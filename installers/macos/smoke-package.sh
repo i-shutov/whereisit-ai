@@ -37,6 +37,17 @@ cleanup() {
 trap cleanup EXIT
 pkgutil --expand "$PKG" "$WORK/pkg"
 [[ -f "$WORK/pkg/PackageInfo" ]] || { echo 'Missing PackageInfo' >&2; exit 1; }
+python3 - "$WORK/pkg/PackageInfo" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+info = ET.parse(sys.argv[1]).getroot()
+assert info.attrib.get('install-location') == '/Applications', 'Unexpected package destination'
+assert info.attrib.get('identifier') == 'ai.whereisit.desktop', 'Unexpected package identifier'
+for element in info.iter():
+    if element.tag.rsplit('}', 1)[-1] == 'relocate':
+        assert len(element) == 0, 'Relocatable bundle found in installer'
+print('PASS: PKG destination fixed to /Applications; no relocation rules')
+PY
 hdiutil attach "$DMG" -readonly -nobrowse -quiet -mountpoint "$MOUNT"
 MOUNTED=true
 [[ -d "$MOUNT/WhereIsIt AI.app" && -L "$MOUNT/Applications" ]] || exit 1
@@ -48,6 +59,11 @@ if pkgutil --pkg-info ai.whereisit.desktop >/dev/null 2>&1; then echo 'Existing 
 CREATED_INSTALL=true
 sudo installer -pkg "$PKG" -target /
 CLI="$INSTALLED/Contents/MacOS/whereisit-ai-cli"
+if [[ ! -x "$CLI" ]]; then
+  echo 'Installer returned without the expected executable in /Applications' >&2
+  pkgutil --files ai.whereisit.desktop || true
+  exit 1
+fi
 [[ "$("$CLI" --version)" == "WhereIsIt AI $VERSION" ]] || exit 1
 python3 -c 'import json,sys; print(json.dumps({"op":"init","db":sys.argv[1]}))' "$WORK/catalog.sqlite" | "$CLI" serve > "$WORK/init.json"
 python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["ok"] is True' "$WORK/init.json"
