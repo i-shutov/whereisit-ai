@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Wire new maintenance operations and adapt a physical-table-specific assertion."""
+"""Wire maintenance operations and adapt physical-table-specific assertions."""
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[2]
@@ -27,4 +27,5 @@ if "mod maintenance;" not in s:
 p = root / "crates/atlas-service/src/maintenance.rs"
 s = p.read_text(encoding="utf-8")
 s = s.replace("use rusqlite::{params, Connection, OpenFlags, OptionalExtension};", "use rusqlite::{Connection, OpenFlags};")
+s = s.replace("PRAGMA optimize=0x10002", "PRAGMA main.optimize=0x10002")
 p.write_text(s, encoding="utf-8")
