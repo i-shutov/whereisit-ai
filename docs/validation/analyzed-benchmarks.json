@@ -1,0 +1,23 @@
+[
+  {
+    "label": "movies",
+    "members": 34541,
+    "first_ms": 313.612,
+    "page_p50_ms": 6.107,
+    "page_max_ms": 8.123
+  },
+  {
+    "label": "music",
+    "members": 32889,
+    "first_ms": 348.677,
+    "page_p50_ms": 5.232,
+    "page_max_ms": 6.054
+  },
+  {
+    "label": "all_files",
+    "members": 1855534,
+    "first_ms": 25766.096,
+    "page_p50_ms": 6.851,
+    "page_max_ms": 14.687
+  }
+]

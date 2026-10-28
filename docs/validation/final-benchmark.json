@@ -1,0 +1,159 @@
+{
+  "created_utc": "2026-10-28T12:06:37.354974+00:00",
+  "environment": {
+    "platform": "Linux-6.18.55-x86_64-with-glibc2.39",
+    "python": "3.12.14",
+    "cpu_count_visible": 9,
+    "cli_sha256": "8a90ab98404f511bd526cdbb7b8e9cd7c47636c84a0df51f887d6200d6fa8992"
+  },
+  "method": "One persistent CLI serve process; page size 250; first request followed by five repeated requests. No cache flush, cold-start guarantee or concurrent-load isolation.",
+  "privacy": "Aggregate results only; no result names, paths, disk labels or entry IDs are written.",
+  "exact_counts_requested": true,
+  "duplicate_cache_writes_enabled": true,
+  "search": [
+    {
+      "label": "all_first_page",
+      "query": "",
+      "page_size": 250,
+      "returned": 250,
+      "first_ms": 31.77,
+      "warm_samples": 5,
+      "warm_p50_ms": 5.183,
+      "warm_max_ms": 6.376,
+      "has_more": true,
+      "total_matches": 3046027,
+      "exact_count_plus_page_ms": 583.685
+    },
+    {
+      "label": "cyrillic_substring",
+      "query": "name:концерт",
+      "page_size": 250,
+      "returned": 93,
+      "first_ms": 28.552,
+      "warm_samples": 5,
+      "warm_p50_ms": 4.979,
+      "warm_max_ms": 6.771,
+      "has_more": false,
+      "total_matches": 93,
+      "exact_count_plus_page_ms": 4.86
+    },
+    {
+      "label": "latin_substring",
+      "query": "name:matrix",
+      "page_size": 250,
+      "returned": 250,
+      "first_ms": 143.645,
+      "warm_samples": 5,
+      "warm_p50_ms": 11.537,
+      "warm_max_ms": 13.004,
+      "has_more": true,
+      "total_matches": 1080,
+      "exact_count_plus_page_ms": 11.867
+    },
+    {
+      "label": "movie_expression",
+      "query": "(ext:mkv OR ext:mp4 OR ext:avi) AND size:>1GiB AND NOT name:sample",
+      "page_size": 250,
+      "returned": 250,
+      "first_ms": 55.873,
+      "warm_samples": 5,
+      "warm_p50_ms": 47.92,
+      "warm_max_ms": 59.864,
+      "has_more": true,
+      "total_matches": 13562,
+      "exact_count_plus_page_ms": 76.707
+    },
+    {
+      "label": "music_expression",
+      "query": "ext:mp3 OR ext:flac OR ext:m4a",
+      "page_size": 250,
+      "returned": 250,
+      "first_ms": 503.799,
+      "warm_samples": 5,
+      "warm_p50_ms": 43.518,
+      "warm_max_ms": 46.35,
+      "has_more": true,
+      "total_matches": 88300,
+      "exact_count_plus_page_ms": 47.074
+    },
+    {
+      "label": "path_and_music",
+      "query": "path:music AND (ext:flac OR ext:mp3)",
+      "page_size": 250,
+      "returned": 250,
+      "first_ms": 56.55,
+      "warm_samples": 5,
+      "warm_p50_ms": 34.355,
+      "warm_max_ms": 38.589,
+      "has_more": true,
+      "total_matches": 3999,
+      "exact_count_plus_page_ms": 62.668
+    },
+    {
+      "label": "glob_mkv",
+      "query": "name:*.mkv",
+      "page_size": 250,
+      "returned": 250,
+      "first_ms": 43.497,
+      "warm_samples": 5,
+      "warm_p50_ms": 22.362,
+      "warm_max_ms": 36.185,
+      "has_more": true,
+      "total_matches": 12664,
+      "exact_count_plus_page_ms": 28.783
+    }
+  ],
+  "catalog": {
+    "entries": 3046027,
+    "volumes": 44,
+    "total_bytes": 62235182885218
+  },
+  "stats_ms": 3.408,
+  "duplicates": [
+    {
+      "label": "all_files",
+      "query": "",
+      "page_size": 250,
+      "returned": 250,
+      "first_ms": 28744.565,
+      "warm_samples": 5,
+      "warm_p50_ms": 7.56,
+      "warm_max_ms": 8.73,
+      "has_more": null,
+      "total_matches": 1855534,
+      "verified": false,
+      "basis": "name_and_size_metadata_candidates",
+      "first_call_may_build_or_reuse_cache": true
+    },
+    {
+      "label": "movies",
+      "query": "ext:mkv OR ext:mp4 OR ext:avi",
+      "page_size": 250,
+      "returned": 250,
+      "first_ms": 271.95,
+      "warm_samples": 5,
+      "warm_p50_ms": 5.68,
+      "warm_max_ms": 5.904,
+      "has_more": null,
+      "total_matches": 34541,
+      "verified": false,
+      "basis": "name_and_size_metadata_candidates",
+      "first_call_may_build_or_reuse_cache": true
+    },
+    {
+      "label": "music",
+      "query": "ext:mp3 OR ext:flac OR ext:m4a",
+      "page_size": 250,
+      "returned": 250,
+      "first_ms": 243.525,
+      "warm_samples": 5,
+      "warm_p50_ms": 6.038,
+      "warm_max_ms": 6.476,
+      "has_more": null,
+      "total_matches": 32889,
+      "verified": false,
+      "basis": "name_and_size_metadata_candidates",
+      "first_call_may_build_or_reuse_cache": true
+    }
+  ]
+}

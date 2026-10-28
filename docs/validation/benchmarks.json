@@ -1,0 +1,520 @@
+{
+  "environment": {
+    "platform": "Linux-6.18.55-x86_64-with-glibc2.39",
+    "cpu_count_visible": 9,
+    "cpu_quota": "800000 100000",
+    "memory_limit_bytes": "8589934592",
+    "notes": "Release build. Warm filesystem cache; each API request opens a SQLite connection. Other sandbox work may run concurrently. No source file contents read."
+  },
+  "search": [
+    {
+      "label": "all_first_page",
+      "query": "",
+      "page_size": 250,
+      "returned": 250,
+      "has_more": true,
+      "total_matches": 3046027,
+      "first_ms": 16.12,
+      "warm_samples": 10,
+      "warm_p50_ms": 7.401,
+      "warm_p95_ms": 10.2,
+      "warm_min_ms": 5.347,
+      "warm_max_ms": 10.2,
+      "exact_count_plus_page_ms": 202.252,
+      "plan": {
+        "parameters": [],
+        "plan": [
+          "SCAN entries USING COVERING INDEX entries_modified"
+        ],
+        "sql": "SELECT id FROM entries WHERE 1"
+      }
+    },
+    {
+      "label": "cyrillic_substring",
+      "query": "name:концерт",
+      "page_size": 250,
+      "returned": 93,
+      "has_more": false,
+      "total_matches": 93,
+      "first_ms": 14.761,
+      "warm_samples": 10,
+      "warm_p50_ms": 6.431,
+      "warm_p95_ms": 7.093,
+      "warm_min_ms": 5.661,
+      "warm_max_ms": 7.093,
+      "exact_count_plus_page_ms": 6.039,
+      "plan": {
+        "parameters": [
+          "\"кон\" AND \"нце\" AND \"ерт\"",
+          "концерт"
+        ],
+        "plan": [
+          "SEARCH entries USING INTEGER PRIMARY KEY (rowid=?)",
+          "LIST SUBQUERY 1",
+          "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1"
+        ],
+        "sql": "SELECT id FROM entries WHERE (id IN (SELECT rowid FROM entries_trigram WHERE entries_trigram MATCH ?) AND instr(name_norm,?)>0)"
+      }
+    },
+    {
+      "label": "latin_substring",
+      "query": "name:matrix",
+      "page_size": 250,
+      "returned": 250,
+      "has_more": true,
+      "total_matches": 1080,
+      "first_ms": 31.208,
+      "warm_samples": 10,
+      "warm_p50_ms": 13.171,
+      "warm_p95_ms": 22.332,
+      "warm_min_ms": 9.098,
+      "warm_max_ms": 22.332,
+      "exact_count_plus_page_ms": 11.533,
+      "plan": {
+        "parameters": [
+          "\"mat\" AND \"atr\" AND \"rix\"",
+          "matrix"
+        ],
+        "plan": [
+          "SEARCH entries USING INTEGER PRIMARY KEY (rowid=?)",
+          "LIST SUBQUERY 1",
+          "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1"
+        ],
+        "sql": "SELECT id FROM entries WHERE (id IN (SELECT rowid FROM entries_trigram WHERE entries_trigram MATCH ?) AND instr(name_norm,?)>0)"
+      }
+    },
+    {
+      "label": "movie_expression",
+      "query": "(ext:mkv OR ext:mp4 OR ext:avi) AND size:>1GiB AND NOT name:sample",
+      "page_size": 250,
+      "returned": 250,
+      "has_more": true,
+      "total_matches": 13562,
+      "first_ms": 209.892,
+      "warm_samples": 10,
+      "warm_p50_ms": 58.82,
+      "warm_p95_ms": 76.566,
+      "warm_min_ms": 49.491,
+      "warm_max_ms": 76.566,
+      "exact_count_plus_page_ms": 108.234,
+      "plan": {
+        "parameters": [
+          "mkv",
+          "mp4",
+          "avi",
+          1073741824,
+          "\"sam\" AND \"amp\" AND \"ple\"",
+          "sample"
+        ],
+        "plan": [
+          "SEARCH entries USING INDEX entries_ext (ext=?)",
+          "LIST SUBQUERY 1",
+          "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1"
+        ],
+        "sql": "SELECT id FROM entries WHERE (((((ext = ? OR ext = ?) OR ext = ?)) AND size > ?) AND (NOT (id IN (SELECT rowid FROM entries_trigram WHERE entries_trigram MATCH ?) AND instr(name_norm,?)>0)))"
+      }
+    },
+    {
+      "label": "music_expression",
+      "query": "ext:mp3 OR ext:flac OR ext:m4a",
+      "page_size": 250,
+      "returned": 250,
+      "has_more": true,
+      "total_matches": 88300,
+      "first_ms": 236.944,
+      "warm_samples": 10,
+      "warm_p50_ms": 57.901,
+      "warm_p95_ms": 66.098,
+      "warm_min_ms": 50.944,
+      "warm_max_ms": 66.098,
+      "exact_count_plus_page_ms": 51.439,
+      "plan": {
+        "parameters": [
+          "mp3",
+          "flac",
+          "m4a"
+        ],
+        "plan": [
+          "SEARCH entries USING COVERING INDEX entries_ext (ext=?)"
+        ],
+        "sql": "SELECT id FROM entries WHERE ((ext = ? OR ext = ?) OR ext = ?)"
+      }
+    },
+    {
+      "label": "path_and_music",
+      "query": "path:music AND (ext:flac OR ext:mp3)",
+      "page_size": 250,
+      "returned": 250,
+      "has_more": true,
+      "total_matches": 3999,
+      "first_ms": 44.466,
+      "warm_samples": 10,
+      "warm_p50_ms": 46.414,
+      "warm_p95_ms": 53.429,
+      "warm_min_ms": 44.137,
+      "warm_max_ms": 53.429,
+      "exact_count_plus_page_ms": 71.073,
+      "plan": {
+        "parameters": [
+          "\"mus\" AND \"usi\" AND \"sic\"",
+          "music",
+          "flac",
+          "mp3"
+        ],
+        "plan": [
+          "SEARCH entries USING INDEX entries_ext (ext=? AND rowid=?)",
+          "LIST SUBQUERY 1",
+          "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1"
+        ],
+        "sql": "SELECT id FROM entries WHERE ((id IN (SELECT rowid FROM entries_trigram WHERE entries_trigram MATCH ?) AND instr(unicode_lower(relative_path),?)>0) AND ((ext = ? OR ext = ?)))"
+      }
+    },
+    {
+      "label": "glob_mkv",
+      "query": "name:*.mkv",
+      "page_size": 250,
+      "returned": 250,
+      "has_more": true,
+      "total_matches": 12664,
+      "first_ms": 30.062,
+      "warm_samples": 10,
+      "warm_p50_ms": 29.021,
+      "warm_p95_ms": 33.006,
+      "warm_min_ms": 25.76,
+      "warm_max_ms": 33.006,
+      "exact_count_plus_page_ms": 34.403,
+      "plan": {
+        "parameters": [
+          "\".mk\" AND \".mk\" AND \"mkv\"",
+          "*.mkv"
+        ],
+        "plan": [
+          "SEARCH entries USING INTEGER PRIMARY KEY (rowid=?)",
+          "LIST SUBQUERY 1",
+          "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1"
+        ],
+        "sql": "SELECT id FROM entries WHERE (id IN (SELECT rowid FROM entries_trigram WHERE entries_trigram MATCH ?) AND name_norm GLOB ?)"
+      }
+    },
+    {
+      "label": "inherited_category",
+      "query": "category:AtlasValidationTemporaryCategory",
+      "page_size": 250,
+      "returned": 7,
+      "has_more": false,
+      "total_matches": 7,
+      "first_ms": 1.747,
+      "warm_samples": 10,
+      "warm_p50_ms": 1.284,
+      "warm_p95_ms": 1.679,
+      "warm_min_ms": 0.816,
+      "warm_max_ms": 1.679,
+      "exact_count_plus_page_ms": 1.157,
+      "plan": {
+        "parameters": [
+          "atlasvalidationtemporarycategory"
+        ],
+        "plan": [
+          "SEARCH entries USING INTEGER PRIMARY KEY (rowid=?)",
+          "LIST SUBQUERY 3",
+          "MATERIALIZE marked",
+          "SETUP",
+          "SEARCH c USING COVERING INDEX categories_name (name_norm=?)",
+          "SEARCH ec USING COVERING INDEX entry_categories_category (category_id=?)",
+          "SEARCH e USING INTEGER PRIMARY KEY (rowid=?)",
+          "RECURSIVE STEP",
+          "SCAN m",
+          "SEARCH child USING COVERING INDEX entries_parent (volume_id=? AND parent_id=?)",
+          "SCAN marked"
+        ],
+        "sql": "SELECT id FROM entries WHERE id IN (WITH RECURSIVE marked(id,volume_id) AS (SELECT e.id,e.volume_id FROM categories c JOIN entry_categories ec ON ec.category_id=c.id JOIN entries e ON e.id=ec.entry_id WHERE c.name_norm=? UNION SELECT child.id,child.volume_id FROM marked m JOIN entries child ON child.volume_id=m.volume_id AND child.parent_id=m.id) SELECT id FROM marked)"
+      }
+    }
+  ],
+  "stats": {
+    "entries": 3046027,
+    "total_bytes": 62235182885218,
+    "volumes": 44
+  },
+  "category_validation": {
+    "inherited_entries": 7,
+    "matched_expected": true
+  },
+  "duplicates": [
+    {
+      "label": "all_files",
+      "query": "",
+      "basis": "name_and_size_metadata_candidates",
+      "verified": false,
+      "groups": 537567,
+      "member_files": 1855534,
+      "first_build_and_page_ms": 39028.599,
+      "cached_page_p50_ms": 7.549,
+      "cached_page_p95_ms": 9.091,
+      "samples": 10
+    },
+    {
+      "label": "movies",
+      "query": "ext:mkv OR ext:mp4 OR ext:avi",
+      "basis": "name_and_size_metadata_candidates",
+      "verified": false,
+      "groups": 12991,
+      "member_files": 34541,
+      "first_build_and_page_ms": 17366.163,
+      "cached_page_p50_ms": 6.242,
+      "cached_page_p95_ms": 15.355,
+      "samples": 10
+    },
+    {
+      "label": "music",
+      "query": "ext:mp3 OR ext:flac OR ext:m4a",
+      "basis": "name_and_size_metadata_candidates",
+      "verified": false,
+      "groups": 13145,
+      "member_files": 32889,
+      "first_build_and_page_ms": 14120.713,
+      "cached_page_p50_ms": 5.804,
+      "cached_page_p95_ms": 8.218,
+      "samples": 10
+    }
+  ],
+  "exports": [
+    {
+      "label": "music_sample",
+      "csv": {
+        "result": {
+          "bytes": 170978,
+          "duplicate_candidates": false,
+          "format": "csv",
+          "path": "/tmp/atlas-realdata-final/checks/music_sample.csv",
+          "rows": 603,
+          "scope": "search"
+        },
+        "ms": 9.654,
+        "path": "/tmp/atlas-realdata-final/checks/music_sample.csv"
+      },
+      "parquet": {
+        "result": {
+          "bytes": 54435,
+          "duplicate_candidates": false,
+          "format": "parquet",
+          "path": "/tmp/atlas-realdata-final/checks/music_sample.parquet",
+          "rows": 603,
+          "scope": "search"
+        },
+        "ms": 13.701,
+        "path": "/tmp/atlas-realdata-final/checks/music_sample.parquet"
+      },
+      "csv_rows_independent": 603
+    },
+    {
+      "label": "small_disk",
+      "csv": {
+        "result": {
+          "bytes": 1224,
+          "duplicate_candidates": false,
+          "format": "csv",
+          "path": "/tmp/atlas-realdata-final/checks/small_disk.csv",
+          "rows": 11,
+          "scope": "children"
+        },
+        "ms": 1.871,
+        "path": "/tmp/atlas-realdata-final/checks/small_disk.csv"
+      },
+      "parquet": {
+        "result": {
+          "bytes": 3773,
+          "duplicate_candidates": false,
+          "format": "parquet",
+          "path": "/tmp/atlas-realdata-final/checks/small_disk.parquet",
+          "rows": 11,
+          "scope": "children"
+        },
+        "ms": 1.81,
+        "path": "/tmp/atlas-realdata-final/checks/small_disk.parquet"
+      },
+      "csv_rows_independent": 11
+    },
+    {
+      "label": "music_duplicates",
+      "csv": {
+        "result": {
+          "bytes": 9495873,
+          "duplicate_candidates": true,
+          "format": "csv",
+          "path": "/tmp/atlas-realdata-final/checks/music_duplicates.csv",
+          "rows": 32889,
+          "scope": "duplicates"
+        },
+        "ms": 261.434,
+        "path": "/tmp/atlas-realdata-final/checks/music_duplicates.csv"
+      },
+      "parquet": {
+        "result": {
+          "bytes": 2940793,
+          "duplicate_candidates": true,
+          "format": "parquet",
+          "path": "/tmp/atlas-realdata-final/checks/music_duplicates.parquet",
+          "rows": 32889,
+          "scope": "duplicates"
+        },
+        "ms": 353.475,
+        "path": "/tmp/atlas-realdata-final/checks/music_duplicates.parquet"
+      },
+      "csv_rows_independent": 32889
+    }
+  ],
+  "foreign_key_errors": [],
+  "objects_bytes": [
+    {
+      "name": "entries",
+      "bytes": 1032835072
+    },
+    {
+      "name": "entries_path",
+      "bytes": 398757888
+    },
+    {
+      "name": "entries_trigram_data",
+      "bytes": 305135616
+    },
+    {
+      "name": "ctf_entries",
+      "bytes": 229298176
+    },
+    {
+      "name": "entries_parent",
+      "bytes": 134574080
+    },
+    {
+      "name": "entries_name_sort",
+      "bytes": 118644736
+    },
+    {
+      "name": "entries_name_size",
+      "bytes": 116781056
+    },
+    {
+      "name": "entries_kind_size",
+      "bytes": 57122816
+    },
+    {
+      "name": "entries_ext",
+      "bytes": 40214528
+    },
+    {
+      "name": "entries_size",
+      "bytes": 38817792
+    },
+    {
+      "name": "entries_trigram_docsize",
+      "bytes": 32669696
+    },
+    {
+      "name": "entries_modified",
+      "bytes": 31350784
+    },
+    {
+      "name": "duplicate_cache_groups",
+      "bytes": 1236992
+    },
+    {
+      "name": "duplicate_cache_keys",
+      "bytes": 704512
+    },
+    {
+      "name": "duplicate_cache_members",
+      "bytes": 483328
+    },
+    {
+      "name": "entries_trigram_idx",
+      "bytes": 438272
+    },
+    {
+      "name": "duplicate_cache_size",
+      "bytes": 167936
+    },
+    {
+      "name": "ctf_volumes",
+      "bytes": 16384
+    },
+    {
+      "name": "sqlite_schema",
+      "bytes": 12288
+    },
+    {
+      "name": "volumes",
+      "bytes": 4096
+    },
+    {
+      "name": "sqlite_autoindex_entry_categories_1",
+      "bytes": 4096
+    },
+    {
+      "name": "sqlite_autoindex_ctf_sources_1",
+      "bytes": 4096
+    },
+    {
+      "name": "entry_categories_category",
+      "bytes": 4096
+    },
+    {
+      "name": "entry_categories",
+      "bytes": 4096
+    },
+    {
+      "name": "entries_trigram_config",
+      "bytes": 4096
+    },
+    {
+      "name": "duplicate_cache_state",
+      "bytes": 4096
+    },
+    {
+      "name": "ctf_volumes_source",
+      "bytes": 4096
+    },
+    {
+      "name": "ctf_sources",
+      "bytes": 4096
+    },
+    {
+      "name": "categories_name",
+      "bytes": 4096
+    },
+    {
+      "name": "categories",
+      "bytes": 4096
+    },
+    {
+      "name": "atlas_meta",
+      "bytes": 4096
+    }
+  ],
+  "checkpoint": [
+    [
+      0,
+      0,
+      0
+    ]
+  ],
+  "db_bytes_after_cache": 2631045120,
+  "ctf_from_sqlite": {
+    "elapsed_ms": 11265.089,
+    "bytes": 144766574,
+    "source_sha256": "f9339112d0a2b3da114cb4f4efa026d4501da0933d294f01f02896fda08f33d5",
+    "output_sha256": "f9339112d0a2b3da114cb4f4efa026d4501da0933d294f01f02896fda08f33d5",
+    "byte_identical": true,
+    "result": {
+      "bytes": 144766574,
+      "compatibility": "Observed variant; see validation report for original-application checks",
+      "disks": 44,
+      "entries": 3046027,
+      "format": "Catalog 3.00",
+      "new_categories_omitted": false,
+      "new_tags_omitted": false,
+      "path": "/tmp/atlas-realdata-final/roundtrip-from-sqlite.CTF",
+      "sha256": "f9339112d0a2b3da114cb4f4efa026d4501da0933d294f01f02896fda08f33d5"
+    }
+  }
+}

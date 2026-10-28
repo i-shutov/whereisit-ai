@@ -1,0 +1,41 @@
+{
+  "removed_ddl": {
+    "entries_path": "CREATE INDEX entries_path ON entries(volume_id,relative_path)",
+    "entries_modified": "CREATE INDEX entries_modified ON entries(modified_unix)"
+  },
+  "old_index_bytes": {
+    "entries_path": 398757888,
+    "entries_modified": 31350784
+  },
+  "checks": [
+    {
+      "request": {
+        "op": "children",
+        "volume_id": 38,
+        "limit": 250
+      },
+      "ms": 5.553,
+      "items": 5
+    },
+    {
+      "request": {
+        "op": "search_fast",
+        "query": "path:music AND (ext:flac OR ext:mp3)",
+        "limit": 250
+      },
+      "ms": 63.114,
+      "items": 250
+    },
+    {
+      "request": {
+        "op": "search_fast",
+        "query": "ext:mp3",
+        "volume_id": 21,
+        "limit": 250
+      },
+      "ms": 41.681,
+      "items": 250
+    }
+  ],
+  "free_bytes": 3013103616
+}

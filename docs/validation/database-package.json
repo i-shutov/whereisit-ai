@@ -1,0 +1,14 @@
+{
+  "archive": "/tmp/atlas-deliverables/USB-drives-AtlasCatalog-v0.1.sqlite.zip",
+  "archive_bytes": 419970049,
+  "archive_sha256": "cfb8dec383e56b1b362a4e99ffac4033297a3eb0637929a5949e06125db22b53",
+  "db_bytes": 2161020928,
+  "db_sha256": "a6c327f995ef4041418eb48e09d23e2295c68fd3a38832894b1bd1405e5f77aa",
+  "volumes": 44,
+  "entries": 3046027,
+  "quick_check": "ok",
+  "foreign_key_check": "ok",
+  "zip_crc": "ok",
+  "elapsed_seconds": 81.84,
+  "available_bytes": 702398464
+}

@@ -1,0 +1,85 @@
+{
+  "status": "passed",
+  "checked_at_utc": "2026-10-28T11:35:10.998500+00:00",
+  "independent_readers": {
+    "csv": "Python standard library csv",
+    "parquet": "DuckDB 1.4.1"
+  },
+  "method": "Read completed export files only; no database access, service calls or repeated exports. Exact row-by-row comparison after normalizing NULL to an empty CSV field.",
+  "cases": [
+    {
+      "case": "music_sample",
+      "rows": 603,
+      "columns": 15,
+      "all_values_equal": true,
+      "size_type": "BIGINT",
+      "size_sum_bytes": 101176664775,
+      "size_max_bytes": 1496320749,
+      "rows_over_4_gib": 0,
+      "rows_with_cyrillic_name_or_path": 419,
+      "null_modified_dates": 603,
+      "null_parent_ids": 0,
+      "local_date_strings": 603,
+      "csv_bytes": 170978,
+      "parquet_bytes": 54435
+    },
+    {
+      "case": "small_disk",
+      "rows": 11,
+      "columns": 15,
+      "all_values_equal": true,
+      "size_type": "BIGINT",
+      "size_sum_bytes": 232766,
+      "size_max_bytes": 81920,
+      "rows_over_4_gib": 0,
+      "rows_with_cyrillic_name_or_path": 0,
+      "null_modified_dates": 11,
+      "null_parent_ids": 5,
+      "local_date_strings": 10,
+      "csv_bytes": 1224,
+      "parquet_bytes": 3773
+    },
+    {
+      "case": "music_duplicates",
+      "rows": 32889,
+      "columns": 15,
+      "all_values_equal": true,
+      "size_type": "BIGINT",
+      "size_sum_bytes": 282084823890,
+      "size_max_bytes": 254089215,
+      "rows_over_4_gib": 0,
+      "rows_with_cyrillic_name_or_path": 21327,
+      "null_modified_dates": 32889,
+      "null_parent_ids": 0,
+      "local_date_strings": 32889,
+      "csv_bytes": 9495873,
+      "parquet_bytes": 2940793
+    },
+    {
+      "case": "large_movies",
+      "rows": 321,
+      "columns": 15,
+      "all_values_equal": true,
+      "size_type": "BIGINT",
+      "size_sum_bytes": 2920310820302,
+      "size_min_bytes": 4316109809,
+      "size_max_bytes": 40898551720,
+      "rows_over_4_gib": 321,
+      "rows_with_cyrillic_name_or_path": 320,
+      "null_modified_dates": 321,
+      "null_parent_ids": 0,
+      "local_date_strings": 321,
+      "csv_bytes": 96894,
+      "parquet_bytes": 41580
+    }
+  ],
+  "original_application_validation": "Pending independent WhereIsIt acceptance; this audit does not establish original-application compatibility.",
+  "ctf_sqlite_roundtrip": {
+    "input_bytes": 144766574,
+    "output_bytes": 144766574,
+    "source_sha256": "f9339112d0a2b3da114cb4f4efa026d4501da0933d294f01f02896fda08f33d5",
+    "output_sha256": "f9339112d0a2b3da114cb4f4efa026d4501da0933d294f01f02896fda08f33d5",
+    "byte_identical_by_sha256_and_length": true
+  },
+  "large_file_audit_utc": "2026-10-28T11:38:21.168391+00:00"
+}

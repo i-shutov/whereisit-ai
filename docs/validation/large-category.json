@@ -1,0 +1,11 @@
+{
+  "subtree_entries": 374259,
+  "page_size": 250,
+  "returned": 250,
+  "first_ms": 1888.031,
+  "warm_samples": 4,
+  "warm_p50_ms": 1129.943,
+  "warm_max_ms": 1932.059,
+  "count_plus_page_ms": 2150.692,
+  "independent_count_matches": true
+}

@@ -1,0 +1,15 @@
+{
+  "build_ms": 4930.999,
+  "plan": [
+    [
+      6,
+      0,
+      111,
+      "SEARCH entries USING COVERING INDEX entries_name_size (kind=?)"
+    ]
+  ],
+  "groups": 537567,
+  "groups_query_ms": 530.538,
+  "first_all_ms": 22856.399,
+  "member_files": 1855534
+}

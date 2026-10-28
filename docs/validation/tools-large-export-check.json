@@ -1,0 +1,23 @@
+{
+  "status": "passed",
+  "created_utc": "2026-10-28T11:48:39.034707+00:00",
+  "readers": {
+    "csv": "Python standard library csv",
+    "parquet": "DuckDB 1.4.1"
+  },
+  "columns": 15,
+  "rows": 321,
+  "all_values_equal": true,
+  "size_type": "BIGINT",
+  "size_sum_bytes": 2920310820302,
+  "size_min_bytes": 4316109809,
+  "size_max_bytes": 40898551720,
+  "rows_over_4_gib": 321,
+  "rows_with_cyrillic_name_or_path": 320,
+  "null_modified_dates": 321,
+  "null_parent_ids": 0,
+  "local_date_strings": 321,
+  "normalization": "Parquet NULL equals an empty CSV field; all other values compare as exact text. Integer values never pass through floating point.",
+  "csv_bytes": 96894,
+  "parquet_bytes": 41580
+}

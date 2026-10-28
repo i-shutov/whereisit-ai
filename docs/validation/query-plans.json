@@ -1,0 +1,210 @@
+{
+  "before": {
+    "groups_all": [
+      [
+        7,
+        0,
+        61,
+        "SEARCH entries USING INDEX entries_kind_size (kind=?)"
+      ],
+      [
+        12,
+        0,
+        0,
+        "USE TEMP B-TREE FOR GROUP BY"
+      ]
+    ],
+    "groups_media": [
+      [
+        7,
+        0,
+        61,
+        "SEARCH entries USING INDEX entries_kind_size (kind=?)"
+      ],
+      [
+        18,
+        0,
+        0,
+        "USE TEMP B-TREE FOR GROUP BY"
+      ]
+    ],
+    "members_media": [
+      [
+        6,
+        0,
+        61,
+        "SEARCH e USING INDEX entries_kind_size (kind=?)"
+      ],
+      [
+        17,
+        0,
+        61,
+        "SEARCH g USING INDEX duplicate_cache_keys (name_key=? AND size_key=?)"
+      ],
+      [
+        33,
+        0,
+        0,
+        "USE TEMP B-TREE FOR ORDER BY"
+      ]
+    ]
+  },
+  "analyze_ms": 3832.396,
+  "after": {
+    "groups_all": [
+      [
+        7,
+        0,
+        122,
+        "SEARCH entries USING INDEX entries_kind_size (kind=?)"
+      ],
+      [
+        12,
+        0,
+        0,
+        "USE TEMP B-TREE FOR GROUP BY"
+      ]
+    ],
+    "groups_media": [
+      [
+        7,
+        0,
+        68,
+        "SEARCH entries USING INDEX entries_ext (ext=?)"
+      ],
+      [
+        31,
+        0,
+        0,
+        "USE TEMP B-TREE FOR GROUP BY"
+      ]
+    ],
+    "members_media": [
+      [
+        6,
+        0,
+        68,
+        "SEARCH e USING INDEX entries_ext (ext=?)"
+      ],
+      [
+        30,
+        0,
+        42,
+        "SEARCH g USING INDEX duplicate_cache_keys (name_key=? AND size_key=?)"
+      ],
+      [
+        47,
+        0,
+        0,
+        "USE TEMP B-TREE FOR ORDER BY"
+      ]
+    ]
+  },
+  "stats": [
+    [
+      "duplicate_cache_groups",
+      "duplicate_cache_size",
+      "13145 1"
+    ],
+    [
+      "duplicate_cache_groups",
+      "duplicate_cache_keys",
+      "13145 2 1"
+    ],
+    [
+      "duplicate_cache_state",
+      null,
+      "1"
+    ],
+    [
+      "atlas_meta",
+      null,
+      "1"
+    ],
+    [
+      "ctf_entries",
+      null,
+      "3046027"
+    ],
+    [
+      "ctf_sources",
+      "sqlite_autoindex_ctf_sources_1",
+      "1 1"
+    ],
+    [
+      "entries_trigram_docsize",
+      null,
+      "3046027"
+    ],
+    [
+      "ctf_volumes",
+      "ctf_volumes_source",
+      "44 44 1"
+    ],
+    [
+      "entries_trigram_idx",
+      "entries_trigram_idx",
+      "25768 667 1"
+    ],
+    [
+      "duplicate_cache_members",
+      null,
+      "32889"
+    ],
+    [
+      "entries_trigram_data",
+      null,
+      "76913"
+    ],
+    [
+      "volumes",
+      null,
+      "44"
+    ],
+    [
+      "entries_trigram_config",
+      "entries_trigram_config",
+      "1 1"
+    ],
+    [
+      "entries",
+      "entries_modified",
+      "3046027 1001"
+    ],
+    [
+      "entries",
+      "entries_name_size",
+      "3046027 3 3"
+    ],
+    [
+      "entries",
+      "entries_name_sort",
+      "3046027 3 1"
+    ],
+    [
+      "entries",
+      "entries_kind_size",
+      "3046027 1001 3"
+    ],
+    [
+      "entries",
+      "entries_size",
+      "3046027 667"
+    ],
+    [
+      "entries",
+      "entries_ext",
+      "3046027 3"
+    ],
+    [
+      "entries",
+      "entries_path",
+      "3046027 1001 1"
+    ],
+    [
+      "entries",
+      "entries_parent",
+      "3046027 1001 26 1 1"
+    ]
+  ]
+}

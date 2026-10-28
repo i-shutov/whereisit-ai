@@ -1,0 +1,4 @@
+module CAtlas [system] {
+    header "atlas.h"
+    export *
+}

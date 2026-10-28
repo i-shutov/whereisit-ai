@@ -1,0 +1,17 @@
+CREATE TABLE volumes(id INTEGER PRIMARY KEY, label TEXT NOT NULL, root_path TEXT NOT NULL, scanned_at INTEGER NOT NULL, entry_count INTEGER NOT NULL, total_bytes INTEGER NOT NULL, status TEXT NOT NULL);
+CREATE TABLE entries(id INTEGER PRIMARY KEY, volume_id INTEGER NOT NULL REFERENCES volumes(id) ON DELETE CASCADE, parent_id INTEGER REFERENCES entries(id), name TEXT NOT NULL, relative_path TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('file','directory','symlink','archive')), size INTEGER NOT NULL CHECK(size>=0), modified_unix INTEGER, description TEXT NOT NULL DEFAULT '', tags TEXT NOT NULL DEFAULT '', search_text TEXT NOT NULL, name_norm TEXT NOT NULL, ext TEXT NOT NULL);
+CREATE INDEX entries_parent ON entries(volume_id,parent_id,name,id);
+CREATE INDEX entries_ext ON entries(ext);
+CREATE TABLE categories(id INTEGER PRIMARY KEY,parent_id INTEGER REFERENCES categories(id),name TEXT NOT NULL,name_norm TEXT NOT NULL);
+CREATE INDEX categories_name ON categories(name_norm);
+CREATE TABLE entry_categories(entry_id INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE,category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,PRIMARY KEY(entry_id,category_id));
+CREATE INDEX entry_categories_category ON entry_categories(category_id,entry_id);
+CREATE VIRTUAL TABLE entries_trigram USING fts5(search_text,content='entries',content_rowid='id',tokenize='trigram',detail=none);
+CREATE INDEX entries_size ON entries(size);
+CREATE INDEX entries_kind_size ON entries(kind,size);
+CREATE INDEX entries_name_sort ON entries(name COLLATE NOCASE,id);
+CREATE INDEX entries_name_size ON entries(kind,name_norm,size);
+CREATE TRIGGER entries_ai AFTER INSERT ON entries BEGIN INSERT INTO entries_trigram(rowid,search_text) VALUES(new.id,new.search_text); END;
+CREATE TRIGGER entries_ad AFTER DELETE ON entries BEGIN INSERT INTO entries_trigram(entries_trigram,rowid,search_text) VALUES('delete',old.id,old.search_text); END;
+CREATE TRIGGER entries_au AFTER UPDATE ON entries BEGIN INSERT INTO entries_trigram(entries_trigram,rowid,search_text) VALUES('delete',old.id,old.search_text); INSERT INTO entries_trigram(rowid,search_text) VALUES(new.id,new.search_text); END;
+PRAGMA user_version=1;

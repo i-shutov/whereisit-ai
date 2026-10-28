@@ -1,0 +1,13 @@
+/target/
+/dist/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.CTF
+*.ctf
+*.parquet
+*.csv
+!tests/fixtures/*.csv
+apps/macos/.build/
+.DS_Store
+

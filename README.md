@@ -1,21 +1,106 @@
-# WhereIsIt AI
+# WhereIsIt AI — нативный каталог дисков
 
-Native offline disk catalog for **Windows 10/11 and macOS 13+**: Rust core, SQLite/FTS5, Win32/SwiftUI, WhereIsIt CTF import/export, Boolean search, categories, metadata duplicate candidates, CSV/Parquet.
+Предварительная версия v0.1.0 аналога WhereIsIt для каталога файлов на отключённых носителях. Общее ядро написано на Rust, рабочая база — SQLite, Windows-интерфейс использует Win32, macOS — SwiftUI/AppKit. CTF служит форматом импорта и обратного экспорта; поиск работает по внутренней базе.
 
-## Status (2026-10-28)
+## Готовые файлы и состояние
 
-- Atlas Catalog v0.1 source is packaged locally; full source **has not yet been pushed into this repository**. This repository starts as a coordination and import checkpoint.
-- Real USB-drives.CTF: 44 volumes, 3,046,027 entries. Unchanged CTF → SQLite → CTF SHA-256 roundtrip verified.
-- Windows native GUI compiled and smoked under Wine; **real Windows QA and Mac builds are pending**.
-- Original WhereIsIt acceptance of *new/modified* CTF is pending; this must not be confused with unchanged-file roundtrip.
-- Windows Inno Setup and macOS pkg/dmg build scripts have been prepared in the new local finalization snapshot, but no signed installation builds have passed CI yet.
+Готовый Windows x64 архив содержит `atlas-windows.exe` и консольный `atlas.exe`; отдельная установка SQLite, Python или браузерного runtime для приложения не нужна. Распакуйте программы в обычную папку и запустите GUI. Базовая сборка остаётся неподписанной. Для выпуска с установщиком подготовлен Inno Setup 6; до прохождения нативной CI-проверки установщик не считается опубликованным.
 
-## Storage approach
+Архив готовой базы содержит `USB-drives.atlas.sqlite`: 44 диска, 3 046 027 записей. После распаковки файл занимает 2 161 020 928 байт; откройте его кнопкой **Open catalog**. Повторный импорт исходного CTF для этой базы не требуется. При новых больших импортах нужен запас места под SQLite и временный WAL.
 
-Primary SQLite (transactional tree, indexes, FTS5); evaluate DuckDB/Parquet for bulk analytics and duplicate groups on the same 3M-record workload. Polars is a comparison/export tool, not a durable catalog DB. Do **not** load 3M rows into RAM at startup.
+Windows release проверен в Wine. Исходники macOS и скрипт `.app` подготовлены, но готовый Mac-бинарник не заявляется: сборка с macOS SDK и запуск на Apple Silicon/Intel ещё необходимы. Подробный статус и измерения: [VALIDATION.md](docs/VALIDATION.md).
 
-## Workflow
+## Основной сценарий
 
-Read [ROADMAP_TO_1.0](docs/ROADMAP_TO_1.0.md). M0 source/bootstrap is the **first blocking task**. After source import, isolated coding agents work via PRs on CTF, storage, Windows, macOS and QA. No agent is considered launched solely because its Issue exists.
+1. Создать каталог **New catalog** или открыть файл `*.atlas.sqlite` через **Open catalog**.
+2. Нажать **Import CTF** для существующей базы либо **Add disk** и выбрать корень подключённого диска/папки.
+3. Выбрать носитель слева, открывать папки двойным нажатием; **Back** возвращает вверх. Строка поиска принимает выражения из раздела ниже. **All disks / global search** ищет по всему каталогу.
+4. Для категорий выбрать запись, выбрать или создать категорию и нажать **Assign category**. Категория папки действует при поиске и на её потомков, без отдельных связей для каждого файла.
+5. **Duplicates** ищет кандидатов по имени и размеру, только размеру или только имени. Данные носителя для этого не требуются. Колонка **Disk** в результатах поиска и дубликатах указывает носитель. Совпадение метаданных не подтверждает совпадение содержимого.
+6. Выбрать CSV или Parquet в списке форматов и нажать **Export**. Экспортируется применённый поиск, найденные кандидаты либо текущая ветка с потомками; ограничения страницы интерфейса не ограничивают экспорт. Формат CTF экспортирует весь каталог.
 
-**Privacy:** never commit source CTF, converted user SQLite, media listings, software license keys, or actual disk paths. No automatic media hashing, content indexing or deletion.
+Сканирование собирает имена, структуру, размеры и даты. Новые сканы не читают содержимое медиа, не создают миниатюры, не разбирают архивы и не считают хэши. Уже имеющиеся в CTF записи внутри архивов сохраняются. Длительные операции выполняются вне потока интерфейса. При повторном добавлении диска создаётся отдельный снимок; замена старого снимка с переносом аннотаций — следующий этап.
+
+## Поиск
+
+```text
+(ext:mkv OR ext:avi OR ext:mp4) AND size:>1GiB
+(ext:flac OR ext:mp3) AND NOT path:*/temp/*
+name:*матрица* AND size:>=700MiB
+category:"Музыка" AND ext:flac
+name:"Звёздные войны"
+```
+
+Доступны `AND`, `OR`, `NOT`, скобки, поля `name`, `path`, `ext`, `size`, `description`, `tag`, `category`, кавычки и маски `*`/`?`. Пробел между самостоятельными условиями означает `AND`. Приоритет: `NOT`, затем `AND`, затем `OR`. `ext` сравнивается точно, `category` — по имени; имя категории в первой версии не является путём дерева категорий. Сравнение текста регистронезависимое с Unicode lowercase; исходное написание имён сохраняется.
+
+Размеры поддерживают сравнения `=`, `>`, `>=`, `<`, `<=`, единицы `B`, `KB`, `MB`, `GB`, `KiB`, `MiB`, `GiB`, `TiB`. Условия без поля ищут по объединённым имени, пути, описанию и тегам. Полные регулярные выражения, `XOR` и синтаксис выражений WhereIsIt один к одному в первой версии не реализованы.
+
+FTS5 trigram отбирает кандидатов для подстрок и масок с литеральным фрагментом длиной от трёх символов; точное условие проверяется после отбора. Очень короткие строки и шаблоны без такого фрагмента требуют просмотра большого набора. Интерфейс запрашивает `search_fast` без подсчёта всех совпадений: видна текущая страница и наличие следующей.
+
+## CTF и точность данных
+
+Поддержан исследованный **несжатый Catalog 3.00**, в том числе файл `USB-drives.CTF`: 44 диска и 3 046 027 записей. Полная пересборка этой базы парсером/writer дала побайтово идентичный файл. Результаты последующей проверки через SQLite и оригинальную программу приведены в [VALIDATION.md](docs/VALIDATION.md).
+
+Неизвестные поля сохраняются отдельно от рабочих поисковых полей. Неподдерживаемые варианты, сжатие/шифрование и заполненные группы дисков отклоняются с ошибкой. Смысл исходных категорий CTF пока не восстановлен; новые собственные категории работают внутри Atlas. Экспорт CTF при новых назначениях категорий или непустых собственных тегах по умолчанию отклоняется, чтобы не потерять их незаметно; CSV/Parquet сохраняют эти поля. Технический API допускает явное `allow_lossy:true` для CTF без новых назначений категорий и тегов; ответ содержит флаги `new_categories_omitted` и `new_tags_omitted`. В собственной БД категории и теги сохраняются.
+
+DOS-даты CTF не содержат часового пояса. Они сохраняются без изменения и отображаются как исходное местное время в `modified_local`; приложение не объявляет их точными UTC-моментами. `modified_unix` у таких записей остаётся пустым, если при импорте явно не задано `utc_offset_minutes`. CSV/Parquet содержат оба поля. Даты новых сканов имеют Unix-время.
+
+CTF-импорт и экспорт первой версии держат разобранный каталог в памяти. SQLite-сканирование и CSV/Parquet работают потоком. На больших CTF нужно учитывать память и свободное место для новой базы и WAL. Объём и скорость на реальной базе, а не только на синтетических примерах, отражены в отчёте проверки.
+
+## Сборка
+
+Требуется Rust **1.90.0** (закреплён в `rust-toolchain.toml`), зависимости закреплены в `Cargo.lock`. SQLite включён в сборку.
+
+### Windows 10/11 x64
+
+Установить Rust с MSVC toolchain и C++ Build Tools. Из PowerShell в каталоге проекта:
+
+```powershell
+cargo build --release --locked --target x86_64-pc-windows-msvc -p atlas-windows -p atlas-cli
+```
+
+Команда создаёт `target/x86_64-pc-windows-msvc/release/atlas-windows.exe` и `atlas.exe`. Файл каталога можно передать первым аргументом. Готовая приложенная x64-сборка собрана кросс-компилятором GNU и проверена в Wine; проверка на реальной Windows указана отдельно в отчёте.
+
+### macOS 13+, Apple Silicon или Intel
+
+Нужны Xcode Command Line Tools, Swift 5.9+ и Rust. На выбранном Mac:
+
+```sh
+bash apps/macos/build.sh
+```
+
+Результат — `dist/macos/WhereIsIt AI.app` для архитектуры текущего Mac. Скрипт помещает Rust-библиотеку в приложение, исправляет пути динамической линковки и создаёт локальную ad-hoc подпись. Сборка и запуск в Linux не заменяют проверку macOS; статус проверки Mac приведён в отчёте.
+
+### Ядро и CLI
+
+```sh
+cargo test --workspace --locked
+cargo build --release -p atlas-cli
+./target/release/atlas --help
+```
+
+CLI принимает одну JSON-команду через `request` или последовательность JSON-строк через `serve`. Пример PowerShell:
+
+```powershell
+@{op='search_fast'; db='C:\Catalogs\USB-drives.atlas.sqlite'; query='(ext:mkv OR ext:avi) AND size:>1GiB'; limit=100} |
+  ConvertTo-Json -Compress | .\atlas.exe serve
+```
+
+## Документы проекта
+
+- [Архитектура](docs/ARCHITECTURE.md) — слои, данные, индексы, границы ответственности.
+- [План](docs/PLAN.md) — исполненные задачи, критерии приёмки и дальнейшие этапы.
+- [Проверки и измерения](docs/VALIDATION.md) — фактическое состояние сборок и реального каталога.
+- [CTF](docs/CTF_FORMAT.md) — наблюдаемый формат, доказательства и ограничения.
+- [API](docs/API.md) — команды, области экспорта и владение памятью C ABI.
+- [Утилиты измерений и независимого чтения](tools/README.md) — воспроизводимые developer-only проверки.
+- [Native QA](docs/QA_NATIVE.md) — проверенные действия интерфейса и снимок.
+
+Проект распространяется по MIT. [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) и `licenses/` содержат уведомления и лицензии сторонних зависимостей.
+
+## Подготовка установщиков
+
+- Windows: выполнить `cargo build --release --locked -p atlas-windows -p atlas-cli`, затем `pwsh -File installers/windows/build-installer.ps1`. Полученный Inno Setup `.exe` выполняет установку **для текущего пользователя** и добавляет деинсталлятор. Не переносит пользовательскую БД. Для публичного выпуска необходимы подписание и SmartScreen QA.
+- macOS: выполнить `bash apps/macos/build.sh`, затем `bash installers/macos/package.sh`. Формируются `.pkg` и `.dmg` для архитектуры сборочного Mac. Для распространения потребуется Developer ID, notarization и stapling.
+- CI: `.github/workflows/build.yml` собирает платформенные артефакты. Финальную подпись релизов нельзя считать выполненной без соответствующих сертификатов/секретов и успешных проверок.
+- Контрольный план: [ROADMAP_TO_1.0.md](docs/ROADMAP_TO_1.0.md). Выбор двигателя: [ADR-0001](docs/decisions/ADR-0001-storage-engine.md).

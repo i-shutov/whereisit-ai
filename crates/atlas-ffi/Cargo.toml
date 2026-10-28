@@ -1,0 +1,13 @@
+[package]
+name = "atlas-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "atlas_ffi"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+atlas-service = { path = "../atlas-service" }
+
