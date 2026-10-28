@@ -254,7 +254,6 @@ fn ctf_export_rejects_native_tags_unless_loss_is_explicit() {
     assert!(tags.contains("priority"));
 }
 
-
 /// v2 creates no opaque legacy row for an ordinary file; v1 remains readable
 /// and writable without silently migrating or rewriting the user's database.
 #[test]
@@ -285,15 +284,24 @@ fn ctf_sparse_v2_and_existing_v1_layout_are_both_supported() {
     std::fs::write(&source, ctf_format::write_ctf(&fixture).unwrap()).unwrap();
     // The CTF reader can expose nonempty raw fields even when a synthetic
     // input specified no optional extensions: use the parsed source as oracle.
-    let parsed = ctf_format::parse_ctf(
-        &std::fs::read(&source).unwrap(),
-        &Limits::default(),
-    ).unwrap();
-    let expected_payload_rows: i64 = parsed.disks.iter()
-        .map(|disk| disk.entries.iter().filter(|entry| !entry.opaque.is_empty()).count() as i64)
+    let parsed =
+        ctf_format::parse_ctf(&std::fs::read(&source).unwrap(), &Limits::default()).unwrap();
+    let expected_payload_rows: i64 = parsed
+        .disks
+        .iter()
+        .map(|disk| {
+            disk.entries
+                .iter()
+                .filter(|entry| !entry.opaque.is_empty())
+                .count() as i64
+        })
         .sum();
     for legacy in [false, true] {
-        let db = t.path().join(if legacy { "existing-v1.sqlite" } else { "new-v2.sqlite" });
+        let db = t.path().join(if legacy {
+            "existing-v1.sqlite"
+        } else {
+            "new-v2.sqlite"
+        });
         {
             let catalog = Catalog::open(&db).unwrap();
             let version: i64 = catalog
@@ -303,7 +311,10 @@ fn ctf_sparse_v2_and_existing_v1_layout_are_both_supported() {
             assert_eq!(version, 2);
             if legacy {
                 // Simulates a previously created v1 database before its first CTF import.
-                catalog.conn().pragma_update(None, "user_version", 1i64).unwrap();
+                catalog
+                    .conn()
+                    .pragma_update(None, "user_version", 1i64)
+                    .unwrap();
             }
         }
         let result = call(json!({"op":"import_ctf","db":db,"path":source}));
@@ -328,17 +339,19 @@ fn ctf_sparse_v2_and_existing_v1_layout_are_both_supported() {
                 .conn()
                 .query_row("SELECT COUNT(*) FROM ctf_entry_payload", [], |r| r.get(0))
                 .unwrap();
-            assert_eq!(rows, expected_payload_rows,
-                "Sparse CTF storage must match the parsed original nonempty byte payloads");
+            assert_eq!(
+                rows, expected_payload_rows,
+                "Sparse CTF storage must match the parsed original nonempty byte payloads"
+            );
         }
         drop(catalog);
-        let output = t.path().join(if legacy { "back-v1.ctf" } else { "back-v2.ctf" });
+        let output = t
+            .path()
+            .join(if legacy { "back-v1.ctf" } else { "back-v2.ctf" });
         let result = call(json!({"op":"export_ctf","db":db,"path":output}));
         assert_eq!(result["ok"], true, "{result}");
-        let exported = ctf_format::parse_ctf(
-            &std::fs::read(&output).unwrap(),
-            &Limits::default(),
-        ).unwrap();
+        let exported =
+            ctf_format::parse_ctf(&std::fs::read(&output).unwrap(), &Limits::default()).unwrap();
         assert_eq!(exported.disks.len(), 1);
         assert_eq!(exported.disks[0].entries.len(), 1);
         assert_eq!(exported.disks[0].entries[0].name, "sample.flac");
