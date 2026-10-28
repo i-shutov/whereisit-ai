@@ -7,6 +7,8 @@ existing file, symlink, database or SQLite sidecar is never overwritten.
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
+import unicodedata
 import hashlib
 import json
 import os
@@ -115,7 +117,9 @@ def write_report_new(path: Path, text: str, source: Path) -> None:
     # Reject the source AND all of its SQLite sidecars, including nonexistent ones.
     source_path = source.resolve()
     reserved = {source_path, *(Path(str(source_path) + suffix) for suffix in ("-wal", "-shm", "-journal"))}
-    if path.resolve() in reserved or path.is_symlink():
+    normalized = lambda value: unicodedata.normalize("NFC", str(value)).casefold()
+    reserved_normalized = {normalized(value) for value in reserved}
+    if normalized(path.resolve()) in reserved_normalized or path.is_symlink():
         raise ValueError("Report cannot target the catalog or its sidecars")
     # O_EXCL also rejects hard links, existing unrelated files and dangling symlinks.
     fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -133,7 +137,7 @@ def write_report_new(path: Path, text: str, source: Path) -> None:
 def self_test() -> None:
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
-        source = root / "fixture #?.sqlite"
+        source = root / "fixture # percent.sqlite"
         con = sqlite3.connect(source)
         con.executescript("""
           CREATE TABLE entries(id INTEGER PRIMARY KEY,name TEXT,description TEXT,
@@ -158,7 +162,7 @@ def self_test() -> None:
             raise AssertionError("Hard link overwritten")
         except FileExistsError:
             pass
-        with connect_readonly(source) as conn:
+        with closing(connect_readonly(source)) as conn:
             out = profile(conn)
         assert out["entry_fields"]["records"] == 2
         assert out["entry_fields"]["descriptions_nonempty"] == 1
@@ -181,7 +185,7 @@ def self_test() -> None:
           PRAGMA user_version=2;
         """)
         con.close()
-        with connect_readonly(source) as conn:
+        with closing(connect_readonly(source)) as conn:
             out = profile(conn)
         assert out["legacy_layout"] == "sparse-v2"
         assert out["legacy_records"] == 2

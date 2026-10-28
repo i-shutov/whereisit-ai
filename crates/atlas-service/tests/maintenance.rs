@@ -211,3 +211,22 @@ fn legacy_ctf_bytes_survive_compaction_from_v1_and_v2() {
         );
     }
 }
+
+#[test]
+fn uppercase_sidecar_aliases_are_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source.sqlite");
+    drop(old_catalog(&source, 1));
+    let before = std::fs::read(&source).unwrap();
+    for name in [
+        "source.sqlite-WAL",
+        "source.sqlite-SHM",
+        "SOURCE.SQLITE-journal",
+    ] {
+        let output = dir.path().join(name);
+        let report = call(json!({"op":"compact_catalog","db":source,"path":output}));
+        assert_eq!(report["ok"], false, "{report}");
+        assert!(!output.exists());
+    }
+    assert_eq!(std::fs::read(&source).unwrap(), before);
+}

@@ -96,6 +96,23 @@ fn supported_version(conn: &Connection, schema: &str) -> Result<i64> {
     Ok(version)
 }
 
+fn same_existing_file(a: &Path, b: &Path) -> bool {
+    let (Ok(a), Ok(b)) = (a.canonicalize(), b.canonicalize()) else {
+        return false;
+    };
+    if a == b || a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase() {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let (Ok(a), Ok(b)) = (fs::metadata(a), fs::metadata(b)) {
+            return a.dev() == b.dev() && a.ino() == b.ino();
+        }
+    }
+    false
+}
+
 fn destination(source: &Path, target: &Path) -> Result<PathBuf> {
     if fs::symlink_metadata(target).is_ok() {
         return Err(Error::new(
@@ -123,11 +140,28 @@ fn destination(source: &Path, target: &Path) -> Result<PathBuf> {
             .file_name()
             .ok_or_else(|| Error::new("invalid_path", "Source requires a filename"))?,
     );
+    // A case-insensitive or Unicode-normalizing filesystem may resolve an
+    // alternate base spelling to the same catalog even when its sidecar is absent.
+    let target_name = name.to_string_lossy();
+    for suffix in ["-wal", "-shm", "-journal"] {
+        if target_name.to_ascii_lowercase().ends_with(suffix) {
+            let stem = &target_name[..target_name.len() - suffix.len()];
+            if same_existing_file(source, &parent.join(stem)) {
+                return Err(Error::new(
+                    "unsafe_output",
+                    "Output aliases a source SQLite sidecar",
+                ));
+            }
+        }
+    }
     for base in [source_real, source_alias] {
         for suffix in ["", "-wal", "-shm", "-journal"] {
             let mut protected = base.as_os_str().to_os_string();
             protected.push(suffix);
-            if result == protected {
+            if result == protected
+                || result.to_string_lossy().to_lowercase()
+                    == protected.to_string_lossy().to_lowercase()
+            {
                 return Err(Error::new(
                     "unsafe_output",
                     "Output cannot be a source catalog or SQLite sidecar",
