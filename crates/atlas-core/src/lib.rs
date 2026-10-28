@@ -118,7 +118,7 @@ impl Catalog {
             "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;",
         )?;
         let v: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if v > 1 {
+        if v > 2 {
             return Err(Error::new(
                 "schema_version",
                 "Database was created by a newer version",
@@ -129,7 +129,11 @@ impl Catalog {
             let current: i64 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
             if current == 0 {
                 tx.execute_batch(include_str!("../migrations/001.sql"))?;
-            } else if current > 1 {
+                // New catalog files use the sparse CTF legacy-payload layout.
+                // Existing schema-v1 databases remain readable and are never
+                // migrated implicitly while opening a user catalog.
+                tx.execute_batch(include_str!("../migrations/002.sql"))?;
+            } else if current > 2 {
                 return Err(Error::new(
                     "schema_version",
                     "Database was created by a newer version",
@@ -748,7 +752,7 @@ pub mod api {
                 Ok(json!({}))
             }
             "explain_query" => c.explain_query(string(&v, "query")?),
-            "init" => Ok(json!({"schema_version":1})),
+            "init" => Ok(json!({"schema_version":c.conn().pragma_query_value(None,"user_version",|r|r.get::<_,i64>(0))?})),
             "stats" => c.stats(),
             "volumes" => Ok(json!(c.volumes()?)),
             "children" => Ok(json!(c.children(
