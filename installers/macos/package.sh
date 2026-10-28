@@ -23,19 +23,26 @@ ARCH="$(uname -m)"
 PKG="$OUT/WhereIsItAI-${VERSION}-macOS-${ARCH}.pkg"
 DMG="$OUT/WhereIsItAI-${VERSION}-macOS-${ARCH}.dmg"
 NUMERIC="${VERSION%%-*}"
-if [[ -n "${MAC_INSTALLER_SIGN_IDENTITY:-}" ]]; then
-  pkgbuild --component "$APP" --install-location /Applications \
-    --identifier ai.whereisit.desktop --version "$NUMERIC" \
-    --sign "$MAC_INSTALLER_SIGN_IDENTITY" "$PKG"
-else
-  pkgbuild --component "$APP" --install-location /Applications \
-    --identifier ai.whereisit.desktop --version "$NUMERIC" "$PKG"
-fi
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-ditto "$APP" "$TMP/WhereIsIt AI.app"
-ln -s /Applications "$TMP/Applications"
-hdiutil create -volname 'WhereIsIt AI' -srcfolder "$TMP" -format UDZO -ov "$DMG"
+mkdir -p "$TMP/pkg-root" "$TMP/dmg-root"
+ditto "$APP" "$TMP/pkg-root/WhereIsIt AI.app"
+# --component alone permits relocating to another discovered copy, including
+# the build tree. Explicit component properties keep the install in /Applications.
+COMPONENTS="$ROOT/installers/macos/components.plist"
+plutil -lint "$COMPONENTS" >/dev/null
+if [[ -n "${MAC_INSTALLER_SIGN_IDENTITY:-}" ]]; then
+  pkgbuild --root "$TMP/pkg-root" --component-plist "$COMPONENTS" \
+    --install-location /Applications --identifier ai.whereisit.desktop \
+    --version "$NUMERIC" --sign "$MAC_INSTALLER_SIGN_IDENTITY" "$PKG"
+else
+  pkgbuild --root "$TMP/pkg-root" --component-plist "$COMPONENTS" \
+    --install-location /Applications --identifier ai.whereisit.desktop \
+    --version "$NUMERIC" "$PKG"
+fi
+ditto "$APP" "$TMP/dmg-root/WhereIsIt AI.app"
+ln -s /Applications "$TMP/dmg-root/Applications"
+hdiutil create -volname 'WhereIsIt AI' -srcfolder "$TMP/dmg-root" -format UDZO -ov "$DMG"
 if [[ -n "${MAC_APP_SIGN_IDENTITY:-}" && "$MAC_APP_SIGN_IDENTITY" != '-' ]]; then
   codesign --force --timestamp --sign "$MAC_APP_SIGN_IDENTITY" "$DMG"
 fi
