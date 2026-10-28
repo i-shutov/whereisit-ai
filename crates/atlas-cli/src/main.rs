@@ -27,7 +27,9 @@ fn main() {
                 match line {
                     Ok(line) if !line.trim().is_empty() => {
                         if writeln!(out, "{}", atlas_service::dispatch_json(&line))
-                            .and_then(|_| out.flush()).is_err() {
+                            .and_then(|_| out.flush())
+                            .is_err()
+                        {
                             std::process::exit(1);
                         }
                     }
@@ -40,15 +42,21 @@ fn main() {
             }
         }
         "request" if args.len() == 2 => {
-            if !print_response(&args[1]) { std::process::exit(1); }
+            if !print_response(&args[1]) {
+                std::process::exit(1);
+            }
         }
         "validate" if args.len() == 2 => {
             let request = json!({"op":"validate_catalog","db":args[1]});
-            if !print_response(&request.to_string()) { std::process::exit(1); }
+            if !print_response(&request.to_string()) {
+                std::process::exit(1);
+            }
         }
         "compact" if args.len() == 3 => {
             let request = json!({"op":"compact_catalog","db":args[1],"path":args[2]});
-            if !print_response(&request.to_string()) { std::process::exit(1); }
+            if !print_response(&request.to_string()) {
+                std::process::exit(1);
+            }
         }
         _ => {
             eprintln!("Invalid command or arguments; use --help.");

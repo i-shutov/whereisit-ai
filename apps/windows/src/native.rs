@@ -18,6 +18,8 @@ use windows_sys::Win32::{
     },
 };
 
+const COMPACT_COPY: usize = 200;
+const VALIDATE_CATALOG: usize = 201;
 const OPEN: usize = 101;
 const NEW: usize = 102;
 const SCAN: usize = 103;
@@ -276,7 +278,7 @@ impl App {
                 }
                 continue;
             }
-            if reply.tag == "mutation" {
+            if matches!(reply.tag, "mutation" | "maintenance") {
                 self.job = None;
             }
             if reply.tag == "rows" && reply.generation != self.generation {
@@ -355,6 +357,17 @@ impl App {
                         .as_bool()
                         .unwrap_or(self.offset + self.entries.len() < self.total);
                     self.render_rows();
+                }
+                "maintenance" => {
+                    self.status(
+                        "Catalog verification completed. The original catalog was not replaced.",
+                    );
+                    MessageBoxW(
+                        self.hwnd,
+                        wide(&serde_json::to_string_pretty(data).unwrap_or_default()).as_ptr(),
+                        wide("Catalog maintenance result").as_ptr(),
+                        MB_OK,
+                    );
                 }
                 "mutation" => {
                     self.status("Operation completed.");
@@ -501,6 +514,21 @@ impl App {
     }
     unsafe fn command(&mut self, command: usize, notification: usize) {
         match command {
+            COMPACT_COPY | VALIDATE_CATALOG if self.job.is_none() && self.pending == 0 => {
+                let request = if command == COMPACT_COPY {
+                    let Some(path) = file_dialog(self.hwnd, true, "sqlite") else {
+                        return;
+                    };
+                    json!({"op":"compact_catalog","path":path})
+                } else {
+                    json!({"op":"validate_catalog"})
+                };
+                self.job = Some("maintenance".into());
+                self.status(
+                    "Verifying catalog / writing a compact copy. Original stays unchanged...",
+                );
+                self.call("maintenance", request);
+            }
             CATEGORY_FILTER | CATEGORY_ASSIGN => {
                 let index = SendMessageW(self.category_list, LB_GETCURSEL, 0, 0);
                 if index < 0 {
@@ -1049,7 +1077,7 @@ pub fn run() {
         let hwnd = CreateWindowExW(
             WS_EX_CONTROLPARENT,
             class.as_ptr(),
-            wide("WhereIsIt AI").as_ptr(),
+            wide(concat!("WhereIsIt AI ", env!("CARGO_PKG_VERSION"))).as_ptr(),
             WS_OVERLAPPEDWINDOW | WS_VISIBLE,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
@@ -1065,10 +1093,34 @@ pub fn run() {
             MessageBoxW(
                 null_mut(),
                 wide("Unable to create the native application window.").as_ptr(),
-                wide("WhereIsIt AI").as_ptr(),
+                wide(concat!("WhereIsIt AI ", env!("CARGO_PKG_VERSION"))).as_ptr(),
                 MB_OK | MB_ICONERROR,
             );
             return;
+        }
+        let menu = CreateMenu();
+        let maintenance = CreatePopupMenu();
+        if !menu.is_null() && !maintenance.is_null() {
+            AppendMenuW(
+                maintenance,
+                MF_STRING,
+                VALIDATE_CATALOG,
+                wide("Verify catalog").as_ptr(),
+            );
+            AppendMenuW(
+                maintenance,
+                MF_STRING,
+                COMPACT_COPY,
+                wide("Create compact copy...").as_ptr(),
+            );
+            AppendMenuW(
+                menu,
+                MF_POPUP,
+                maintenance as usize,
+                wide("Catalog").as_ptr(),
+            );
+            SetMenu(hwnd, menu);
+            DrawMenuBar(hwnd);
         }
         let mut message: MSG = std::mem::zeroed();
         while GetMessageW(&mut message, null_mut(), 0, 0) > 0 {
