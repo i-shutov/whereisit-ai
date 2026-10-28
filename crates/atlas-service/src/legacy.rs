@@ -13,12 +13,32 @@ use std::{
     path::Path,
 };
 
-const LEGACY_SCHEMA: &str = r#"
+const LEGACY_SCHEMA_V1: &str = r#"
 CREATE TABLE IF NOT EXISTS ctf_sources(id INTEGER PRIMARY KEY,sha256 TEXT NOT NULL UNIQUE,source_path TEXT NOT NULL,catalog_name TEXT NOT NULL,trailer BLOB NOT NULL,utc_offset_minutes INTEGER,disk_count INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS ctf_volumes(volume_id INTEGER PRIMARY KEY REFERENCES volumes(id) ON DELETE CASCADE,source_id INTEGER NOT NULL REFERENCES ctf_sources(id),source_order INTEGER NOT NULL,header BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS ctf_entries(entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,attributes INTEGER NOT NULL,modified_dos INTEGER NOT NULL,created_dos INTEGER NOT NULL,accessed_dos INTEGER NOT NULL,opaque BLOB NOT NULL);
 CREATE INDEX IF NOT EXISTS ctf_volumes_source ON ctf_volumes(source_id,source_order);
 "#;
+const LEGACY_SCHEMA_V2: &str = r#"
+CREATE TABLE IF NOT EXISTS ctf_sources(id INTEGER PRIMARY KEY,sha256 TEXT NOT NULL UNIQUE,source_path TEXT NOT NULL,catalog_name TEXT NOT NULL,trailer BLOB NOT NULL,utc_offset_minutes INTEGER,disk_count INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS ctf_volumes(volume_id INTEGER PRIMARY KEY REFERENCES volumes(id) ON DELETE CASCADE,source_id INTEGER NOT NULL REFERENCES ctf_sources(id),source_order INTEGER NOT NULL,header BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS ctf_entries(entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,attributes INTEGER NOT NULL,modified_dos INTEGER NOT NULL,created_dos INTEGER NOT NULL,accessed_dos INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS ctf_entry_payload(entry_id INTEGER PRIMARY KEY REFERENCES ctf_entries(entry_id) ON DELETE CASCADE,opaque BLOB NOT NULL CHECK(length(opaque)>0));
+CREATE INDEX IF NOT EXISTS ctf_volumes_source ON ctf_volumes(source_id,source_order);
+"#;
+
+/// Keep old v1 catalogs writable without changing their SQLite layout.
+/// Only newly initialized v2 catalogs use a truly sparse CTF opaque table.
+fn ensure_legacy_schema(c: &Catalog) -> Result<bool> {
+    let version: i64 = c.conn().pragma_query_value(None, "user_version", |r| r.get(0))?;
+    let dense_opaque = version <= 1;
+    c.conn().execute_batch(if dense_opaque {
+        LEGACY_SCHEMA_V1
+    } else {
+        LEGACY_SCHEMA_V2
+    })?;
+    Ok(dense_opaque)
+}
 fn fail(e: impl std::fmt::Display) -> Error {
     Error::new("ctf", e)
 }
@@ -77,7 +97,7 @@ pub fn import(c: &mut Catalog, v: &Value) -> Result<Value> {
         ),
     };
     let (bytes, sha) = read(v)?;
-    c.conn().execute_batch(LEGACY_SCHEMA)?;
+    let dense_opaque = ensure_legacy_schema(c)?;
     let seen: Option<i64> = c
         .conn()
         .query_row("SELECT id FROM ctf_sources WHERE sha256=?1", [&sha], |r| {
@@ -120,7 +140,16 @@ pub fn import(c: &mut Catalog, v: &Value) -> Result<Value> {
     let kind=match e.kind{EntryKind::File=>"file",EntryKind::Directory=>"directory",EntryKind::Archive=>"archive"};
     let new=NewEntry{parent_id,name:e.name.clone(),relative_path:path.clone(),kind:kind.into(),size:e.size,modified_unix:dos_to_unix(e.modified_dos,offset),description:e.description.clone(),tags:String::new()};
     let entry_id=session.insert(&new)?;
-    session.transaction().prepare_cached("INSERT INTO ctf_entries(entry_id,attributes,modified_dos,created_dos,accessed_dos,opaque) VALUES(?1,?2,?3,?4,?5,?6)")?.execute(params![entry_id,e.attributes,e.modified_dos,e.created_dos,e.accessed_dos,e.opaque])?;
+    if dense_opaque {
+     // Compatibility with preexisting v1 SQLite databases.
+     session.transaction().prepare_cached("INSERT INTO ctf_entries(entry_id,attributes,modified_dos,created_dos,accessed_dos,opaque) VALUES(?1,?2,?3,?4,?5,?6)")?.execute(params![entry_id,e.attributes,e.modified_dos,e.created_dos,e.accessed_dos,e.opaque])?;
+    } else {
+     // Common CTF flags/timestamps remain dense; rare unknown bytes do not.
+     session.transaction().prepare_cached("INSERT INTO ctf_entries(entry_id,attributes,modified_dos,created_dos,accessed_dos) VALUES(?1,?2,?3,?4,?5)")?.execute(params![entry_id,e.attributes,e.modified_dos,e.created_dos,e.accessed_dos])?;
+     if !e.opaque.is_empty() {
+      session.transaction().prepare_cached("INSERT INTO ctf_entry_payload(entry_id,opaque) VALUES(?1,?2)")?.execute(params![entry_id,e.opaque])?;
+     }
+    }
     ids.push(entry_id);directory_paths.push(if e.kind==EntryKind::File{None}else{Some(path)});entries+=1;
    }
    volumes.push(session.finish_volume()?);
@@ -142,7 +171,7 @@ pub fn import(c: &mut Catalog, v: &Value) -> Result<Value> {
 }
 
 pub fn export(c: &Catalog, v: &Value) -> Result<Value> {
-    c.conn().execute_batch(LEGACY_SCHEMA)?;
+    let dense_opaque = ensure_legacy_schema(c)?;
     let snapshot = c.conn().unchecked_transaction()?;
     let links: i64 =
         snapshot.query_row("SELECT COUNT(*) FROM entry_categories", [], |r| r.get(0))?;
@@ -227,7 +256,12 @@ pub fn export(c: &Catalog, v: &Value) -> Result<Value> {
             opaque_header: header,
         };
         let mut ids = HashMap::<i64, usize>::new();
-        let mut stmt=snapshot.prepare("SELECT e.id,e.parent_id,e.name,e.kind,e.size,e.modified_unix,e.description,l.attributes,l.modified_dos,l.created_dos,l.accessed_dos,l.opaque FROM entries e LEFT JOIN ctf_entries l ON l.entry_id=e.id WHERE e.volume_id=?1 ORDER BY e.id")?;
+        let sql = if dense_opaque {
+            "SELECT e.id,e.parent_id,e.name,e.kind,e.size,e.modified_unix,e.description,l.attributes,l.modified_dos,l.created_dos,l.accessed_dos,l.opaque FROM entries e LEFT JOIN ctf_entries l ON l.entry_id=e.id WHERE e.volume_id=?1 ORDER BY e.id"
+        } else {
+            "SELECT e.id,e.parent_id,e.name,e.kind,e.size,e.modified_unix,e.description,l.attributes,l.modified_dos,l.created_dos,l.accessed_dos,p.opaque FROM entries e LEFT JOIN ctf_entries l ON l.entry_id=e.id LEFT JOIN ctf_entry_payload p ON p.entry_id=e.id WHERE e.volume_id=?1 ORDER BY e.id"
+        };
+        let mut stmt=snapshot.prepare(sql)?;
         let mut rows = stmt.query([volume_id])?;
         while let Some(r) = rows.next()? {
             let id: i64 = r.get(0)?;
