@@ -283,6 +283,15 @@ fn ctf_sparse_v2_and_existing_v1_layout_are_both_supported() {
         opaque_trailer: Vec::new(),
     };
     std::fs::write(&source, ctf_format::write_ctf(&fixture).unwrap()).unwrap();
+    // The CTF reader can expose nonempty raw fields even when a synthetic
+    // input specified no optional extensions: use the parsed source as oracle.
+    let parsed = ctf_format::parse_ctf(
+        &std::fs::read(&source).unwrap(),
+        &Limits::default(),
+    ).unwrap();
+    let expected_payload_rows: i64 = parsed.disks.iter()
+        .map(|disk| disk.entries.iter().filter(|entry| !entry.opaque.is_empty()).count() as i64)
+        .sum();
     for legacy in [false, true] {
         let db = t.path().join(if legacy { "existing-v1.sqlite" } else { "new-v2.sqlite" });
         {
@@ -319,7 +328,8 @@ fn ctf_sparse_v2_and_existing_v1_layout_are_both_supported() {
                 .conn()
                 .query_row("SELECT COUNT(*) FROM ctf_entry_payload", [], |r| r.get(0))
                 .unwrap();
-            assert_eq!(rows, 0, "An empty opaque field must not allocate a payload row");
+            assert_eq!(rows, expected_payload_rows,
+                "Sparse CTF storage must match the parsed original nonempty byte payloads");
         }
         drop(catalog);
         let output = t.path().join(if legacy { "back-v1.ctf" } else { "back-v2.ctf" });
