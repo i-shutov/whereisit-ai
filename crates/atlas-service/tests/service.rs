@@ -253,3 +253,85 @@ fn ctf_export_rejects_native_tags_unless_loss_is_explicit() {
     assert!(tags.contains("watchlist"));
     assert!(tags.contains("priority"));
 }
+
+
+/// v2 creates no opaque legacy row for an ordinary file; v1 remains readable
+/// and writable without silently migrating or rewriting the user's database.
+#[test]
+fn ctf_sparse_v2_and_existing_v1_layout_are_both_supported() {
+    use ctf_format::{CtfCatalog, CtfDisk, CtfEntry, EntryKind, Limits};
+    let t = tempfile::tempdir().unwrap();
+    let source = t.path().join("legacy-source.ctf");
+    let fixture = CtfCatalog {
+        name: "Compatibility test".into(),
+        disks: vec![CtfDisk {
+            name: "Offline disk".into(),
+            opaque_header: Vec::new(),
+            entries: vec![CtfEntry {
+                name: "sample.flac".into(),
+                description: String::new(),
+                parent: None,
+                kind: EntryKind::File,
+                size: 1234,
+                attributes: 32,
+                modified_dos: 0,
+                created_dos: 0,
+                accessed_dos: 0,
+                opaque: Vec::new(),
+            }],
+        }],
+        opaque_trailer: Vec::new(),
+    };
+    std::fs::write(&source, ctf_format::write_ctf(&fixture).unwrap()).unwrap();
+    for legacy in [false, true] {
+        let db = t.path().join(if legacy { "existing-v1.sqlite" } else { "new-v2.sqlite" });
+        {
+            let catalog = Catalog::open(&db).unwrap();
+            let version: i64 = catalog
+                .conn()
+                .pragma_query_value(None, "user_version", |r| r.get(0))
+                .unwrap();
+            assert_eq!(version, 2);
+            if legacy {
+                // Simulates a previously created v1 database before its first CTF import.
+                catalog.conn().pragma_update(None, "user_version", 1i64).unwrap();
+            }
+        }
+        let result = call(json!({"op":"import_ctf","db":db,"path":source}));
+        assert_eq!(result["ok"], true, "{result}");
+        let catalog = Catalog::open(&db).unwrap();
+        let version: i64 = catalog
+            .conn()
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, if legacy { 1 } else { 2 });
+        let columns = catalog
+            .conn()
+            .prepare("PRAGMA table_info(ctf_entries)")
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(1))
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(columns.contains(&"opaque".to_owned()), legacy);
+        if !legacy {
+            let rows: i64 = catalog
+                .conn()
+                .query_row("SELECT COUNT(*) FROM ctf_entry_payload", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(rows, 0, "An empty opaque field must not allocate a payload row");
+        }
+        drop(catalog);
+        let output = t.path().join(if legacy { "back-v1.ctf" } else { "back-v2.ctf" });
+        let result = call(json!({"op":"export_ctf","db":db,"path":output}));
+        assert_eq!(result["ok"], true, "{result}");
+        let exported = ctf_format::parse_ctf(
+            &std::fs::read(&output).unwrap(),
+            &Limits::default(),
+        ).unwrap();
+        assert_eq!(exported.disks.len(), 1);
+        assert_eq!(exported.disks[0].entries.len(), 1);
+        assert_eq!(exported.disks[0].entries[0].name, "sample.flac");
+        assert_eq!(exported.disks[0].entries[0].size, 1234);
+    }
+}
