@@ -1,28 +1,22 @@
 #!/usr/bin/env bash
-# Package integrity smoke for ephemeral macOS CI runners.
-# Does NOT claim Gatekeeper acceptance, notarization or clean install.
+# Isolated CI runner only: validates packages and installs/removes this app.
+# This does not claim GUI usability or Gatekeeper/notarization acceptance.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 [[ "$(uname -s)" == Darwin ]] || { echo 'macOS only' >&2; exit 2; }
-VERSION="$(printenv VERSION 2>/dev/null || echo 0.1.0)"
+VERSION="$(tr -d '\r\n' < VERSION)"
 ARCH="$(uname -m)"
 APP="$ROOT/dist/macos/WhereIsIt AI.app"
-if [[ -n "$(printenv APP 2>/dev/null || true)" ]]; then APP="$(printenv APP)"; fi
 PKG="$ROOT/dist/macos/installers/WhereIsItAI-$VERSION-macOS-$ARCH.pkg"
 DMG="$ROOT/dist/macos/installers/WhereIsItAI-$VERSION-macOS-$ARCH.dmg"
-[[ -d "$APP" && -f "$PKG" && -f "$DMG" ]] || {
-  echo 'Missing built app/pkg/dmg' >&2; exit 2;
-}
+[[ -d "$APP" && -f "$PKG" && -f "$DMG" ]] || { echo 'Missing app/pkg/dmg' >&2; exit 2; }
 PLIST="$APP/Contents/Info.plist"
 plutil -lint "$PLIST" >/dev/null
-[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$PLIST")" == "WhereIsIt AI" ]] || {
-  echo 'Unexpected bundle name' >&2; exit 1;
-}
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$PLIST")" == 'WhereIsIt AI' ]] || exit 1
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :WhereIsItReleaseVersion' "$PLIST")" == "$VERSION" ]] || exit 1
 ARCHS="$(lipo -archs "$APP/Contents/MacOS/AtlasCatalog")"
-[[ " $ARCHS " == *" $ARCH "* ]] || {
-  echo "Missing $ARCH binary slice" >&2; exit 1;
-}
+[[ " $ARCHS " == *" $ARCH "* ]] || { echo 'Wrong architecture' >&2; exit 1; }
 otool -L "$APP/Contents/MacOS/AtlasCatalog" | grep -q 'libatlas_ffi'
 codesign --verify --deep --strict "$APP"
 hdiutil verify "$DMG" >/dev/null
@@ -30,21 +24,41 @@ WORK="$(mktemp -d)"
 MOUNT="$WORK/mount"
 mkdir -p "$MOUNT"
 MOUNTED=false
+INSTALLED='/Applications/WhereIsIt AI.app'
+CREATED_INSTALL=false
 cleanup() {
-  if [[ "$MOUNTED" == true ]]; then
-    hdiutil detach "$MOUNT" -quiet || true
+  if [[ "$MOUNTED" == true ]]; then hdiutil detach "$MOUNT" -quiet || true; fi
+  if [[ "$CREATED_INSTALL" == true ]]; then
+    sudo rm -rf -- "$INSTALLED"
+    sudo pkgutil --forget ai.whereisit.desktop >/dev/null || true
   fi
-  rm -rf "$WORK"
+  rm -rf -- "$WORK"
 }
 trap cleanup EXIT
 pkgutil --expand "$PKG" "$WORK/pkg"
-[[ -f "$WORK/pkg/PackageInfo" ]] || { echo 'Missing PKG PackageInfo' >&2; exit 1; }
+[[ -f "$WORK/pkg/PackageInfo" ]] || { echo 'Missing PackageInfo' >&2; exit 1; }
 hdiutil attach "$DMG" -readonly -nobrowse -quiet -mountpoint "$MOUNT"
 MOUNTED=true
-[[ -d "$MOUNT/WhereIsIt AI.app" ]] || { echo 'DMG does not contain app' >&2; exit 1; }
-[[ -L "$MOUNT/Applications" ]] || { echo 'DMG missing Applications link' >&2; exit 1; }
-[[ "$(readlink "$MOUNT/Applications")" == /Applications ]] || {
-  echo 'Unexpected Applications link target' >&2; exit 1;
-}
-echo "PASS: macOS $ARCH app linkage, package metadata and readable DMG"
-echo 'Ad-hoc signing only; signing/notarization and clean Mac installation remain unverified.'
+[[ -d "$MOUNT/WhereIsIt AI.app" && -L "$MOUNT/Applications" ]] || exit 1
+[[ "$(readlink "$MOUNT/Applications")" == /Applications ]] || exit 1
+# Never remove or replace an existing application/receipt on any machine.
+[[ ! -e "$INSTALLED" && ! -L "$INSTALLED" ]] || { echo 'Existing app; refusing smoke install' >&2; exit 1; }
+if pkgutil --pkg-info ai.whereisit.desktop >/dev/null 2>&1; then echo 'Existing receipt; refusing smoke install' >&2; exit 1; fi
+[[ "${CI:-}" == true ]] || { echo 'Installation smoke is restricted to CI runners' >&2; exit 1; }
+CREATED_INSTALL=true
+sudo installer -pkg "$PKG" -target /
+CLI="$INSTALLED/Contents/MacOS/whereisit-ai-cli"
+[[ "$("$CLI" --version)" == "WhereIsIt AI $VERSION" ]] || exit 1
+python3 -c 'import json,sys; print(json.dumps({"op":"init","db":sys.argv[1]}))' "$WORK/catalog.sqlite" | "$CLI" serve > "$WORK/init.json"
+python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["ok"] is True' "$WORK/init.json"
+"$CLI" validate "$WORK/catalog.sqlite" > "$WORK/validation.json"
+BEFORE="$(shasum -a 256 "$WORK/catalog.sqlite" | awk '{print $1}')"
+"$CLI" compact "$WORK/catalog.sqlite" "$WORK/compact.sqlite" > "$WORK/compact.json"
+AFTER="$(shasum -a 256 "$WORK/catalog.sqlite" | awk '{print $1}')"
+[[ "$BEFORE" == "$AFTER" ]] || { echo 'Source bytes changed' >&2; exit 1; }
+sudo rm -rf -- "$INSTALLED"
+sudo pkgutil --forget ai.whereisit.desktop >/dev/null
+CREATED_INSTALL=false
+[[ -f "$WORK/catalog.sqlite" && -f "$WORK/compact.sqlite" ]] || { echo 'User catalog lost during removal' >&2; exit 1; }
+echo "PASS: $ARCH app, PKG install, bundled CLI, read-only validation, compact copy, removal preserves data, DMG integrity."
+echo 'GUI usability, Gatekeeper and Developer ID notarization are separate gates.'
