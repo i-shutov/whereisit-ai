@@ -15,10 +15,12 @@ swift build -c release -Xlinker -L -Xlinker "$root/target/release" \
   -Xlinker -rpath -Xlinker '@executable_path/../Frameworks'
 binary_dir="$(swift build -c release --show-bin-path)"
 app="$root/dist/macos/WhereIsIt AI.app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/Resources"
 cp "$binary_dir/AtlasCatalog" "$app/Contents/MacOS/AtlasCatalog"
 cp "$root/target/release/atlas" "$app/Contents/MacOS/whereisit-ai-cli"
 cp "$root/target/release/libatlas_ffi.dylib" "$app/Contents/Frameworks/libatlas_ffi.dylib"
+cp "$root/LICENSE" "$root/THIRD_PARTY_NOTICES.md" "$app/Contents/Resources/"
+ditto "$root/licenses" "$app/Contents/Resources/licenses"
 cp Info.plist "$app/Contents/Info.plist"
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :WhereIsItReleaseVersion' "$app/Contents/Info.plist")" == "$version" ]] || { echo 'Bundle version mismatch' >&2; exit 1; }
 install_name_tool -id '@rpath/libatlas_ffi.dylib' "$app/Contents/Frameworks/libatlas_ffi.dylib"
