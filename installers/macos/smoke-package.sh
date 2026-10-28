@@ -64,6 +64,9 @@ if [[ ! -x "$CLI" ]]; then
   pkgutil --files ai.whereisit.desktop || true
   exit 1
 fi
+for notice in LICENSE THIRD_PARTY_NOTICES.md licenses/SQLite-3.46.0/COPYRIGHT.txt; do
+  [[ -f "$INSTALLED/Contents/Resources/$notice" ]] || { echo "Missing installed notice: $notice" >&2; exit 1; }
+done
 [[ "$("$CLI" --version)" == "WhereIsIt AI $VERSION" ]] || exit 1
 python3 -c 'import json,sys; print(json.dumps({"op":"init","db":sys.argv[1]}))' "$WORK/catalog.sqlite" | "$CLI" serve > "$WORK/init.json"
 python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["ok"] is True' "$WORK/init.json"
@@ -76,5 +79,5 @@ sudo rm -rf -- "$INSTALLED"
 sudo pkgutil --forget ai.whereisit.desktop >/dev/null
 CREATED_INSTALL=false
 [[ -f "$WORK/catalog.sqlite" && -f "$WORK/compact.sqlite" ]] || { echo 'User catalog lost during removal' >&2; exit 1; }
-echo "PASS: $ARCH app, PKG install, bundled CLI, read-only validation, compact copy, removal preserves data, DMG integrity."
+echo "PASS: $ARCH app, PKG install, license resources, bundled CLI, read-only validation, compact copy, removal preserves data, DMG integrity."
 echo 'GUI usability, Gatekeeper and Developer ID notarization are separate gates.'
