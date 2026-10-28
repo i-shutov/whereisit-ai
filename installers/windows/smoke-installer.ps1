@@ -30,6 +30,9 @@ try {
     if (-not (Test-Path $cli) -or -not (Test-Path $gui)) {
         throw 'Installed GUI or CLI executable is missing'
     }
+    foreach ($file in @('LICENSE','THIRD_PARTY_NOTICES.md','licenses/SQLite-3.46.0/COPYRIGHT.txt')) {
+        if (-not (Test-Path (Join-Path $InstallDir $file) -PathType Leaf)) { throw "Missing installed notice: $file" }
+    }
     $request = @{op='init'; db=$catalog} | ConvertTo-Json -Compress
     $answer = & $cli request $request
     if ($LASTEXITCODE -ne 0) { throw "Installed CLI init failed ($LASTEXITCODE)" }
@@ -42,7 +45,7 @@ try {
     Start-Sleep -Seconds 2
     if (Test-Path $cli) { throw 'Application executable survived uninstall unexpectedly' }
     if (-not (Test-Path $catalog)) { throw 'Uninstaller removed the user catalog!' }
-    Write-Host 'PASS: silent setup, installed CLI init, uninstall, catalog preservation'
+    Write-Host 'PASS: silent setup, installed notices, installed CLI init, uninstall, catalog preservation'
 } finally {
     # Do not delete catalog on failed run: leave it for runner diagnostics.
     # The runner is ephemeral and stores no real user data.
