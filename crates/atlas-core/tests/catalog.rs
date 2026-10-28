@@ -354,7 +354,7 @@ fn bulk_import_collects_query_planner_statistics() {
     let n: i64 = c
         .conn()
         .query_row(
-            "SELECT COUNT(*) FROM sqlite_stat1 WHERE tbl='entries'",
+            "SELECT COUNT(*) FROM sqlite_stat1 WHERE tbl='entries_core'",
             [],
             |r| r.get(0),
         )

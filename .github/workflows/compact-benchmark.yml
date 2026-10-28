@@ -1,0 +1,46 @@
+name: Compact catalog benchmark (synthetic)
+on:
+  push:
+    branches: ['release/1.0-hardening']
+    paths: ['.github/workflows/compact-benchmark.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: compact-benchmark-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        records: [100000, 3046027]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-1.90-bench
+      - run: rustup toolchain install 1.90.0 --profile minimal
+      - run: cargo build --release --locked -p atlas-service --example compact_benchmark
+      - name: Verified synthetic copy and query parity
+        env:
+          RECORDS: ${{ matrix.records }}
+        run: |
+          mkdir -p benchmark-results
+          /usr/bin/time -v -o benchmark-results/resources.txt target/release/examples/compact_benchmark "$RECORDS" > benchmark-results/metrics.json
+          python3 -m json.tool benchmark-results/metrics.json
+          printf 'source_sha=%s\nrun_id=%s\nrecords=%s\ndataset=SYNTHETIC; NOT USER CTF\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$RECORDS" > benchmark-results/provenance.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: synthetic-compact-${{ matrix.records }}
+          path: benchmark-results/*
+          if-no-files-found: ignore

@@ -1,0 +1,16 @@
+{
+  "format": "whereisit-release-acceptance-v1",
+  "version": "1.0.0-rc.1",
+  "channel": "prerelease",
+  "stable_ready": false,
+  "known_open_gates": [
+    "real_user_44_disk_catalog_migration_and_roundtrip",
+    "original_whereisit_acceptance_of_new_and_modified_ctf",
+    "complete_interactive_gui_dpi_and_upgrade_matrix",
+    "windows_authenticode_and_macos_developer_id_notarization"
+  ],
+  "synthetic_data_is_not_real_data_acceptance": true,
+  "publication_requires_successful_jobs": ["test", "windows", "macos (macos-15)", "macos (macos-15-intel)"],
+  "signing": {"windows": "unsigned", "macos": "ad-hoc, not notarized"},
+  "personal_catalogs_in_release": false
+}

@@ -1,66 +1,105 @@
 name: WhereIsIt AI — native CI and installer candidates
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: native-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-1.90-test
       - run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
       - run: cargo test --workspace --locked
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: bash -n apps/macos/build.sh installers/macos/package.sh
+      - run: |
+          if test -f tools/storage_audit.py; then python3 tools/storage_audit.py --self-test; fi
+          if test -f tools/storage_layout_experiment.py; then python3 tools/storage_layout_experiment.py --self-test; fi
+      - run: bash -n apps/macos/build.sh installers/macos/package.sh installers/macos/smoke-package.sh
   windows:
+    needs: test
     runs-on: windows-2022
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-1.90-release
       - run: rustup toolchain install 1.90.0 --profile minimal
       - run: cargo test --workspace --locked
       - run: cargo build --release --locked -p atlas-windows -p atlas-cli
       - name: Prepare Inno Setup 6
         shell: pwsh
         run: choco install innosetup --no-progress -y
-      - name: Create per-user Windows installer candidate
+      - name: Build per-user Windows installer candidate
         shell: pwsh
         run: ./installers/windows/build-installer.ps1
-      - name: Smoke-test Windows setup, installed CLI and safe uninstall
+      - name: Verify install, installed CLI and safe uninstall
         shell: pwsh
         run: ./installers/windows/smoke-installer.ps1
-      - name: Verify installer exists
+      - name: Checksums and provenance
         shell: pwsh
         run: |
           $files = @(Get-ChildItem 'dist/windows/WhereIsItAI-*-setup.exe')
-          if ($files.Count -ne 1) { throw 'Expected exactly one Windows setup executable.' }
-          Get-FileHash $files[0].FullName -Algorithm SHA256
+          if ($files.Count -ne 1) { throw 'Expected exactly one setup executable.' }
+          $hash = (Get-FileHash $files[0].FullName -Algorithm SHA256).Hash.ToLower()
+          "$hash  $($files[0].Name)" | Set-Content dist/windows/SHA256SUMS.txt -Encoding ascii
+          @{commit=$env:GITHUB_SHA;run_id=$env:GITHUB_RUN_ID;signing='unsigned';platform='windows-x64'} | ConvertTo-Json | Set-Content dist/windows/provenance.json
       - uses: actions/upload-artifact@v4
         with:
           name: WhereIsItAI-Windows-x64-unsigned-candidate
+          if-no-files-found: error
           path: |
             target/release/atlas-windows.exe
             target/release/atlas.exe
             dist/windows/*.exe
+            dist/windows/SHA256SUMS.txt
+            dist/windows/provenance.json
   macos:
+    needs: test
     strategy:
       fail-fast: false
       matrix:
         os: [macos-15, macos-15-intel]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-1.90-release
       - run: rustup toolchain install 1.90.0 --profile minimal
       - run: cargo test --workspace --locked
       - run: bash apps/macos/build.sh
       - run: bash installers/macos/package.sh
       - run: bash installers/macos/smoke-package.sh
-      - run: |
-          test -d 'dist/macos/WhereIsIt AI.app'
-          test -f 'dist/macos/installers/WhereIsItAI-0.1.0-macOS-'"$(uname -m)"'.pkg'
+      - name: Record exact source
+        run: |
+          printf 'commit=%s\nrun_id=%s\nsigning=ad-hoc, not notarized\narchitecture=%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$(uname -m)" > dist/macos/installers/provenance.txt
       - uses: actions/upload-artifact@v4
         with:
           name: WhereIsItAI-${{ matrix.os }}-unsigned-candidate
+          if-no-files-found: error
           path: dist/macos/installers/*

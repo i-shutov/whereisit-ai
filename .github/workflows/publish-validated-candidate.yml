@@ -1,0 +1,79 @@
+name: Publish verified native candidate
+on:
+  workflow_run:
+    workflows: ['WhereIsIt AI — native CI and installer candidates']
+    types: [completed]
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: publish-native-candidate
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+      CI_RUN_ID: ${{ github.event.workflow_run.id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - name: Validate immutable candidate identity
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test '${{ github.event.workflow_run.path }}' = '.github/workflows/build.yml'
+          version="$(tr -d '\r\n' < VERSION)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]] || { echo 'Only release candidates are allowed'; exit 1; }
+          test -f "docs/releases/v$version.md"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo 'Candidate already exists: never overwrite or retag. A new source requires a new RC number.'
+            echo 'publish=false' >> "$GITHUB_OUTPUT"
+          else
+            if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$version" >/dev/null 2>&1; then
+              echo 'An existing tag without a release must be reconciled manually; refusing to move it.' >&2
+              exit 1
+            fi
+            echo 'publish=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Download only the successful exact-source native artifacts
+        if: steps.identity.outputs.publish == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID" > verified-run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID/jobs?per_page=100" > verified-jobs.json
+          gh run download "$CI_RUN_ID" --repo "$GITHUB_REPOSITORY" --dir incoming --pattern 'WhereIsItAI-*-unsigned-candidate'
+          python3 tools/prepare_release_assets.py
+      - name: Create draft, verify downloadable bytes, then publish prerelease
+        if: steps.identity.outputs.publish == 'true'
+        env:
+          VERSION: ${{ steps.identity.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          gh release create "$tag" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" \
+            --title "WhereIsIt AI $VERSION — unsigned candidate" \
+            --draft --prerelease --latest=false \
+            --notes-file "docs/releases/$tag.md"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir published-verification
+          (cd published-verification && sha256sum -c SHA256SUMS.txt)
+          test "$(find published-verification -maxdepth 1 -type f | wc -l)" -eq 8
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --latest=false
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json url,tagName,isDraft,isPrerelease,assets

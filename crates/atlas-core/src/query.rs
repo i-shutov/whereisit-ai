@@ -353,3 +353,18 @@ fn parse_size(op: &str, num: &str) -> Result<(&'static str, i64)> {
     };
     Ok((new_op, n as i64))
 }
+
+/// This is a physical-plan hint, never a semantic rewrite. Unknown fields are
+/// still rejected by compile(). Unqualified/free-text terms include payload.
+pub fn needs_payload(input: &str) -> Result<bool> {
+    Ok(lex(input)?.iter().any(|token| match token {
+        Token::Word(word) => match word.split_once(':') {
+            None => true,
+            Some((field, _)) => matches!(
+                field.to_ascii_lowercase().as_str(),
+                "text" | "description" | "tag"
+            ),
+        },
+        _ => false,
+    }))
+}

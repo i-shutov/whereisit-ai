@@ -3,7 +3,7 @@
 ; The application never bundles or copies the user's private catalog.
 #define AppName "WhereIsIt AI"
 #ifndef AppVersion
-  #define AppVersion "0.1.0"
+  #define AppVersion "1.0.0-rc.1"
 #endif
 #ifndef BuildDir
   #define BuildDir "../../target/release"
@@ -16,6 +16,7 @@
 AppId={{E89ED28D-1651-4C1E-9358-08C5FCE51722}
 AppName={#AppName}
 AppVersion={#AppVersion}
+VersionInfoVersion=1.0.0.0
 AppVerName={#AppName} {#AppVersion}
 AppPublisher=WhereIsIt AI contributors
 DefaultDirName={localappdata}\Programs\WhereIsIt AI

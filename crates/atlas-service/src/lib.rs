@@ -5,6 +5,7 @@ mod dates;
 mod duplicates;
 mod exports;
 mod legacy;
+mod maintenance;
 mod selection;
 
 pub fn dispatch_json(input: &str) -> String {
@@ -48,6 +49,8 @@ fn dispatch(input: &str) -> Result<Value> {
         .and_then(Value::as_str)
         .ok_or_else(|| Error::new("invalid_request", "op must be a string"))?;
     let mut data = match op {
+        "compact_catalog" => maintenance::compact_copy(&v)?,
+        "validate_catalog" => maintenance::validate(&v)?,
         "import_ctf" => legacy::import(&mut Catalog::open(text(&v, "db")?)?, &v)?,
         "export_ctf" => legacy::export(&Catalog::open(text(&v, "db")?)?, &v)?,
         "ctf_info" => legacy::info(&v)?,

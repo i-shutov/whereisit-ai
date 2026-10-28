@@ -183,6 +183,34 @@ enum Bridge {
             panel.begin { [weak self] response in if response == .OK, let url = panel.url { self?.database = url.path; self?.initialize() } }
         }
     }
+    func verifyCatalog() {
+        guard mutationAllowed else { return }
+        job = "maintenance"
+        status = "Verifying catalog without modifying it..."
+        request(["op": "validate_catalog"], as: EmptyReply.self) { [weak self] result in
+            guard let self else { return }
+            self.job = nil
+            if result != nil { self.status = "Catalog verification passed. Original data unchanged." }
+        }
+    }
+    func compactCopy() {
+        guard mutationAllowed else { return }
+        let sourceDatabase = database
+        let panel = NSSavePanel()
+        panel.title = "Create a verified compact copy; original stays unchanged"
+        panel.nameFieldStringValue = "Catalog-compact.atlas.sqlite"
+        panel.begin { [weak self] response in
+            guard let self, response == .OK, let url = panel.url,
+                  self.database == sourceDatabase, self.mutationAllowed else { return }
+            self.job = "maintenance"
+            self.status = "Creating and verifying compact copy..."
+            self.request(["op": "compact_catalog", "path": url.path], as: EmptyReply.self) { [weak self] result in
+                guard let self else { return }
+                self.job = nil
+                if result != nil { self.status = "Compact copy verified. Use Open to view it; the original is unchanged." }
+            }
+        }
+    }
     func mutate(_ args: [String: Any], label: String) {
         status = label
         request(args, as: EmptyReply.self) { [weak self] result in
@@ -233,6 +261,8 @@ enum Bridge {
             HStack(spacing: 6) {
                 Button("Open…") { model.chooseCatalog(create: false) }.disabled(!model.mutationAllowed)
                 Button("New…") { model.chooseCatalog(create: true) }.disabled(!model.mutationAllowed)
+                Button("Check") { model.verifyCatalog() }.disabled(!model.mutationAllowed)
+                Button("Compact copy…") { model.compactCopy() }.disabled(!model.mutationAllowed)
                 Divider().frame(height: 16)
                 Button("Add disk…") { model.addDisk() }.disabled(!model.mutationAllowed)
                 Button("Import CTF…") { model.importCTF() }.disabled(!model.mutationAllowed)
