@@ -28,6 +28,9 @@ jobs:
       - name: Create per-user Windows installer candidate
         shell: pwsh
         run: ./installers/windows/build-installer.ps1
+      - name: Smoke-test Windows setup, installed CLI and safe uninstall
+        shell: pwsh
+        run: ./installers/windows/smoke-installer.ps1
       - name: Verify installer exists
         shell: pwsh
         run: |
