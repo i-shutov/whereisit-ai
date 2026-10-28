@@ -40,6 +40,9 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Files]
 Source: "{#BuildDir}/atlas-windows.exe"; DestDir: "{app}"; DestName: "whereisit-ai.exe"; Flags: ignoreversion
 Source: "{#BuildDir}/atlas.exe"; DestDir: "{app}"; DestName: "whereisit-ai-cli.exe"; Flags: ignoreversion
+Source: "../../LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "../../THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "../../licenses/*"; DestDir: "{app}\licenses"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\WhereIsIt AI"; Filename: "{app}\whereisit-ai.exe"
