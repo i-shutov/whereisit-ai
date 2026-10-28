@@ -1,0 +1,124 @@
+name: WhereIsIt AI — build and publish unsigned prerelease
+run-name: "Candidate ${{ inputs.version }} · publish=${{ inputs.publish }}"
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'RC version, e.g. v0.1.0-rc.2'
+        type: string
+        required: true
+      publish:
+        description: 'Publish unsigned GitHub prerelease after all three platform builds pass'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: release-candidate-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  check-version:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Only allow prerelease version identifiers
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]] || {
+            echo "Only vX.Y.Z-rc.N candidates may be published by this workflow." >&2
+            exit 1
+          }
+  linux:
+    needs: check-version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
+      - run: cargo test --workspace --locked
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: python3 tools/storage_audit.py --self-test
+  windows:
+    needs: check-version
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install 1.90.0 --profile minimal
+      - run: cargo test --workspace --locked
+      - run: cargo build --release --locked -p atlas-windows -p atlas-cli
+      - shell: pwsh
+        run: choco install innosetup --no-progress -y
+      - name: Build Windows x64 unsigned installer
+        env:
+          VERSION: ${{ inputs.version }}
+        shell: pwsh
+        run: |
+          ./installers/windows/build-installer.ps1 -Version $env:VERSION.TrimStart('v')
+          $file = @(Get-ChildItem dist/windows/WhereIsItAI-*-setup.exe)
+          if ($file.Count -ne 1) { throw 'Exactly one setup executable required' }
+          Get-FileHash $file[0].FullName -Algorithm SHA256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whereisit-ai-${{ inputs.version }}-windows-x64-unsigned
+          if-no-files-found: error
+          path: dist/windows/*setup.exe
+  macos:
+    needs: check-version
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install 1.90.0 --profile minimal
+      - run: cargo test --workspace --locked
+      - run: bash apps/macos/build.sh
+      - name: Package unsigned macOS installer candidates
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          VERSION="${VERSION#v}" bash installers/macos/package.sh
+          test -f "dist/macos/installers/WhereIsItAI-${VERSION#v}-macOS-$(uname -m).pkg"
+          shasum -a 256 dist/macos/installers/*.{pkg,dmg}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whereisit-ai-${{ inputs.version }}-${{ matrix.os }}-unsigned
+          if-no-files-found: error
+          path: |
+            dist/macos/installers/*.pkg
+            dist/macos/installers/*.dmg
+  publish-prerelease:
+    if: ${{ inputs.publish }}
+    needs: [check-version, linux, windows, macos]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: whereisit-ai-${{ inputs.version }}-*-unsigned
+          merge-multiple: true
+      - name: Prepare immutable manifest
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          test "$(find release-assets -type f \( -name '*.exe' -o -name '*.pkg' -o -name '*.dmg' \) | wc -l)" -eq 5
+          cd release-assets
+          sha256sum *.exe *.pkg *.dmg > SHA256SUMS.txt
+          printf 'version=%s\ncommit=%s\nplatforms=windows-x64,macos-arm64,macos-x86_64\nsigning=UNSIGNED TEST CANDIDATE\n' "$VERSION" "$GITHUB_SHA" > provenance.txt
+          cat SHA256SUMS.txt
+      - name: Publish only a prerelease (unsigned, not notarized)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh release view "$VERSION" >/dev/null 2>&1 && { echo "Release already exists"; exit 1; }
+          gh release create "$VERSION" release-assets/* \
+            --target "$GITHUB_SHA" \
+            --title "WhereIsIt AI $VERSION — UNSIGNED TEST CANDIDATE" \
+            --prerelease \
+            --notes-file docs/releases/UNSIGNED_PRERELEASE.md
