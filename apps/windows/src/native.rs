@@ -1007,8 +1007,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             if app.job.is_some()
                 && MessageBoxW(
                     hwnd,
-                    wide("An operation is in progress. Cancel it and close WhereIsIt AI?")
-                        .as_ptr(),
+                    wide("An operation is in progress. Cancel it and close WhereIsIt AI?").as_ptr(),
                     wide("Close WhereIsIt AI").as_ptr(),
                     MB_YESNO | MB_ICONQUESTION,
                 ) != IDYES
