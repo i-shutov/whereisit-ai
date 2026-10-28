@@ -56,6 +56,7 @@ jobs:
       - run: cargo test --workspace --locked
       - run: bash apps/macos/build.sh
       - run: bash installers/macos/package.sh
+      - run: bash installers/macos/smoke-package.sh
       - run: |
           test -d 'dist/macos/WhereIsIt AI.app'
           test -f 'dist/macos/installers/WhereIsItAI-0.1.0-macOS-'"$(uname -m)"'.pkg'
