@@ -26,11 +26,16 @@ while IFS= read -r dependency; do
   install_name_tool -change "$dependency" '@rpath/libatlas_ffi.dylib' "$app/Contents/MacOS/AtlasCatalog"
 done < <(otool -L "$app/Contents/MacOS/AtlasCatalog" | awk '/libatlas_ffi/{print $1}')
 identity="${MAC_APP_SIGN_IDENTITY:--}"
-options=()
-if [[ "$identity" != '-' ]]; then options=(--options runtime --timestamp); fi
-codesign --force --sign "$identity" "${options[@]}" "$app/Contents/Frameworks/libatlas_ffi.dylib"
-codesign --force --sign "$identity" "${options[@]}" "$app/Contents/MacOS/whereisit-ai-cli"
-codesign --force --sign "$identity" "${options[@]}" "$app"
+sign_component() {
+  if [[ "$identity" == '-' ]]; then
+    codesign --force --sign - "$1"
+  else
+    codesign --force --sign "$identity" --options runtime --timestamp "$1"
+  fi
+}
+sign_component "$app/Contents/Frameworks/libatlas_ffi.dylib"
+sign_component "$app/Contents/MacOS/whereisit-ai-cli"
+sign_component "$app"
 codesign --verify --deep --strict "$app"
 printf 'Built: %s\nRelease: %s\n' "$app" "$version"
 if [[ "$identity" == '-' ]]; then echo 'AD-HOC SIGNED TEST BUILD; not Developer ID signed or notarized.'; fi
