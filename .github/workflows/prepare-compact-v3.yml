@@ -4,6 +4,7 @@ on:
     branches: ['release/1.0-hardening']
     paths:
       - 'tools/dev/apply_compact_v3.py'
+      - 'tools/dev/finish_compact_v3.py'
       - '.github/workflows/prepare-compact-v3.yml'
   workflow_dispatch:
 permissions:
@@ -32,7 +33,9 @@ jobs:
           key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-1.90-test
       - run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
       - name: Apply exact source transformation
-        run: python3 tools/dev/apply_compact_v3.py
+        run: |
+          python3 tools/dev/apply_compact_v3.py
+          python3 tools/dev/finish_compact_v3.py
       - run: cargo fmt --all
       - run: cargo test --workspace --locked
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -42,9 +45,9 @@ jobs:
         run: |
           git config user.name 'whereisit-ci'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add crates/atlas-core/src/lib.rs crates/atlas-core/src/query.rs crates/atlas-service/src/legacy.rs crates/atlas-service/src/duplicates.rs crates/atlas-core/tests/compact.rs
+          git add crates/atlas-core/src/lib.rs crates/atlas-core/src/query.rs crates/atlas-core/tests/catalog.rs crates/atlas-core/tests/compact.rs crates/atlas-service/src/lib.rs crates/atlas-service/src/maintenance.rs crates/atlas-service/tests/maintenance.rs crates/atlas-service/src/legacy.rs crates/atlas-service/src/duplicates.rs
           if ! git diff --cached --quiet; then
-            git commit -m 'feat(storage): activate tested compact v3 core and lazy annotation payload'
+            git commit -m 'feat(storage): tested compact v3 and copy-only verified migration'
             git push origin HEAD:refs/heads/release/1.0-hardening
           fi
           gh workflow run build.yml --ref release/1.0-hardening
