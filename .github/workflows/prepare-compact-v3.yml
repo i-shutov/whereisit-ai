@@ -7,6 +7,7 @@ on:
       - 'tools/dev/finish_compact_v3.py'
       - 'tools/dev/prepare_release_identity.py'
       - 'tools/dev/add_maintenance_ui.py'
+      - 'tools/dev/final_safety.py'
       - '.github/workflows/prepare-compact-v3.yml'
   workflow_dispatch:
 permissions:
@@ -45,6 +46,7 @@ jobs:
           sed -i 's/result == PathBuf::from(protected)/result == protected/' crates/atlas-service/src/maintenance.rs
           gh api repos/i-shutov/whereisit-ai/git/blobs/ab1210ecbb5da8d8154b60da76b0a72034ad295e --jq .content | base64 --decode > tools/storage_audit.py
           test "$(git hash-object tools/storage_audit.py)" = ab1210ecbb5da8d8154b60da76b0a72034ad295e
+          python3 tools/dev/final_safety.py
       - run: cargo fmt --all
       - run: cargo test --workspace --locked
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -60,7 +62,7 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add crates apps installers Cargo.toml Cargo.lock THIRD_PARTY_NOTICES.md tools/storage_audit.py
           if ! git diff --cached --quiet; then
-            git commit -m 'release: verified 1.0 RC identity, compact catalog UI and native CLI'
+            git commit -m 'fix(storage): protect sidecar aliases across native platforms'
             git push origin HEAD:refs/heads/release/1.0-hardening
           fi
           gh workflow run build.yml --ref release/1.0-hardening
