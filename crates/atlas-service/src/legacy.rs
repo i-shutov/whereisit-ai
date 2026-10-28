@@ -30,7 +30,9 @@ CREATE INDEX IF NOT EXISTS ctf_volumes_source ON ctf_volumes(source_id,source_or
 /// Keep old v1 catalogs writable without changing their SQLite layout.
 /// Only newly initialized v2 catalogs use a truly sparse CTF opaque table.
 fn ensure_legacy_schema(c: &Catalog) -> Result<bool> {
-    let version: i64 = c.conn().pragma_query_value(None, "user_version", |r| r.get(0))?;
+    let version: i64 = c
+        .conn()
+        .pragma_query_value(None, "user_version", |r| r.get(0))?;
     let dense_opaque = version <= 1;
     c.conn().execute_batch(if dense_opaque {
         LEGACY_SCHEMA_V1
@@ -261,7 +263,7 @@ pub fn export(c: &Catalog, v: &Value) -> Result<Value> {
         } else {
             "SELECT e.id,e.parent_id,e.name,e.kind,e.size,e.modified_unix,e.description,l.attributes,l.modified_dos,l.created_dos,l.accessed_dos,p.opaque FROM entries e LEFT JOIN ctf_entries l ON l.entry_id=e.id LEFT JOIN ctf_entry_payload p ON p.entry_id=e.id WHERE e.volume_id=?1 ORDER BY e.id"
         };
-        let mut stmt=snapshot.prepare(sql)?;
+        let mut stmt = snapshot.prepare(sql)?;
         let mut rows = stmt.query([volume_id])?;
         while let Some(r) = rows.next()? {
             let id: i64 = r.get(0)?;
