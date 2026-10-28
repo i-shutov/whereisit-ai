@@ -118,7 +118,7 @@ impl Catalog {
             "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;",
         )?;
         let v: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if v > 1 {
+        if v > 3 {
             return Err(Error::new(
                 "schema_version",
                 "Database was created by a newer version",
@@ -128,8 +128,8 @@ impl Catalog {
             let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             let current: i64 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
             if current == 0 {
-                tx.execute_batch(include_str!("../migrations/001.sql"))?;
-            } else if current > 1 {
+                tx.execute_batch(include_str!("../migrations/003.sql"))?;
+            } else if current > 3 {
                 return Err(Error::new(
                     "schema_version",
                     "Database was created by a newer version",
@@ -138,6 +138,18 @@ impl Catalog {
             tx.commit()?;
         }
         Ok(Self { conn })
+    }
+    /// Hot predicates select the indexed core directly. Annotations are joined
+    /// only for the final display page, or when requested by the predicate.
+    pub fn query_table(&self, query: &str) -> Result<&'static str> {
+        let version: i64 = self
+            .conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))?;
+        Ok(if version >= 3 && !query::needs_payload(query)? {
+            "entries_core"
+        } else {
+            "entries"
+        })
     }
     pub fn volumes(&self) -> Result<Vec<Volume>> {
         let mut s=self.conn.prepare("SELECT id,label,root_path,scanned_at,entry_count,total_bytes,status FROM volumes ORDER BY id DESC")?;
@@ -166,12 +178,13 @@ impl Catalog {
     ) -> Result<Page> {
         let limit = limit.clamp(1, 1000);
         let off = offset.min(i64::MAX as u64) as i64;
+        let table = self.query_table("")?;
         let total = self.conn.query_row(
-            "SELECT COUNT(*) FROM entries WHERE volume_id=?1 AND parent_id IS ?2",
+            &format!("SELECT COUNT(*) FROM {table} WHERE volume_id=?1 AND parent_id IS ?2"),
             params![volume_id, parent_id],
             |r| r.get(0),
         )?;
-        let mut s=self.conn.prepare("SELECT id,volume_id,parent_id,name,relative_path,kind,size,modified_unix,description,tags FROM entries WHERE volume_id=?1 AND parent_id IS ?2 ORDER BY CASE kind WHEN 'directory' THEN 0 ELSE 1 END,name COLLATE NOCASE,id LIMIT ?3 OFFSET ?4")?;
+        let mut s=self.conn.prepare(&format!("WITH page AS MATERIALIZED (SELECT id FROM {table} WHERE volume_id=?1 AND parent_id IS ?2 ORDER BY CASE kind WHEN 'directory' THEN 0 ELSE 1 END,name COLLATE NOCASE,id LIMIT ?3 OFFSET ?4) SELECT e.id,e.volume_id,e.parent_id,e.name,e.relative_path,e.kind,e.size,e.modified_unix,e.description,e.tags FROM page p JOIN entries e ON e.id=p.id ORDER BY CASE e.kind WHEN 'directory' THEN 0 ELSE 1 END,e.name COLLATE NOCASE,e.id"))?;
         let items = s
             .query_map(params![volume_id, parent_id, limit as i64, off], entry_row)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -192,6 +205,7 @@ impl Catalog {
         limit: u64,
     ) -> Result<Page> {
         let (filter, mut args) = query::compile(query)?;
+        let table = self.query_table(query)?;
         let limit = limit.clamp(1, 1000);
         let off = offset.min(i64::MAX as u64) as i64;
         let mut clauses = vec![filter];
@@ -201,11 +215,11 @@ impl Catalog {
         }
         let filter = clauses.join(" AND ");
         let total = self.conn.query_row(
-            &format!("SELECT COUNT(*) FROM entries WHERE {filter}"),
+            &format!("SELECT COUNT(*) FROM {table} WHERE {filter}"),
             rusqlite::params_from_iter(args.iter()),
             |r| r.get(0),
         )?;
-        let sql=format!("SELECT id,volume_id,parent_id,name,relative_path,kind,size,modified_unix,description,tags FROM entries WHERE {filter} ORDER BY name COLLATE NOCASE,id LIMIT ? OFFSET ?");
+        let sql=format!("WITH page AS MATERIALIZED (SELECT id FROM {table} WHERE {filter} ORDER BY name COLLATE NOCASE,id LIMIT ? OFFSET ?) SELECT e.id,e.volume_id,e.parent_id,e.name,e.relative_path,e.kind,e.size,e.modified_unix,e.description,e.tags FROM page p JOIN entries e ON e.id=p.id ORDER BY e.name COLLATE NOCASE,e.id");
         args.push((limit as i64).into());
         args.push(off.into());
         let mut s = self.conn.prepare(&sql)?;
@@ -229,13 +243,14 @@ impl Catalog {
         limit: u64,
     ) -> Result<FastPage> {
         let (filter, mut args) = query::compile(query)?;
+        let table = self.query_table(query)?;
         let limit = limit.clamp(1, 1000);
         let mut clauses = vec![filter];
         if let Some(id) = volume_id {
             clauses.push("volume_id = ?".into());
             args.push(id.into());
         }
-        let sql=format!("SELECT id,volume_id,parent_id,name,relative_path,kind,size,modified_unix,description,tags FROM entries WHERE {} ORDER BY name COLLATE NOCASE,id LIMIT ? OFFSET ?",clauses.join(" AND "));
+        let sql=format!("WITH page AS MATERIALIZED (SELECT id FROM {table} WHERE {} ORDER BY name COLLATE NOCASE,id LIMIT ? OFFSET ?) SELECT e.id,e.volume_id,e.parent_id,e.name,e.relative_path,e.kind,e.size,e.modified_unix,e.description,e.tags FROM page p JOIN entries e ON e.id=p.id ORDER BY e.name COLLATE NOCASE,e.id",clauses.join(" AND "));
         args.push(((limit + 1) as i64).into());
         args.push((offset.min(i64::MAX as u64) as i64).into());
         let mut stmt = self.conn.prepare(&sql)?;
@@ -289,6 +304,7 @@ impl Catalog {
             volume_id: id,
             count: 0,
             bytes: 0,
+            sparse: tx.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))? >= 3,
         };
         write(&mut w)?;
         let (count, bytes) = (w.count, w.bytes);
@@ -448,7 +464,8 @@ impl Catalog {
     }
     pub fn explain_query(&self, q: &str) -> Result<Value> {
         let (filter, args) = query::compile(q)?;
-        let sql = format!("SELECT id FROM entries WHERE {filter}");
+        let table = self.query_table(q)?;
+        let sql = format!("SELECT id FROM {table} WHERE {filter}");
         let mut s = self.conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
         let plan = s
             .query_map(rusqlite::params_from_iter(args.iter()), |r| {
@@ -527,6 +544,10 @@ impl<'a> ImportSession<'a> {
                 volume_id: id,
                 count: 0,
                 bytes: 0,
+                sparse: self
+                    .tx
+                    .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))?
+                    >= 3,
             },
         ));
         Ok(id)
@@ -557,6 +578,7 @@ pub struct BulkWriter<'a> {
     pub volume_id: i64,
     count: u64,
     bytes: u64,
+    sparse: bool,
 }
 impl BulkWriter<'_> {
     pub fn insert(&mut self, e: &NewEntry) -> Result<i64> {
@@ -577,7 +599,21 @@ impl BulkWriter<'_> {
                 ));
             }
         }
-        self.tx.prepare_cached("INSERT INTO entries(volume_id,parent_id,name,relative_path,kind,size,modified_unix,description,tags,search_text,name_norm,ext) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)")?.execute(params![self.volume_id,e.parent_id,e.name,e.relative_path,e.kind,size,e.modified_unix,e.description,e.tags,search_text(&e.name,&e.relative_path,&e.description,&e.tags),e.name.to_lowercase(),Path::new(&e.name).extension().and_then(|x|x.to_str()).unwrap_or("").to_lowercase()])?;
+        let entry_id = if self.sparse {
+            self.tx.prepare_cached("INSERT INTO entries_core(volume_id,parent_id,name,relative_path,kind,size,modified_unix,name_norm,ext) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)")?.execute(params![self.volume_id,e.parent_id,e.name,e.relative_path,e.kind,size,e.modified_unix,e.name.to_lowercase(),Path::new(&e.name).extension().and_then(|x|x.to_str()).unwrap_or("").to_lowercase()])?;
+            let entry_id = self.tx.last_insert_rowid();
+            if !e.description.is_empty() || !e.tags.is_empty() {
+                self.tx
+                    .prepare_cached(
+                        "INSERT INTO entry_payload(entry_id,description,tags) VALUES(?1,?2,?3)",
+                    )?
+                    .execute(params![entry_id, e.description, e.tags])?;
+            }
+            entry_id
+        } else {
+            self.tx.prepare_cached("INSERT INTO entries(volume_id,parent_id,name,relative_path,kind,size,modified_unix,description,tags,search_text,name_norm,ext) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)")?.execute(params![self.volume_id,e.parent_id,e.name,e.relative_path,e.kind,size,e.modified_unix,e.description,e.tags,search_text(&e.name,&e.relative_path,&e.description,&e.tags),e.name.to_lowercase(),Path::new(&e.name).extension().and_then(|x|x.to_str()).unwrap_or("").to_lowercase()])?;
+            self.tx.last_insert_rowid()
+        };
         self.count += 1;
         if e.kind == "file" {
             self.bytes = self
@@ -588,7 +624,7 @@ impl BulkWriter<'_> {
         if self.bytes > i64::MAX as u64 {
             return Err(Error::new("invalid_entry", "Total size is too large"));
         }
-        Ok(self.tx.last_insert_rowid())
+        Ok(entry_id)
     }
 }
 fn search_text(n: &str, p: &str, d: &str, t: &str) -> String {
@@ -748,7 +784,9 @@ pub mod api {
                 Ok(json!({}))
             }
             "explain_query" => c.explain_query(string(&v, "query")?),
-            "init" => Ok(json!({"schema_version":1})),
+            "init" => Ok(
+                json!({"schema_version":c.conn().pragma_query_value(None,"user_version",|r|r.get::<_,i64>(0))?}),
+            ),
             "stats" => c.stats(),
             "volumes" => Ok(json!(c.volumes()?)),
             "children" => Ok(json!(c.children(

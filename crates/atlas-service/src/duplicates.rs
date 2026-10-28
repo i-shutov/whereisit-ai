@@ -81,7 +81,7 @@ pub fn ensure_schema(c: &Catalog) -> Result<()> {
     if exists {
         return Ok(());
     }
-    c.conn().execute_batch(r#"
+    let mut schema = r#"
 CREATE TABLE IF NOT EXISTS atlas_meta(id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL);
 INSERT OR IGNORE INTO atlas_meta(id,revision) VALUES(1,0);
 CREATE TABLE IF NOT EXISTS duplicate_cache_state(id INTEGER PRIMARY KEY CHECK(id=1),config TEXT NOT NULL,revision INTEGER NOT NULL,total INTEGER NOT NULL);
@@ -100,7 +100,16 @@ CREATE TRIGGER IF NOT EXISTS atlas_rev_category_delete AFTER DELETE ON categorie
 CREATE TRIGGER IF NOT EXISTS atlas_rev_link_insert AFTER INSERT ON entry_categories BEGIN UPDATE atlas_meta SET revision=revision+1 WHERE id=1; END;
 CREATE TRIGGER IF NOT EXISTS atlas_rev_link_delete AFTER DELETE ON entry_categories BEGIN UPDATE atlas_meta SET revision=revision+1 WHERE id=1; END;
 CREATE TRIGGER IF NOT EXISTS atlas_rev_link_update AFTER UPDATE ON entry_categories BEGIN UPDATE atlas_meta SET revision=revision+1 WHERE id=1; END;
-"#)?;
+"#.to_owned();
+    if c.query_table("")? == "entries_core" {
+        schema = schema.replace(" ON entries BEGIN", " ON entries_core BEGIN");
+        let payload_triggers = "CREATE TRIGGER IF NOT EXISTS atlas_rev_payload_insert AFTER INSERT ON entry_payload BEGIN UPDATE atlas_meta SET revision=revision+1 WHERE id=1; END; CREATE TRIGGER IF NOT EXISTS atlas_rev_payload_update AFTER UPDATE ON entry_payload BEGIN UPDATE atlas_meta SET revision=revision+1 WHERE id=1; END; CREATE TRIGGER IF NOT EXISTS atlas_rev_payload_delete AFTER DELETE ON entry_payload BEGIN UPDATE atlas_meta SET revision=revision+1 WHERE id=1; END; ";
+        schema = schema.replace(
+            "CREATE TRIGGER IF NOT EXISTS atlas_rev_link_update",
+            &format!("{payload_triggers}CREATE TRIGGER IF NOT EXISTS atlas_rev_link_update"),
+        );
+    }
+    c.conn().execute_batch(&schema)?;
     Ok(())
 }
 /// Ensure that the cache corresponds to the selected duplicate mode and revision.
@@ -108,6 +117,7 @@ CREATE TRIGGER IF NOT EXISTS atlas_rev_link_update AFTER UPDATE ON entry_categor
 /// `duplicates`, which performs that verification automatically.
 pub fn ensure_cache(c: &Catalog, v: &Value, force: bool) -> Result<()> {
     let req = request(v, force)?;
+    let table = c.query_table(v.get("query").and_then(Value::as_str).unwrap_or(""))?;
     ensure_schema(c)?;
     let already_current:bool=c.conn().query_row("SELECT EXISTS(SELECT 1 FROM duplicate_cache_state s JOIN atlas_meta a ON a.id=1 AND a.revision=s.revision WHERE s.id=1 AND s.config=?1)", [&req.config], |r|r.get(0))?;
     if already_current {
@@ -144,11 +154,11 @@ pub fn ensure_cache(c: &Catalog, v: &Value, force: bool) -> Result<()> {
                 "e.size=g.size_key",
             ),
         };
-        let groups=format!("INSERT INTO duplicate_cache_groups(name_key,size_key,duplicate_count,duplicate_group) SELECT {key_columns},COUNT(*),{display} FROM entries WHERE {} GROUP BY {group_by} HAVING COUNT(*)>1",req.filter);
+        let groups=format!("INSERT INTO duplicate_cache_groups(name_key,size_key,duplicate_count,duplicate_group) SELECT {key_columns},COUNT(*),{display} FROM {table} WHERE {} GROUP BY {group_by} HAVING COUNT(*)>1",req.filter);
         tx.execute(&groups, rusqlite::params_from_iter(req.args.iter()))?;
         // Keep original result order and materialize it once. Page reads then seek by
         // position and join only their bounded set of IDs to live rows.
-        let members=format!("INSERT INTO duplicate_cache_members(entry_id,group_id) SELECT e.id,g.group_id FROM entries e JOIN (SELECT id AS group_id,name_key,size_key,duplicate_group FROM duplicate_cache_groups) g ON {join} WHERE {} ORDER BY g.duplicate_group,e.volume_id,e.relative_path,e.id",req.filter);
+        let members=format!("INSERT INTO duplicate_cache_members(entry_id,group_id) SELECT e.id,g.group_id FROM {table} e JOIN (SELECT id AS group_id,name_key,size_key,duplicate_group FROM duplicate_cache_groups) g ON {join} WHERE {} ORDER BY g.duplicate_group,e.volume_id,e.relative_path,e.id",req.filter);
         tx.execute(&members, rusqlite::params_from_iter(req.args.iter()))?;
         let total: i64 = tx.query_row("SELECT COUNT(*) FROM duplicate_cache_members", [], |r| {
             r.get(0)

@@ -19,6 +19,24 @@ CREATE TABLE IF NOT EXISTS ctf_volumes(volume_id INTEGER PRIMARY KEY REFERENCES 
 CREATE TABLE IF NOT EXISTS ctf_entries(entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,attributes INTEGER NOT NULL,modified_dos INTEGER NOT NULL,created_dos INTEGER NOT NULL,accessed_dos INTEGER NOT NULL,opaque BLOB NOT NULL);
 CREATE INDEX IF NOT EXISTS ctf_volumes_source ON ctf_volumes(source_id,source_order);
 "#;
+
+/// Raw CTF records are dense provenance, not sparse optional annotations.
+/// Keep v1 and experimental v2 compatible; v3 refers to the real core table.
+pub(crate) fn ensure_legacy_schema(c: &Catalog) -> Result<bool> {
+    let version: i64 = c
+        .conn()
+        .pragma_query_value(None, "user_version", |r| r.get(0))?;
+    let mut schema = LEGACY_SCHEMA.to_owned();
+    if version >= 3 {
+        schema = schema.replace("REFERENCES entries(id)", "REFERENCES entries_core(id)");
+    }
+    if version == 2 {
+        schema = schema.replace(",opaque BLOB NOT NULL", "");
+        schema.push_str("CREATE TABLE IF NOT EXISTS ctf_entry_payload(entry_id INTEGER PRIMARY KEY REFERENCES ctf_entries(entry_id) ON DELETE CASCADE,opaque BLOB NOT NULL CHECK(length(opaque)>0));");
+    }
+    c.conn().execute_batch(&schema)?;
+    Ok(version != 2)
+}
 fn fail(e: impl std::fmt::Display) -> Error {
     Error::new("ctf", e)
 }
@@ -77,7 +95,7 @@ pub fn import(c: &mut Catalog, v: &Value) -> Result<Value> {
         ),
     };
     let (bytes, sha) = read(v)?;
-    c.conn().execute_batch(LEGACY_SCHEMA)?;
+    let dense_opaque = ensure_legacy_schema(c)?;
     let seen: Option<i64> = c
         .conn()
         .query_row("SELECT id FROM ctf_sources WHERE sha256=?1", [&sha], |r| {
@@ -120,7 +138,14 @@ pub fn import(c: &mut Catalog, v: &Value) -> Result<Value> {
     let kind=match e.kind{EntryKind::File=>"file",EntryKind::Directory=>"directory",EntryKind::Archive=>"archive"};
     let new=NewEntry{parent_id,name:e.name.clone(),relative_path:path.clone(),kind:kind.into(),size:e.size,modified_unix:dos_to_unix(e.modified_dos,offset),description:e.description.clone(),tags:String::new()};
     let entry_id=session.insert(&new)?;
+    if dense_opaque {
     session.transaction().prepare_cached("INSERT INTO ctf_entries(entry_id,attributes,modified_dos,created_dos,accessed_dos,opaque) VALUES(?1,?2,?3,?4,?5,?6)")?.execute(params![entry_id,e.attributes,e.modified_dos,e.created_dos,e.accessed_dos,e.opaque])?;
+    } else {
+      session.transaction().prepare_cached("INSERT INTO ctf_entries(entry_id,attributes,modified_dos,created_dos,accessed_dos) VALUES(?1,?2,?3,?4,?5)")?.execute(params![entry_id,e.attributes,e.modified_dos,e.created_dos,e.accessed_dos])?;
+      if !e.opaque.is_empty() {
+        session.transaction().prepare_cached("INSERT INTO ctf_entry_payload(entry_id,opaque) VALUES(?1,?2)")?.execute(params![entry_id,e.opaque])?;
+      }
+    }
     ids.push(entry_id);directory_paths.push(if e.kind==EntryKind::File{None}else{Some(path)});entries+=1;
    }
    volumes.push(session.finish_volume()?);
@@ -142,7 +167,7 @@ pub fn import(c: &mut Catalog, v: &Value) -> Result<Value> {
 }
 
 pub fn export(c: &Catalog, v: &Value) -> Result<Value> {
-    c.conn().execute_batch(LEGACY_SCHEMA)?;
+    let dense_opaque = ensure_legacy_schema(c)?;
     let snapshot = c.conn().unchecked_transaction()?;
     let links: i64 =
         snapshot.query_row("SELECT COUNT(*) FROM entry_categories", [], |r| r.get(0))?;
@@ -227,7 +252,12 @@ pub fn export(c: &Catalog, v: &Value) -> Result<Value> {
             opaque_header: header,
         };
         let mut ids = HashMap::<i64, usize>::new();
-        let mut stmt=snapshot.prepare("SELECT e.id,e.parent_id,e.name,e.kind,e.size,e.modified_unix,e.description,l.attributes,l.modified_dos,l.created_dos,l.accessed_dos,l.opaque FROM entries e LEFT JOIN ctf_entries l ON l.entry_id=e.id WHERE e.volume_id=?1 ORDER BY e.id")?;
+        let sql = if dense_opaque {
+            "SELECT e.id,e.parent_id,e.name,e.kind,e.size,e.modified_unix,e.description,l.attributes,l.modified_dos,l.created_dos,l.accessed_dos,l.opaque FROM entries e LEFT JOIN ctf_entries l ON l.entry_id=e.id WHERE e.volume_id=?1 ORDER BY e.id"
+        } else {
+            "SELECT e.id,e.parent_id,e.name,e.kind,e.size,e.modified_unix,e.description,l.attributes,l.modified_dos,l.created_dos,l.accessed_dos,p.opaque FROM entries e LEFT JOIN ctf_entries l ON l.entry_id=e.id LEFT JOIN ctf_entry_payload p ON p.entry_id=e.id WHERE e.volume_id=?1 ORDER BY e.id"
+        };
+        let mut stmt = snapshot.prepare(sql)?;
         let mut rows = stmt.query([volume_id])?;
         while let Some(r) = rows.next()? {
             let id: i64 = r.get(0)?;

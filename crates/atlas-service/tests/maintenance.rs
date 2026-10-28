@@ -8,7 +8,8 @@ fn call(v: Value) -> Value {
 
 fn old_catalog(path: &Path, version: i64) -> Catalog {
     let conn = rusqlite::Connection::open(path).unwrap();
-    conn.execute_batch(include_str!("../../atlas-core/migrations/001.sql")).unwrap();
+    conn.execute_batch(include_str!("../../atlas-core/migrations/001.sql"))
+        .unwrap();
     conn.pragma_update(None, "user_version", version).unwrap();
     drop(conn);
     Catalog::open(path).unwrap()
@@ -20,17 +21,30 @@ fn seed(c: &mut Catalog) {
         for i in 0..8 {
             ids.push(w.insert(&NewEntry {
                 parent_id: None,
-                name: if i < 2 { "Movie.mkv".into() } else { format!("Track-{i}.flac") },
-                relative_path: if i < 2 { "Movie.mkv".into() } else { format!("Track-{i}.flac") },
+                name: if i < 2 {
+                    "Movie.mkv".into()
+                } else {
+                    format!("Track-{i}.flac")
+                },
+                relative_path: if i < 2 {
+                    "Movie.mkv".into()
+                } else {
+                    format!("Track-{i}.flac")
+                },
                 kind: "file".into(),
                 size: 5_000_000_001,
                 modified_unix: None,
-                description: if i == 4 { "Редкая аннотация".into() } else { "".into() },
+                description: if i == 4 {
+                    "Редкая аннотация".into()
+                } else {
+                    "".into()
+                },
                 tags: if i == 6 { "favorite".into() } else { "".into() },
             })?);
         }
         Ok(())
-    }).unwrap();
+    })
+    .unwrap();
     let category = c.create_category("Музыка", None).unwrap();
     c.assign_category(ids[4], category).unwrap();
 }
@@ -42,10 +56,29 @@ fn compact_copy_preserves_source_and_creates_a_runnable_catalog() {
         // '#' exercises correct percent escaping; '?' is invalid on Windows.
         let source = dir.path().join("source #.sqlite");
         let target = dir.path().join("compact.sqlite");
-        let mut c = if version == 3 { Catalog::open(&source).unwrap() } else { old_catalog(&source, version) };
+        let mut c = if version == 3 {
+            Catalog::open(&source).unwrap()
+        } else {
+            old_catalog(&source, version)
+        };
         seed(&mut c);
-        let before_queries: Vec<_> = ["ext:mkv", "description:редкая", "NOT tag:favorite", "category:музыка", "аннотация OR name:Movie"]
-            .iter().map(|q| c.search(q, None, 0, 100).unwrap().items.into_iter().map(|e| e.id).collect::<Vec<_>>()).collect();
+        let before_queries: Vec<_> = [
+            "ext:mkv",
+            "description:редкая",
+            "NOT tag:favorite",
+            "category:музыка",
+            "аннотация OR name:Movie",
+        ]
+        .iter()
+        .map(|q| {
+            c.search(q, None, 0, 100)
+                .unwrap()
+                .items
+                .into_iter()
+                .map(|e| e.id)
+                .collect::<Vec<_>>()
+        })
+        .collect();
         drop(c);
         let before_bytes = std::fs::read(&source).unwrap();
         let report = call(json!({"op":"compact_catalog","db":source,"path":target}));
@@ -53,10 +86,29 @@ fn compact_copy_preserves_source_and_creates_a_runnable_catalog() {
         assert_eq!(report["data"]["entries"], 8);
         assert_eq!(report["data"]["payload_rows"], 2);
         assert_eq!(report["data"]["schema_version"], 3);
-        assert_eq!(before_bytes, std::fs::read(&source).unwrap(), "Source database bytes changed");
+        assert_eq!(
+            before_bytes,
+            std::fs::read(&source).unwrap(),
+            "Source database bytes changed"
+        );
         let c = Catalog::open(&target).unwrap();
-        for (i, q) in ["ext:mkv", "description:редкая", "NOT tag:favorite", "category:музыка", "аннотация OR name:Movie"].iter().enumerate() {
-            let ids: Vec<_> = c.search(q, None, 0, 100).unwrap().items.into_iter().map(|e| e.id).collect();
+        for (i, q) in [
+            "ext:mkv",
+            "description:редкая",
+            "NOT tag:favorite",
+            "category:музыка",
+            "аннотация OR name:Movie",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let ids: Vec<_> = c
+                .search(q, None, 0, 100)
+                .unwrap()
+                .items
+                .into_iter()
+                .map(|e| e.id)
+                .collect();
             assert_eq!(ids, before_queries[i], "{q}");
         }
         drop(c);
@@ -79,7 +131,14 @@ fn compaction_never_overwrites_existing_files_or_source_sidecars() {
     std::fs::write(&existing, b"keep me").unwrap();
     let hardlink = dir.path().join("hardlink.sqlite");
     std::fs::hard_link(&source, &hardlink).unwrap();
-    for target in [source.clone(), existing.clone(), hardlink, dir.path().join("source.sqlite-wal"), dir.path().join("source.sqlite-shm"), dir.path().join("source.sqlite-journal")] {
+    for target in [
+        source.clone(),
+        existing.clone(),
+        hardlink,
+        dir.path().join("source.sqlite-wal"),
+        dir.path().join("source.sqlite-shm"),
+        dir.path().join("source.sqlite-journal"),
+    ] {
         let r = call(json!({"op":"compact_catalog","db":source,"path":target}));
         assert_eq!(r["ok"], false, "Unexpected unsafe output: {r}");
     }
@@ -114,19 +173,41 @@ fn legacy_ctf_bytes_survive_compaction_from_v1_and_v2() {
         drop(old_catalog(&source, version));
         let fixture = CtfCatalog {
             name: "Synthetic CTF fixture".into(),
-            disks: vec![CtfDisk { name: "Disk".into(), opaque_header: vec![], entries: vec![CtfEntry {
-                name: "Музыка 🎵.flac".into(), description: "Rare description".into(), parent: None,
-                kind: EntryKind::File, size: 6_000_000_000, attributes: 32,
-                modified_dos: 0, created_dos: 0, accessed_dos: 0, opaque: vec![],
-            }] }],
+            disks: vec![CtfDisk {
+                name: "Disk".into(),
+                opaque_header: vec![],
+                entries: vec![CtfEntry {
+                    name: "Музыка 🎵.flac".into(),
+                    description: "Rare description".into(),
+                    parent: None,
+                    kind: EntryKind::File,
+                    size: 6_000_000_000,
+                    attributes: 32,
+                    modified_dos: 0,
+                    created_dos: 0,
+                    accessed_dos: 0,
+                    opaque: vec![],
+                }],
+            }],
             opaque_trailer: vec![],
         };
         std::fs::write(&input, ctf_format::write_ctf(&fixture).unwrap()).unwrap();
-        for v in [json!({"op":"import_ctf","db":source,"path":input}), json!({"op":"export_ctf","db":source,"path":before}), json!({"op":"compact_catalog","db":source,"path":target}), json!({"op":"export_ctf","db":target,"path":after})] {
+        for v in [
+            json!({"op":"import_ctf","db":source,"path":input}),
+            json!({"op":"export_ctf","db":source,"path":before}),
+            json!({"op":"compact_catalog","db":source,"path":target}),
+            json!({"op":"export_ctf","db":target,"path":after}),
+        ] {
             let r = call(v);
             assert_eq!(r["ok"], true, "{r}");
         }
-        assert_eq!(std::fs::read(&before).unwrap(), std::fs::read(&after).unwrap());
-        assert_eq!(std::fs::read(&input).unwrap(), std::fs::read(&after).unwrap());
+        assert_eq!(
+            std::fs::read(&before).unwrap(),
+            std::fs::read(&after).unwrap()
+        );
+        assert_eq!(
+            std::fs::read(&input).unwrap(),
+            std::fs::read(&after).unwrap()
+        );
     }
 }

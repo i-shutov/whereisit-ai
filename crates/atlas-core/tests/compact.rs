@@ -22,9 +22,14 @@ fn payload_rows(c: &Catalog) -> i64 {
 
 fn fts_check(c: &Catalog) {
     c.conn()
-        .execute_batch("INSERT INTO entries_trigram(entries_trigram,rank) VALUES('integrity-check',1)")
+        .execute_batch(
+            "INSERT INTO entries_trigram(entries_trigram,rank) VALUES('integrity-check',1)",
+        )
         .unwrap();
-    let integrity: String = c.conn().query_row("PRAGMA quick_check", [], |r| r.get(0)).unwrap();
+    let integrity: String = c
+        .conn()
+        .query_row("PRAGMA quick_check", [], |r| r.get(0))
+        .unwrap();
     assert_eq!(integrity, "ok");
 }
 
@@ -32,28 +37,63 @@ fn fts_check(c: &Catalog) {
 fn compact_schema_sparsity_and_hot_query_plan() {
     let temp = tempfile::tempdir().unwrap();
     let mut c = Catalog::open(temp.path().join("catalog.sqlite")).unwrap();
-    let version: i64 = c.conn().pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+    let version: i64 = c
+        .conn()
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .unwrap();
     assert_eq!(version, 3);
     c.bulk_import("disk", "offline", |w| {
         w.insert(&file("Film.mkv", "", ""))?;
         w.insert(&file("Музыка.flac", "Редкое описание", "любимое"))?;
         w.insert(&file("Other.mkv", "", ""))?;
         Ok(())
-    }).unwrap();
+    })
+    .unwrap();
     assert_eq!(payload_rows(&c), 1);
-    let columns: Vec<String> = c.conn().prepare("PRAGMA table_info(entries_core)").unwrap()
-        .query_map([], |r| r.get(1)).unwrap().collect::<Result<_, _>>().unwrap();
+    let columns: Vec<String> = c
+        .conn()
+        .prepare("PRAGMA table_info(entries_core)")
+        .unwrap()
+        .query_map([], |r| r.get(1))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
     for field in ["description", "tags", "search_text"] {
-        assert!(!columns.iter().any(|v| v == field), "{field} leaked into hot rows");
+        assert!(
+            !columns.iter().any(|v| v == field),
+            "{field} leaked into hot rows"
+        );
     }
-    assert_eq!(c.query_table("name:Film AND size:>4GiB").unwrap(), "entries_core");
+    assert_eq!(
+        c.query_table("name:Film AND size:>4GiB").unwrap(),
+        "entries_core"
+    );
     assert_eq!(c.query_table("description:редкое").unwrap(), "entries");
-    let plan = c.explain_query("ext:mkv AND size:>4GiB").unwrap().to_string();
+    let plan = c
+        .explain_query("ext:mkv AND size:>4GiB")
+        .unwrap()
+        .to_string();
     assert!(plan.contains("entries_core"), "{plan}");
-    assert!(!plan.contains("entry_payload"), "hot predicate touched payload: {plan}");
-    assert_eq!(c.search_fast("name:музыка", None, 0, 100).unwrap().items[0].description, "Редкое описание");
-    assert_eq!(c.search("NOT description:редкое", None, 0, 100).unwrap().total, 2);
-    assert_eq!(c.search("tag:любимое OR name:Film", None, 0, 100).unwrap().total, 2);
+    assert!(
+        !plan.contains("entry_payload"),
+        "hot predicate touched payload: {plan}"
+    );
+    assert_eq!(
+        c.search_fast("name:музыка", None, 0, 100).unwrap().items[0].description,
+        "Редкое описание"
+    );
+    assert_eq!(
+        c.search("NOT description:редкое", None, 0, 100)
+            .unwrap()
+            .total,
+        2
+    );
+    assert_eq!(
+        c.search("tag:любимое OR name:Film", None, 0, 100)
+            .unwrap()
+            .total,
+        2
+    );
     fts_check(&c);
 }
 
@@ -62,24 +102,38 @@ fn payload_insert_edit_remove_and_delete_keep_fts_consistent() {
     let temp = tempfile::tempdir().unwrap();
     let mut c = Catalog::open(temp.path().join("catalog.sqlite")).unwrap();
     let mut id = 0;
-    let volume = c.bulk_import("disk", "offline", |w| {
-        id = w.insert(&file("Track.flac", "", ""))?;
-        Ok(())
-    }).unwrap();
+    let volume = c
+        .bulk_import("disk", "offline", |w| {
+            id = w.insert(&file("Track.flac", "", ""))?;
+            Ok(())
+        })
+        .unwrap();
     assert_eq!(payload_rows(&c), 0);
     c.update_entry(id, "Альбом один", "jazz").unwrap();
     assert_eq!(payload_rows(&c), 1);
-    assert_eq!(c.search("description:альбом AND tag:jazz", None, 0, 10).unwrap().total, 1);
+    assert_eq!(
+        c.search("description:альбом AND tag:jazz", None, 0, 10)
+            .unwrap()
+            .total,
+        1
+    );
     fts_check(&c);
     c.update_entry(id, "Второе описание", "rock").unwrap();
-    assert_eq!(c.search("description:альбом OR tag:jazz", None, 0, 10).unwrap().total, 0);
+    assert_eq!(
+        c.search("description:альбом OR tag:jazz", None, 0, 10)
+            .unwrap()
+            .total,
+        0
+    );
     fts_check(&c);
     c.update_entry(id, "", "").unwrap();
     assert_eq!(payload_rows(&c), 0);
     assert_eq!(c.search("NOT tag:rock", None, 0, 10).unwrap().total, 1);
     fts_check(&c);
     c.update_entry(id, "Уникальная аннотация", "tag").unwrap();
-    c.conn().execute("DELETE FROM volumes WHERE id=?1", [volume.id]).unwrap();
+    c.conn()
+        .execute("DELETE FROM volumes WHERE id=?1", [volume.id])
+        .unwrap();
     assert_eq!(payload_rows(&c), 0);
     assert_eq!(c.search("аннотация", None, 0, 10).unwrap().total, 0);
     fts_check(&c);
@@ -91,10 +145,15 @@ fn compact_pagination_hydrates_only_correct_rows() {
     let mut c = Catalog::open(temp.path().join("catalog.sqlite")).unwrap();
     c.bulk_import("disk", "offline", |w| {
         for i in 0..17 {
-            w.insert(&file(&format!("Track-{i:02}.flac"), if i % 2 == 0 { "note" } else { "" }, ""))?;
+            w.insert(&file(
+                &format!("Track-{i:02}.flac"),
+                if i % 2 == 0 { "note" } else { "" },
+                "",
+            ))?;
         }
         Ok(())
-    }).unwrap();
+    })
+    .unwrap();
     let expected = c.search("ext:flac", None, 0, 100).unwrap().items;
     let mut got = Vec::new();
     let mut offset = 0;
@@ -102,10 +161,18 @@ fn compact_pagination_hydrates_only_correct_rows() {
         let page = c.search_fast("ext:flac", None, offset, 4).unwrap();
         offset += page.items.len() as u64;
         got.extend(page.items);
-        if !page.has_more { break; }
+        if !page.has_more {
+            break;
+        }
     }
-    assert_eq!(got.iter().map(|e| e.id).collect::<Vec<_>>(), expected.iter().map(|e| e.id).collect::<Vec<_>>());
-    assert_eq!(got.iter().map(|e| &e.description).collect::<Vec<_>>(), expected.iter().map(|e| &e.description).collect::<Vec<_>>());
+    assert_eq!(
+        got.iter().map(|e| e.id).collect::<Vec<_>>(),
+        expected.iter().map(|e| e.id).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        got.iter().map(|e| &e.description).collect::<Vec<_>>(),
+        expected.iter().map(|e| &e.description).collect::<Vec<_>>()
+    );
     fts_check(&c);
 }
 
@@ -115,18 +182,28 @@ fn old_catalog_versions_are_not_migrated_on_open() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("legacy.sqlite");
         let conn = Connection::open(&path).unwrap();
-        conn.execute_batch(include_str!("../migrations/001.sql")).unwrap();
+        conn.execute_batch(include_str!("../migrations/001.sql"))
+            .unwrap();
         conn.pragma_update(None, "user_version", version).unwrap();
         drop(conn);
         let mut c = Catalog::open(&path).unwrap();
-        let actual: i64 = c.conn().pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        let actual: i64 = c
+            .conn()
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
         assert_eq!(actual, version);
         assert_eq!(c.query_table("name:Legacy").unwrap(), "entries");
         c.bulk_import("old", "offline", |w| {
             w.insert(&file("Legacy.mkv", "old annotation", "keep"))?;
             Ok(())
-        }).unwrap();
-        assert_eq!(c.search("description:annotation", None, 0, 10).unwrap().total, 1);
+        })
+        .unwrap();
+        assert_eq!(
+            c.search("description:annotation", None, 0, 10)
+                .unwrap()
+                .total,
+            1
+        );
         fts_check(&c);
     }
 }
@@ -134,10 +211,20 @@ fn old_catalog_versions_are_not_migrated_on_open() {
 #[test]
 fn query_plan_hint_respects_field_names_and_quoted_values() {
     use atlas_core::query::needs_payload;
-    for q in ["", "name:description", "path:*description*", "category:\"Music tag\" AND ext:flac"] {
+    for q in [
+        "",
+        "name:description",
+        "path:*description*",
+        "category:\"Music tag\" AND ext:flac",
+    ] {
         assert!(!needs_payload(q).unwrap(), "{q}");
     }
-    for q in ["notes", "text:notes", "NOT description:notes", "name:track OR tag:favourite"] {
+    for q in [
+        "notes",
+        "text:notes",
+        "NOT description:notes",
+        "name:track OR tag:favourite",
+    ] {
         assert!(needs_payload(q).unwrap(), "{q}");
     }
 }
