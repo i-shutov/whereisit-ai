@@ -40,7 +40,7 @@ SQL = {
                  WHEN tags<>'' THEN 'tags_only'
                  ELSE 'empty'
                END AS kind,COUNT(*)
-        FROM entries GROUP BY kind
+        FROM entries GROUP BY 1
     """,
     "legacy_payload_distribution": """
         SELECT CASE
@@ -49,7 +49,7 @@ SQL = {
                  WHEN LENGTH(opaque)<4096 THEN '256..4095'
                  ELSE '4096+'
                END AS bucket,COUNT(*)
-        FROM ctf_entries GROUP BY bucket
+        FROM ctf_entries GROUP BY 1
     """,
 }
 IDENTIFIERS = {"entries", "ctf_entries", "entries_trigram", "categories", "entry_categories"}
