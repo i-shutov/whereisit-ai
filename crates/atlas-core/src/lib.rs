@@ -752,7 +752,9 @@ pub mod api {
                 Ok(json!({}))
             }
             "explain_query" => c.explain_query(string(&v, "query")?),
-            "init" => Ok(json!({"schema_version":c.conn().pragma_query_value(None,"user_version",|r|r.get::<_,i64>(0))?})),
+            "init" => Ok(
+                json!({"schema_version":c.conn().pragma_query_value(None,"user_version",|r|r.get::<_,i64>(0))?}),
+            ),
             "stats" => c.stats(),
             "volumes" => Ok(json!(c.volumes()?)),
             "children" => Ok(json!(c.children(
