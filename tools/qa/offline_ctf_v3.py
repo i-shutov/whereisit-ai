@@ -89,6 +89,7 @@ def inspect(source: pathlib.Path, cli: pathlib.Path, timeout: int,
         "format": "whereisit-local-ctf-v3-acceptance-v1",
         "status": "in_progress",
         "input_type": "operator_supplied_ctf",
+        "input_provenance": "not_independently_attested",
         "source": {"sha256": original_sha, "size_bytes": size},
         "cli_sha256": file_hash(cli),
         "sqlite_runtime_version": version,
@@ -190,7 +191,8 @@ def main() -> int:
     ap.add_argument("--expected-sha256", help="Optional verified source SHA-256")
     ap.add_argument("--full-export", action="store_true",
                     help="Also test full temporary CSV/Parquet export (larger disk I/O)")
-    ap.add_argument("--timeout-seconds", type=int, default=480)
+    ap.add_argument("--timeout-seconds", type=int, default=1500,
+                    help="Per-phase timeout; large 3M-entry CTF imports can exceed 8 minutes")
     ap.add_argument("source", type=pathlib.Path)
     args = ap.parse_args()
     if args.timeout_seconds < 10:
