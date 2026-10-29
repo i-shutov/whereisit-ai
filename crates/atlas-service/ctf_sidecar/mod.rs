@@ -97,7 +97,9 @@ fn stream_identity(path: &Path, limit: u64) -> io::Result<SourceIdentity> {
         if n == 0 {
             break;
         }
-        size = size.checked_add(n as u64).ok_or_else(|| invalid("Size overflow"))?;
+        size = size
+            .checked_add(n as u64)
+            .ok_or_else(|| invalid("Size overflow"))?;
         if size > limit {
             return Err(invalid("Source exceeds configured size limit"));
         }
@@ -122,12 +124,18 @@ fn capture_with_hook<F: FnOnce()>(path: &Path, max_bytes: u64, between: F) -> io
         return Err(invalid("Unsupported source size limit"));
     }
     let bytes = bounded_bytes(path, max_bytes)?;
-    let name = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let name = path
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let snapshot = Snapshot::from_bytes(name, bytes);
     between();
     let verified = stream_identity(path, max_bytes)?;
     if verified != snapshot.identity {
-        return Err(io::Error::new(io::ErrorKind::WouldBlock, "Source changed during capture"));
+        return Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "Source changed during capture",
+        ));
     }
     Ok(snapshot)
 }
@@ -136,7 +144,10 @@ fn capture_with_hook<F: FnOnce()>(path: &Path, max_bytes: u64, between: F) -> io
 /// A later writer race is still possible; this module intentionally has NO CTF save API.
 pub fn verify_edit_base(path: &Path, base: &SourceIdentity, max_bytes: u64) -> io::Result<()> {
     if stream_identity(path, max_bytes)? != *base {
-        return Err(io::Error::new(io::ErrorKind::WouldBlock, "External CTF changes conflict with edit base"));
+        return Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "External CTF changes conflict with edit base",
+        ));
     }
     Ok(())
 }
@@ -171,20 +182,29 @@ pub struct CacheRead {
 }
 
 fn miss(state: CacheState) -> CacheRead {
-    CacheRead { state, artifact: None }
+    CacheRead {
+        state,
+        artifact: None,
+    }
 }
 
 /// Name/path is intentionally excluded. Byte-identical copies can reuse derived
 /// data, but this is NOT permission to merge their editable annotation identities.
 pub fn cache_key(source: &SourceIdentity, recipe: &Recipe) -> io::Result<String> {
-    let encoded = serde_json::to_vec(&(MANIFEST_VERSION, source, recipe)).map_err(|_| invalid("Recipe encoding failed"))?;
+    let encoded = serde_json::to_vec(&(MANIFEST_VERSION, source, recipe))
+        .map_err(|_| invalid("Recipe encoding failed"))?;
     Ok(sha256(&encoded))
 }
 
 /// Fixed artifact basenames prevent manifest-controlled path traversal. Checks
 /// recipe/source and artifact checksum before the caller decodes any index bytes.
 /// A checksum detects corruption, not a malicious author who can rewrite both files.
-pub fn inspect(dir: &Path, source: &SourceIdentity, recipe: &Recipe, max_artifact_bytes: u64) -> io::Result<CacheRead> {
+pub fn inspect(
+    dir: &Path,
+    source: &SourceIdentity,
+    recipe: &Recipe,
+    max_artifact_bytes: u64,
+) -> io::Result<CacheRead> {
     if !dir.exists() {
         return Ok(miss(CacheState::Missing));
     }
@@ -220,7 +240,7 @@ pub fn inspect(dir: &Path, source: &SourceIdentity, recipe: &Recipe, max_artifac
     }
     let artifact_path = dir.join("index.bin");
     match fs::symlink_metadata(&artifact_path) {
-        Ok(m) if m.is_file() && m.len() == manifest.artifact_size_bytes => {},
+        Ok(m) if m.is_file() && m.len() == manifest.artifact_size_bytes => {}
         Ok(_) => return Ok(miss(CacheState::Corrupt)),
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(miss(CacheState::Incomplete)),
         Err(e) => return Err(e),
@@ -230,10 +250,15 @@ pub fn inspect(dir: &Path, source: &SourceIdentity, recipe: &Recipe, max_artifac
         Err(e) if e.kind() == io::ErrorKind::InvalidData => return Ok(miss(CacheState::Corrupt)),
         Err(e) => return Err(e),
     };
-    if artifact.len() as u64 != manifest.artifact_size_bytes || sha256(&artifact) != manifest.artifact_sha256 {
+    if artifact.len() as u64 != manifest.artifact_size_bytes
+        || sha256(&artifact) != manifest.artifact_sha256
+    {
         return Ok(miss(CacheState::Corrupt));
     }
-    Ok(CacheRead { state: CacheState::Ready, artifact: Some(artifact) })
+    Ok(CacheRead {
+        state: CacheState::Ready,
+        artifact: Some(artifact),
+    })
 }
 
 fn write_synced(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -255,7 +280,12 @@ fn sync_directory(path: &Path) -> io::Result<()> {
 /// A corrupt existing generation fails closed; quarantine/rebuild policy belongs to
 /// the coordinator, not an implicit deletion here. Crash durability still needs
 /// platform-specific acceptance, particularly directory durability on Windows.
-pub fn publish(root: &Path, snapshot: &Snapshot, recipe: &Recipe, artifact: &[u8]) -> io::Result<PathBuf> {
+pub fn publish(
+    root: &Path,
+    snapshot: &Snapshot,
+    recipe: &Recipe,
+    artifact: &[u8],
+) -> io::Result<PathBuf> {
     fs::create_dir_all(root)?;
     let target = root.join(cache_key(&snapshot.identity, recipe)?);
     if target.exists() {
@@ -263,9 +293,14 @@ pub fn publish(root: &Path, snapshot: &Snapshot, recipe: &Recipe, artifact: &[u8
         if existing.state == CacheState::Ready && existing.artifact.as_deref() == Some(artifact) {
             return Ok(target);
         }
-        return Err(io::Error::new(io::ErrorKind::AlreadyExists, "Existing generation differs or is corrupt; explicit recovery required"));
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "Existing generation differs or is corrupt; explicit recovery required",
+        ));
     }
-    let temporary = tempfile::Builder::new().prefix("building-").tempdir_in(root)?;
+    let temporary = tempfile::Builder::new()
+        .prefix("building-")
+        .tempdir_in(root)?;
     write_synced(&temporary.path().join("index.bin"), artifact)?;
     let manifest = Manifest {
         manifest_version: MANIFEST_VERSION,
@@ -275,17 +310,20 @@ pub fn publish(root: &Path, snapshot: &Snapshot, recipe: &Recipe, artifact: &[u8
         artifact_sha256: sha256(artifact),
         artifact_size_bytes: artifact.len() as u64,
     };
-    let encoded = serde_json::to_vec_pretty(&manifest).map_err(|_| invalid("Manifest encoding failed"))?;
+    let encoded =
+        serde_json::to_vec_pretty(&manifest).map_err(|_| invalid("Manifest encoding failed"))?;
     if encoded.len() as u64 > MANIFEST_LIMIT {
         return Err(invalid("Manifest too large"));
     }
     write_synced(&temporary.path().join("manifest.json"), &encoded)?;
     sync_directory(temporary.path())?;
     match fs::rename(temporary.path(), &target) {
-        Ok(()) => {},
+        Ok(()) => {}
         Err(e) => {
             let competing = inspect(&target, &snapshot.identity, recipe, artifact.len() as u64)?;
-            if competing.state != CacheState::Ready || competing.artifact.as_deref() != Some(artifact) {
+            if competing.state != CacheState::Ready
+                || competing.artifact.as_deref() != Some(artifact)
+            {
                 return Err(e);
             }
         }
@@ -302,7 +340,8 @@ mod capture_race_tests {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("catalog.ctf");
         fs::write(&p, b"old bytes").unwrap();
-        let error = capture_with_hook(&p, 100, || fs::write(&p, b"new bytes").unwrap()).unwrap_err();
+        let error =
+            capture_with_hook(&p, 100, || fs::write(&p, b"new bytes").unwrap()).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
     }
 }
