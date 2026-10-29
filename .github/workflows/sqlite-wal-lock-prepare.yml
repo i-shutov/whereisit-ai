@@ -1,0 +1,80 @@
+# This preparer is intentionally restricted to ONE isolated development branch.
+# It is not general CI, a dependency updater for untrusted PRs, or a release.
+name: Prepare SQLite WAL fixed lock (isolated branch only)
+on:
+  push:
+    branches: [fix/sqlite-wal-durability-20261029]
+    paths:
+      - "Cargo.toml"
+      - "crates/*/Cargo.toml"
+      - "tools/dev/refresh_sqlite_notices.py"
+      - ".github/workflows/sqlite-wal-lock-prepare.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: whereisit-sqlite-wal-lock-prepare
+  cancel-in-progress: false
+jobs:
+  regenerate:
+    if: github.repository == 'i-shutov/whereisit-ai' && github.ref == 'refs/heads/fix/sqlite-wal-durability-20261029'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: true
+      - run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
+      - name: Resolve exact fixed rusqlite / bundled SQLite and fetch registry licenses
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo update -p rusqlite --precise 0.39.0
+          cargo update -p libsqlite3-sys --precise 0.37.0
+          cargo fetch --locked
+          python3 tools/dev/refresh_sqlite_notices.py
+          cargo fmt --all
+      - name: Validate locked source, WAL recovery, tests and static analysis
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked --workspace
+          cargo test --locked -p atlas-core --test wal_durability -- --nocapture
+          cargo test --locked -p atlas-service --lib
+          cargo fmt --all -- --check
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+          cargo tree --locked --duplicates | tee duplicate-dependencies.txt
+          cargo tree --locked -i rusqlite
+          cargo tree --locked -i libsqlite3-sys
+      - name: Commit verified lock, notices and format only if branch still has same head
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin fix/sqlite-wal-durability-20261029
+          test "$(git rev-parse origin/fix/sqlite-wal-durability-20261029)" = "$GITHUB_SHA"
+          git add Cargo.lock THIRD_PARTY_NOTICES.md licenses crates/atlas-core/tests/wal_durability.rs
+          if ! git diff --cached --quiet; then
+            git config user.name "whereisit-ci"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "build(sqlite): lock bundled 3.51.3 and verified legal payload"
+            git push origin HEAD:refs/heads/fix/sqlite-wal-durability-20261029
+          fi
+      - name: Preserve only nonprivate diagnostics if verification fails
+        if: failure()
+        shell: bash
+        run: |
+          git diff --stat > sqlite-upgrade-diff-stat.txt
+          cargo metadata --no-deps --format-version 1 > sqlite-workspace-metadata.json || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sqlite-wal-lock-prepare-evidence
+          path: |
+            duplicate-dependencies.txt
+            sqlite-upgrade-diff-stat.txt
+            sqlite-workspace-metadata.json
+          if-no-files-found: warn
+          retention-days: 21

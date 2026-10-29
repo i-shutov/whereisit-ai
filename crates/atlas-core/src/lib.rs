@@ -159,15 +159,15 @@ impl Catalog {
                 label: r.get(1)?,
                 root_path: r.get(2)?,
                 scanned_at: r.get(3)?,
-                entry_count: r.get(4)?,
-                total_bytes: r.get(5)?,
+                entry_count: nonnegative_sql_u64(r, 4)?,
+                total_bytes: nonnegative_sql_u64(r, 5)?,
                 status: r.get(6)?,
             })
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
     pub fn stats(&self) -> Result<Value> {
-        self.conn.query_row("SELECT COUNT(*),COALESCE(SUM(entry_count),0),COALESCE(SUM(total_bytes),0) FROM volumes",[],|r|Ok(json!({"volumes":r.get::<_,u64>(0)?,"entries":r.get::<_,u64>(1)?,"total_bytes":r.get::<_,u64>(2)?}))).map_err(Into::into)
+        self.conn.query_row("SELECT COUNT(*),COALESCE(SUM(entry_count),0),COALESCE(SUM(total_bytes),0) FROM volumes",[],|r|Ok(json!({"volumes":nonnegative_sql_u64(r,0)?,"entries":nonnegative_sql_u64(r,1)?,"total_bytes":nonnegative_sql_u64(r,2)?}))).map_err(Into::into)
     }
     pub fn children(
         &self,
@@ -182,7 +182,7 @@ impl Catalog {
         let total = self.conn.query_row(
             &format!("SELECT COUNT(*) FROM {table} WHERE volume_id=?1 AND parent_id IS ?2"),
             params![volume_id, parent_id],
-            |r| r.get(0),
+            |r| nonnegative_sql_u64(r, 0),
         )?;
         let mut s=self.conn.prepare(&format!("WITH page AS MATERIALIZED (SELECT id FROM {table} WHERE volume_id=?1 AND parent_id IS ?2 ORDER BY CASE kind WHEN 'directory' THEN 0 ELSE 1 END,name COLLATE NOCASE,id LIMIT ?3 OFFSET ?4) SELECT e.id,e.volume_id,e.parent_id,e.name,e.relative_path,e.kind,e.size,e.modified_unix,e.description,e.tags FROM page p JOIN entries e ON e.id=p.id ORDER BY CASE e.kind WHEN 'directory' THEN 0 ELSE 1 END,e.name COLLATE NOCASE,e.id"))?;
         let items = s
@@ -217,7 +217,7 @@ impl Catalog {
         let total = self.conn.query_row(
             &format!("SELECT COUNT(*) FROM {table} WHERE {filter}"),
             rusqlite::params_from_iter(args.iter()),
-            |r| r.get(0),
+            |r| nonnegative_sql_u64(r, 0),
         )?;
         let sql=format!("WITH page AS MATERIALIZED (SELECT id FROM {table} WHERE {filter} ORDER BY name COLLATE NOCASE,id LIMIT ? OFFSET ?) SELECT e.id,e.volume_id,e.parent_id,e.name,e.relative_path,e.kind,e.size,e.modified_unix,e.description,e.tags FROM page p JOIN entries e ON e.id=p.id ORDER BY e.name COLLATE NOCASE,e.id");
         args.push((limit as i64).into());
@@ -310,7 +310,11 @@ impl Catalog {
         let (count, bytes) = (w.count, w.bytes);
         tx.execute(
             "UPDATE volumes SET entry_count=?1,total_bytes=?2 WHERE id=?3",
-            params![count, bytes, id],
+            params![
+                signed_sql_u64(count, "entry_count")?,
+                signed_sql_u64(bytes, "total_bytes")?,
+                id
+            ],
         )?;
         // Collect bounded planner statistics within the atomic transaction.
         tx.execute_batch("PRAGMA optimize=0x10002")?;
@@ -568,7 +572,11 @@ impl<'a> ImportSession<'a> {
         volume.total_bytes = writer.bytes;
         self.tx.execute(
             "UPDATE volumes SET entry_count=?1,total_bytes=?2 WHERE id=?3",
-            params![volume.entry_count, volume.total_bytes, volume.id],
+            params![
+                signed_sql_u64(volume.entry_count, "entry_count")?,
+                signed_sql_u64(volume.total_bytes, "total_bytes")?,
+                volume.id
+            ],
         )?;
         Ok(volume)
     }
@@ -630,6 +638,28 @@ impl BulkWriter<'_> {
 fn search_text(n: &str, p: &str, d: &str, t: &str) -> String {
     format!("{n}\n{p}\n{d}\n{t}").to_lowercase()
 }
+// SQLite stores integer values as signed i64. rusqlite 0.38+ correctly
+// requires explicit conversions for u64; do not silently wrap negative
+// database data or truncate aggregate counts.
+fn signed_sql_u64(value: u64, column: &'static str) -> Result<i64> {
+    i64::try_from(value)
+        .map_err(|_| Error::new("range", format!("{column} exceeds SQLite INTEGER range")))
+}
+
+fn nonnegative_sql_u64(row: &rusqlite::Row<'_>, column: usize) -> rusqlite::Result<u64> {
+    let value: i64 = row.get(column)?;
+    u64::try_from(value).map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            column,
+            rusqlite::types::Type::Integer,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Negative SQLite integer in unsigned catalog field",
+            )),
+        )
+    })
+}
+
 pub fn entry_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Entry> {
     Ok(Entry {
         id: r.get(0)?,
@@ -638,7 +668,7 @@ pub fn entry_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Entry> {
         name: r.get(3)?,
         relative_path: r.get(4)?,
         kind: r.get(5)?,
-        size: r.get(6)?,
+        size: nonnegative_sql_u64(r, 6)?,
         modified_unix: r.get(7)?,
         description: r.get(8)?,
         tags: r.get(9)?,

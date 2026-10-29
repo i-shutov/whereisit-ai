@@ -82,11 +82,7 @@ fn has_table(conn: &Connection, schema: &str, name: &str) -> Result<bool> {
 }
 
 fn supported_version(conn: &Connection, schema: &str) -> Result<i64> {
-    let version: i64 = conn.pragma_query_value(
-        Some(rusqlite::DatabaseName::Attached(schema)),
-        "user_version",
-        |r| r.get(0),
-    )?;
+    let version: i64 = conn.pragma_query_value(Some(schema), "user_version", |r| r.get(0))?;
     if !(1..=3).contains(&version) {
         return Err(Error::new(
             "schema_version",

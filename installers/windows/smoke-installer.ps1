@@ -30,9 +30,14 @@ try {
     if (-not (Test-Path $cli) -or -not (Test-Path $gui)) {
         throw 'Installed GUI or CLI executable is missing'
     }
-    foreach ($file in @('LICENSE','THIRD_PARTY_NOTICES.md','licenses/SQLite-3.46.0/COPYRIGHT.txt')) {
+    foreach ($file in @('LICENSE','THIRD_PARTY_NOTICES.md','licenses/SQLite-3.51.3/COPYRIGHT.txt')) {
         if (-not (Test-Path (Join-Path $InstallDir $file) -PathType Leaf)) { throw "Missing installed notice: $file" }
     }
+    $sqliteVersion = (& $cli --sqlite-version).Trim()
+    if ($LASTEXITCODE -ne 0 -or $sqliteVersion -ne '3.51.3') {
+        throw "Installed CLI embeds incorrect SQLite: $sqliteVersion (expected 3.51.3)"
+    }
+    Write-Host "PASS: installed Windows CLI embeds SQLite $sqliteVersion"
     $request = @{op='init'; db=$catalog} | ConvertTo-Json -Compress
     $answer = & $cli request $request
     if ($LASTEXITCODE -ne 0) { throw "Installed CLI init failed ($LASTEXITCODE)" }

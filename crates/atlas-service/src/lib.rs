@@ -8,6 +8,12 @@ mod legacy;
 mod maintenance;
 mod selection;
 
+/// The actual SQLite library linked into each installed native executable.
+/// Does not open any catalog or access the filesystem.
+pub fn embedded_sqlite_version() -> &'static str {
+    rusqlite::version()
+}
+
 pub fn dispatch_json(input: &str) -> String {
     let result = std::panic::catch_unwind(|| dispatch(input));
     match result {

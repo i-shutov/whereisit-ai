@@ -9,7 +9,7 @@ atlas-core = { path = "../atlas-core" }
 ctf-format = { path = "../ctf-format" }
 serde.workspace = true
 serde_json.workspace = true
-rusqlite = { version = "0.32", features = ["bundled", "modern_sqlite", "functions"] }
+rusqlite.workspace = true
 csv = "1.3"
 parquet = { version = "56", default-features = false, features = ["snap"] }
 sha2 = "0.10"

@@ -16,6 +16,10 @@ fn main() {
         println!("WhereIsIt AI {}", env!("CARGO_PKG_VERSION"));
         return;
     }
+    if args.len() == 1 && args[0] == "--sqlite-version" {
+        println!("{}", atlas_service::embedded_sqlite_version());
+        return;
+    }
     if args.is_empty() || args.iter().any(|a| a == "--help" || a == "-h") {
         println!("WhereIsIt AI {}\n\natlas request '<JSON>'\natlas serve\natlas validate <catalog.sqlite>\natlas compact <source.sqlite> <new-copy.sqlite>\n\nCompact creates a verified v3 COPY and never replaces the source or an existing output.\nServe accepts one JSON request per line. No Python or database server is required.", env!("CARGO_PKG_VERSION"));
         return;
