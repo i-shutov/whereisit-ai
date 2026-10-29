@@ -69,3 +69,15 @@ The artifact published by the acceptance example is a test summary, not a produc
 For each local input: verify immutable source SHA before/after; parse/count; raw unchanged CTF roundtrip; CTF→SQLite→CTF byte comparison; fixed query first-page ID and count equality versus a Rust reference; metadata duplicate participant counts; CSV/Parquet row counts; rename cache reuse; changed CTF invalidation; unsaved-edit-base conflict. The real runner does not claim full arbitrary-query equivalence, complete export-value equality, p95/cold-cache measurements, hash-verified file-content duplicates or legacy-app acceptance.
 
 A changed catalog inside the acceptance runner is written only to a private temporary *copy*. No original CTF is overwritten. The normal product continues using the released schema until this branch is reviewed and integrated.
+
+## 2026-10-30 integration checkpoint (experimental module only)
+
+The project's current `main` uses bundled SQLite 3.51.3 and has independent
+Windows/macOS installer smoke. Before merging this **experimental helper**,
+re-run the combined PR against that base with locked Cargo tests and native CI.
+The helper does not register an application-side file watcher or automatically
+replace a live SQLite catalog. Merging it is **not** acceptance of these
+unimplemented features or authorization to use disposable caches for native
+annotations. Real read-only validation of a third 44-volume CTF supports
+byte-exact unchanged CTF roundtrip, but is not a substitute for the two other
+private source samples or original WhereIsIt modified-export acceptance.
