@@ -40,6 +40,8 @@ for n, name in enumerate(sys.argv[1:], 1):
             report["ctf_roundtrip"]["status"] = "byte_difference"
         if fault == "diagnostics_missing":
             report["parser_diagnostics"] = {"status": "diagnostics_failed"}
+        if fault == "bad_postcheck":
+            report["post_check"] = None
         reports.append({"dataset_number": n, "report": report})
     elif mode == "acceptance":
         report = {"source": identity, "status": "passed_available_checks",
@@ -171,6 +173,21 @@ class CheckpointTest(unittest.TestCase):
         result, report, _, _, _ = self.run_fixture({"probe": "diagnostics_missing"})
         self.assertEqual(result.returncode, 1)
         self.assertEqual(report["phases"][0]["status"], "failed")
+
+    def test_malformed_native_postcheck_never_drops_failure_checkpoint(self):
+        result, report, _, _, _ = self.run_fixture({"probe": "bad_postcheck"})
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(report["phases"][0]["status"], "failed")
+
+    def test_wrong_source_identity_fails_even_with_green_tool_status(self):
+        result, report, _, _, _ = self.run_fixture({"probe": "wrong_source"})
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(report["phases"][0]["status"], "failed")
+
+    def test_reversed_dataset_order_cannot_claim_pass(self):
+        result, report, _, _, _ = self.run_fixture({"ram_index": "swap_order"})
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(report["phases"][2]["status"], "unverified")
 
     def test_acceptance_without_query_or_sqlite_parity_fails(self):
         for fault in ("missing_queries", "sqlite_loss"):
