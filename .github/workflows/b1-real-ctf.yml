@@ -35,6 +35,41 @@ jobs:
           cargo run --release --locked -p atlas-service --example ctf_real_probe -- --self-test
           cargo run --release --locked -p atlas-service --example ctf_real_ram_index -- --self-test
           cargo run --release --locked -p atlas-service --example ctf_real_acceptance -- --self-test
+      - name: Validate complete checkpoint through three real Rust binaries (two generated CTFs)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/b1-generated"
+          cargo build --release --locked -p atlas-service --example ctf_b1_fixture
+          target/release/examples/ctf_b1_fixture "$RUNNER_TEMP/b1-generated/generated-1.CTF" 1000
+          target/release/examples/ctf_b1_fixture "$RUNNER_TEMP/b1-generated/generated-2.CTF" 1200
+          python3 tools/block1/run_private_ctf.py \
+            --probe target/release/examples/ctf_real_probe \
+            --acceptance target/release/examples/ctf_real_acceptance \
+            --ram-index target/release/examples/ctf_real_ram_index \
+            --output "$RUNNER_TEMP/b1-native-checkpoint" \
+            "$RUNNER_TEMP/b1-generated/generated-1.CTF" \
+            "$RUNNER_TEMP/b1-generated/generated-2.CTF"
+          python3 - "$RUNNER_TEMP/b1-native-checkpoint/B1_CHECKPOINT.json" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              result = json.load(stream)
+          assert result["passed_available_checks"]
+          assert result["inputs_are_real_user_ctf"] is False
+          assert result["input_origin_method"] == "unverified"
+          assert len(result["files"]) == 2
+          assert all(f["unchanged"] for f in result["files"])
+          assert [p["status"] for p in result["phases"]] == ["passed"] * 3
+          print("PASS two generated CTFs through native CTF/SQLite/RAM checkpoint")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: b1-generated-native-checkpoint-${{ github.run_id }}
+          path: ${{ runner.temp }}/b1-native-checkpoint/
+          if-no-files-found: warn
+          retention-days: 30
   native-binaries:
     needs: verify-and-format
     strategy:
