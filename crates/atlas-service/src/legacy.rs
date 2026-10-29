@@ -280,6 +280,10 @@ pub fn export(c: &Catalog, v: &Value) -> Result<Value> {
             let modified = r
                 .get::<_, Option<u32>>(8)?
                 .unwrap_or_else(|| unix_to_dos(unix));
+            let signed_size: i64 = r.get(4)?;
+            let size = u64::try_from(signed_size).map_err(|_| {
+                Error::new("ctf_corrupt", "Negative SQL size in legacy CTF export")
+            })?;
             let entry = CtfEntry {
                 name: r.get(2)?,
                 description: r.get(6)?,
