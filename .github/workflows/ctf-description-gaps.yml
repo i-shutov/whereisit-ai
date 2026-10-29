@@ -1,0 +1,48 @@
+# No private data is available to or uploaded from the runner.
+name: CTF description gaps — privacy safe diagnostic
+on:
+  push:
+    branches: [feat/ctf-description-diagnostics-20261030]
+    paths:
+      - "crates/ctf-format/src/lib.rs"
+      - "crates/ctf-format/examples/description_gap_probe.rs"
+      - ".github/workflows/ctf-description-gaps.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ctf-description-gaps-${{ github.sha }}
+  cancel-in-progress: false
+jobs:
+  diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
+      - name: Rust unit, format and lint
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo test --locked -p ctf-format
+          cargo clippy --locked -p ctf-format --all-targets -- -D warnings
+      - name: Compile local-only diagnostic with generated selftest
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p ctf-format --example description_gap_probe
+          target/release/examples/description_gap_probe --self-test
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p dist
+          cp target/release/examples/description_gap_probe LICENSE THIRD_PARTY_NOTICES.md dist/
+          printf 'source_sha=%s\nrunner=%s\nreal_user_data_in_runner=false\n' "$GITHUB_SHA" "$RUNNER_OS-$RUNNER_ARCH" > dist/PROVENANCE.txt
+          (cd dist && sha256sum description_gap_probe LICENSE THIRD_PARTY_NOTICES.md PROVENANCE.txt > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ctf-description-probe-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 21
