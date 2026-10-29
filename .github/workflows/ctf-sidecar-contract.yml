@@ -1,0 +1,68 @@
+name: CTF source binding and private-data runner contract
+on:
+  push:
+    branches: ['feat/ctf-content-bound-sidecars']
+    paths:
+      - 'crates/atlas-service/ctf_sidecar/**'
+      - 'crates/atlas-service/tests/ctf_sidecar_contract.rs'
+      - 'crates/atlas-service/examples/ctf_real_acceptance.rs'
+      - '.github/workflows/ctf-sidecar-contract.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ctf-source-binding-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ctf-binding-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-1.90-v1
+      - name: Check source binding contract and existing workspace tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          cargo test --workspace --locked 2>&1 | tee evidence/rust-tests.log
+      - name: Build local-only acceptance runner
+        run: cargo build --release --locked -p atlas-service --example ctf_real_acceptance
+      - name: Exercise runner with generated CTF only
+        shell: bash
+        run: |
+          set -euo pipefail
+          exe=target/release/examples/ctf_real_acceptance
+          if [ -f "$exe.exe" ]; then exe="$exe.exe"; fi
+          "$exe" --self-test > evidence/synthetic-self-test.json
+          printf 'commit=%s\nrunner=%s\nprivate_CTF_used=false\n' "$GITHUB_SHA" "$RUNNER_OS/$RUNNER_ARCH" > evidence/provenance.txt
+          mkdir -p candidate
+          cp "$exe" candidate/
+          cp LICENSE THIRD_PARTY_NOTICES.md candidate/
+          cp -R licenses candidate/
+      - name: Check static analysis
+        run: cargo clippy -p atlas-service --test ctf_sidecar_contract --example ctf_real_acceptance --locked -- -D warnings
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ctf-binding-evidence-${{ matrix.os }}-${{ github.run_id }}
+          path: evidence/
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: ctf-local-acceptance-runner-${{ matrix.os }}-${{ github.run_id }}
+          path: candidate/
+          if-no-files-found: error
