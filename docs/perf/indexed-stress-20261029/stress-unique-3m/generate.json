@@ -1,0 +1,15 @@
+{
+  "ctf_bytes": 161110591,
+  "ctf_encode_s": 1.072648229,
+  "ctf_sha256": "c3c4fb1439931c1c8e01b7d6eb8525be53d8a47b996ee81a6674923d2c5c932a",
+  "ctf_write_fsync_s": 0.106349252,
+  "dataset": "SYNTHETIC anti-dedup stress, no private user data",
+  "described_entries": 28114,
+  "directories": 234388,
+  "generator_s": 0.465631069,
+  "notes": "Globally unique file/folder names; directory every 13 rows; depth cycles at eight; descriptions vary per record",
+  "profile": "unique-3m",
+  "rows": 3046027,
+  "unique_descriptions": 28114,
+  "volumes": 44
+}
