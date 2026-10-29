@@ -180,6 +180,51 @@ fn failed_initial_fast_import_restores_every_trigger_and_all_rows() {
 }
 
 #[test]
+fn panicking_bulk_import_does_not_leave_fts_trigger_or_data_damage() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = Catalog::open(dir.path().join("panic.sqlite")).unwrap();
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _: Result<()> = c.bulk_import_many_fast_fts(|s| {
+            s.start_volume("new", "offline")?;
+            s.insert(&entry("orphan.flac", "orphan.flac", None, "file", ""))?;
+            panic!("synthetic callback interruption");
+        });
+    }));
+    assert!(outcome.is_err(), "panic must propagate after rollback");
+    assert_eq!(c.volumes().unwrap().len(), 0);
+    let triggers: i64 = c
+        .conn()
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name IN ('core_ai','payload_ai')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(triggers, 2, "transaction rollback restored DDL");
+    c.bulk_import("after-panic", "offline", |w| {
+        w.insert(&entry("healthy.flac", "healthy.flac", None, "file", ""))?;
+        Ok(())
+    })
+    .unwrap();
+    fts_integrity(&c);
+    assert_eq!(c.search("name:healthy", None, 0, 5).unwrap().total, 1);
+}
+
+#[test]
+fn fast_mode_rejects_fresh_v3_without_both_insert_triggers() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = Catalog::open(dir.path().join("missing-trigger.sqlite")).unwrap();
+    c.conn().execute_batch("DROP TRIGGER payload_ai").unwrap();
+    let outcome: Result<()> = c.bulk_import_many_fast_fts(|s| {
+        s.start_volume("broken", "offline")?;
+        s.finish_volume()?;
+        Ok(())
+    });
+    assert!(outcome.is_err(), "missing FTS trigger must fail closed");
+    assert_eq!(c.volumes().unwrap().len(), 0);
+}
+
+#[test]
 fn already_populated_v3_falls_back_to_normal_incremental_triggers() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = Catalog::open(dir.path().join("existing.sqlite")).unwrap();
