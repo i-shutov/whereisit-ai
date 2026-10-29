@@ -1054,6 +1054,30 @@ mod tests {
         }
     }
     #[test]
+    fn diagnostics_classifies_description_gaps_without_reading_user_text() {
+        assert_eq!(
+            undecoded_description_reason(0x10000003, b"abc"),
+            "unsupported_high_flags"
+        );
+        assert_eq!(
+            undecoded_description_reason(0x08000003, &0_u32.to_le_bytes()),
+            "external_reference_not_diagnosable_from_entry"
+        );
+        assert_eq!(
+            undecoded_description_reason(0x00000001, &[0]),
+            "explicit_empty_inline"
+        );
+        assert_eq!(
+            undecoded_description_reason(0x00000002, &[0xff, 0]),
+            "invalid_inline_utf8_or_cesu8"
+        );
+        assert_eq!(
+            undecoded_description_reason(0x00000004, b"book"),
+            "decoded_inline_but_final_description_empty"
+        );
+    }
+
+    #[test]
     fn create_edit_and_export() {
         let c = sample();
         let data = write_ctf(&c).unwrap();
@@ -1138,12 +1162,40 @@ mod tests {
     }
 }
 
+/// Reason categories describe decode failures, never original text.
+fn undecoded_description_reason(packed: u32, data: &[u8]) -> &'static str {
+    let flags = (packed >> 24) as u8;
+    if flags & !0x0c != 0 {
+        "unsupported_high_flags"
+    } else if flags & 0x08 != 0 {
+        // The parser may reference a larger disk/blob buffer which a CtfEntry
+        // does not retain. A 4-byte pointer alone cannot prove a bad offset.
+        "external_reference_not_diagnosable_from_entry"
+    } else {
+        let raw = data.strip_suffix(&[0]).unwrap_or(data);
+        match decode_name(raw) {
+            Ok(value) if value.is_empty() => "explicit_empty_inline",
+            Ok(_) => "decoded_inline_but_final_description_empty",
+            Err(_) => "invalid_inline_utf8_or_cesu8",
+        }
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ImportDiagnostics {
+    /// Legacy count: a record has a nonzero type-1 payload but an empty decoded
+    /// description. It includes intentional empty values; do not call all
+    /// occurrences data loss without reviewing the classification histogram.
     pub unsupported_descriptions: usize,
     pub archived_files: usize,
     pub archive_containers: usize,
     pub descriptions: usize,
+    /// Per-extension reason totals for records in unsupported_descriptions.
+    #[serde(default)]
+    pub description_gap_reasons: std::collections::BTreeMap<String, usize>,
+    /// Upper high-byte flags only, never original encoded text or source path.
+    #[serde(default)]
+    pub description_gap_flag_histogram: std::collections::BTreeMap<String, usize>,
 }
 /// Count descriptions that remain preserved but could not be decoded for search.
 pub fn diagnostics(c: &CtfCatalog) -> Result<ImportDiagnostics, CtfError> {
@@ -1185,8 +1237,23 @@ pub fn diagnostics(c: &CtfCatalog) -> Result<ImportDiagnostics, CtfError> {
                     Vec::new()
                 }
             };
-            if e.description.is_empty() && ext.iter().any(|x| x.0 == 1 && x.1 & 0xffffff != 0) {
-                d.unsupported_descriptions += 1;
+            if e.description.is_empty() {
+                let mut gap_found = false;
+                for (kind, packed, data) in &ext {
+                    if *kind != 1 || packed & 0xffffff == 0 {
+                        continue;
+                    }
+                    gap_found = true;
+                    *d.description_gap_reasons
+                        .entry(undecoded_description_reason(*packed, data).to_owned())
+                        .or_insert(0) += 1;
+                    *d.description_gap_flag_histogram
+                        .entry(format!("{:02x}", packed >> 24))
+                        .or_insert(0) += 1;
+                }
+                if gap_found {
+                    d.unsupported_descriptions += 1;
+                }
             }
         }
     }
