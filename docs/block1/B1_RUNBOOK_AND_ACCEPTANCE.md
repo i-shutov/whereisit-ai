@@ -7,8 +7,9 @@
 ## Tools implemented
 
 - Native Rust **ctf_real_probe**: bounded double-hash source capture, CTF parser, complete counts and distributions (file/folder/archive, hierarchy depth, size buckets, decoded annotations, opaque raw record bytes, coarse attributes), metadata duplicate groups, unchanged parse→write byte comparison with numeric mismatch offset, final source hash verification. Reports no actual file names or paths.
+- Native Rust **ctf_real_ram_index**: same-data sorted RAM scan versus extension postings, name trigrams and sparse-description candidates; confirms count and page equality for each fixed query and reports index build time/memory.
 - Native Rust **ctf_real_acceptance** (from PR #17): SQLite import, Rust/SQLite query parity, duplicate candidates, CSV/Parquet counts, SQLite→CTF roundtrip, hash-linked cache invalidation, rename reuse, external edit conflict detection.
-- Python **run_private_ctf.py**: runs both tools on both sources, writes a local immutable checkpoint: probe.json, acceptance.json, B1_CHECKPOINT.json, B1_REPORT.md, SHA256SUMS.txt.
+- Python **run_private_ctf.py**: runs both tools on both sources, writes a local immutable checkpoint: probe.json, acceptance.json, ram_index.json, B1_CHECKPOINT.json, B1_REPORT.md, SHA256SUMS.txt.
 - Python **benchmark_columnar.py**: imports real CTF to *temporary* SQLite, exports temporary Parquet, compares native SQLite with DuckDB Parquet scans and Polars lazy/eager. Tested result shape is sorted ID first 250, exact count and SHA-256 of ordered IDs for 14+ predicates; does not disclose actual sample text. Temporary SQLite/Parquet are removed at exit. Warm timing is not a cold-cache/p95 guarantee.
 
 ## Windows PowerShell
@@ -16,7 +17,7 @@
 Build tools in branch research/b1-real-ctf-20261029:
 
 ```powershell
-cargo +1.90.0 build --release --locked -p atlas-service --example ctf_real_probe --example ctf_real_acceptance
+cargo +1.90.0 build --release --locked -p atlas-service --example ctf_real_probe --example ctf_real_acceptance --example ctf_real_ram_index
 cargo +1.90.0 build --release --locked -p atlas-cli
 ```
 
@@ -25,16 +26,16 @@ Run from the project directory, changing source paths:
 ```powershell
 $book = 'D:\Catalogs\e-books.CTF'
 $mp3 = 'D:\Catalogs\Mp3-60Gb.CTF'
-py -3 tools/block1/run_private_ctf.py --probe target\release\examples\ctf_real_probe.exe --acceptance target\release\examples\ctf_real_acceptance.exe --output "$env:USERPROFILE\Documents\WhereIsIt-B1-001" $book $mp3
+py -3 tools/block1/run_private_ctf.py --probe target\release\examples\ctf_real_probe.exe --acceptance target\release\examples\ctf_real_acceptance.exe --ram-index target\release\examples\ctf_real_ram_index.exe --output "$env:USERPROFILE\Documents\WhereIsIt-B1-001" $book $mp3
 uv run --with duckdb==1.5.5 --with polars==1.43.2 python tools/block1/benchmark_columnar.py --cli target\release\atlas.exe --output "$env:USERPROFILE\Documents\WhereIsIt-B1-columnar-001" $book $mp3
 ```
 
 ## macOS / Linux
 
 ```bash
-cargo +1.90.0 build --release --locked -p atlas-service --example ctf_real_probe --example ctf_real_acceptance
+cargo +1.90.0 build --release --locked -p atlas-service --example ctf_real_probe --example ctf_real_acceptance --example ctf_real_ram_index
 cargo +1.90.0 build --release --locked -p atlas-cli
-python3 tools/block1/run_private_ctf.py --probe target/release/examples/ctf_real_probe --acceptance target/release/examples/ctf_real_acceptance --output "$HOME/WhereIsIt-B1-001" "/path/to/e-books.CTF" "/path/to/Mp3-60Gb.CTF"
+python3 tools/block1/run_private_ctf.py --probe target/release/examples/ctf_real_probe --acceptance target/release/examples/ctf_real_acceptance --ram-index target/release/examples/ctf_real_ram_index --output "$HOME/WhereIsIt-B1-001" "/path/to/e-books.CTF" "/path/to/Mp3-60Gb.CTF"
 uv run --with duckdb==1.5.5 --with polars==1.43.2 python tools/block1/benchmark_columnar.py --cli target/release/atlas --output "$HOME/WhereIsIt-B1-columnar-001" "/path/to/e-books.CTF" "/path/to/Mp3-60Gb.CTF"
 ```
 
