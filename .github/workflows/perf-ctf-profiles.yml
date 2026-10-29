@@ -1,0 +1,87 @@
+name: CTF adverse profiles and persistence study
+on:
+  push:
+    branches: ['perf/ctf-profiles-20261029']
+    paths:
+      - 'crates/atlas-service/examples/perf_ctf_profiles.rs'
+      - 'tools/perf/checkpoints.py'
+      - '.github/workflows/perf-ctf-profiles.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ctf-adverse-profiles
+  cancel-in-progress: false
+jobs:
+  profiles:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      POLARS_MAX_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: perf-ctf-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-1.90-v1
+      - run: |
+          rustup toolchain install 1.90.0 --profile minimal
+          cargo build --release --locked -p atlas-service --example perf_ctf_ram --example perf_ctf_profiles
+          python -m pip install duckdb==1.5.5 polars==1.43.2
+      - name: Test unique/deep and payload-heavy 100k catalogs
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          { lscpu; free -b; rustc --version; python --version; python -m pip freeze; } > evidence/environment.txt
+          printf 'commit=%s\nrun_id=%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > evidence/provenance.txt
+          for profile in unique-deep payload-heavy; do
+            dir="$RUNNER_TEMP/ctf-profile-$profile"
+            mkdir -p "$dir" "evidence/$profile"
+            collect() { cp "$dir"/*.json "evidence/$profile/" 2>/dev/null || true; }
+            trap collect EXIT
+            /usr/bin/time -v -o "evidence/$profile/generate.resources.txt" target/release/examples/perf_ctf_profiles "$profile" "$dir" 100000
+            collect
+            for phase in ram app; do
+              /usr/bin/time -v -o "evidence/$profile/$phase.resources.txt" target/release/examples/perf_ctf_ram "$phase" "$dir"
+              collect
+            done
+            for engine in prepare sqlite sqlite-ram duck-file duck-ram duck-parquet duck-sorted polars-ram polars-parquet; do
+              /usr/bin/time -v -o "evidence/$profile/$engine.resources.txt" python tools/perf/backends.py "$engine" "$dir"
+              collect
+            done
+            python tools/perf/checkpoints.py "$dir"
+            collect
+            python tools/perf/summarize.py evidence
+          done
+      - if: always()
+        run: python tools/perf/summarize.py evidence
+      - name: Record aggregate-only evidence on research branch
+        if: success()
+        run: |
+          git fetch origin perf/ctf-profiles-20261029
+          if [ "$(git rev-parse origin/perf/ctf-profiles-20261029)" != "$GITHUB_SHA" ]; then exit 0; fi
+          mkdir -p docs/perf/ctf-profiles-20261029
+          cp -R evidence/. docs/perf/ctf-profiles-20261029/
+          git config user.name 'whereisit-perf-ci'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/perf/ctf-profiles-20261029
+          git commit -m 'perf: measured unique/deep/payload profiles and persistence tests [skip ci]'
+          git push origin HEAD:refs/heads/perf/ctf-profiles-20261029
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ctf-adverse-profile-evidence-${{ github.run_id }}
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
