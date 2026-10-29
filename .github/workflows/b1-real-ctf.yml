@@ -43,7 +43,7 @@ jobs:
             echo 'Branch advanced, refusing to overwrite newer source' >&2
             exit 1
           fi
-          git add crates/atlas-service/examples/ctf_real_probe.rs crates/atlas-service/examples/ctf_real_ram_index.rs
+          git add crates/atlas-service/examples/ctf_real_probe.rs crates/atlas-service/examples/ctf_real_ram_index.rs crates/atlas-service/examples/ctf_b1_fixture.rs
           if ! git diff --cached --quiet; then
             git config user.name 'whereisit-ci'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
@@ -108,13 +108,13 @@ jobs:
       - name: Build CLI and generated CTF fixture
         run: |
           cargo build --release --locked -p atlas-cli
-          cargo build --release --locked -p atlas-service --example perf_ctf_ram
+          cargo build --release --locked -p atlas-service --example ctf_b1_fixture
           python -m pip install duckdb==1.5.5 polars==1.43.2
       - name: Assert SQLite DuckDB Polars parity on generated input
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/ctf-work"
-          target/release/examples/perf_ctf_ram generate "$RUNNER_TEMP/ctf-work" 1000
+          target/release/examples/ctf_b1_fixture "$RUNNER_TEMP/ctf-work/source.ctf" 1000
           python tools/block1/benchmark_columnar.py \
             --cli "target/release/atlas" \
             --output "$RUNNER_TEMP/b1-columnar-report" \
