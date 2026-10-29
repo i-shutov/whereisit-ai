@@ -1,0 +1,89 @@
+name: B1 read-only real CTF diagnostic tools
+on:
+  push:
+    branches: [research/b1-real-ctf-20261029]
+    paths:
+      - "crates/atlas-service/examples/ctf_real_probe.rs"
+      - "tools/block1/**"
+      - ".github/workflows/b1-real-ctf.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: b1-real-ctf
+  cancel-in-progress: false
+jobs:
+  verify-and-format:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
+      - name: Format and verify workspace + standalone probes
+        run: |
+          cargo fmt --all
+          cargo test --workspace --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          python3 -m py_compile tools/block1/run_private_ctf.py
+          cargo run --release --locked -p atlas-service --example ctf_real_probe -- --self-test
+          cargo run --release --locked -p atlas-service --example ctf_real_acceptance -- --self-test
+      - name: Commit only verified formatting if branch head unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin research/b1-real-ctf-20261029
+          if [ "$(git rev-parse origin/research/b1-real-ctf-20261029)" != "$GITHUB_SHA" ]; then
+            echo 'Branch advanced, refusing to overwrite newer source' >&2
+            exit 1
+          fi
+          git add crates/atlas-service/examples/ctf_real_probe.rs
+          if ! git diff --cached --quiet; then
+            git config user.name 'whereisit-ci'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'style(b1): format verified CTF probe [skip ci]'
+            git push origin HEAD:refs/heads/research/b1-real-ctf-20261029
+          fi
+  native-binaries:
+    needs: verify-and-format
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: research/b1-real-ctf-20261029
+      - run: rustup toolchain install 1.90.0 --profile minimal
+        shell: bash
+      - name: Build privacy-safe native tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release --locked -p atlas-service --example ctf_real_probe --example ctf_real_acceptance
+          ext=""
+          if [ "$RUNNER_OS" = Windows ]; then ext=".exe"; fi
+          mkdir -p dist
+          cp "target/release/examples/ctf_real_probe$ext" "dist/ctf_real_probe$ext"
+          cp "target/release/examples/ctf_real_acceptance$ext" "dist/ctf_real_acceptance$ext"
+          cp LICENSE THIRD_PARTY_NOTICES.md dist/
+          printf 'source_sha=%s\nrunner=%s\n' "$(git rev-parse HEAD)" "$RUNNER_OS-$RUNNER_ARCH" > dist/PROVENANCE.txt
+      - name: Run both synthetic self-tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ext=""
+          if [ "$RUNNER_OS" = Windows ]; then ext=".exe"; fi
+          "./dist/ctf_real_probe$ext" --self-test
+          "./dist/ctf_real_acceptance$ext" --self-test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: b1-CTF-tools-${{ matrix.os }}-${{ github.run_id }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 60
