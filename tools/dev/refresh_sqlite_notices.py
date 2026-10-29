@@ -37,9 +37,16 @@ def check_sqlite_source() -> Path:
     # SQLite's version define may be well beyond the initial header. Scan
     # the packaged amalgamation rather than treating the first 200 KiB as all.
     source_bytes = amalgamation.read_bytes()
-    marker = f'#define SQLITE_VERSION "{SQLITE_VERSION}"'.encode()
-    if marker not in source_bytes:
-        raise RuntimeError("Bundled sqlite3.c is not the reviewed SQLite " + SQLITE_VERSION)
+    # SQLite amalgamation macros use variable spacing before the quoted value.
+    found = re.search(
+        rb'(?m)^[ \\t]*#[ \\t]*define[ \\t]+SQLITE_VERSION[ \\t]+"([0-9]+\\.[0-9]+\\.[0-9]+)"',
+        source_bytes,
+    )
+    actual = found.group(1).decode("ascii") if found else "not_found"
+    if actual != SQLITE_VERSION:
+        raise RuntimeError(
+            f"Bundled sqlite3.c version mismatch: expected {SQLITE_VERSION}, found {actual}"
+        )
     if b"The author disclaims copyright to this source code." not in source_bytes:
         raise RuntimeError("SQLite public-domain notice missing from bundled source")
     return amalgamation
