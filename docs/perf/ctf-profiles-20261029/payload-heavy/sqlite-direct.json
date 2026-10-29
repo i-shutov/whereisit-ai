@@ -1,0 +1,436 @@
+{
+  "engine": "sqlite-direct",
+  "shape": "ID-only ordered first 250, count separately",
+  "queries": [
+    {
+      "id": 0,
+      "case": "ext-size",
+      "page": {
+        "first_ms": 2.6187960000072508,
+        "median_ms": 0.8531990000051337,
+        "warm_samples_ms": [
+          1.0130180000089695,
+          0.926665999998022,
+          0.8638989999951718,
+          0.8203470000012203,
+          0.8312180000018543,
+          0.8424990000150956
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 44.052060000012716,
+      "total": 24488,
+      "parity": true,
+      "plan": [
+        [
+          5,
+          0,
+          0,
+          "SCAN e USING INDEX entries_name_sort"
+        ]
+      ]
+    },
+    {
+      "id": 1,
+      "case": "name-substring",
+      "page": {
+        "first_ms": 26.287908999989895,
+        "median_ms": 22.818664999988414,
+        "warm_samples_ms": [
+          23.243516000007958,
+          23.093985000002704,
+          22.946098999995,
+          22.636849000008397,
+          22.691230999981826,
+          22.561980000006088
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 11.420336000014686,
+      "total": 1,
+      "parity": true,
+      "plan": [
+        [
+          5,
+          0,
+          0,
+          "SCAN e USING INDEX entries_name_sort"
+        ]
+      ]
+    },
+    {
+      "id": 2,
+      "case": "broad-path-ext",
+      "page": {
+        "first_ms": 8.761083000024428,
+        "median_ms": 8.123299000018847,
+        "warm_samples_ms": [
+          8.254535000020269,
+          8.247590999985732,
+          8.175807000014856,
+          8.070791000022837,
+          8.04723699999954,
+          8.010126999977274
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 76.5989960000013,
+      "total": 24488,
+      "parity": true,
+      "plan": [
+        [
+          5,
+          0,
+          0,
+          "SCAN e USING INDEX entries_name_sort"
+        ]
+      ]
+    },
+    {
+      "id": 3,
+      "case": "sparse-description",
+      "page": {
+        "first_ms": 398.3450380000022,
+        "median_ms": 390.56350549999763,
+        "warm_samples_ms": [
+          390.4525529999887,
+          390.67445800000655,
+          390.6780450000156,
+          390.21564800000874,
+          390.78746000001274,
+          390.44686100001513
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 388.49323100001243,
+      "total": 19595,
+      "parity": true,
+      "plan": [
+        [
+          4,
+          0,
+          0,
+          "SEARCH e USING INTEGER PRIMARY KEY (rowid=?)"
+        ],
+        [
+          8,
+          0,
+          0,
+          "LIST SUBQUERY 1"
+        ],
+        [
+          10,
+          8,
+          0,
+          "SCAN entry_payload"
+        ],
+        [
+          36,
+          0,
+          0,
+          "USE TEMP B-TREE FOR ORDER BY"
+        ]
+      ]
+    },
+    {
+      "id": 4,
+      "case": "negative-description-ext",
+      "page": {
+        "first_ms": 372.88498999998865,
+        "median_ms": 372.2831700000171,
+        "warm_samples_ms": [
+          372.1679559999984,
+          371.5585550000071,
+          372.3637030000191,
+          372.2026370000151,
+          372.48824499999955,
+          373.3341390000078
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 375.99894000001655,
+      "total": 19600,
+      "parity": true,
+      "plan": [
+        [
+          5,
+          0,
+          0,
+          "SCAN e USING INDEX entries_name_sort"
+        ],
+        [
+          11,
+          0,
+          0,
+          "LIST SUBQUERY 1"
+        ],
+        [
+          13,
+          11,
+          0,
+          "SCAN entry_payload"
+        ]
+      ]
+    },
+    {
+      "id": 5,
+      "case": "inherited-category-ext",
+      "page": {
+        "first_ms": 1.6995230000134143,
+        "median_ms": 0.7765040000009549,
+        "warm_samples_ms": [
+          0.8022130000142624,
+          0.7736089999923479,
+          0.7859420000215778,
+          0.7793990000095619,
+          0.7729980000021897,
+          0.7706529999893519
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 21.909391000008327,
+      "total": 3341,
+      "parity": true,
+      "plan": [
+        [
+          5,
+          0,
+          0,
+          "SCAN e USING INDEX entries_name_sort"
+        ]
+      ]
+    },
+    {
+      "id": 6,
+      "case": "or-cross-field",
+      "page": {
+        "first_ms": 383.45604500000263,
+        "median_ms": 386.9357815000001,
+        "warm_samples_ms": [
+          386.8850259999874,
+          386.7158489999838,
+          386.1025009999821,
+          387.01677299999915,
+          387.3422919999996,
+          386.98653700001273
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 726.884388000002,
+      "total": 19596,
+      "parity": true,
+      "plan": [
+        [
+          5,
+          0,
+          0,
+          "SCAN e USING INDEX entries_name_sort"
+        ],
+        [
+          18,
+          0,
+          0,
+          "LIST SUBQUERY 1"
+        ],
+        [
+          20,
+          18,
+          0,
+          "SCAN entry_payload"
+        ]
+      ]
+    },
+    {
+      "id": 7,
+      "case": "no-match",
+      "page": {
+        "first_ms": 24.628152000019554,
+        "median_ms": 22.880929999999466,
+        "warm_samples_ms": [
+          22.77732600001059,
+          22.67726899998479,
+          22.984533999988344,
+          22.488173999988703,
+          23.160503000013932,
+          23.24835899997879
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 8.519935999999007,
+      "total": 0,
+      "parity": true,
+      "plan": [
+        [
+          5,
+          0,
+          0,
+          "SCAN e USING INDEX entries_name_sort"
+        ]
+      ]
+    },
+    {
+      "id": 8,
+      "case": "short-text",
+      "page": {
+        "first_ms": 0.40988800000718584,
+        "median_ms": 0.18529199999761659,
+        "warm_samples_ms": [
+          0.20089599999550956,
+          0.18367399999874578,
+          0.17992599998706282,
+          0.17757300000198484,
+          0.1918400000135989,
+          0.18690999999648739
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 7.238375999975233,
+      "total": 99956,
+      "parity": true,
+      "plan": [
+        [
+          5,
+          0,
+          0,
+          "SCAN e USING INDEX entries_name_sort"
+        ]
+      ]
+    },
+    {
+      "id": 9,
+      "case": "selective-folder-ext",
+      "page": {
+        "first_ms": 296.7467909999755,
+        "median_ms": 298.5878834999909,
+        "warm_samples_ms": [
+          298.50940200000764,
+          299.7300480000149,
+          298.6663649999741,
+          297.15006500001095,
+          298.78695100001096,
+          296.231946000006
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 82.65993099999491,
+      "total": 0,
+      "parity": true,
+      "plan": [
+        [
+          5,
+          0,
+          0,
+          "SCAN e USING INDEX entries_name_sort"
+        ]
+      ]
+    },
+    {
+      "id": 10,
+      "case": "wildcard-name",
+      "page": {
+        "first_ms": 24.284317999985205,
+        "median_ms": 23.60008200000152,
+        "warm_samples_ms": [
+          24.385016999985965,
+          24.543033000014702,
+          23.770044999992024,
+          23.430119000011018,
+          22.999050999999326,
+          22.287276000014344
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 8.459397999985185,
+      "total": 0,
+      "parity": true,
+      "plan": [
+        [
+          5,
+          0,
+          0,
+          "SCAN e USING INDEX entries_name_sort"
+        ]
+      ]
+    },
+    {
+      "id": 11,
+      "case": "boolean-or-not-size",
+      "page": {
+        "first_ms": 3.285024999996722,
+        "median_ms": 2.7905884999910313,
+        "warm_samples_ms": [
+          2.8274869999904695,
+          2.793553999993037,
+          2.7832439999997405,
+          2.7893859999892356,
+          2.7707109999823842,
+          2.791790999992827
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 81.46859499998982,
+      "total": 20632,
+      "parity": true,
+      "plan": [
+        [
+          5,
+          0,
+          0,
+          "SCAN e USING INDEX entries_name_sort"
+        ]
+      ]
+    },
+    {
+      "id": 12,
+      "case": "rare-large-size",
+      "page": {
+        "first_ms": 19.424600000007786,
+        "median_ms": 17.94646600001215,
+        "warm_samples_ms": [
+          19.147079999981997,
+          17.997937000018283,
+          17.310579000024973,
+          17.624337999990303,
+          17.89499500000602,
+          19.233100999997532
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 0.0779659999921023,
+      "total": 9,
+      "parity": true,
+      "plan": [
+        [
+          5,
+          0,
+          0,
+          "SCAN e USING INDEX entries_name_sort"
+        ]
+      ]
+    }
+  ],
+  "duplicates": {
+    "groups": 0,
+    "members": 0,
+    "first_build_ms": 29.594532999993817
+  },
+  "paging": null,
+  "point_lookup": {
+    "first_ms": 0.051707000011447235,
+    "median_ms": 0.0063720000014200195,
+    "warm_samples_ms": [
+      0.009617999978672742,
+      0.006591999976990337,
+      0.006141000000070562,
+      0.006232000004047222,
+      0.006511999998792817,
+      0.006081000009316995
+    ],
+    "cache": "OS cache not flushed"
+  },
+  "memory": {
+    "peak_rss_kib": 91448,
+    "rss_kib": 89168
+  },
+  "sqlite_version": "3.45.1"
+}

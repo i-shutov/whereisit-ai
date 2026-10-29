@@ -1,0 +1,11 @@
+{
+  "ctf_bytes": 72736655,
+  "ctf_encode_s": 0.16350541,
+  "ctf_sha256": "6225b0b038b5358105a60748474e342776338bd912386f2617411f2237f7a759",
+  "ctf_write_fsync_s": 0.036535805,
+  "dataset": "SYNTHETIC adverse profile, not user data",
+  "generator_s": 0.055517734,
+  "profile": "payload-heavy",
+  "rows": 100000,
+  "volumes": 44
+}

@@ -1,0 +1,440 @@
+{
+  "engine": "sqlite-tuned",
+  "shape": "ID-only ordered first 250, count separately",
+  "queries": [
+    {
+      "id": 0,
+      "case": "ext-size",
+      "page": {
+        "first_ms": 0.1700280000136445,
+        "median_ms": 0.08895700000266515,
+        "warm_samples_ms": [
+          0.09800299997664297,
+          0.08962800001199867,
+          0.08888700000397876,
+          0.08892700000728837,
+          0.08880699999735953,
+          0.08898699999804194
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 1.7432759999849168,
+      "total": 24488,
+      "parity": true,
+      "plan": [
+        [
+          4,
+          0,
+          0,
+          "SEARCH e USING COVERING INDEX perf_ext_order_size (ext=?)"
+        ]
+      ]
+    },
+    {
+      "id": 1,
+      "case": "name-substring",
+      "page": {
+        "first_ms": 31.364198000005672,
+        "median_ms": 23.013438999996083,
+        "warm_samples_ms": [
+          23.5713579999981,
+          22.984579999985044,
+          23.042298000007122,
+          23.053849000007176,
+          22.768884999976535,
+          22.608985999994502
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 7.67863600000851,
+      "total": 1,
+      "parity": true,
+      "plan": [
+        [
+          5,
+          0,
+          0,
+          "SCAN e USING INDEX entries_name_sort"
+        ]
+      ]
+    },
+    {
+      "id": 2,
+      "case": "broad-path-ext",
+      "page": {
+        "first_ms": 1.033336000006102,
+        "median_ms": 0.7883014999947591,
+        "warm_samples_ms": [
+          0.8053180000047178,
+          0.7967220000182351,
+          0.7868539999833501,
+          0.7716860000073211,
+          0.789749000006168,
+          0.7868339999959062
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 77.14149599999587,
+      "total": 24488,
+      "parity": true,
+      "plan": [
+        [
+          5,
+          0,
+          0,
+          "SEARCH e USING INDEX perf_ext_order_size (ext=?)"
+        ]
+      ]
+    },
+    {
+      "id": 3,
+      "case": "sparse-description",
+      "page": {
+        "first_ms": 396.8541039999991,
+        "median_ms": 394.5588289999904,
+        "warm_samples_ms": [
+          392.0511970000007,
+          392.03150000000164,
+          396.1813869999844,
+          394.8804050000092,
+          394.5168359999798,
+          394.600822000001
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 393.1986509999774,
+      "total": 19595,
+      "parity": true,
+      "plan": [
+        [
+          4,
+          0,
+          0,
+          "SEARCH e USING INTEGER PRIMARY KEY (rowid=?)"
+        ],
+        [
+          8,
+          0,
+          0,
+          "LIST SUBQUERY 1"
+        ],
+        [
+          10,
+          8,
+          0,
+          "SCAN entry_payload"
+        ],
+        [
+          36,
+          0,
+          0,
+          "USE TEMP B-TREE FOR ORDER BY"
+        ]
+      ]
+    },
+    {
+      "id": 4,
+      "case": "negative-description-ext",
+      "page": {
+        "first_ms": 371.43331599997964,
+        "median_ms": 372.25397199999577,
+        "warm_samples_ms": [
+          374.7672650000027,
+          371.69575600000826,
+          373.4798989999888,
+          372.8121879999833,
+          371.3552389999961,
+          371.46735800001807
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 377.0431629999962,
+      "total": 19600,
+      "parity": true,
+      "plan": [
+        [
+          4,
+          0,
+          0,
+          "SEARCH e USING COVERING INDEX perf_ext_order_size (ext=?)"
+        ],
+        [
+          11,
+          0,
+          0,
+          "LIST SUBQUERY 1"
+        ],
+        [
+          13,
+          11,
+          0,
+          "SCAN entry_payload"
+        ]
+      ]
+    },
+    {
+      "id": 5,
+      "case": "inherited-category-ext",
+      "page": {
+        "first_ms": 0.4617049999922074,
+        "median_ms": 0.1402624999826685,
+        "warm_samples_ms": [
+          0.14956000001120628,
+          0.14275699999188873,
+          0.1403929999810316,
+          0.13812800000323477,
+          0.14013199998430537,
+          0.1384190000237595
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 22.481752999993887,
+      "total": 3341,
+      "parity": true,
+      "plan": [
+        [
+          5,
+          0,
+          0,
+          "SEARCH e USING INDEX perf_ext_order_size (ext=?)"
+        ]
+      ]
+    },
+    {
+      "id": 6,
+      "case": "or-cross-field",
+      "page": {
+        "first_ms": 385.34204799998406,
+        "median_ms": 386.75395949999825,
+        "warm_samples_ms": [
+          384.2783959999849,
+          387.30895300000157,
+          383.9512129999889,
+          386.48898499999973,
+          388.2191120000016,
+          387.01893399999676
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 728.6996489999922,
+      "total": 19596,
+      "parity": true,
+      "plan": [
+        [
+          5,
+          0,
+          0,
+          "SCAN e USING INDEX entries_name_sort"
+        ],
+        [
+          18,
+          0,
+          0,
+          "LIST SUBQUERY 1"
+        ],
+        [
+          20,
+          18,
+          0,
+          "SCAN entry_payload"
+        ]
+      ]
+    },
+    {
+      "id": 7,
+      "case": "no-match",
+      "page": {
+        "first_ms": 24.582162999990942,
+        "median_ms": 22.79133300000069,
+        "warm_samples_ms": [
+          22.79560599998831,
+          22.78706000001307,
+          22.450398999978916,
+          22.415594999984023,
+          23.262369999997645,
+          23.434674000014866
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 8.561887000013257,
+      "total": 0,
+      "parity": true,
+      "plan": [
+        [
+          5,
+          0,
+          0,
+          "SCAN e USING INDEX entries_name_sort"
+        ]
+      ]
+    },
+    {
+      "id": 8,
+      "case": "short-text",
+      "page": {
+        "first_ms": 0.41516699999988305,
+        "median_ms": 0.18059399999970083,
+        "warm_samples_ms": [
+          0.19756100002155108,
+          0.18172099998992053,
+          0.17946700000948113,
+          0.17772300000729047,
+          0.17786399999408786,
+          0.194864999997435
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 6.710498999979109,
+      "total": 99956,
+      "parity": true,
+      "plan": [
+        [
+          5,
+          0,
+          0,
+          "SCAN e USING INDEX entries_name_sort"
+        ]
+      ]
+    },
+    {
+      "id": 9,
+      "case": "selective-folder-ext",
+      "page": {
+        "first_ms": 83.10264299998948,
+        "median_ms": 83.14219249999155,
+        "warm_samples_ms": [
+          82.89420299999506,
+          83.4021430000007,
+          83.39018199998804,
+          82.81630700000164,
+          83.64427699999055,
+          82.53163399999153
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 81.96299799999451,
+      "total": 0,
+      "parity": true,
+      "plan": [
+        [
+          5,
+          0,
+          0,
+          "SEARCH e USING INDEX perf_ext_order_size (ext=?)"
+        ]
+      ]
+    },
+    {
+      "id": 10,
+      "case": "wildcard-name",
+      "page": {
+        "first_ms": 24.04447600000026,
+        "median_ms": 23.224319499988155,
+        "warm_samples_ms": [
+          23.453869999997323,
+          23.095439000002216,
+          23.24831499998936,
+          23.35836000000313,
+          23.20032399998695,
+          22.090345999998817
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 8.336684999989075,
+      "total": 0,
+      "parity": true,
+      "plan": [
+        [
+          5,
+          0,
+          0,
+          "SCAN e USING INDEX entries_name_sort"
+        ]
+      ]
+    },
+    {
+      "id": 11,
+      "case": "boolean-or-not-size",
+      "page": {
+        "first_ms": 3.3301670000014383,
+        "median_ms": 2.7951349999995045,
+        "warm_samples_ms": [
+          2.8257219999829886,
+          2.7941030000135925,
+          2.796558999989429,
+          2.7961669999854166,
+          2.7886139999964143,
+          2.774215999977514
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 83.24413700000832,
+      "total": 20632,
+      "parity": true,
+      "plan": [
+        [
+          5,
+          0,
+          0,
+          "SCAN e USING INDEX entries_name_sort"
+        ]
+      ]
+    },
+    {
+      "id": 12,
+      "case": "rare-large-size",
+      "page": {
+        "first_ms": 19.959434000014653,
+        "median_ms": 19.384463000008623,
+        "warm_samples_ms": [
+          19.624556999985998,
+          19.567050000006248,
+          19.812990999980684,
+          19.201876000010998,
+          18.971824000004744,
+          18.791246999995792
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 0.07057199999849217,
+      "total": 9,
+      "parity": true,
+      "plan": [
+        [
+          5,
+          0,
+          0,
+          "SCAN e USING INDEX entries_name_sort"
+        ]
+      ]
+    }
+  ],
+  "duplicates": {
+    "groups": 0,
+    "members": 0,
+    "first_build_ms": 29.392111999982262
+  },
+  "paging": null,
+  "point_lookup": {
+    "first_ms": 0.027360999979464395,
+    "median_ms": 0.005500499995036989,
+    "warm_samples_ms": [
+      0.007244000016726204,
+      0.005660999988776894,
+      0.0058809999927689205,
+      0.0052199999913682404,
+      0.005340000001297085,
+      0.005200000003924288
+    ],
+    "cache": "OS cache not flushed"
+  },
+  "memory": {
+    "peak_rss_kib": 96820,
+    "rss_kib": 89376
+  },
+  "sqlite_version": "3.45.1",
+  "copy_to_ram_s": null,
+  "index_build_s": 0.16817990100000202,
+  "index_note": "Adds ext + name order + id + size, preserves existing indexes; direct predicates, no FTS candidate stage; category uses known synthetic inherited membership",
+  "python_udf_note": "Unicode lowercase for paths runs in Python here, unlike the production Rust UDF"
+}

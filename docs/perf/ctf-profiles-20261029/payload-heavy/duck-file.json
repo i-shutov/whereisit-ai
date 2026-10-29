@@ -1,0 +1,370 @@
+{
+  "engine": "duck-file",
+  "shape": "ID-only ordered first 250, count separately",
+  "queries": [
+    {
+      "id": 0,
+      "case": "ext-size",
+      "page": {
+        "first_ms": 3.9491250000196487,
+        "median_ms": 1.9945250000006354,
+        "warm_samples_ms": [
+          2.2464159999913136,
+          2.0592159999921478,
+          1.9844560000024103,
+          2.0045939999988605,
+          1.9592589999888332,
+          1.972864000009622
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 0.7755020000104196,
+      "total": 24488,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│          SEQ_SCAN         │\n│    ────────────────────   │\n│           Table:          │\n│ analytical.main.\"catalog\" │\n│                           │\n│   Type: Sequential Scan   │\n│                           │\n│        Projections:       │\n│             id            │\n│         name_norm         │\n│                           │\n│          Filters:         │\n│         ext='mkv'         │\n│      size>4294967296      │\n│ optional: Dynamic Filter  │\n│        (name_norm)        │\n│                           │\n│        ~20,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    },
+    {
+      "id": 1,
+      "case": "name-substring",
+      "page": {
+        "first_ms": 4.880388999993102,
+        "median_ms": 4.716972999986524,
+        "warm_samples_ms": [
+          4.722693999980265,
+          4.746138000001565,
+          4.723205000004782,
+          4.681957999991937,
+          4.711251999992783,
+          4.700673000002098
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 4.6456190000014885,
+      "total": 1,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             id            │\n│         name_norm         │\n│                           │\n│        ~20,000 rows       │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│          SEQ_SCAN         │\n│    ────────────────────   │\n│           Table:          │\n│ analytical.main.\"catalog\" │\n│                           │\n│   Type: Sequential Scan   │\n│                           │\n│        Projections:       │\n│         name_norm         │\n│             id            │\n│                           │\n│          Filters:         │\n│ (instr(name_norm, 'запись │\n│    -0000200') > 0) AND    │\n│  optional: Dynamic Filter │\n│        (name_norm)        │\n│                           │\n│        ~20,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    },
+    {
+      "id": 2,
+      "case": "broad-path-ext",
+      "page": {
+        "first_ms": 19.035395000003064,
+        "median_ms": 11.872968500000525,
+        "warm_samples_ms": [
+          11.95129000001316,
+          11.870950000002267,
+          11.94320499999435,
+          11.73094799997898,
+          11.701533000007203,
+          11.874986999998782
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 11.350646000011011,
+      "total": 24488,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│          SEQ_SCAN         │\n│    ────────────────────   │\n│           Table:          │\n│ analytical.main.\"catalog\" │\n│                           │\n│   Type: Sequential Scan   │\n│                           │\n│        Projections:       │\n│             id            │\n│         name_norm         │\n│                           │\n│          Filters:         │\n│ (instr(path_norm, 'медиате│\n│         ка') > 0)         │\n│         ext='flac'        │\n│ optional: Dynamic Filter  │\n│        (name_norm)        │\n│                           │\n│        ~20,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    },
+    {
+      "id": 3,
+      "case": "sparse-description",
+      "page": {
+        "first_ms": 1.960010000004786,
+        "median_ms": 1.8296560000123918,
+        "warm_samples_ms": [
+          1.8471889999887026,
+          1.8754820000026484,
+          1.7785009999897738,
+          1.8340240000043195,
+          1.825288000020464,
+          1.7614589999936925
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 0.7192670000222279,
+      "total": 19595,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│          SEQ_SCAN         │\n│    ────────────────────   │\n│           Table:          │\n│ analytical.main.\"catalog\" │\n│                           │\n│   Type: Sequential Scan   │\n│                           │\n│        Projections:       │\n│             id            │\n│         name_norm         │\n│                           │\n│          Filters:         │\n│ (instr(description, 'редко│\n│          е') > 0)         │\n│ optional: Dynamic Filter  │\n│        (name_norm)        │\n│                           │\n│        ~20,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    },
+    {
+      "id": 4,
+      "case": "negative-description-ext",
+      "page": {
+        "first_ms": 2.14225100000931,
+        "median_ms": 2.0626924999902485,
+        "warm_samples_ms": [
+          2.0625619999918854,
+          2.0470439999940027,
+          2.0628229999886116,
+          1.987681999992219,
+          2.331897000004801,
+          2.101875999983349
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 0.9119769999870186,
+      "total": 19600,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│          SEQ_SCAN         │\n│    ────────────────────   │\n│           Table:          │\n│ analytical.main.\"catalog\" │\n│                           │\n│   Type: Sequential Scan   │\n│                           │\n│        Projections:       │\n│             id            │\n│         name_norm         │\n│                           │\n│          Filters:         │\n│ (instr(description, 'редко│\n│         е') <= 0)         │\n│         ext='mp3'         │\n│ optional: Dynamic Filter  │\n│        (name_norm)        │\n│                           │\n│        ~20,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    },
+    {
+      "id": 5,
+      "case": "inherited-category-ext",
+      "page": {
+        "first_ms": 0.9480450000012297,
+        "median_ms": 0.8063999999876614,
+        "warm_samples_ms": [
+          0.8204469999952835,
+          0.8137439999984508,
+          0.8136539999838988,
+          0.7867429999919295,
+          0.7991459999914241,
+          0.7956200000194258
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 0.4705810000018573,
+      "total": 3341,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│          SEQ_SCAN         │\n│    ────────────────────   │\n│           Table:          │\n│ analytical.main.\"catalog\" │\n│                           │\n│   Type: Sequential Scan   │\n│                           │\n│        Projections:       │\n│             id            │\n│         name_norm         │\n│                           │\n│          Filters:         │\n│         category=1        │\n│         ext='mkv'         │\n│ optional: Dynamic Filter  │\n│        (name_norm)        │\n│                           │\n│        ~20,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    },
+    {
+      "id": 6,
+      "case": "or-cross-field",
+      "page": {
+        "first_ms": 76.56366399999115,
+        "median_ms": 76.64632350000034,
+        "warm_samples_ms": [
+          76.58234900000593,
+          77.82051699999215,
+          76.73309100002257,
+          76.28804699999137,
+          71.19582100000343,
+          76.71029799999474
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 75.77869299998952,
+      "total": 19596,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             id            │\n│         name_norm         │\n│                           │\n│        ~20,000 rows       │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│             #3            │\n│                           │\n│        ~20,000 rows       │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           FILTER          │\n│    ────────────────────   │\n│ ((instr(name_norm, 'музыка│\n│     ') > 0) OR (instr     │\n│ (path_norm, 'музыка') > 0)│\n│  OR (instr(description, 'м│\n│   узыка') > 0) OR (instr  │\n│ (name_norm, '0000042') > 0│\n│             ))            │\n│                           │\n│        ~20,000 rows       │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│          SEQ_SCAN         │\n│    ────────────────────   │\n│           Table:          │\n│ analytical.main.\"catalog\" │\n│                           │\n│   Type: Sequential Scan   │\n│                           │\n│        Projections:       │\n│         name_norm         │\n│         path_norm         │\n│        description        │\n│             id            │\n│                           │\n│          Filters:         │\n│ optional: Dynamic Filter  │\n│        (name_norm)        │\n│                           │\n│       ~100,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    },
+    {
+      "id": 7,
+      "case": "no-match",
+      "page": {
+        "first_ms": 3.400277999986656,
+        "median_ms": 3.219228000006069,
+        "warm_samples_ms": [
+          3.747137000004841,
+          3.2693919999928767,
+          3.2017249999967134,
+          3.1716000000017175,
+          3.236731000015425,
+          3.198148999985051
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 3.3591810000075384,
+      "total": 0,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             id            │\n│         name_norm         │\n│                           │\n│        ~20,000 rows       │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│          SEQ_SCAN         │\n│    ────────────────────   │\n│           Table:          │\n│ analytical.main.\"catalog\" │\n│                           │\n│   Type: Sequential Scan   │\n│                           │\n│        Projections:       │\n│         name_norm         │\n│             id            │\n│                           │\n│          Filters:         │\n│     (instr(name_norm,     │\n│ 'zzzzzznomatch') > 0) AND │\n│  optional: Dynamic Filter │\n│        (name_norm)        │\n│                           │\n│        ~20,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    },
+    {
+      "id": 8,
+      "case": "short-text",
+      "page": {
+        "first_ms": 6.774075000009816,
+        "median_ms": 6.843305000003852,
+        "warm_samples_ms": [
+          6.708170999985441,
+          6.918225000021039,
+          6.769657000006646,
+          6.682744000016783,
+          6.916953000001058,
+          6.950305000003709
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 3.8782119999893894,
+      "total": 99956,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             id            │\n│         name_norm         │\n│                           │\n│        ~20,000 rows       │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│          SEQ_SCAN         │\n│    ────────────────────   │\n│           Table:          │\n│ analytical.main.\"catalog\" │\n│                           │\n│   Type: Sequential Scan   │\n│                           │\n│        Projections:       │\n│         name_norm         │\n│             id            │\n│                           │\n│          Filters:         │\n│ (instr(name_norm, 'з') > 0│\n│  ) AND optional: Dynamic  │\n│     Filter (name_norm)    │\n│                           │\n│        ~20,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    },
+    {
+      "id": 9,
+      "case": "selective-folder-ext",
+      "page": {
+        "first_ms": 11.77958799999601,
+        "median_ms": 11.525843500010069,
+        "warm_samples_ms": [
+          11.529871000021785,
+          11.566078999976526,
+          11.46543000001543,
+          11.454950999990388,
+          11.714597000008098,
+          11.521815999998353
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 11.799225000004299,
+      "total": 0,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│          SEQ_SCAN         │\n│    ────────────────────   │\n│           Table:          │\n│ analytical.main.\"catalog\" │\n│                           │\n│   Type: Sequential Scan   │\n│                           │\n│        Projections:       │\n│             id            │\n│         name_norm         │\n│                           │\n│          Filters:         │\n│  (instr(path_norm, 'album │\n│        -0077') > 0)       │\n│         ext='flac'        │\n│ optional: Dynamic Filter  │\n│        (name_norm)        │\n│                           │\n│        ~20,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    },
+    {
+      "id": 10,
+      "case": "wildcard-name",
+      "page": {
+        "first_ms": 4.458608999982516,
+        "median_ms": 4.353968000003761,
+        "warm_samples_ms": [
+          4.396512999989,
+          4.36894099999563,
+          4.3389950000118915,
+          4.386363999998366,
+          4.292728999985229,
+          4.3338160000132575
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 4.375965000008364,
+      "total": 0,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             id            │\n│         name_norm         │\n│                           │\n│        ~20,000 rows       │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│          SEQ_SCAN         │\n│    ────────────────────   │\n│           Table:          │\n│ analytical.main.\"catalog\" │\n│                           │\n│   Type: Sequential Scan   │\n│                           │\n│        Projections:       │\n│         name_norm         │\n│             id            │\n│                           │\n│          Filters:         │\n│ (instr(name_norm, '0000042│\n│    ') > 0) AND (substr    │\n│ (name_norm, -4) = '.mkv') │\n│    AND optional: Dynamic  │\n│     Filter (name_norm)    │\n│                           │\n│        ~20,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    },
+    {
+      "id": 11,
+      "case": "boolean-or-not-size",
+      "page": {
+        "first_ms": 14.56518500000925,
+        "median_ms": 13.48014749999038,
+        "warm_samples_ms": [
+          14.315807999992103,
+          13.457559999977775,
+          13.258317999998326,
+          13.323619999994207,
+          13.502735000002986,
+          14.321789999996781
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 12.367899999986776,
+      "total": 20632,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #1            │\n│             #2            │\n│                           │\n│        ~4,000 rows        │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           FILTER          │\n│    ────────────────────   │\n│ ((ext = 'mkv') OR (ext =  │\n│          'flac'))         │\n│                           │\n│        ~4,000 rows        │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│          SEQ_SCAN         │\n│    ────────────────────   │\n│           Table:          │\n│ analytical.main.\"catalog\" │\n│                           │\n│   Type: Sequential Scan   │\n│                           │\n│        Projections:       │\n│            ext            │\n│             id            │\n│         name_norm         │\n│                           │\n│          Filters:         │\n│ optional: ext='mkv' OR ext│\n│          ='flac'          │\n│  (instr(path_norm, 'album │\n│       -0001') <= 0)       │\n│      size>1073741824      │\n│ optional: Dynamic Filter  │\n│        (name_norm)        │\n│                           │\n│        ~20,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    },
+    {
+      "id": 12,
+      "case": "rare-large-size",
+      "page": {
+        "first_ms": 0.8925109999893266,
+        "median_ms": 0.7510515000035412,
+        "warm_samples_ms": [
+          0.7777760000067246,
+          0.7800209999970775,
+          0.7561259999988579,
+          0.7187459999897783,
+          0.7400060000009034,
+          0.7459770000082244
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 0.4989539999940007,
+      "total": 9,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│          SEQ_SCAN         │\n│    ────────────────────   │\n│           Table:          │\n│ analytical.main.\"catalog\" │\n│                           │\n│   Type: Sequential Scan   │\n│                           │\n│        Projections:       │\n│             id            │\n│         name_norm         │\n│                           │\n│          Filters:         │\n│      size>9000000000      │\n│ optional: Dynamic Filter  │\n│        (name_norm)        │\n│                           │\n│        ~20,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    }
+  ],
+  "duplicates": {
+    "groups": 0,
+    "members": 0,
+    "first_build_ms": 14.737626999988152
+  },
+  "paging": null,
+  "point_lookup": {
+    "first_ms": 0.5757879999919169,
+    "median_ms": 0.3395104999981413,
+    "warm_samples_ms": [
+      0.366095000003952,
+      0.34273199997869597,
+      0.3376020000018798,
+      0.34141899999440284,
+      0.32088099999327824,
+      0.3211909999834006
+    ],
+    "cache": "OS cache not flushed"
+  },
+  "memory": {
+    "peak_rss_kib": 112500,
+    "rss_kib": 112736
+  },
+  "duckdb_version": "1.5.5",
+  "threads": 2,
+  "open_and_load_s": 0.010116202999995494
+}

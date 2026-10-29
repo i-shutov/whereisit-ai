@@ -1,0 +1,290 @@
+{
+  "engine": "polars-ram",
+  "polars_version": "1.43.2",
+  "threads": 2,
+  "open_and_load_s": 0.08192983899999717,
+  "queries": [
+    {
+      "id": 0,
+      "case": "ext-size",
+      "page": {
+        "first_ms": 2.202342999993334,
+        "median_ms": 1.2267160000050126,
+        "warm_samples_ms": [
+          1.213070999995125,
+          1.1804110000070978,
+          1.4672869999969862,
+          1.2403610000149001,
+          1.2804670000150509,
+          1.0838700000022072
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 0.41435499997533043,
+      "total": 24488,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    simple π 2/2 [\"id\", \"name_norm\"]\n      FILTER (col(\"ext\") == \"mkv\") & (col(\"size\") > 4294967296)\n      FROM\n        DF [\"id\", \"volume_id\", \"parent_id\", \"kind\", ...]; PROJECT[\"id\", \"name_norm\", \"ext\", \"size\"] 4/12 COLUMNS"
+    },
+    {
+      "id": 1,
+      "case": "name-substring",
+      "page": {
+        "first_ms": 1.9721699999877274,
+        "median_ms": 1.879504000001475,
+        "warm_samples_ms": [
+          1.8920039999841265,
+          1.8822339999928772,
+          1.8491810000114128,
+          3.168371000015213,
+          1.876774000010073,
+          1.8604929999810338
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 2.9480080000041653,
+      "total": 1,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    FILTER col(\"name_norm\").str.contains([\"запись-0000200\"])\n    FROM\n      DF [\"id\", \"volume_id\", \"parent_id\", \"kind\", ...]; PROJECT[\"id\", \"name_norm\"] 2/12 COLUMNS"
+    },
+    {
+      "id": 2,
+      "case": "broad-path-ext",
+      "page": {
+        "first_ms": 3.8680090000013934,
+        "median_ms": 3.5050924999922017,
+        "warm_samples_ms": [
+          3.7261450000016794,
+          3.4983209999950304,
+          3.4959830000218517,
+          3.450951999980134,
+          4.400662999984206,
+          3.511863999989373
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 3.4137309999948684,
+      "total": 24488,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    simple π 2/2 [\"id\", \"name_norm\"]\n      FILTER (col(\"ext\") == \"flac\") & col(\"path_norm\").str.contains([\"медиатека\"])\n      FROM\n        DF [\"id\", \"volume_id\", \"parent_id\", \"kind\", ...]; PROJECT[\"id\", \"name_norm\", \"ext\", \"path_norm\"] 4/12 COLUMNS"
+    },
+    {
+      "id": 3,
+      "case": "sparse-description",
+      "page": {
+        "first_ms": 1.9720519999850694,
+        "median_ms": 1.6127790000126652,
+        "warm_samples_ms": [
+          1.8390230000022711,
+          1.9180209999944964,
+          1.4638000000104512,
+          1.353222999995296,
+          1.7617580000148791,
+          1.3157730000159518
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 1.117200999999568,
+      "total": 19595,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    simple π 2/2 [\"id\", \"name_norm\"]\n      FILTER col(\"description\").str.contains([\"редкое\"])\n      FROM\n        DF [\"id\", \"volume_id\", \"parent_id\", \"kind\", ...]; PROJECT[\"id\", \"name_norm\", \"description\"] 3/12 COLUMNS"
+    },
+    {
+      "id": 4,
+      "case": "negative-description-ext",
+      "page": {
+        "first_ms": 1.5193340000223543,
+        "median_ms": 1.7161269999945716,
+        "warm_samples_ms": [
+          1.9686949999879744,
+          1.9373159999815925,
+          1.4658989999816185,
+          2.0276350000187904,
+          1.484599000008302,
+          1.4949380000075507
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 1.212058999982446,
+      "total": 19600,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    simple π 2/2 [\"id\", \"name_norm\"]\n      FILTER (col(\"description\").str.contains([\"редкое\"]).not() & (col(\"ext\") == \"mp3\"))\n      FROM\n        DF [\"id\", \"volume_id\", \"parent_id\", \"kind\", ...]; PROJECT[\"id\", \"name_norm\", \"description\", \"ext\"] 4/12 COLUMNS"
+    },
+    {
+      "id": 5,
+      "case": "inherited-category-ext",
+      "page": {
+        "first_ms": 1.7169040000055702,
+        "median_ms": 0.8134985000083361,
+        "warm_samples_ms": [
+          0.82554600001572,
+          0.7831440000245493,
+          0.8189950000030422,
+          0.8210570000244388,
+          0.8080020000136301,
+          0.7917799999859199
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 0.36593499999071355,
+      "total": 3341,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    simple π 2/2 [\"id\", \"name_norm\"]\n      FILTER (col(\"category\") == 1) & (col(\"ext\") == \"mkv\")\n      FROM\n        DF [\"id\", \"volume_id\", \"parent_id\", \"kind\", ...]; PROJECT[\"id\", \"name_norm\", \"category\", \"ext\"] 4/12 COLUMNS"
+    },
+    {
+      "id": 6,
+      "case": "or-cross-field",
+      "page": {
+        "first_ms": 9.688447999991467,
+        "median_ms": 5.459710499991388,
+        "warm_samples_ms": [
+          9.782221999984131,
+          9.570915000011837,
+          5.556762999987086,
+          5.359040000001869,
+          5.36265799999569,
+          5.34944599999676
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 8.702290000002222,
+      "total": 19596,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    simple π 2/2 [\"id\", \"name_norm\"]\n      FILTER (((col(\"name_norm\").str.contains([\"музыка\"]) | col(\"path_norm\").str.contains([\"музыка\"])) | col(\"description\").str.contains([\"музыка\"])) | col(\"name_norm\").str.contains([\"0000042\"]))\n      FROM\n        DF [\"id\", \"volume_id\", \"parent_id\", \"kind\", ...]; PROJECT[\"id\", \"name_norm\", \"path_norm\", \"description\"] 4/12 COLUMNS"
+    },
+    {
+      "id": 7,
+      "case": "no-match",
+      "page": {
+        "first_ms": 1.3415389999806848,
+        "median_ms": 1.2578704999981483,
+        "warm_samples_ms": [
+          1.256621999999652,
+          1.255570000012085,
+          1.2450810000075307,
+          1.2591189999966446,
+          1.2664310000047863,
+          1.2635849999753646
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 2.0360409999966578,
+      "total": 0,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    FILTER col(\"name_norm\").str.contains([\"zzzzzznomatch\"])\n    FROM\n      DF [\"id\", \"volume_id\", \"parent_id\", \"kind\", ...]; PROJECT[\"id\", \"name_norm\"] 2/12 COLUMNS"
+    },
+    {
+      "id": 8,
+      "case": "short-text",
+      "page": {
+        "first_ms": 3.637007999998332,
+        "median_ms": 2.4880874999979596,
+        "warm_samples_ms": [
+          3.8655670000196096,
+          3.775396999998293,
+          2.45222000000922,
+          2.471135999996932,
+          2.5050389999989875,
+          2.4303200000019842
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 1.3030490000005557,
+      "total": 99956,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    FILTER col(\"name_norm\").str.contains([\"з\"])\n    FROM\n      DF [\"id\", \"volume_id\", \"parent_id\", \"kind\", ...]; PROJECT[\"id\", \"name_norm\"] 2/12 COLUMNS"
+    },
+    {
+      "id": 9,
+      "case": "selective-folder-ext",
+      "page": {
+        "first_ms": 3.298143999984404,
+        "median_ms": 3.381239500001243,
+        "warm_samples_ms": [
+          3.3718520000149965,
+          3.544594999993933,
+          3.372863999999254,
+          3.447223000023314,
+          3.389615000003232,
+          2.1624769999846194
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 1.9063889999983985,
+      "total": 0,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    simple π 2/2 [\"id\", \"name_norm\"]\n      FILTER (col(\"ext\") == \"flac\") & col(\"path_norm\").str.contains([\"album-0077\"])\n      FROM\n        DF [\"id\", \"volume_id\", \"parent_id\", \"kind\", ...]; PROJECT[\"id\", \"name_norm\", \"ext\", \"path_norm\"] 4/12 COLUMNS"
+    },
+    {
+      "id": 10,
+      "case": "wildcard-name",
+      "page": {
+        "first_ms": 1.6001460000154566,
+        "median_ms": 1.5911990000034848,
+        "warm_samples_ms": [
+          1.5794469999832472,
+          1.5594589999921027,
+          1.5890950000141402,
+          2.5745890000052896,
+          1.6063770000016575,
+          1.5933029999928294
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 1.4782370000148148,
+      "total": 0,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    FILTER (col(\"name_norm\").str.contains([\"0000042\"]) & col(\"name_norm\").str.ends_with([\".mkv\"]))\n    FROM\n      DF [\"id\", \"volume_id\", \"parent_id\", \"kind\", ...]; PROJECT[\"id\", \"name_norm\"] 2/12 COLUMNS"
+    },
+    {
+      "id": 11,
+      "case": "boolean-or-not-size",
+      "page": {
+        "first_ms": 6.062449000012293,
+        "median_ms": 3.9510560000053374,
+        "warm_samples_ms": [
+          5.8895599999857495,
+          3.805193000005147,
+          5.737629999998717,
+          3.60569000000055,
+          3.648209000004954,
+          4.096919000005528
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 3.0533350000041537,
+      "total": 20632,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    simple π 2/2 [\"id\", \"name_norm\"]\n      FILTER ((col(\"ext\").is_in([[\"mkv\", \"flac\"]]) & col(\"path_norm\").str.contains([\"album-0001\"]).not()) & (col(\"size\") > 1073741824))\n      FROM\n        DF [\"id\", \"volume_id\", \"parent_id\", \"kind\", ...]; PROJECT[\"id\", \"name_norm\", \"ext\", \"path_norm\", ...] 5/12 COLUMNS"
+    },
+    {
+      "id": 12,
+      "case": "rare-large-size",
+      "page": {
+        "first_ms": 0.6179160000101547,
+        "median_ms": 0.5635749999868267,
+        "warm_samples_ms": [
+          0.5756979999773648,
+          0.5412339999963933,
+          0.5963160000135304,
+          0.5338489999928697,
+          0.5921880000130386,
+          0.5514519999962886
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 0.2992400000039197,
+      "total": 9,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    simple π 2/2 [\"id\", \"name_norm\"]\n      FILTER col(\"size\") > 9000000000\n      FROM\n        DF [\"id\", \"volume_id\", \"parent_id\", \"kind\", ...]; PROJECT[\"id\", \"name_norm\", \"size\"] 3/12 COLUMNS"
+    }
+  ],
+  "duplicates": {
+    "groups": 0,
+    "members": 0,
+    "first_build_ms": 11.439494000001105
+  },
+  "memory": {
+    "peak_rss_kib": 234128,
+    "rss_kib": 234504
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "duckdb_version": "1.5.5",
+  "threads": 2,
+  "import_tsv_s": 0.3663891199999938,
+  "point_index_build_s": 0.2890465199999994,
+  "duckdb_bytes": 17313792,
+  "parquet": {
+    "canonical": {
+      "seconds": 0.15768271700000014,
+      "bytes": 1280666
+    },
+    "sorted": {
+      "seconds": 0.1977152320000073,
+      "bytes": 1406128
+    }
+  },
+  "canonical_has_raw_ctf_provenance": false,
+  "warning": "These derived analytical files omit raw CTF bytes. Add original CTF size before comparing durable footprints.",
+  "memory": {
+    "peak_rss_kib": 612344,
+    "rss_kib": 89444
+  }
+}

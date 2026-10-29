@@ -1,0 +1,370 @@
+{
+  "engine": "duck-sorted",
+  "shape": "ID-only ordered first 250, count separately",
+  "queries": [
+    {
+      "id": 0,
+      "case": "ext-size",
+      "page": {
+        "first_ms": 9.239666000013358,
+        "median_ms": 5.67195250000907,
+        "warm_samples_ms": [
+          5.935109999995802,
+          5.843579000014643,
+          5.500326000003497,
+          5.483464999997523,
+          6.767578999983925,
+          5.400068000000147
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 2.690075999993269,
+      "total": 24488,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│        READ_PARQUET       │\n│    ────────────────────   │\n│         Function:         │\n│        READ_PARQUET       │\n│                           │\n│        Projections:       │\n│             id            │\n│         name_norm         │\n│                           │\n│          Filters:         │\n│         ext='mkv'         │\n│      size>4294967296      │\n│ optional: Dynamic Filter  │\n│        (name_norm)        │\n│                           │\n│        ~20,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    },
+    {
+      "id": 1,
+      "case": "name-substring",
+      "page": {
+        "first_ms": 7.169650999998112,
+        "median_ms": 7.008589999998094,
+        "warm_samples_ms": [
+          6.959638000012092,
+          6.973944999998594,
+          6.956341999995175,
+          7.098327999983667,
+          7.161555999999791,
+          7.043234999997594
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 7.888607000012371,
+      "total": 1,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             id            │\n│         name_norm         │\n│                           │\n│        ~20,000 rows       │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│        READ_PARQUET       │\n│    ────────────────────   │\n│         Function:         │\n│        READ_PARQUET       │\n│                           │\n│        Projections:       │\n│         name_norm         │\n│             id            │\n│                           │\n│          Filters:         │\n│ (instr(name_norm, 'запись │\n│    -0000200') > 0) AND    │\n│  optional: Dynamic Filter │\n│        (name_norm)        │\n│                           │\n│        ~20,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    },
+    {
+      "id": 2,
+      "case": "broad-path-ext",
+      "page": {
+        "first_ms": 40.29963899998279,
+        "median_ms": 26.386243499999296,
+        "warm_samples_ms": [
+          26.32452800000351,
+          17.51217200001065,
+          31.69480100001465,
+          26.44795899999508,
+          17.368453000017325,
+          26.4810220000129
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 21.840234000023884,
+      "total": 24488,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│        READ_PARQUET       │\n│    ────────────────────   │\n│         Function:         │\n│        READ_PARQUET       │\n│                           │\n│        Projections:       │\n│             id            │\n│         name_norm         │\n│                           │\n│          Filters:         │\n│ (instr(path_norm, 'медиате│\n│         ка') > 0)         │\n│         ext='flac'        │\n│ optional: Dynamic Filter  │\n│        (name_norm)        │\n│                           │\n│        ~20,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    },
+    {
+      "id": 3,
+      "case": "sparse-description",
+      "page": {
+        "first_ms": 5.424524999995128,
+        "median_ms": 5.234764500002598,
+        "warm_samples_ms": [
+          5.395380000010164,
+          5.2682419999996455,
+          5.284902999989072,
+          5.118652000021484,
+          5.179305000012846,
+          5.20128700000555
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 0.8945350000146846,
+      "total": 19595,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│        READ_PARQUET       │\n│    ────────────────────   │\n│         Function:         │\n│        READ_PARQUET       │\n│                           │\n│        Projections:       │\n│             id            │\n│         name_norm         │\n│                           │\n│          Filters:         │\n│ (instr(description, 'редко│\n│          е') > 0)         │\n│ optional: Dynamic Filter  │\n│        (name_norm)        │\n│                           │\n│        ~20,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    },
+    {
+      "id": 4,
+      "case": "negative-description-ext",
+      "page": {
+        "first_ms": 6.0453570000049694,
+        "median_ms": 6.009389499993745,
+        "warm_samples_ms": [
+          6.097543999999289,
+          6.185779999981378,
+          5.952212000011059,
+          6.047491000003902,
+          5.971287999983588,
+          5.932585000010704
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 1.069612999998526,
+      "total": 19600,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│        READ_PARQUET       │\n│    ────────────────────   │\n│         Function:         │\n│        READ_PARQUET       │\n│                           │\n│        Projections:       │\n│             id            │\n│         name_norm         │\n│                           │\n│          Filters:         │\n│ (instr(description, 'редко│\n│         е') <= 0)         │\n│         ext='mp3'         │\n│ optional: Dynamic Filter  │\n│        (name_norm)        │\n│                           │\n│        ~20,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    },
+    {
+      "id": 5,
+      "case": "inherited-category-ext",
+      "page": {
+        "first_ms": 4.477371000007224,
+        "median_ms": 4.898960500000271,
+        "warm_samples_ms": [
+          6.955619999985174,
+          4.425744999991821,
+          4.477241000017784,
+          5.3253389999952105,
+          5.320679999982758,
+          4.358800000005658
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 0.876841000007289,
+      "total": 3341,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│        READ_PARQUET       │\n│    ────────────────────   │\n│         Function:         │\n│        READ_PARQUET       │\n│                           │\n│        Projections:       │\n│             id            │\n│         name_norm         │\n│                           │\n│          Filters:         │\n│         category=1        │\n│         ext='mkv'         │\n│ optional: Dynamic Filter  │\n│        (name_norm)        │\n│                           │\n│        ~20,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    },
+    {
+      "id": 6,
+      "case": "or-cross-field",
+      "page": {
+        "first_ms": 101.88409200000592,
+        "median_ms": 102.6122604999955,
+        "warm_samples_ms": [
+          105.90619100000254,
+          105.25521299999241,
+          105.67822499999124,
+          99.79625399998326,
+          99.83835299999555,
+          99.96930799999859
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 98.09314599999652,
+      "total": 19596,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             id            │\n│         name_norm         │\n│                           │\n│        ~20,000 rows       │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│             #3            │\n│                           │\n│        ~20,000 rows       │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           FILTER          │\n│    ────────────────────   │\n│ ((instr(name_norm, 'музыка│\n│     ') > 0) OR (instr     │\n│ (path_norm, 'музыка') > 0)│\n│  OR (instr(description, 'м│\n│   узыка') > 0) OR (instr  │\n│ (name_norm, '0000042') > 0│\n│             ))            │\n│                           │\n│        ~20,000 rows       │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│        READ_PARQUET       │\n│    ────────────────────   │\n│         Function:         │\n│        READ_PARQUET       │\n│                           │\n│        Projections:       │\n│         name_norm         │\n│         path_norm         │\n│        description        │\n│             id            │\n│                           │\n│          Filters:         │\n│ optional: Dynamic Filter  │\n│        (name_norm)        │\n│                           │\n│       ~100,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    },
+    {
+      "id": 7,
+      "case": "no-match",
+      "page": {
+        "first_ms": 5.409125999989328,
+        "median_ms": 5.189629499980697,
+        "warm_samples_ms": [
+          5.479677000010952,
+          5.292698000005203,
+          5.191006999979209,
+          5.160048999982791,
+          5.18690999999194,
+          5.188251999982185
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 5.3626280000003135,
+      "total": 0,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             id            │\n│         name_norm         │\n│                           │\n│        ~20,000 rows       │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│        READ_PARQUET       │\n│    ────────────────────   │\n│         Function:         │\n│        READ_PARQUET       │\n│                           │\n│        Projections:       │\n│         name_norm         │\n│             id            │\n│                           │\n│          Filters:         │\n│     (instr(name_norm,     │\n│ 'zzzzzznomatch') > 0) AND │\n│  optional: Dynamic Filter │\n│        (name_norm)        │\n│                           │\n│        ~20,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    },
+    {
+      "id": 8,
+      "case": "short-text",
+      "page": {
+        "first_ms": 6.750595999989173,
+        "median_ms": 6.5766460000133975,
+        "warm_samples_ms": [
+          6.710070999986328,
+          8.806345000010651,
+          6.5590379999775905,
+          6.570279000015944,
+          6.555301000020108,
+          6.583013000010851
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 5.557683000006364,
+      "total": 99956,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             id            │\n│         name_norm         │\n│                           │\n│        ~20,000 rows       │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│        READ_PARQUET       │\n│    ────────────────────   │\n│         Function:         │\n│        READ_PARQUET       │\n│                           │\n│        Projections:       │\n│         name_norm         │\n│             id            │\n│                           │\n│          Filters:         │\n│ (instr(name_norm, 'з') > 0│\n│  ) AND optional: Dynamic  │\n│     Filter (name_norm)    │\n│                           │\n│        ~20,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    },
+    {
+      "id": 9,
+      "case": "selective-folder-ext",
+      "page": {
+        "first_ms": 27.06105699999739,
+        "median_ms": 27.227393499998698,
+        "warm_samples_ms": [
+          29.202445999999327,
+          27.19952600000397,
+          17.539713999980222,
+          17.573467000005394,
+          27.255260999993425,
+          27.404851000000008
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 23.212022000024035,
+      "total": 0,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│        READ_PARQUET       │\n│    ────────────────────   │\n│         Function:         │\n│        READ_PARQUET       │\n│                           │\n│        Projections:       │\n│             id            │\n│         name_norm         │\n│                           │\n│          Filters:         │\n│  (instr(path_norm, 'album │\n│        -0077') > 0)       │\n│         ext='flac'        │\n│ optional: Dynamic Filter  │\n│        (name_norm)        │\n│                           │\n│        ~20,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    },
+    {
+      "id": 10,
+      "case": "wildcard-name",
+      "page": {
+        "first_ms": 6.613911000016515,
+        "median_ms": 6.3847914999968225,
+        "warm_samples_ms": [
+          6.329547999996521,
+          6.440034999997124,
+          6.307256000013695,
+          6.238727999999583,
+          6.615363999998181,
+          6.471374000000196
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 6.478808000025538,
+      "total": 0,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             id            │\n│         name_norm         │\n│                           │\n│        ~20,000 rows       │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│        READ_PARQUET       │\n│    ────────────────────   │\n│         Function:         │\n│        READ_PARQUET       │\n│                           │\n│        Projections:       │\n│         name_norm         │\n│             id            │\n│                           │\n│          Filters:         │\n│ (instr(name_norm, '0000042│\n│    ') > 0) AND (substr    │\n│ (name_norm, -4) = '.mkv') │\n│    AND optional: Dynamic  │\n│     Filter (name_norm)    │\n│                           │\n│        ~20,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    },
+    {
+      "id": 11,
+      "case": "boolean-or-not-size",
+      "page": {
+        "first_ms": 33.21997599999804,
+        "median_ms": 30.305179999999154,
+        "warm_samples_ms": [
+          30.29034200000069,
+          21.144923000008475,
+          30.341387000021314,
+          22.576602999976103,
+          30.320017999997617,
+          40.66825900000026
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 17.29517599997621,
+      "total": 20632,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #1            │\n│             #2            │\n│                           │\n│        ~4,000 rows        │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           FILTER          │\n│    ────────────────────   │\n│ ((ext = 'mkv') OR (ext =  │\n│          'flac'))         │\n│                           │\n│        ~4,000 rows        │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│        READ_PARQUET       │\n│    ────────────────────   │\n│         Function:         │\n│        READ_PARQUET       │\n│                           │\n│        Projections:       │\n│            ext            │\n│             id            │\n│         name_norm         │\n│                           │\n│          Filters:         │\n│ optional: ext='mkv' OR ext│\n│          ='flac'          │\n│  (instr(path_norm, 'album │\n│       -0001') <= 0)       │\n│      size>1073741824      │\n│ optional: Dynamic Filter  │\n│        (name_norm)        │\n│                           │\n│        ~20,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    },
+    {
+      "id": 12,
+      "case": "rare-large-size",
+      "page": {
+        "first_ms": 9.871690000011313,
+        "median_ms": 4.7323790000035615,
+        "warm_samples_ms": [
+          6.766276000007565,
+          4.950215999997454,
+          4.7147760000143535,
+          4.6914520000029825,
+          4.668690000016795,
+          4.7499819999927695
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 2.132301999978381,
+      "total": 9,
+      "parity": true,
+      "plan": [
+        [
+          "physical_plan",
+          "┌───────────────────────────┐\n│         PROJECTION        │\n│    ────────────────────   │\n│             #0            │\n│                           │\n│         ~250 rows         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│           TOP_N           │\n│    ────────────────────   │\n│          Top: 250         │\n│                           │\n│         Order By:         │\n│           #1 ASC          │\n│          e.id ASC         │\n└─────────────┬─────────────┘\n┌─────────────┴─────────────┐\n│        READ_PARQUET       │\n│    ────────────────────   │\n│         Function:         │\n│        READ_PARQUET       │\n│                           │\n│        Projections:       │\n│             id            │\n│         name_norm         │\n│                           │\n│          Filters:         │\n│      size>9000000000      │\n│ optional: Dynamic Filter  │\n│        (name_norm)        │\n│                           │\n│        ~20,000 rows       │\n└───────────────────────────┘\n"
+        ]
+      ]
+    }
+  ],
+  "duplicates": {
+    "groups": 0,
+    "members": 0,
+    "first_build_ms": 15.885395999987395
+  },
+  "paging": null,
+  "point_lookup": {
+    "first_ms": 3.6175719999960165,
+    "median_ms": 3.434725000005301,
+    "warm_samples_ms": [
+      3.455238000015015,
+      3.4553280000011455,
+      3.3986319999996795,
+      3.4133399999802805,
+      3.4613189999959104,
+      3.4142119999955867
+    ],
+    "cache": "OS cache not flushed"
+  },
+  "memory": {
+    "peak_rss_kib": 163784,
+    "rss_kib": 111640
+  },
+  "duckdb_version": "1.5.5",
+  "threads": 2,
+  "open_and_load_s": 0.009202315999999655
+}
