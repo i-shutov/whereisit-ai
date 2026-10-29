@@ -3,7 +3,7 @@
 
 Run:
  python tools/block1/run_private_ctf.py --probe /path/to/ctf_real_probe \
-   --acceptance /path/to/ctf_real_acceptance --output /private/new/checkpoint \
+   --acceptance /path/to/ctf_real_acceptance --ram-index /path/to/ctf_real_ram_index --output /private/new/checkpoint \
    /path/to/e-books.CTF /path/to/Mp3-60Gb.CTF
 
 Produces aggregate-only JSON and Markdown. Never uploads any raw catalog bytes.
@@ -63,6 +63,11 @@ def phase_status(r: dict[str, Any]) -> str:
             and d.get("report", {}).get("post_check", {}).get("source_unchanged") is True
             for d in datasets
         ) else "failed"
+    if phase == "ram_index":
+        datasets = data.get("reports")
+        if not isinstance(datasets, list) or len(datasets) != 2:
+            return "unverified"
+        return "passed" if all(d.get("result", {}).get("status") == "passed" for d in datasets) else "failed"
     if phase == "acceptance":
         datasets = data.get("reports")
         if not isinstance(datasets, list) or len(datasets) != 2:
@@ -74,6 +79,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--probe", type=pathlib.Path, required=True)
     ap.add_argument("--acceptance", type=pathlib.Path, required=True)
+    ap.add_argument("--ram-index", type=pathlib.Path, required=True)
     ap.add_argument("--output", type=pathlib.Path, required=True,
                     help="A new, nonexistent output directory, separate from CTFs")
     ap.add_argument("--timeout-seconds", type=int, default=1800)
@@ -86,7 +92,7 @@ def main() -> int:
         ap.error("Provide two different source CTF paths")
     if not all(p.is_file() and p.suffix.lower() == ".ctf" for p in sources):
         ap.error("Both inputs must be existing regular .CTF files")
-    for exe in [args.probe, args.acceptance]:
+    for exe in [args.probe, args.acceptance, args.ram_index]:
         if not exe.is_file():
             ap.error("Compile/download both native example executables before running")
     output = args.output.resolve()
@@ -102,7 +108,7 @@ def main() -> int:
     start = time.perf_counter()
     phases: list[dict[str, Any]] = []
     try:
-        for phase, exe in [("probe", args.probe), ("acceptance", args.acceptance)]:
+        for phase, exe in [("probe", args.probe), ("acceptance", args.acceptance), ("ram_index", args.ram_index)]:
             result = execute(exe.resolve(), sources, phase, args.timeout_seconds)
             phases.append(result)
             (output / (phase + ".json")).write_text(
@@ -116,7 +122,7 @@ def main() -> int:
                 item["sha256_after"] = None
                 item["recheck_status"] = "source_missing_or_unreadable"
             item["unchanged"] = item["sha256_before"] == item["sha256_after"]
-    passed = all(x["unchanged"] for x in files) and len(phases) == 2 and all(
+    passed = all(x["unchanged"] for x in files) and len(phases) == 3 and all(
         phase_status(x) == "passed" for x in phases
     )
     summary = {
@@ -153,13 +159,13 @@ def main() -> int:
     report.extend("| {} | {} |".format(x["phase"],phase_status(x)) for x in phases)
     report += [
         "", "## Raw results", "",
-        "The probe.json and acceptance.json contain aggregate measurements only.",
+        "The probe.json, acceptance.json and ram_index.json contain aggregate measurements only.",
         "All catalog names, full paths and descriptions are intentionally absent.",
         "Original WhereIsIt acceptance and cross-file crash recovery remain unverified.",
         ""
     ]
     (output / "B1_REPORT.md").write_text("\n".join(report), encoding="utf-8")
-    artifacts = ["probe.json","acceptance.json","B1_CHECKPOINT.json","B1_REPORT.md"]
+    artifacts = ["probe.json","acceptance.json","ram_index.json","B1_CHECKPOINT.json","B1_REPORT.md"]
     (output / "SHA256SUMS.txt").write_text(
         "\n".join("{}  {}".format(hash_file(output/name),name) for name in artifacts)+"\n",
         encoding="utf-8"
