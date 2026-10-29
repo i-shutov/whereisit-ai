@@ -1,6 +1,9 @@
 //! Shared command service for native clients and CLI.
 use atlas_core::{Catalog, Error, Result};
 use serde_json::{json, Value};
+#[path = "../ctf_sidecar/mod.rs"]
+mod ctf_sidecar;
+mod ctf_mirror;
 mod dates;
 mod duplicates;
 mod exports;
@@ -55,6 +58,8 @@ fn dispatch(input: &str) -> Result<Value> {
         .and_then(Value::as_str)
         .ok_or_else(|| Error::new("invalid_request", "op must be a string"))?;
     let mut data = match op {
+        "ctf_sync" => ctf_mirror::sync(&v)?,
+        "ctf_search" => ctf_mirror::search(&v)?,
         "compact_catalog" => maintenance::compact_copy(&v)?,
         "validate_catalog" => maintenance::validate(&v)?,
         "import_ctf" => legacy::import(&mut Catalog::open(text(&v, "db")?)?, &v)?,
