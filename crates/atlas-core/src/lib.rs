@@ -377,8 +377,10 @@ impl Catalog {
                             "SELECT name,sql FROM sqlite_master WHERE type='trigger' \
                              AND name IN ('core_ai','payload_ai') ORDER BY name",
                         )?;
-                        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
-                            .collect::<std::result::Result<Vec<_>, _>>()?
+                        let found = stmt
+                            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                            .collect::<std::result::Result<Vec<_>, _>>()?;
+                        found
                     };
                     if definitions.len() != 2
                         || definitions[0].0 != "core_ai"
