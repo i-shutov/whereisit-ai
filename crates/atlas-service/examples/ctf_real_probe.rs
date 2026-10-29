@@ -118,6 +118,14 @@ fn summarize(c: &CtfCatalog) -> Value {
                     .and_then(|s| s.to_str())
                     .unwrap_or("")
                     .to_lowercase();
+                // Do not emit arbitrary long/private file suffixes as "extensions".
+                let extension = if extension.len() <= 12
+                    && extension.chars().all(|ch| ch.is_ascii_alphanumeric())
+                {
+                    extension
+                } else {
+                    "[other]".to_owned()
+                };
                 *extensions.entry(extension).or_default() += 1;
                 *group_counts
                     .entry((e.name.to_lowercase(), e.size))
