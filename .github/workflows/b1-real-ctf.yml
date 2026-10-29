@@ -28,7 +28,7 @@ jobs:
           cargo fmt --all
           cargo test --workspace --locked
           cargo clippy --workspace --all-targets --locked -- -D warnings
-          python3 -m py_compile tools/block1/run_private_ctf.py
+          python3 -m py_compile tools/block1/run_private_ctf.py tools/block1/benchmark_columnar.py
           cargo run --release --locked -p atlas-service --example ctf_real_probe -- --self-test
           cargo run --release --locked -p atlas-service --example ctf_real_acceptance -- --self-test
       - name: Commit only verified formatting if branch head unchanged
@@ -87,3 +87,37 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 60
+
+  columnar-synthetic-smoke:
+    needs: verify-and-format
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: research/b1-real-ctf-20261029
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: rustup toolchain install 1.90.0 --profile minimal
+      - name: Build CLI and generated CTF fixture
+        run: |
+          cargo build --release --locked -p atlas-cli
+          cargo build --release --locked -p atlas-service --example perf_ctf_ram
+          python -m pip install duckdb==1.5.5 polars==1.43.2
+      - name: Assert SQLite DuckDB Polars parity on generated input
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ctf-work"
+          target/release/examples/perf_ctf_ram generate "$RUNNER_TEMP/ctf-work" 1000
+          python tools/block1/benchmark_columnar.py \
+            --cli "target/release/atlas" \
+            --output "$RUNNER_TEMP/b1-columnar-report" \
+            "$RUNNER_TEMP/ctf-work/source.ctf"
+          test -f "$RUNNER_TEMP/b1-columnar-report/columnar-1.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: b1-columnar-synthetic-report
+          path: ${{ runner.temp }}/b1-columnar-report/columnar-1.json
+          if-no-files-found: warn
