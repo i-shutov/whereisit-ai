@@ -310,7 +310,11 @@ impl Catalog {
         let (count, bytes) = (w.count, w.bytes);
         tx.execute(
             "UPDATE volumes SET entry_count=?1,total_bytes=?2 WHERE id=?3",
-            params![signed_sql_u64(count, "entry_count")?, signed_sql_u64(bytes, "total_bytes")?, id],
+            params![
+                signed_sql_u64(count, "entry_count")?,
+                signed_sql_u64(bytes, "total_bytes")?,
+                id
+            ],
         )?;
         // Collect bounded planner statistics within the atomic transaction.
         tx.execute_batch("PRAGMA optimize=0x10002")?;
@@ -568,7 +572,11 @@ impl<'a> ImportSession<'a> {
         volume.total_bytes = writer.bytes;
         self.tx.execute(
             "UPDATE volumes SET entry_count=?1,total_bytes=?2 WHERE id=?3",
-            params![signed_sql_u64(volume.entry_count, "entry_count")?, signed_sql_u64(volume.total_bytes, "total_bytes")?, volume.id],
+            params![
+                signed_sql_u64(volume.entry_count, "entry_count")?,
+                signed_sql_u64(volume.total_bytes, "total_bytes")?,
+                volume.id
+            ],
         )?;
         Ok(volume)
     }
