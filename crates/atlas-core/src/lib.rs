@@ -2,7 +2,7 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::{
@@ -305,6 +305,7 @@ impl Catalog {
             count: 0,
             bytes: 0,
             sparse: tx.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))? >= 3,
+            verified_parent_ids: HashSet::new(),
         };
         write(&mut w)?;
         let (count, bytes) = (w.count, w.bytes);
@@ -552,6 +553,7 @@ impl<'a> ImportSession<'a> {
                     .tx
                     .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))?
                     >= 3,
+                verified_parent_ids: HashSet::new(),
             },
         ));
         Ok(id)
@@ -587,6 +589,9 @@ pub struct BulkWriter<'a> {
     count: u64,
     bytes: u64,
     sparse: bool,
+    // Only parent IDs inserted as directories/archives by this writer.
+    // Does not trust arbitrary DB IDs or bypass SQLite verification for them.
+    verified_parent_ids: HashSet<i64>,
 }
 impl BulkWriter<'_> {
     pub fn insert(&mut self, e: &NewEntry) -> Result<i64> {
@@ -599,12 +604,20 @@ impl BulkWriter<'_> {
         let size = i64::try_from(e.size)
             .map_err(|_| Error::new("invalid_entry", "Entry size is too large"))?;
         if let Some(parent) = e.parent_id {
-            let valid:bool=self.tx.prepare_cached("SELECT EXISTS(SELECT 1 FROM entries WHERE id=?1 AND volume_id=?2 AND kind IN ('directory','archive'))")?.query_row(params![parent,self.volume_id],|r|r.get(0))?;
-            if !valid {
-                return Err(Error::new(
-                    "invalid_entry",
-                    "Parent does not belong to this volume or cannot contain children",
-                ));
+            if !self.verified_parent_ids.contains(&parent) {
+                // Preserve the original DB-authoritative check for IDs not
+                // inserted as a valid parent by this BulkWriter. Regular CTF
+                // and filesystem scans use only writer-issued parent IDs.
+                let valid: bool = self
+                    .tx
+                    .prepare_cached("SELECT EXISTS(SELECT 1 FROM entries WHERE id=?1 AND volume_id=?2 AND kind IN ('directory','archive'))")?
+                    .query_row(params![parent, self.volume_id], |r| r.get(0))?;
+                if !valid {
+                    return Err(Error::new(
+                        "invalid_entry",
+                        "Parent does not belong to this volume or cannot contain children",
+                    ));
+                }
             }
         }
         let entry_id = if self.sparse {
@@ -622,6 +635,14 @@ impl BulkWriter<'_> {
             self.tx.prepare_cached("INSERT INTO entries(volume_id,parent_id,name,relative_path,kind,size,modified_unix,description,tags,search_text,name_norm,ext) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)")?.execute(params![self.volume_id,e.parent_id,e.name,e.relative_path,e.kind,size,e.modified_unix,e.description,e.tags,search_text(&e.name,&e.relative_path,&e.description,&e.tags),e.name.to_lowercase(),Path::new(&e.name).extension().and_then(|x|x.to_str()).unwrap_or("").to_lowercase()])?;
             self.tx.last_insert_rowid()
         };
+        // Parent kind is immutable under the import-session contract. Keep
+        // only a bounded working set; cache misses retain SQLite validation.
+        if matches!(e.kind.as_str(), "directory" | "archive") {
+            if self.verified_parent_ids.len() >= 65_536 {
+                self.verified_parent_ids.clear();
+            }
+            self.verified_parent_ids.insert(entry_id);
+        }
         self.count += 1;
         if e.kind == "file" {
             self.bytes = self
