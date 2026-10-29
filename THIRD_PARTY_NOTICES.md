@@ -1,14 +1,24 @@
 # Уведомления о сторонних компонентах
 
-Этот перечень составлен по зафиксированным registry-зависимостям в `Cargo.lock`; он включает зависимости для сборки, тестов и разных платформ, поэтому не каждый пакет обязательно присутствует в каждом бинарном файле. Версии и выражения лицензий приведены по локальным пакетам Cargo без изменения их исходной записи. Лицензии с `OR` предоставляют указанные альтернативы, а `AND` требует выполнения обеих частей.
+Список генерируется из зафиксированных registry-пакетов в Cargo.lock.
+Он охватывает зависимости сборки, тестов и всех поддержанных платформ;
+не каждая из перечисленных библиотек попадает в каждый бинарный файл.
+Лицензионные формулировки получены из опубликованных Cargo.toml;
+файлы лицензий/NOTICE скопированы из соответствующих Cargo-пакетов.
+При отсутствии отдельного файла в архиве остаётся выражение лицензии
+из его манифеста. Наличие файла не заменяет юридического анализа.
 
-Лицензионные файлы и файлы NOTICE, включённые в локальные пакеты, сохранены по папкам `licenses/<имя>-<версия>/`. Для трёх пакетов исходный архив в локальном реестре не содержит отдельного файла лицензии: r-efi 5.3.0 и 6.0.0, thrift 0.17.0; выражения ниже взяты из их Cargo.toml. Apache-2.0 и MIT тексты доступны в других папках настоящего комплекта. Для окончательного распространяемого дистрибутива следует повторно сверить набор и уведомления при обновлении lockfile или подключении других компонентов.
-
-SHA-256 Cargo.lock: `b94d11ada91ea0eb664195c62fed82171d50971d5dcdbe3d8fe78008f27e5b28`.
+SHA-256 Cargo.lock: `ec0a2328b5687687e5e323a39444cc0898fa2288b2949336d54207f9967d9b97`.
 
 ## Встроенный SQLite
 
-Сборка с `rusqlite` и `libsqlite3-sys` использует встроенный SQLite 3.46.0. В составе локального исходника его авторы отказываются от авторского права; сохранён соответствующий заголовок в `licenses/SQLite-3.46.0/COPYRIGHT.txt`. Лицензия Rust-обёртки `libsqlite3-sys` приведена отдельно.
+rusqlite 0.39.0 + libsqlite3-sys 0.37.0
+с включённым bundled используют SQLite 3.51.3.
+Проверено по sqlite3.c опубликованного crate, а не по системной SQLite.
+В исходнике SQLite авторы отказываются от авторского права.
+Исходный заголовок сохранён: [COPYRIGHT.txt](licenses/SQLite-3.51.3/COPYRIGHT.txt).
+Исправление WAL-reset включено в SQLite 3.51.3 и позднее.
+Версия подтверждается также при сборке и тестах.
 
 ## Зафиксированные registry-пакеты
 
@@ -39,6 +49,7 @@ SHA-256 Cargo.lock: `b94d11ada91ea0eb664195c62fed82171d50971d5dcdbe3d8fe78008f27
 | fallible-streaming-iterator | 0.1.9 | `MIT/Apache-2.0` | [LICENSE-APACHE](licenses/fallible-streaming-iterator-0.1.9/LICENSE-APACHE), [LICENSE-MIT](licenses/fallible-streaming-iterator-0.1.9/LICENSE-MIT) |
 | fastrand | 2.5.0 | `Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/fastrand-2.5.0/LICENSE-APACHE), [LICENSE-MIT](licenses/fastrand-2.5.0/LICENSE-MIT) |
 | find-msvc-tools | 0.1.15 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/find-msvc-tools-0.1.15/LICENSE-APACHE), [LICENSE-MIT](licenses/find-msvc-tools-0.1.15/LICENSE-MIT) |
+| foldhash | 0.2.0 | `Zlib` | [LICENSE](licenses/foldhash-0.2.0/LICENSE) |
 | futures-core | 0.3.34 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/futures-core-0.3.34/LICENSE-APACHE), [LICENSE-MIT](licenses/futures-core-0.3.34/LICENSE-MIT) |
 | futures-task | 0.3.34 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/futures-task-0.3.34/LICENSE-APACHE), [LICENSE-MIT](licenses/futures-task-0.3.34/LICENSE-MIT) |
 | futures-util | 0.3.34 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/futures-util-0.3.34/LICENSE-APACHE), [LICENSE-MIT](licenses/futures-util-0.3.34/LICENSE-MIT) |
@@ -47,9 +58,8 @@ SHA-256 Cargo.lock: `b94d11ada91ea0eb664195c62fed82171d50971d5dcdbe3d8fe78008f27
 | getrandom | 0.3.4 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/getrandom-0.3.4/LICENSE-APACHE), [LICENSE-MIT](licenses/getrandom-0.3.4/LICENSE-MIT) |
 | getrandom | 0.4.3 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/getrandom-0.4.3/LICENSE-APACHE), [LICENSE-MIT](licenses/getrandom-0.4.3/LICENSE-MIT) |
 | half | 2.7.1 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/half-2.7.1/LICENSE-APACHE), [LICENSE-MIT](licenses/half-2.7.1/LICENSE-MIT) |
-| hashbrown | 0.14.5 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/hashbrown-0.14.5/LICENSE-APACHE), [LICENSE-MIT](licenses/hashbrown-0.14.5/LICENSE-MIT) |
 | hashbrown | 0.16.1 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/hashbrown-0.16.1/LICENSE-APACHE), [LICENSE-MIT](licenses/hashbrown-0.16.1/LICENSE-MIT) |
-| hashlink | 0.9.1 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/hashlink-0.9.1/LICENSE-APACHE), [LICENSE-MIT](licenses/hashlink-0.9.1/LICENSE-MIT) |
+| hashlink | 0.11.1 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/hashlink-0.11.1/LICENSE-APACHE), [LICENSE-MIT](licenses/hashlink-0.11.1/LICENSE-MIT) |
 | iana-time-zone | 0.1.65 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/iana-time-zone-0.1.65/LICENSE-APACHE), [LICENSE-MIT](licenses/iana-time-zone-0.1.65/LICENSE-MIT) |
 | iana-time-zone-haiku | 0.1.2 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/iana-time-zone-haiku-0.1.2/LICENSE-APACHE), [LICENSE-MIT](licenses/iana-time-zone-haiku-0.1.2/LICENSE-MIT) |
 | integer-encoding | 3.0.4 | `MIT` | [LICENSE](licenses/integer-encoding-3.0.4/LICENSE) |
@@ -57,8 +67,8 @@ SHA-256 Cargo.lock: `b94d11ada91ea0eb664195c62fed82171d50971d5dcdbe3d8fe78008f27
 | js-sys | 0.3.106 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/js-sys-0.3.106/LICENSE-APACHE), [LICENSE-MIT](licenses/js-sys-0.3.106/LICENSE-MIT) |
 | libc | 0.2.191 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/libc-0.2.191/LICENSE-APACHE), [LICENSE-MIT](licenses/libc-0.2.191/LICENSE-MIT) |
 | libm | 0.2.16 | `MIT` | [LICENSE.txt](licenses/libm-0.2.16/LICENSE.txt) |
-| libsqlite3-sys | 0.30.1 | `MIT` | [LICENSE](licenses/libsqlite3-sys-0.30.1/LICENSE) |
-| linux-raw-sys | 0.12.1 | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/linux-raw-sys-0.12.1/LICENSE-APACHE), [LICENSE-Apache-2.0_WITH_LLVM-exception](licenses/linux-raw-sys-0.12.1/LICENSE-Apache-2.0_WITH_LLVM-exception), [LICENSE-MIT](licenses/linux-raw-sys-0.12.1/LICENSE-MIT) |
+| libsqlite3-sys | 0.37.0 | `MIT` | [LICENSE](licenses/libsqlite3-sys-0.37.0/LICENSE) |
+| linux-raw-sys | 0.12.1 | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` | [COPYRIGHT](licenses/linux-raw-sys-0.12.1/COPYRIGHT), [LICENSE-APACHE](licenses/linux-raw-sys-0.12.1/LICENSE-APACHE), [LICENSE-Apache-2.0_WITH_LLVM-exception](licenses/linux-raw-sys-0.12.1/LICENSE-Apache-2.0_WITH_LLVM-exception), [LICENSE-MIT](licenses/linux-raw-sys-0.12.1/LICENSE-MIT) |
 | log | 0.4.34 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/log-0.4.34/LICENSE-APACHE), [LICENSE-MIT](licenses/log-0.4.34/LICENSE-MIT) |
 | memchr | 2.8.3 | `Unlicense OR MIT` | [COPYING](licenses/memchr-2.8.3/COPYING), [LICENSE-MIT](licenses/memchr-2.8.3/LICENSE-MIT), [UNLICENSE](licenses/memchr-2.8.3/UNLICENSE) |
 | num | 0.4.3 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/num-0.4.3/LICENSE-APACHE), [LICENSE-MIT](licenses/num-0.4.3/LICENSE-MIT) |
@@ -76,10 +86,11 @@ SHA-256 Cargo.lock: `b94d11ada91ea0eb664195c62fed82171d50971d5dcdbe3d8fe78008f27
 | pkg-config | 0.3.34 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/pkg-config-0.3.34/LICENSE-APACHE), [LICENSE-MIT](licenses/pkg-config-0.3.34/LICENSE-MIT) |
 | proc-macro2 | 1.0.107 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/proc-macro2-1.0.107/LICENSE-APACHE), [LICENSE-MIT](licenses/proc-macro2-1.0.107/LICENSE-MIT) |
 | quote | 1.0.47 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/quote-1.0.47/LICENSE-APACHE), [LICENSE-MIT](licenses/quote-1.0.47/LICENSE-MIT) |
-| r-efi | 5.3.0 | `MIT OR Apache-2.0 OR LGPL-2.1-or-later` | В архиве нет отдельного файла |
-| r-efi | 6.0.0 | `MIT OR Apache-2.0 OR LGPL-2.1-or-later` | В архиве нет отдельного файла |
-| rusqlite | 0.32.1 | `MIT` | [LICENSE](licenses/rusqlite-0.32.1/LICENSE) |
-| rustix | 1.1.6 | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/rustix-1.1.6/LICENSE-APACHE), [LICENSE-Apache-2.0_WITH_LLVM-exception](licenses/rustix-1.1.6/LICENSE-Apache-2.0_WITH_LLVM-exception), [LICENSE-MIT](licenses/rustix-1.1.6/LICENSE-MIT) |
+| r-efi | 5.3.0 | `MIT OR Apache-2.0 OR LGPL-2.1-or-later` | Отдельный файл в архиве отсутствует |
+| r-efi | 6.0.0 | `MIT OR Apache-2.0 OR LGPL-2.1-or-later` | Отдельный файл в архиве отсутствует |
+| rsqlite-vfs | 0.1.1 | `MIT` | Отдельный файл в архиве отсутствует |
+| rusqlite | 0.39.0 | `MIT` | [LICENSE](licenses/rusqlite-0.39.0/LICENSE) |
+| rustix | 1.1.6 | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` | [COPYRIGHT](licenses/rustix-1.1.6/COPYRIGHT), [LICENSE-APACHE](licenses/rustix-1.1.6/LICENSE-APACHE), [LICENSE-Apache-2.0_WITH_LLVM-exception](licenses/rustix-1.1.6/LICENSE-Apache-2.0_WITH_LLVM-exception), [LICENSE-MIT](licenses/rustix-1.1.6/LICENSE-MIT) |
 | rustversion | 1.0.23 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/rustversion-1.0.23/LICENSE-APACHE), [LICENSE-MIT](licenses/rustversion-1.0.23/LICENSE-MIT) |
 | ryu | 1.0.23 | `Apache-2.0 OR BSL-1.0` | [LICENSE-APACHE](licenses/ryu-1.0.23/LICENSE-APACHE), [LICENSE-BOOST](licenses/ryu-1.0.23/LICENSE-BOOST) |
 | same-file | 1.0.6 | `Unlicense/MIT` | [COPYING](licenses/same-file-1.0.6/COPYING), [LICENSE-MIT](licenses/same-file-1.0.6/LICENSE-MIT), [UNLICENSE](licenses/same-file-1.0.6/UNLICENSE) |
@@ -93,12 +104,13 @@ SHA-256 Cargo.lock: `b94d11ada91ea0eb664195c62fed82171d50971d5dcdbe3d8fe78008f27
 | slab | 0.4.12 | `MIT` | [LICENSE](licenses/slab-0.4.12/LICENSE) |
 | smallvec | 1.16.4 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/smallvec-1.16.4/LICENSE-APACHE), [LICENSE-MIT](licenses/smallvec-1.16.4/LICENSE-MIT) |
 | snap | 1.1.2 | `BSD-3-Clause` | [COPYING](licenses/snap-1.1.2/COPYING) |
+| sqlite-wasm-rs | 0.5.5 | `MIT` | [LICENSE](licenses/sqlite-wasm-rs-0.5.5/LICENSE) |
 | syn | 2.0.119 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/syn-2.0.119/LICENSE-APACHE), [LICENSE-MIT](licenses/syn-2.0.119/LICENSE-MIT) |
 | syn | 3.0.9 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/syn-3.0.9/LICENSE-APACHE), [LICENSE-MIT](licenses/syn-3.0.9/LICENSE-MIT) |
 | tempfile | 3.27.0 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/tempfile-3.27.0/LICENSE-APACHE), [LICENSE-MIT](licenses/tempfile-3.27.0/LICENSE-MIT) |
 | thiserror | 2.0.21 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/thiserror-2.0.21/LICENSE-APACHE), [LICENSE-MIT](licenses/thiserror-2.0.21/LICENSE-MIT) |
 | thiserror-impl | 2.0.21 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/thiserror-impl-2.0.21/LICENSE-APACHE), [LICENSE-MIT](licenses/thiserror-impl-2.0.21/LICENSE-MIT) |
-| thrift | 0.17.0 | `Apache-2.0` | В архиве нет отдельного файла |
+| thrift | 0.17.0 | `Apache-2.0` | Отдельный файл в архиве отсутствует |
 | tiny-keccak | 2.0.2 | `CC0-1.0` | [LICENSE](licenses/tiny-keccak-2.0.2/LICENSE) |
 | twox-hash | 2.1.5 | `MIT` | [LICENSE.txt](licenses/twox-hash-2.1.5/LICENSE.txt) |
 | typenum | 1.20.1 | `MIT OR Apache-2.0` | [LICENSE](licenses/typenum-1.20.1/LICENSE), [LICENSE-APACHE](licenses/typenum-1.20.1/LICENSE-APACHE), [LICENSE-MIT](licenses/typenum-1.20.1/LICENSE-MIT) |

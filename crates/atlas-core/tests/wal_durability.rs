@@ -19,11 +19,10 @@ fn connection(path: &std::path::Path) -> rusqlite::Result<Connection> {
 fn integrity_check(conn: &Connection) -> rusqlite::Result<()> {
     let result: String = conn.query_row("PRAGMA integrity_check", [], |r| r.get(0))?;
     assert_eq!(result, "ok", "SQLite integrity_check must succeed");
-    let fk_errors: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM pragma_foreign_key_check",
-        [],
-        |r| r.get(0),
-    )?;
+    let fk_errors: i64 =
+        conn.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| {
+            r.get(0)
+        })?;
     assert_eq!(fk_errors, 0, "SQLite foreign key validation must succeed");
     Ok(())
 }
@@ -72,8 +71,9 @@ fn concurrent_writers_reader_checkpoint_and_rollback_preserve_rows() -> TestResu
              PRIMARY KEY(writer, ordinal)
          );",
     )?;
-    let mode: String =
-        catalog.conn().query_row("PRAGMA journal_mode", [], |r| r.get(0))?;
+    let mode: String = catalog
+        .conn()
+        .query_row("PRAGMA journal_mode", [], |r| r.get(0))?;
     assert_eq!(mode, "wal", "Test must exercise real WAL mode");
     drop(catalog);
 
@@ -103,17 +103,11 @@ fn concurrent_writers_reader_checkpoint_and_rollback_preserve_rows() -> TestResu
         let db = connection(&reader_path)?;
         // A read transaction must retain its own snapshot across other commits.
         let tx = db.unchecked_transaction()?;
-        let initial: i64 = tx.query_row(
-            "SELECT COUNT(*) FROM durability_events",
-            [],
-            |r| r.get(0),
-        )?;
+        let initial: i64 =
+            tx.query_row("SELECT COUNT(*) FROM durability_events", [], |r| r.get(0))?;
         thread::sleep(Duration::from_millis(30));
-        let same_snapshot: i64 = tx.query_row(
-            "SELECT COUNT(*) FROM durability_events",
-            [],
-            |r| r.get(0),
-        )?;
+        let same_snapshot: i64 =
+            tx.query_row("SELECT COUNT(*) FROM durability_events", [], |r| r.get(0))?;
         assert_eq!(initial, same_snapshot);
         tx.commit()?;
         Ok(())
@@ -122,10 +116,9 @@ fn concurrent_writers_reader_checkpoint_and_rollback_preserve_rows() -> TestResu
     let checkpointer = thread::spawn(move || -> rusqlite::Result<()> {
         let db = connection(&checkpoint_path)?;
         for _ in 0..40 {
-            let _: (i64, i64, i64) =
-                db.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-                })?;
+            let _: (i64, i64, i64) = db.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?;
             thread::yield_now();
         }
         Ok(())
@@ -137,11 +130,8 @@ fn concurrent_writers_reader_checkpoint_and_rollback_preserve_rows() -> TestResu
     checkpointer.join().expect("checkpointer panicked")?;
 
     let db = connection(&path)?;
-    let committed: i64 = db.query_row(
-        "SELECT COUNT(*) FROM durability_events",
-        [],
-        |r| r.get(0),
-    )?;
+    let committed: i64 =
+        db.query_row("SELECT COUNT(*) FROM durability_events", [], |r| r.get(0))?;
     assert_eq!(committed, 110, "Two writers each commit 55 records");
     let distinct: i64 = db.query_row(
         "SELECT COUNT(*) FROM (
@@ -151,18 +141,14 @@ fn concurrent_writers_reader_checkpoint_and_rollback_preserve_rows() -> TestResu
         |r| r.get(0),
     )?;
     assert_eq!(distinct, committed);
-    let _: (i64, i64, i64) =
-        db.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })?;
+    let _: (i64, i64, i64) = db.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+    })?;
     integrity_check(&db)?;
     drop(db);
     let reopened = connection(&path)?;
-    let persisted: i64 = reopened.query_row(
-        "SELECT COUNT(*) FROM durability_events",
-        [],
-        |r| r.get(0),
-    )?;
+    let persisted: i64 =
+        reopened.query_row("SELECT COUNT(*) FROM durability_events", [], |r| r.get(0))?;
     assert_eq!(persisted, 110, "Committed rows must survive reopen");
     integrity_check(&reopened)?;
     Ok(())
@@ -208,8 +194,14 @@ fn abrupt_child_exit_drops_only_uncommitted_wal_transaction() -> TestResult {
         [],
         |r| r.get(0),
     )?;
-    assert_eq!(committed, 1, "Committed WAL record disappeared on process exit");
-    assert_eq!(abandoned, 0, "Uncommitted WAL record leaked after process exit");
+    assert_eq!(
+        committed, 1,
+        "Committed WAL record disappeared on process exit"
+    );
+    assert_eq!(
+        abandoned, 0,
+        "Uncommitted WAL record leaked after process exit"
+    );
     integrity_check(&conn)?;
     Ok(())
 }
@@ -227,15 +219,9 @@ fn wal_crash_child() -> TestResult {
          PRAGMA synchronous=NORMAL;
          CREATE TABLE crash_events(value TEXT NOT NULL);",
     )?;
-    conn.execute(
-        "INSERT INTO crash_events(value) VALUES ('committed')",
-        [],
-    )?;
+    conn.execute("INSERT INTO crash_events(value) VALUES ('committed')", [])?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    tx.execute(
-        "INSERT INTO crash_events(value) VALUES ('uncommitted')",
-        [],
-    )?;
+    tx.execute("INSERT INTO crash_events(value) VALUES ('uncommitted')", [])?;
     println!("WAL_UNCOMMITTED_READY");
     std::io::stdout().flush()?;
     thread::sleep(Duration::from_secs(90));
