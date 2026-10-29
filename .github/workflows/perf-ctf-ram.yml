@@ -1,0 +1,93 @@
+name: CTF RAM and columnar performance study
+on:
+  push:
+    branches: ['perf/ctf-ram-study-20261029']
+    paths:
+      - 'crates/atlas-service/examples/perf_ctf_ram.rs'
+      - 'tools/perf/**'
+      - '.github/workflows/perf-ctf-ram.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ctf-ram-study
+  cancel-in-progress: false
+jobs:
+  study:
+    if: github.repository == 'i-shutov/whereisit-ai' && github.ref == 'refs/heads/perf/ctf-ram-study-20261029'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      POLARS_MAX_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: perf-ctf-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-1.90-v1
+      - name: Build pinned native benchmark and Python engines
+        run: |
+          rustup toolchain install 1.90.0 --profile minimal
+          cargo build --release --locked -p atlas-service --example perf_ctf_ram
+          python -m pip install duckdb==1.5.5 polars==1.43.2
+      - name: Record reproducible environment
+        run: |
+          mkdir -p evidence
+          { uname -a; lscpu; free -b; rustc --version; python --version; python -m pip freeze; df -h; } > evidence/environment.txt
+          printf 'source_commit=%s\nrun_id=%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > evidence/provenance.txt
+      - name: Execute same-data 100k then 3046027-record comparison
+        shell: bash
+        run: |
+          set -euo pipefail
+          for count in 100000 3046027; do
+            dir="$RUNNER_TEMP/ctf-ram-study-$count"
+            mkdir -p "$dir" "evidence/$count"
+            collect() { cp "$dir"/*.json "evidence/$count/" 2>/dev/null || true; }
+            trap collect EXIT
+            for phase in generate ram app; do
+              /usr/bin/time -v -o "evidence/$count/$phase.resources.txt" target/release/examples/perf_ctf_ram "$phase" "$dir" "$count"
+              collect
+            done
+            for engine in prepare sqlite sqlite-ram duck-file duck-ram duck-parquet duck-sorted polars-ram polars-parquet; do
+              /usr/bin/time -v -o "evidence/$count/$engine.resources.txt" python tools/perf/backends.py "$engine" "$dir"
+              collect
+            done
+            python tools/perf/summarize.py evidence
+            rm -f "$dir"/*.ctf "$dir"/*.sqlite* "$dir"/*.tsv "$dir"/*.parquet "$dir"/*.duckdb*
+          done
+      - name: Assemble evidence even on a partially completed run
+        if: always()
+        run: python tools/perf/summarize.py evidence
+      - name: Commit successful aggregate results on isolated research branch
+        if: success()
+        run: |
+          git fetch origin perf/ctf-ram-study-20261029
+          if [ "$(git rev-parse origin/perf/ctf-ram-study-20261029)" != "$GITHUB_SHA" ]; then
+            echo 'Branch advanced; preserving results as artifact rather than overwriting newer work.'
+            exit 0
+          fi
+          mkdir -p docs/perf/ctf-ram-20261029
+          cp -R evidence/. docs/perf/ctf-ram-20261029/
+          git config user.name 'whereisit-perf-ci'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/perf/ctf-ram-20261029
+          git commit -m 'perf: measured synthetic CTF RAM versus SQL and columnar evidence [skip ci]'
+          git push origin HEAD:refs/heads/perf/ctf-ram-study-20261029
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ctf-ram-columnar-evidence-${{ github.run_id }}
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 30
