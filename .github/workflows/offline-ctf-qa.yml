@@ -1,0 +1,48 @@
+# Build only the application CLI. No private CTFs or catalog content enter Actions.
+name: Private CTF local-only QA runner
+on:
+  push:
+    branches: [qa/offline-real-ctf-v3-20261029]
+    paths:
+      - "tools/qa/offline_ctf_v3.py"
+      - ".github/workflows/offline-ctf-qa.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: local-private-ctf-${{ github.sha }}
+  cancel-in-progress: false
+jobs:
+  build-local-cli:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - run: rustup toolchain install 1.90.0 --profile minimal --component clippy,rustfmt
+      - name: Build exact-source native CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p atlas-cli
+          test "$(target/release/atlas --sqlite-version)" = 3.51.3
+          cargo test --locked -p atlas-cli
+          python3 -m py_compile tools/qa/offline_ctf_v3.py
+      - name: Package local executable with source identity and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p dist
+          cp target/release/atlas LICENSE THIRD_PARTY_NOTICES.md dist/
+          printf 'source_sha=%s\nrunner=%s\nsqlite=%s\nprivate_user_catalog_uploaded=false\n' \
+            "$GITHUB_SHA" "$RUNNER_OS/$RUNNER_ARCH" "$(./dist/atlas --sqlite-version)" \
+            > dist/PROVENANCE.txt
+          (cd dist && sha256sum atlas LICENSE THIRD_PARTY_NOTICES.md PROVENANCE.txt > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whereisit-local-only-v3-cli-${{ github.sha }}
+          path: dist/
+          retention-days: 21
+          if-no-files-found: error
