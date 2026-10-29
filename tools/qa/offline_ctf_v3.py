@@ -15,7 +15,10 @@ import argparse
 import hashlib
 import json
 import pathlib
-import resource
+try:
+    import resource
+except ImportError:  # Native Windows local QA
+    resource = None
 import subprocess
 import sys
 import tempfile
@@ -71,7 +74,7 @@ def ids_digest(data: dict) -> tuple[int, str]:
 
 
 def inspect(source: pathlib.Path, cli: pathlib.Path, timeout: int,
-            expected_sha: str | None, full_export: bool) -> dict:
+            expected_sha: str | None, full_export: bool, result: dict) -> dict:
     size = source.stat().st_size
     original_sha = file_hash(source)
     if expected_sha is not None and original_sha != expected_sha:
@@ -82,7 +85,7 @@ def inspect(source: pathlib.Path, cli: pathlib.Path, timeout: int,
     ).stdout.strip()
     if version != "3.51.3":
         raise RuntimeError("unpatched_sqlite")
-    result = {
+    result.update({
         "format": "whereisit-local-ctf-v3-acceptance-v1",
         "status": "in_progress",
         "input_type": "operator_supplied_ctf",
@@ -99,7 +102,7 @@ def inspect(source: pathlib.Path, cli: pathlib.Path, timeout: int,
             "No guaranteed cold-cache or p95 timings",
             "Metadata duplicates are not content-hash matches",
         ],
-    }
+    })
     with tempfile.TemporaryDirectory(prefix="whereisit-v3-private-") as temp:
         root = pathlib.Path(temp)
         database, exported = root / "derived-v3.sqlite", root / "exported.ctf"
@@ -200,17 +203,17 @@ def main() -> int:
         ap.error("Checkpoint must be a NEW directory separate from the source")
     output.mkdir(parents=True, exist_ok=False)
     started = time.perf_counter()
-    report = None
+    report = {"status": "in_progress",
+              "source": {"sha256": file_hash(source), "size_bytes": source.stat().st_size}}
     try:
-        report = inspect(source, cli, args.timeout_seconds, args.expected_sha256,
-                         args.full_export)
+        inspect(source, cli, args.timeout_seconds, args.expected_sha256,
+                args.full_export, report)
         report["status"] = "passed_available_checks"
     except Exception as exc:
         # Exception text may include a private path; store only an error category
         # or a known, code-like phase failure without file content.
         error = str(exc)
         safe_error = error if error.replace("_", "").isalnum() else type(exc).__name__
-        report = report or {}
         report["status"] = "failed"
         report["error_code"] = safe_error
     finally:
@@ -222,7 +225,7 @@ def main() -> int:
         if not report["source_unchanged"]:
             report["status"] = "failed"
             report["error_code"] = "source_changed"
-        if sys.platform == "linux":
+        if sys.platform == "linux" and resource is not None:
             report["max_child_rss_kib"] = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
         report["source_original_name_and_path_omitted"] = True
         (output / "V3_ACCEPTANCE.json").write_text(
