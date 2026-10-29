@@ -110,7 +110,11 @@ def main() -> int:
             )
     finally:
         for item, p in zip(files, sources):
-            item["sha256_after"] = hash_file(p)
+            try:
+                item["sha256_after"] = hash_file(p)
+            except OSError:
+                item["sha256_after"] = None
+                item["recheck_status"] = "source_missing_or_unreadable"
             item["unchanged"] = item["sha256_before"] == item["sha256_after"]
     passed = all(x["unchanged"] for x in files) and len(phases) == 2 and all(
         phase_status(x) == "passed" for x in phases
