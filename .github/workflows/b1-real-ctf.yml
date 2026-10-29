@@ -31,6 +31,7 @@ jobs:
           python3 -m py_compile tools/block1/run_private_ctf.py tools/block1/benchmark_columnar.py
           python3 -m unittest discover -s tools/block1 -p 'test_*.py' -v
           cargo run --release --locked -p atlas-service --example ctf_real_probe -- --self-test
+          cargo run --release --locked -p atlas-service --example ctf_real_ram_index -- --self-test
           cargo run --release --locked -p atlas-service --example ctf_real_acceptance -- --self-test
       - name: Commit only verified formatting if branch head unchanged
         shell: bash
@@ -41,7 +42,7 @@ jobs:
             echo 'Branch advanced, refusing to overwrite newer source' >&2
             exit 1
           fi
-          git add crates/atlas-service/examples/ctf_real_probe.rs
+          git add crates/atlas-service/examples/ctf_real_probe.rs crates/atlas-service/examples/ctf_real_ram_index.rs
           if ! git diff --cached --quiet; then
             git config user.name 'whereisit-ci'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
@@ -66,12 +67,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo build --release --locked -p atlas-service --example ctf_real_probe --example ctf_real_acceptance
+          cargo build --release --locked -p atlas-service --example ctf_real_probe --example ctf_real_acceptance --example ctf_real_ram_index
           ext=""
           if [ "$RUNNER_OS" = Windows ]; then ext=".exe"; fi
           mkdir -p dist
           cp "target/release/examples/ctf_real_probe$ext" "dist/ctf_real_probe$ext"
           cp "target/release/examples/ctf_real_acceptance$ext" "dist/ctf_real_acceptance$ext"
+          cp "target/release/examples/ctf_real_ram_index$ext" "dist/ctf_real_ram_index$ext"
           cp LICENSE THIRD_PARTY_NOTICES.md dist/
           printf 'source_sha=%s\nrunner=%s\n' "$(git rev-parse HEAD)" "$RUNNER_OS-$RUNNER_ARCH" > dist/PROVENANCE.txt
       - name: Run both synthetic self-tests
@@ -82,6 +84,7 @@ jobs:
           if [ "$RUNNER_OS" = Windows ]; then ext=".exe"; fi
           "./dist/ctf_real_probe$ext" --self-test
           "./dist/ctf_real_acceptance$ext" --self-test
+          "./dist/ctf_real_ram_index$ext" --self-test
       - uses: actions/upload-artifact@v4
         with:
           name: b1-CTF-tools-${{ matrix.os }}-${{ github.run_id }}
