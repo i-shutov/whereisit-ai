@@ -513,8 +513,11 @@ impl Catalog {
         Ok(())
     }
 }
-/// A single-transaction importer. Metadata can be written through `transaction()`;
-/// callers must not issue transaction control statements themselves.
+/// A single-transaction importer. Only metadata tables may be written through
+/// `transaction()`. Do not mutate `entries` / `entries_core`, their parent IDs,
+/// or kinds outside `BulkWriter::insert` during the same import: writer-issued
+/// directory/archival parent identities are cached. Transaction control remains
+/// exclusively owned by the importer.
 pub struct ImportSession<'a> {
     tx: &'a Transaction<'a>,
     current: Option<(Volume, BulkWriter<'a>)>,
