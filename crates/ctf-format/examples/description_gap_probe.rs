@@ -66,7 +66,7 @@ fn self_test() {
                     opaque: Vec::new(),
                 },
             ],
-        }]
+        }],
     };
     let encoded = write_ctf(&fixture).expect("synthetic encode");
     let parsed = parse_ctf(&encoded, &Limits::default()).expect("synthetic decode");
