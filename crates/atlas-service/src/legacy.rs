@@ -119,7 +119,7 @@ pub fn import(c: &mut Catalog, v: &Value) -> Result<Value> {
     // Parsing completes before any catalog rows are changed. All volumes and legacy
     // metadata then commit together; a parser/SQL/validation error leaves no partial import.
     drop(bytes);
-    let result=c.bulk_import_many(|session|{
+    let result=c.bulk_import_many_fast_fts(|session|{
   session.transaction().execute("INSERT INTO ctf_sources(sha256,source_path,catalog_name,trailer,utc_offset_minutes,disk_count) VALUES(?1,?2,?3,?4,?5,?6)",params![sha,source_path,source_name,parsed.opaque_trailer,offset,disk_count as i64])?;
   let source_id=session.transaction().last_insert_rowid();
   let mut volumes=Vec::new();let mut entries=0u64;
