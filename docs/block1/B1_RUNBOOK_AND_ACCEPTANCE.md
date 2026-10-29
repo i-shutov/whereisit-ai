@@ -1,0 +1,61 @@
+# Block 1 — real CTF research and execution
+
+**Status: testing harness ready; real-file tests not executed.** ChatGPT's local Python/container executor currently returns ClientError even on trivial commands. This is an executor failure, not a CTF parser verdict. No actual disk counts, names, private SHA-256, or real timings are claimed until a genuine run is verified.
+
+**Private inputs:** e-books.CTF (4,488,883 bytes), Mp3-60Gb.CTF (2,420,847 bytes). The originals are never written or committed to public GitHub/Actions. Production release v1.0.0-rc.1 is unchanged.
+
+## Tools implemented
+
+- Native Rust **ctf_real_probe**: bounded double-hash source capture, CTF parser, complete counts and distributions (file/folder/archive, hierarchy depth, size buckets, decoded annotations, opaque raw record bytes, coarse attributes), metadata duplicate groups, unchanged parse→write byte comparison with numeric mismatch offset, final source hash verification. Reports no actual file names or paths.
+- Native Rust **ctf_real_acceptance** (from PR #17): SQLite import, Rust/SQLite query parity, duplicate candidates, CSV/Parquet counts, SQLite→CTF roundtrip, hash-linked cache invalidation, rename reuse, external edit conflict detection.
+- Python **run_private_ctf.py**: runs both tools on both sources, writes a local immutable checkpoint: probe.json, acceptance.json, B1_CHECKPOINT.json, B1_REPORT.md, SHA256SUMS.txt.
+- Python **benchmark_columnar.py**: imports real CTF to *temporary* SQLite, exports temporary Parquet, compares native SQLite with DuckDB Parquet scans and Polars lazy/eager. Tested result shape is sorted ID first 250, exact count and SHA-256 of ordered IDs for 14+ predicates; does not disclose actual sample text. Temporary SQLite/Parquet are removed at exit. Warm timing is not a cold-cache/p95 guarantee.
+
+## Windows PowerShell
+
+Build tools in branch research/b1-real-ctf-20261029:
+
+```powershell
+cargo +1.90.0 build --release --locked -p atlas-service --example ctf_real_probe --example ctf_real_acceptance
+cargo +1.90.0 build --release --locked -p atlas-cli
+```
+
+Run from the project directory, changing source paths:
+
+```powershell
+$book = 'D:\Catalogs\e-books.CTF'
+$mp3 = 'D:\Catalogs\Mp3-60Gb.CTF'
+py -3 tools/block1/run_private_ctf.py --probe target\release\examples\ctf_real_probe.exe --acceptance target\release\examples\ctf_real_acceptance.exe --output "$env:USERPROFILE\Documents\WhereIsIt-B1-001" $book $mp3
+uv run --with duckdb==1.5.5 --with polars==1.43.2 python tools/block1/benchmark_columnar.py --cli target\release\atlas.exe --output "$env:USERPROFILE\Documents\WhereIsIt-B1-columnar-001" $book $mp3
+```
+
+## macOS / Linux
+
+```bash
+cargo +1.90.0 build --release --locked -p atlas-service --example ctf_real_probe --example ctf_real_acceptance
+cargo +1.90.0 build --release --locked -p atlas-cli
+python3 tools/block1/run_private_ctf.py --probe target/release/examples/ctf_real_probe --acceptance target/release/examples/ctf_real_acceptance --output "$HOME/WhereIsIt-B1-001" "/path/to/e-books.CTF" "/path/to/Mp3-60Gb.CTF"
+uv run --with duckdb==1.5.5 --with polars==1.43.2 python tools/block1/benchmark_columnar.py --cli target/release/atlas --output "$HOME/WhereIsIt-B1-columnar-001" "/path/to/e-books.CTF" "/path/to/Mp3-60Gb.CTF"
+```
+
+All output directories must **not already exist**. The native tools can also be downloaded as unsigned, architecture-specific GitHub Actions artifacts. Private source paths do not appear in JSON.
+
+## Acceptance gates
+
+| Gate | Required evidence | Current state |
+|---|---|---|
+| Both source SHA-256 | Input hashes before/after and byte sizes | Pending executor |
+| CTF format and record coverage | Two real parser reports with disk and field distributions | Pending |
+| Native unchanged CTF roundtrip | Byte identity or explicit offset of mismatch | Pending |
+| SQLite import and export | Record parity, raw roundtrip or explicit loss-protection error | Pending |
+| Search / duplicate parity | Real Rust and SQLite first pages/counts, duplicate groups | Pending |
+| Columnar performance | Real SQLite/DuckDB/Polars matching counts/ID digest with measured times and sizes | Pending |
+| Independent external edit | Same-hash reuses, altered hash invalidates, no accidental overwrite | Passed on synthetic CI, real pending |
+| Original application interoperability | Modified exported CTF opens and works in original WhereIsIt | Not tested |
+| GUI / cold-cache / p95 | OS-specific user-facing test results | Not tested |
+
+## CI privacy and checkpoint
+
+The [B1 workflow](https://github.com/i-shutov/whereisit-ai/actions/workflows/b1-real-ctf.yml) builds/smoke-tests Windows, Linux and both Mac architectures on **synthetic-only** data. It never receives original private user CTF files. A green CI is not a real-data acceptance.
+
+After the two real CTF tests run, publish **only aggregate redacted results** and a B1_ACCEPTANCE checkpoint with actual SHA, environment versions, completeness, failures and follow-up parser fixes. Keep original files untouched and do not silently mark blocked gates as passed.
