@@ -41,6 +41,26 @@ fn embedded_sqlite_includes_wal_reset_fix() {
 }
 
 #[test]
+fn negative_catalog_aggregates_cannot_wrap_as_u64() -> TestResult {
+    let temporary = tempfile::tempdir()?;
+    let catalog = Catalog::open(temporary.path().join("negative.sqlite"))?;
+    catalog.conn().execute(
+        "INSERT INTO volumes(label,root_path,scanned_at,entry_count,total_bytes,status)
+         VALUES('broken','',0,-1,-42,'complete')",
+        [],
+    )?;
+    assert!(
+        catalog.volumes().is_err(),
+        "Negative entry counts must not wrap to an unsigned API value"
+    );
+    assert!(
+        catalog.stats().is_err(),
+        "Negative total sizes must not wrap in aggregate JSON"
+    );
+    Ok(())
+}
+
+#[test]
 fn concurrent_writers_reader_checkpoint_and_rollback_preserve_rows() -> TestResult {
     let temporary = tempfile::tempdir()?;
     let path = temporary.path().join("multi-connection.sqlite");
