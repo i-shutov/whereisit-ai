@@ -1,0 +1,61 @@
+{
+  "profile": "unique-deep",
+  "scope": "Synthetic self-codec semantic validation; not original-application compatibility and not crash-durability proof",
+  "tests": [
+    {
+      "all_known_semantic_fields_equal": true,
+      "bytes": 4884946,
+      "case": "rename-file",
+      "encode_ms": 18.675352,
+      "original_WhereIsIt_acceptance": false,
+      "read_parse_verify_ms": 184.589372,
+      "sha256": "91df06dc6f2cd9c27a6d449ed7b56091ac537bd41484fd9f9d7d15137521d29f",
+      "source_unchanged": true,
+      "write_fsync_ms": 4.046763
+    },
+    {
+      "all_known_semantic_fields_equal": true,
+      "bytes": 4884969,
+      "case": "rename-folder",
+      "encode_ms": 17.307396,
+      "original_WhereIsIt_acceptance": false,
+      "read_parse_verify_ms": 167.839955,
+      "sha256": "b6c62d222571dc9ac7b08ad703bc7e1e64c4c346e1a0fc91cb56b6af0ce59c1e",
+      "source_unchanged": true,
+      "write_fsync_ms": 3.0406
+    },
+    {
+      "all_known_semantic_fields_equal": true,
+      "bytes": 4885056,
+      "case": "change-description",
+      "encode_ms": 16.865183,
+      "original_WhereIsIt_acceptance": false,
+      "read_parse_verify_ms": 151.506222,
+      "sha256": "967cdfe388b27b9cebeb9c65b778e343f7df41f0c5a58435b5d63935a7d69b32",
+      "source_unchanged": true,
+      "write_fsync_ms": 3.1972110000000002
+    },
+    {
+      "all_known_semantic_fields_equal": true,
+      "bytes": 4885020,
+      "case": "append-file",
+      "encode_ms": 17.342481,
+      "original_WhereIsIt_acceptance": false,
+      "read_parse_verify_ms": 154.42848800000002,
+      "sha256": "32853d33c3220db2ac85d42c0fa194773ba4cf5671748468006f59aec7801d1c",
+      "source_unchanged": true,
+      "write_fsync_ms": 3.193734
+    },
+    {
+      "all_known_semantic_fields_equal": true,
+      "bytes": 4884883,
+      "case": "remove-file",
+      "encode_ms": 17.58417,
+      "original_WhereIsIt_acceptance": false,
+      "read_parse_verify_ms": 152.450479,
+      "sha256": "34c1a20ec5ad6054d8439288e218322e255628fd409197283b8cfaa4fa90a803",
+      "source_unchanged": true,
+      "write_fsync_ms": 3.257654
+    }
+  ]
+}

@@ -1,0 +1,449 @@
+{
+  "all_page_and_count_parity": true,
+  "import_s": 15.475418989,
+  "memory": {
+    "peak_rss_kib": 231328,
+    "rss_kib": 151196
+  },
+  "queries": [
+    {
+      "count_plus_first_row_ms": 24.086883999999998,
+      "id": 0,
+      "page": {
+        "cache": "first is NOT an OS-cold measurement",
+        "first_ms": 2.7811369999999997,
+        "median_ms": 2.3525840000000002,
+        "warm_samples_ms": [
+          2.484168,
+          2.4245769999999998,
+          2.404337,
+          2.300831,
+          2.239778,
+          2.2312149999999997
+        ]
+      },
+      "plan": {
+        "parameters": [
+          "mkv",
+          4294967296
+        ],
+        "plan": [
+          "SEARCH entries_core USING INDEX entries_ext (ext=?)"
+        ],
+        "sql": "SELECT id FROM entries_core WHERE (ext = ? AND size > ?)"
+      },
+      "query": "ext:mkv AND size:>4GiB",
+      "shape": "application Entry objects with page hydration, not ID-only",
+      "total": 24488
+    },
+    {
+      "count_plus_first_row_ms": 4.927132,
+      "id": 1,
+      "page": {
+        "cache": "first is NOT an OS-cold measurement",
+        "first_ms": 3.1815429999999996,
+        "median_ms": 2.4855845,
+        "warm_samples_ms": [
+          2.4941020000000003,
+          2.477067,
+          2.515064,
+          2.5004020000000002,
+          2.448133,
+          2.467192
+        ]
+      },
+      "plan": {
+        "parameters": [
+          "\"зап\" AND \"ь-0\" AND \"200\"",
+          "запись-0000200"
+        ],
+        "plan": [
+          "SEARCH entries_core USING INTEGER PRIMARY KEY (rowid=?)",
+          "LIST SUBQUERY 1",
+          "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1"
+        ],
+        "sql": "SELECT id FROM entries_core WHERE (id IN (SELECT rowid FROM entries_trigram WHERE entries_trigram MATCH ?) AND instr(name_norm,?)>0)"
+      },
+      "query": "name:Запись-0000200",
+      "shape": "application Entry objects with page hydration, not ID-only",
+      "total": 1
+    },
+    {
+      "count_plus_first_row_ms": 501.633914,
+      "id": 2,
+      "page": {
+        "cache": "first is NOT an OS-cold measurement",
+        "first_ms": 251.96396199999998,
+        "median_ms": 252.5821125,
+        "warm_samples_ms": [
+          252.546644,
+          251.80964900000004,
+          253.15219,
+          252.61758099999997,
+          251.821747,
+          253.63637100000003
+        ]
+      },
+      "plan": {
+        "parameters": [
+          "\"мед\" AND \"иат\" AND \"ека\"",
+          "медиатека",
+          "flac"
+        ],
+        "plan": [
+          "SEARCH entries_core USING INTEGER PRIMARY KEY (rowid=?)",
+          "LIST SUBQUERY 1",
+          "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1"
+        ],
+        "sql": "SELECT id FROM entries_core WHERE ((id IN (SELECT rowid FROM entries_trigram WHERE entries_trigram MATCH ?) AND instr(unicode_lower(relative_path),?)>0) AND ext = ?)"
+      },
+      "query": "path:Медиатека AND ext:flac",
+      "shape": "application Entry objects with page hydration, not ID-only",
+      "total": 24488
+    },
+    {
+      "count_plus_first_row_ms": 974.616491,
+      "id": 3,
+      "page": {
+        "cache": "first is NOT an OS-cold measurement",
+        "first_ms": 508.65377199999995,
+        "median_ms": 489.8837965,
+        "warm_samples_ms": [
+          507.654952,
+          490.773367,
+          488.09594699999997,
+          488.99422599999997,
+          487.63777400000004,
+          492.578367
+        ]
+      },
+      "plan": {
+        "parameters": [
+          "\"ред\" AND \"едк\" AND \"кое\"",
+          "редкое"
+        ],
+        "plan": [
+          "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+          "LIST SUBQUERY 1",
+          "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+          "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN"
+        ],
+        "sql": "SELECT id FROM entries WHERE (id IN (SELECT rowid FROM entries_trigram WHERE entries_trigram MATCH ?) AND instr(unicode_lower(description),?)>0)"
+      },
+      "query": "description:редкое",
+      "shape": "application Entry objects with page hydration, not ID-only",
+      "total": 19595
+    },
+    {
+      "count_plus_first_row_ms": 331.110167,
+      "id": 4,
+      "page": {
+        "cache": "first is NOT an OS-cold measurement",
+        "first_ms": 178.00975799999998,
+        "median_ms": 177.0150695,
+        "warm_samples_ms": [
+          176.917968,
+          178.82257800000002,
+          177.183129,
+          176.079038,
+          177.11217100000002,
+          176.464015
+        ]
+      },
+      "plan": {
+        "parameters": [
+          "\"ред\" AND \"едк\" AND \"кое\"",
+          "редкое",
+          "mp3"
+        ],
+        "plan": [
+          "SEARCH c USING COVERING INDEX entries_ext (ext=?)",
+          "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+          "LIST SUBQUERY 1",
+          "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1"
+        ],
+        "sql": "SELECT id FROM entries WHERE ((NOT (id IN (SELECT rowid FROM entries_trigram WHERE entries_trigram MATCH ?) AND instr(unicode_lower(description),?)>0)) AND ext = ?)"
+      },
+      "query": "NOT description:редкое AND ext:mp3",
+      "shape": "application Entry objects with page hydration, not ID-only",
+      "total": 19600
+    },
+    {
+      "count_plus_first_row_ms": 47.415525,
+      "id": 5,
+      "page": {
+        "cache": "first is NOT an OS-cold measurement",
+        "first_ms": 24.529492,
+        "median_ms": 24.3709275,
+        "warm_samples_ms": [
+          24.361919,
+          24.030569,
+          24.379936,
+          24.492195000000002,
+          24.294177,
+          24.51454
+        ]
+      },
+      "plan": {
+        "parameters": [
+          "featured",
+          "mkv"
+        ],
+        "plan": [
+          "SEARCH entries_core USING COVERING INDEX entries_ext (ext=? AND rowid=?)",
+          "LIST SUBQUERY 3",
+          "MATERIALIZE marked",
+          "SETUP",
+          "SEARCH c USING COVERING INDEX categories_name (name_norm=?)",
+          "SEARCH ec USING COVERING INDEX entry_categories_category (category_id=?)",
+          "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+          "RECURSIVE STEP",
+          "SCAN m",
+          "SEARCH c USING COVERING INDEX entries_parent (volume_id=? AND parent_id=?)",
+          "SCAN marked"
+        ],
+        "sql": "SELECT id FROM entries_core WHERE (id IN (WITH RECURSIVE marked(id,volume_id) AS (SELECT e.id,e.volume_id FROM categories c JOIN entry_categories ec ON ec.category_id=c.id JOIN entries e ON e.id=ec.entry_id WHERE c.name_norm=? UNION SELECT child.id,child.volume_id FROM marked m JOIN entries child ON child.volume_id=m.volume_id AND child.parent_id=m.id) SELECT id FROM marked) AND ext = ?)"
+      },
+      "query": "category:featured AND ext:mkv",
+      "shape": "application Entry objects with page hydration, not ID-only",
+      "total": 3341
+    },
+    {
+      "count_plus_first_row_ms": 1155.019284,
+      "id": 6,
+      "page": {
+        "cache": "first is NOT an OS-cold measurement",
+        "first_ms": 586.967618,
+        "median_ms": 581.7519950000001,
+        "warm_samples_ms": [
+          583.744155,
+          581.936428,
+          597.3968600000001,
+          581.5675620000001,
+          580.529326,
+          580.6114799999999
+        ]
+      },
+      "plan": {
+        "parameters": [
+          "\"муз\" AND \"узы\" AND \"ыка\"",
+          "музыка",
+          "\"000\" AND \"000\" AND \"042\"",
+          "0000042"
+        ],
+        "plan": [
+          "MULTI-INDEX OR",
+          "INDEX 1",
+          "LIST SUBQUERY 1",
+          "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+          "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+          "INDEX 2",
+          "LIST SUBQUERY 2",
+          "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+          "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+          "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+          "LIST SUBQUERY 1",
+          "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+          "LIST SUBQUERY 2",
+          "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1"
+        ],
+        "sql": "SELECT id FROM entries WHERE ((id IN (SELECT rowid FROM entries_trigram WHERE entries_trigram MATCH ?) AND instr(search_text,?)>0) OR (id IN (SELECT rowid FROM entries_trigram WHERE entries_trigram MATCH ?) AND instr(name_norm,?)>0))"
+      },
+      "query": "музыка OR name:0000042",
+      "shape": "application Entry objects with page hydration, not ID-only",
+      "total": 19596
+    },
+    {
+      "count_plus_first_row_ms": 1.094486,
+      "id": 7,
+      "page": {
+        "cache": "first is NOT an OS-cold measurement",
+        "first_ms": 0.838739,
+        "median_ms": 0.564494,
+        "warm_samples_ms": [
+          0.587488,
+          0.583353,
+          0.5562520000000001,
+          0.569451,
+          0.5595370000000001,
+          0.54201
+        ]
+      },
+      "plan": {
+        "parameters": [
+          "\"zzz\" AND \"zno\" AND \"tch\"",
+          "zzzzzznomatch"
+        ],
+        "plan": [
+          "SEARCH entries_core USING INTEGER PRIMARY KEY (rowid=?)",
+          "LIST SUBQUERY 1",
+          "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1"
+        ],
+        "sql": "SELECT id FROM entries_core WHERE (id IN (SELECT rowid FROM entries_trigram WHERE entries_trigram MATCH ?) AND instr(name_norm,?)>0)"
+      },
+      "query": "name:zzzzzznomatch",
+      "shape": "application Entry objects with page hydration, not ID-only",
+      "total": 0
+    },
+    {
+      "count_plus_first_row_ms": 13.730431,
+      "id": 8,
+      "page": {
+        "cache": "first is NOT an OS-cold measurement",
+        "first_ms": 7.0760950000000005,
+        "median_ms": 6.7101005,
+        "warm_samples_ms": [
+          6.963164,
+          6.702539000000001,
+          6.753507,
+          6.717662,
+          6.482957,
+          6.483799
+        ]
+      },
+      "plan": {
+        "parameters": [
+          "з"
+        ],
+        "plan": [
+          "SCAN entries_core USING COVERING INDEX entries_name_size"
+        ],
+        "sql": "SELECT id FROM entries_core WHERE instr(name_norm,?)>0"
+      },
+      "query": "name:з",
+      "shape": "application Entry objects with page hydration, not ID-only",
+      "total": 99956
+    },
+    {
+      "count_plus_first_row_ms": 10.890875,
+      "id": 9,
+      "page": {
+        "cache": "first is NOT an OS-cold measurement",
+        "first_ms": 6.319219,
+        "median_ms": 5.498904,
+        "warm_samples_ms": [
+          5.542644999999999,
+          5.511247,
+          5.445879,
+          5.500922,
+          5.492369,
+          5.496886
+        ]
+      },
+      "plan": {
+        "parameters": [
+          "\"alb\" AND \"um-\" AND \"077\"",
+          "album-0077",
+          "flac"
+        ],
+        "plan": [
+          "SEARCH entries_core USING INTEGER PRIMARY KEY (rowid=?)",
+          "LIST SUBQUERY 1",
+          "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1"
+        ],
+        "sql": "SELECT id FROM entries_core WHERE ((id IN (SELECT rowid FROM entries_trigram WHERE entries_trigram MATCH ?) AND instr(unicode_lower(relative_path),?)>0) AND ext = ?)"
+      },
+      "query": "path:album-0077 AND ext:flac",
+      "shape": "application Entry objects with page hydration, not ID-only",
+      "total": 0
+    },
+    {
+      "count_plus_first_row_ms": 4.208577,
+      "id": 10,
+      "page": {
+        "cache": "first is NOT an OS-cold measurement",
+        "first_ms": 2.629248,
+        "median_ms": 2.146487,
+        "warm_samples_ms": [
+          2.218807,
+          2.17456,
+          2.153898,
+          2.138635,
+          2.1357310000000003,
+          2.139076
+        ]
+      },
+      "plan": {
+        "parameters": [
+          "\"000\" AND \"000\" AND \"042\"",
+          "*0000042*.mkv"
+        ],
+        "plan": [
+          "SEARCH entries_core USING INTEGER PRIMARY KEY (rowid=?)",
+          "LIST SUBQUERY 1",
+          "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1"
+        ],
+        "sql": "SELECT id FROM entries_core WHERE (id IN (SELECT rowid FROM entries_trigram WHERE entries_trigram MATCH ?) AND name_norm GLOB ?)"
+      },
+      "query": "name:*0000042*.mkv",
+      "shape": "application Entry objects with page hydration, not ID-only",
+      "total": 0
+    },
+    {
+      "count_plus_first_row_ms": 93.627168,
+      "id": 11,
+      "page": {
+        "cache": "first is NOT an OS-cold measurement",
+        "first_ms": 23.292655999999997,
+        "median_ms": 23.420514999999998,
+        "warm_samples_ms": [
+          23.369092000000002,
+          23.16884,
+          27.130813,
+          23.416052999999998,
+          23.424977,
+          23.471998
+        ]
+      },
+      "plan": {
+        "parameters": [
+          "mkv",
+          "flac",
+          "\"alb\" AND \"um-\" AND \"001\"",
+          "*album-0001*",
+          1073741824
+        ],
+        "plan": [
+          "SEARCH entries_core USING INDEX entries_kind_size (ANY(kind) AND size>?)",
+          "LIST SUBQUERY 1",
+          "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1"
+        ],
+        "sql": "SELECT id FROM entries_core WHERE ((((ext = ? OR ext = ?)) AND (NOT (id IN (SELECT rowid FROM entries_trigram WHERE entries_trigram MATCH ?) AND unicode_lower(relative_path) GLOB ?))) AND size > ?)"
+      },
+      "query": "(ext:mkv OR ext:flac) AND NOT path:*album-0001* AND size:>1GiB",
+      "shape": "application Entry objects with page hydration, not ID-only",
+      "total": 20632
+    },
+    {
+      "count_plus_first_row_ms": 0.130307,
+      "id": 12,
+      "page": {
+        "cache": "first is NOT an OS-cold measurement",
+        "first_ms": 0.39190200000000003,
+        "median_ms": 0.1697675,
+        "warm_samples_ms": [
+          0.193843,
+          0.165401,
+          0.184759,
+          0.17413399999999998,
+          0.150097,
+          0.14645200000000003
+        ]
+      },
+      "plan": {
+        "parameters": [
+          9000000000
+        ],
+        "plan": [
+          "SEARCH entries_core USING COVERING INDEX entries_size (size>?)"
+        ],
+        "sql": "SELECT id FROM entries_core WHERE size > ?"
+      },
+      "query": "size:>9000000000B",
+      "shape": "application Entry objects with page hydration, not ID-only",
+      "total": 9
+    }
+  ],
+  "raw_ctf_provenance_included": true,
+  "sqlite_bytes": 237166592
+}

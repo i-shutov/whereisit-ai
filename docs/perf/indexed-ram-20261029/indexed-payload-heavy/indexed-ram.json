@@ -1,0 +1,259 @@
+{
+  "all_index_build_s": 0.104792766,
+  "canonical_read_and_intern_s": 0.33440293,
+  "dataset": "SYNTHETIC adverse profile, not user data",
+  "description_text_posting_capacity_bytes": 135808,
+  "duplicate_groups": 0,
+  "duplicate_members": 0,
+  "folder_text_posting_capacity_bytes": 630895,
+  "hash_table_bucket_bytes_in_capacity": false,
+  "integer_key_duplicate_build_s": 0.001193638,
+  "major_vector_capacity_bytes": 4475024,
+  "memory_after_build": {
+    "peak_rss_kib": 30412,
+    "rss_kib": 30412
+  },
+  "memory_final": {
+    "peak_rss_kib": 31944,
+    "rss_kib": 31944
+  },
+  "name_text_posting_capacity_bytes": 22559770,
+  "notes": [
+    "Experimental fixed Boolean expressions, not generic production parser",
+    "Measures complete match sets, exact count and first 250 IDs together; other engines measured first page separately",
+    "Trigrams index distinct normalized names/folder paths/descriptions; candidate verification prevents false positives",
+    "Dense bitmaps ordered by filename rank; no Roaring implementation was benchmarked",
+    "Known synthetic category membership; arbitrary category updates and Unicode sort semantics remain separate acceptance tasks",
+    "Canonical TSV parsing is not direct zero-copy CTF ingestion; raw CTF must still be retained separately"
+  ],
+  "profile": "payload-heavy",
+  "queries": [
+    {
+      "all_ordered_ids_sha256": "5cb23f8ead47d0e242684250300b480e85b3f201c25fe16f782cee3c60761b36",
+      "first_ms": 0.079119,
+      "id": 0,
+      "median_ms": 0.0297445,
+      "parity": true,
+      "query": "ext:mkv AND size:>4GiB",
+      "total": 24488,
+      "warm_samples_ms": [
+        0.031337000000000004,
+        0.028103,
+        0.033331000000000006,
+        0.028152,
+        0.044467,
+        0.027902000000000003
+      ]
+    },
+    {
+      "all_ordered_ids_sha256": "e41e2c065f55f9a21003e627b91cda581fb9c86404fc33c89c420626a8f4ed26",
+      "first_ms": 0.033741,
+      "id": 1,
+      "median_ms": 0.009714500000000001,
+      "parity": true,
+      "query": "name:Запись-0000200",
+      "total": 1,
+      "warm_samples_ms": [
+        0.010376,
+        0.009965,
+        0.009694000000000001,
+        0.009714,
+        0.009714,
+        0.009715
+      ]
+    },
+    {
+      "all_ordered_ids_sha256": "6fc3eafae164b2823aac518b8bb17360da3e99b9e347aa0baa2cf769bad2ee58",
+      "first_ms": 0.207715,
+      "id": 2,
+      "median_ms": 0.166923,
+      "parity": true,
+      "query": "path:Медиатека AND ext:flac",
+      "total": 24488,
+      "warm_samples_ms": [
+        0.167414,
+        0.186052,
+        0.16748300000000002,
+        0.16523,
+        0.166432,
+        0.165741
+      ]
+    },
+    {
+      "all_ordered_ids_sha256": "fe549dc87828838f1c82facd13d71b183ca427e4cd5c76cc11a5ba87426fdb01",
+      "first_ms": 0.025549,
+      "id": 3,
+      "median_ms": 0.029219,
+      "parity": true,
+      "query": "description:редкое",
+      "total": 19595,
+      "warm_samples_ms": [
+        0.021012000000000003,
+        0.027923,
+        0.030215000000000002,
+        0.030135,
+        0.030166,
+        0.028303
+      ]
+    },
+    {
+      "all_ordered_ids_sha256": "a9a8f25228c35797431e1c7cc89f118d0e48b211c0200e7c633ef84020710c5d",
+      "first_ms": 0.028614,
+      "id": 4,
+      "median_ms": 0.0294245,
+      "parity": true,
+      "query": "NOT description:редкое AND ext:mp3",
+      "total": 19600,
+      "warm_samples_ms": [
+        0.030976999999999998,
+        0.030947,
+        0.030806999999999998,
+        0.028042,
+        0.021302,
+        0.021172
+      ]
+    },
+    {
+      "all_ordered_ids_sha256": "aa13d5b0d0afbf9dcd8c62fe0e77caffb4d4607c8304b6500265be22fe685bba",
+      "first_ms": 0.003245,
+      "id": 5,
+      "median_ms": 0.001948,
+      "parity": true,
+      "query": "category:featured AND ext:mkv",
+      "total": 3341,
+      "warm_samples_ms": [
+        0.001973,
+        0.001993,
+        0.001923,
+        0.0018729999999999999,
+        0.001892,
+        0.004627
+      ]
+    },
+    {
+      "all_ordered_ids_sha256": "358083860e261bade79413c2bbc0d1dfa708c62963be82b5bdf29a715c1bc0f2",
+      "first_ms": 0.093832,
+      "id": 6,
+      "median_ms": 0.0353685,
+      "parity": true,
+      "query": "музыка OR name:0000042",
+      "total": 19596,
+      "warm_samples_ms": [
+        0.041453,
+        0.033361,
+        0.03322,
+        0.03297,
+        0.049916,
+        0.037376
+      ]
+    },
+    {
+      "all_ordered_ids_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "first_ms": 0.002123,
+      "id": 7,
+      "median_ms": 0.0019779999999999997,
+      "parity": true,
+      "query": "name:zzzzzznomatch",
+      "total": 0,
+      "warm_samples_ms": [
+        0.002013,
+        0.001983,
+        0.001973,
+        0.001973,
+        0.002004,
+        0.001973
+      ]
+    },
+    {
+      "all_ordered_ids_sha256": "eb6b019bb7e58285be423e01b9e60f57e0fab0ffa413e8c48cd61550f382f209",
+      "first_ms": 4.434468,
+      "id": 8,
+      "median_ms": 1.4282935,
+      "parity": true,
+      "query": "name:з",
+      "total": 99956,
+      "warm_samples_ms": [
+        1.765074,
+        1.436666,
+        1.387372,
+        1.418459,
+        1.419921,
+        1.448104
+      ]
+    },
+    {
+      "all_ordered_ids_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "first_ms": 0.010305,
+      "id": 9,
+      "median_ms": 0.0041259999999999995,
+      "parity": true,
+      "query": "path:album-0077 AND ext:flac",
+      "total": 0,
+      "warm_samples_ms": [
+        0.004216,
+        0.004136,
+        0.004157,
+        0.004106,
+        0.004116,
+        0.004096000000000001
+      ]
+    },
+    {
+      "all_ordered_ids_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "first_ms": 0.018567999999999998,
+      "id": 10,
+      "median_ms": 0.0201205,
+      "parity": true,
+      "query": "name:*0000042*.mkv",
+      "total": 0,
+      "warm_samples_ms": [
+        0.013781,
+        0.013571,
+        0.023906,
+        0.019979999999999998,
+        0.020261,
+        0.023055
+      ]
+    },
+    {
+      "all_ordered_ids_sha256": "122256adf809b783043cd83a1fbbe983bf9febf8e89aab2b81da7e79cb87c555",
+      "first_ms": 0.09288099999999999,
+      "id": 11,
+      "median_ms": 0.073987,
+      "parity": true,
+      "query": "(ext:mkv OR ext:flac) AND NOT path:*album-0001* AND size:>1GiB",
+      "total": 20632,
+      "warm_samples_ms": [
+        0.071568,
+        0.076616,
+        0.095865,
+        0.076406,
+        0.063336,
+        0.057107
+      ]
+    },
+    {
+      "all_ordered_ids_sha256": "12913159393d7d771dd1d102561155520b9a6baef308705522db1e4ee9fa747d",
+      "first_ms": 0.002954,
+      "id": 12,
+      "median_ms": 0.003064,
+      "parity": true,
+      "query": "size:>9000000000B",
+      "total": 9,
+      "warm_samples_ms": [
+        0.003084,
+        0.003125,
+        0.0029950000000000003,
+        0.003044,
+        0.002994,
+        0.003095
+      ]
+    }
+  ],
+  "raw_ctf_resident_in_this_process": false,
+  "row_bytes": 24,
+  "rows": 100000,
+  "unique_descriptions": 1,
+  "unique_folder_paths": 46,
+  "unique_names": 98022
+}

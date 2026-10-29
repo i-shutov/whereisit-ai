@@ -1,0 +1,61 @@
+{
+  "profile": "payload-heavy",
+  "scope": "Synthetic self-codec semantic validation; not original-application compatibility and not crash-durability proof",
+  "tests": [
+    {
+      "all_known_semantic_fields_equal": true,
+      "bytes": 72736670,
+      "case": "rename-file",
+      "encode_ms": 126.761557,
+      "original_WhereIsIt_acceptance": false,
+      "read_parse_verify_ms": 520.5653930000001,
+      "sha256": "aa5a46deb20fd864f8d738a3c3bc4c602576b7e08ac1ae83dd710650e68b3bee",
+      "source_unchanged": true,
+      "write_fsync_ms": 29.900341
+    },
+    {
+      "all_known_semantic_fields_equal": true,
+      "bytes": 72736693,
+      "case": "rename-folder",
+      "encode_ms": 101.316036,
+      "original_WhereIsIt_acceptance": false,
+      "read_parse_verify_ms": 409.08072899999996,
+      "sha256": "743366842f2e046fa3f2f8022c622b6d8ebf0e49871d1bcad2492e60685ff249",
+      "source_unchanged": true,
+      "write_fsync_ms": 28.172295
+    },
+    {
+      "all_known_semantic_fields_equal": true,
+      "bytes": 72736780,
+      "case": "change-description",
+      "encode_ms": 100.58105400000001,
+      "original_WhereIsIt_acceptance": false,
+      "read_parse_verify_ms": 341.018104,
+      "sha256": "95055a506032a91010889fd798ca9dd773676b4be4e30770b43a375afdee172d",
+      "source_unchanged": true,
+      "write_fsync_ms": 27.979273
+    },
+    {
+      "all_known_semantic_fields_equal": true,
+      "bytes": 72736744,
+      "case": "append-file",
+      "encode_ms": 100.29884799999999,
+      "original_WhereIsIt_acceptance": false,
+      "read_parse_verify_ms": 349.91868700000003,
+      "sha256": "9220c8b190db1021701cf71c7f545589bc3f29a74325926f4c65916a057ec107",
+      "source_unchanged": true,
+      "write_fsync_ms": 27.471816
+    },
+    {
+      "all_known_semantic_fields_equal": true,
+      "bytes": 72736607,
+      "case": "remove-file",
+      "encode_ms": 100.369625,
+      "original_WhereIsIt_acceptance": false,
+      "read_parse_verify_ms": 336.278605,
+      "sha256": "e5fb47a39a6506fa5d0aa0eb99054325e72cecbc4399761368a1b9f0747e3dc2",
+      "source_unchanged": true,
+      "write_fsync_ms": 27.295428
+    }
+  ]
+}

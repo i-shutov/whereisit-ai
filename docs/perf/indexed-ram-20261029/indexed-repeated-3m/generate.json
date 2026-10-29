@@ -1,0 +1,14 @@
+{
+  "ctf_bytes": 144712884,
+  "ctf_encode_s": 1.176616206,
+  "ctf_sha256": "17f2a9f646ccc2f645c2460d46f4acdedf3d55f40f30815377479209a38cd65c",
+  "ctf_write_fsync_s": 0.115781231,
+  "dataset": "SYNTHETIC, not the private original",
+  "generator_s": 0.3858396,
+  "memory": {
+    "peak_rss_kib": 653916,
+    "rss_kib": 653916
+  },
+  "rows": 3046027,
+  "volumes": 44
+}

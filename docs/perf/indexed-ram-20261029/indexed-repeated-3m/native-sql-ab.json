@@ -1,0 +1,866 @@
+{
+  "caveats": [
+    "Fixed-predicate research, not a generic cost-based planner implementation",
+    "Q5 category rewritten to volume_id<=6 only because this synthetic category is exactly all descendants of those volume roots; arbitrary real categories require a membership index",
+    "Q6 fixed OR decomposition tested against this corpus; universal cross-field substring semantics need separate validation",
+    "First-run is not cold OS cache; no p95 SLA claimed",
+    "Source private CTF and production database are not modified"
+  ],
+  "covering_index_build_s": 5.835128459,
+  "dataset": "SYNTHETIC, not the private original",
+  "native_sqlite": "3.46.0",
+  "queries": [
+    {
+      "complete_entry_page_and_count_equal": true,
+      "covering_index_only": {
+        "first_ms": 0.885206,
+        "median_ms": 0.460568,
+        "warm_samples_ms": [
+          0.529434,
+          0.46563699999999997,
+          0.463401,
+          0.45532100000000003,
+          0.457735,
+          0.44129599999999997
+        ]
+      },
+      "equivalent_fixed_predicate": {
+        "first_ms": 0.455048,
+        "median_ms": 0.381006,
+        "warm_samples_ms": [
+          0.386746,
+          0.392602,
+          0.37464600000000003,
+          0.37424,
+          0.384866,
+          0.37714600000000004
+        ]
+      },
+      "id": 0,
+      "indexed_original_full_page_plan": [
+        "MATERIALIZE page",
+        "SEARCH entries_core USING COVERING INDEX perf_native_ext_order_size (ext=?)",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "original": {
+        "first_ms": 11.827232,
+        "median_ms": 10.916204,
+        "warm_samples_ms": [
+          10.945101000000001,
+          10.887307,
+          10.87974,
+          10.99789,
+          10.946737,
+          10.858279999999999
+        ]
+      },
+      "original_full_page_plan": [
+        "MATERIALIZE page",
+        "SCAN entries_core USING INDEX entries_name_sort",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "query": "ext:mkv AND size:>4GiB",
+      "rewritten_full_page_plan": [
+        "MATERIALIZE page",
+        "SEARCH entries_core USING COVERING INDEX perf_native_ext_order_size (ext=?)",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ]
+    },
+    {
+      "covering_index_only": {
+        "first_ms": 45.61151,
+        "median_ms": 45.94952,
+        "warm_samples_ms": [
+          45.990116,
+          46.117289,
+          46.071274,
+          45.908924,
+          45.869737,
+          45.840962
+        ]
+      },
+      "id": 1,
+      "indexed_original_full_page_plan": [
+        "MATERIALIZE page",
+        "SEARCH entries_core USING INTEGER PRIMARY KEY (rowid=?)",
+        "LIST SUBQUERY 1",
+        "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "original": {
+        "first_ms": 45.75443,
+        "median_ms": 45.4572235,
+        "warm_samples_ms": [
+          45.403133,
+          46.233411000000004,
+          45.511314,
+          45.356683000000004,
+          45.889421,
+          45.365299
+        ]
+      },
+      "original_full_page_plan": [
+        "MATERIALIZE page",
+        "SEARCH entries_core USING INTEGER PRIMARY KEY (rowid=?)",
+        "LIST SUBQUERY 1",
+        "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "query": "name:Запись-0000200"
+    },
+    {
+      "complete_entry_page_and_count_equal": true,
+      "covering_index_only": {
+        "first_ms": 2268.5669540000004,
+        "median_ms": 2280.7565735,
+        "warm_samples_ms": [
+          2270.037212,
+          2320.7001099999998,
+          2281.266604,
+          2273.48394,
+          2293.115664,
+          2280.246543
+        ]
+      },
+      "equivalent_fixed_predicate": {
+        "first_ms": 0.7220329999999999,
+        "median_ms": 0.540029,
+        "warm_samples_ms": [
+          0.551865,
+          0.567826,
+          0.5301750000000001,
+          0.54707,
+          0.528887,
+          0.532988
+        ]
+      },
+      "id": 2,
+      "indexed_original_full_page_plan": [
+        "MATERIALIZE page",
+        "SEARCH entries_core USING INTEGER PRIMARY KEY (rowid=?)",
+        "LIST SUBQUERY 1",
+        "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "original": {
+        "first_ms": 2257.357004,
+        "median_ms": 2273.5898685,
+        "warm_samples_ms": [
+          2304.471821,
+          2275.317562,
+          2277.409643,
+          2271.8621749999998,
+          2259.369956,
+          2260.245818
+        ]
+      },
+      "original_full_page_plan": [
+        "MATERIALIZE page",
+        "SEARCH entries_core USING INTEGER PRIMARY KEY (rowid=?)",
+        "LIST SUBQUERY 1",
+        "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "query": "path:Медиатека AND ext:flac",
+      "rewritten_full_page_plan": [
+        "MATERIALIZE page",
+        "SEARCH entries_core USING INDEX perf_native_ext_order_size (ext=?)",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ]
+    },
+    {
+      "complete_entry_page_and_count_equal": true,
+      "covering_index_only": {
+        "first_ms": 72.61580199999999,
+        "median_ms": 73.282955,
+        "warm_samples_ms": [
+          73.51707,
+          73.013556,
+          73.04884,
+          73.53578900000001,
+          73.046334,
+          73.85953
+        ]
+      },
+      "equivalent_fixed_predicate": {
+        "first_ms": 62.841405,
+        "median_ms": 62.295552,
+        "warm_samples_ms": [
+          62.2808,
+          62.556087999999995,
+          62.136925000000005,
+          62.310303999999995,
+          62.068953,
+          62.500795
+        ]
+      },
+      "id": 3,
+      "indexed_original_full_page_plan": [
+        "MATERIALIZE page",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "LIST SUBQUERY 1",
+        "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "original": {
+        "first_ms": 72.25156700000001,
+        "median_ms": 73.1272825,
+        "warm_samples_ms": [
+          72.40798699999999,
+          72.433799,
+          74.636185,
+          73.592725,
+          72.925485,
+          73.32908
+        ]
+      },
+      "original_full_page_plan": [
+        "MATERIALIZE page",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "LIST SUBQUERY 1",
+        "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "query": "description:редкое",
+      "rewritten_full_page_plan": [
+        "MATERIALIZE page",
+        "SEARCH entries_core USING INTEGER PRIMARY KEY (rowid=?)",
+        "LIST SUBQUERY 1",
+        "SCAN entry_payload",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ]
+    },
+    {
+      "complete_entry_page_and_count_equal": true,
+      "covering_index_only": {
+        "first_ms": 8.566132000000001,
+        "median_ms": 7.6150895,
+        "warm_samples_ms": [
+          7.630659,
+          7.817156000000001,
+          7.459129999999999,
+          7.59952,
+          7.672898,
+          7.393917
+        ]
+      },
+      "equivalent_fixed_predicate": {
+        "first_ms": 17.994086,
+        "median_ms": 17.819005,
+        "warm_samples_ms": [
+          17.776612,
+          17.861398,
+          17.766342,
+          18.010444,
+          17.742171000000003,
+          17.871541
+        ]
+      },
+      "id": 4,
+      "indexed_original_full_page_plan": [
+        "MATERIALIZE page",
+        "SEARCH c USING COVERING INDEX perf_native_ext_order_size (ext=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "LIST SUBQUERY 1",
+        "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "original": {
+        "first_ms": 569.970421,
+        "median_ms": 579.0717715000001,
+        "warm_samples_ms": [
+          577.1945440000001,
+          586.4710090000001,
+          570.7732679999999,
+          573.163148,
+          590.7697400000001,
+          580.948999
+        ]
+      },
+      "original_full_page_plan": [
+        "MATERIALIZE page",
+        "SEARCH c USING INDEX entries_ext (ext=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "LIST SUBQUERY 1",
+        "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "query": "NOT description:редкое AND ext:mp3",
+      "rewritten_full_page_plan": [
+        "MATERIALIZE page",
+        "SEARCH entries_core USING COVERING INDEX perf_native_ext_order_size (ext=?)",
+        "LIST SUBQUERY 1",
+        "SCAN entry_payload",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ]
+    },
+    {
+      "complete_entry_page_and_count_equal": true,
+      "covering_index_only": {
+        "first_ms": 621.88802,
+        "median_ms": 621.056178,
+        "warm_samples_ms": [
+          621.358031,
+          631.955045,
+          620.725,
+          620.7543250000001,
+          624.2993700000001,
+          619.472569
+        ]
+      },
+      "equivalent_fixed_predicate": {
+        "first_ms": 1.284018,
+        "median_ms": 0.7464635,
+        "warm_samples_ms": [
+          0.847117,
+          0.76578,
+          0.747599,
+          0.73954,
+          0.745328,
+          0.724595
+        ]
+      },
+      "id": 5,
+      "indexed_original_full_page_plan": [
+        "MATERIALIZE page",
+        "SEARCH entries_core USING INTEGER PRIMARY KEY (rowid=?)",
+        "LIST SUBQUERY 3",
+        "MATERIALIZE marked",
+        "SETUP",
+        "SEARCH c USING COVERING INDEX categories_name (name_norm=?)",
+        "SEARCH ec USING COVERING INDEX entry_categories_category (category_id=?)",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "RECURSIVE STEP",
+        "SCAN m",
+        "SEARCH c USING COVERING INDEX entries_parent (volume_id=? AND parent_id=?)",
+        "SCAN marked",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "original": {
+        "first_ms": 631.2738909999999,
+        "median_ms": 621.865527,
+        "warm_samples_ms": [
+          622.540679,
+          621.486623,
+          626.367158,
+          620.304487,
+          622.2444310000001,
+          620.63077
+        ]
+      },
+      "original_full_page_plan": [
+        "MATERIALIZE page",
+        "SEARCH entries_core USING INTEGER PRIMARY KEY (rowid=?)",
+        "LIST SUBQUERY 3",
+        "MATERIALIZE marked",
+        "SETUP",
+        "SEARCH c USING COVERING INDEX categories_name (name_norm=?)",
+        "SEARCH ec USING COVERING INDEX entry_categories_category (category_id=?)",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "RECURSIVE STEP",
+        "SCAN m",
+        "SEARCH c USING COVERING INDEX entries_parent (volume_id=? AND parent_id=?)",
+        "SCAN marked",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "query": "category:featured AND ext:mkv",
+      "rewritten_full_page_plan": [
+        "MATERIALIZE page",
+        "SEARCH entries_core USING INDEX perf_native_ext_order_size (ext=?)",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ]
+    },
+    {
+      "complete_entry_page_and_count_equal": true,
+      "covering_index_only": {
+        "first_ms": 141.69717200000002,
+        "median_ms": 141.370383,
+        "warm_samples_ms": [
+          141.141035,
+          141.298357,
+          141.239877,
+          141.442409,
+          142.318879,
+          141.958107
+        ]
+      },
+      "equivalent_fixed_predicate": {
+        "first_ms": 61.953066,
+        "median_ms": 62.3206615,
+        "warm_samples_ms": [
+          62.226341999999995,
+          62.271165,
+          62.370158,
+          62.412877,
+          62.17023,
+          71.132215
+        ]
+      },
+      "id": 6,
+      "indexed_original_full_page_plan": [
+        "MATERIALIZE page",
+        "MULTI-INDEX OR",
+        "INDEX 1",
+        "LIST SUBQUERY 1",
+        "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "INDEX 2",
+        "LIST SUBQUERY 2",
+        "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "LIST SUBQUERY 1",
+        "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+        "LIST SUBQUERY 2",
+        "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "original": {
+        "first_ms": 139.84354900000002,
+        "median_ms": 141.74128199999998,
+        "warm_samples_ms": [
+          142.015435,
+          141.44619,
+          141.95058999999998,
+          141.451724,
+          143.64769099999998,
+          141.531974
+        ]
+      },
+      "original_full_page_plan": [
+        "MATERIALIZE page",
+        "MULTI-INDEX OR",
+        "INDEX 1",
+        "LIST SUBQUERY 1",
+        "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "INDEX 2",
+        "LIST SUBQUERY 2",
+        "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "LIST SUBQUERY 1",
+        "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+        "LIST SUBQUERY 2",
+        "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "query": "музыка OR name:0000042",
+      "rewritten_full_page_plan": [
+        "MATERIALIZE page",
+        "SCAN entries_core USING INDEX entries_name_sort",
+        "LIST SUBQUERY 1",
+        "SCAN entry_payload",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ]
+    },
+    {
+      "covering_index_only": {
+        "first_ms": 0.951344,
+        "median_ms": 0.6002235,
+        "warm_samples_ms": [
+          0.706845,
+          0.6523469999999999,
+          0.6177739999999999,
+          0.582673,
+          0.5444789999999999,
+          0.559755
+        ]
+      },
+      "id": 7,
+      "indexed_original_full_page_plan": [
+        "MATERIALIZE page",
+        "SEARCH entries_core USING INTEGER PRIMARY KEY (rowid=?)",
+        "LIST SUBQUERY 1",
+        "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "original": {
+        "first_ms": 0.7470709999999999,
+        "median_ms": 0.5562265,
+        "warm_samples_ms": [
+          0.6019359999999999,
+          0.5590299999999999,
+          0.556044,
+          0.556409,
+          0.5491349999999999,
+          0.54997
+        ]
+      },
+      "original_full_page_plan": [
+        "MATERIALIZE page",
+        "SEARCH entries_core USING INTEGER PRIMARY KEY (rowid=?)",
+        "LIST SUBQUERY 1",
+        "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "query": "name:zzzzzznomatch"
+    },
+    {
+      "covering_index_only": {
+        "first_ms": 151.321271,
+        "median_ms": 150.612622,
+        "warm_samples_ms": [
+          151.36355500000002,
+          149.908118,
+          149.940146,
+          152.071353,
+          151.285098,
+          149.753538
+        ]
+      },
+      "id": 8,
+      "indexed_original_full_page_plan": [
+        "MATERIALIZE page",
+        "SCAN entries_core USING INDEX entries_name_sort",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "original": {
+        "first_ms": 150.291304,
+        "median_ms": 151.914782,
+        "warm_samples_ms": [
+          150.429259,
+          151.852134,
+          154.31897999999998,
+          152.113393,
+          151.97743,
+          151.16541
+        ]
+      },
+      "original_full_page_plan": [
+        "MATERIALIZE page",
+        "SCAN entries_core USING INDEX entries_name_sort",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "query": "name:з"
+    },
+    {
+      "covering_index_only": {
+        "first_ms": 57.467086,
+        "median_ms": 57.432734499999995,
+        "warm_samples_ms": [
+          57.623251,
+          57.054268,
+          57.417708,
+          57.447761,
+          57.77215,
+          56.8495
+        ]
+      },
+      "id": 9,
+      "indexed_original_full_page_plan": [
+        "MATERIALIZE page",
+        "SEARCH entries_core USING INTEGER PRIMARY KEY (rowid=?)",
+        "LIST SUBQUERY 1",
+        "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "original": {
+        "first_ms": 57.192341,
+        "median_ms": 57.514928,
+        "warm_samples_ms": [
+          58.244313,
+          57.486402999999996,
+          57.857543,
+          57.204572,
+          57.543453,
+          57.144812
+        ]
+      },
+      "original_full_page_plan": [
+        "MATERIALIZE page",
+        "SEARCH entries_core USING INTEGER PRIMARY KEY (rowid=?)",
+        "LIST SUBQUERY 1",
+        "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "query": "path:album-0077 AND ext:flac"
+    },
+    {
+      "covering_index_only": {
+        "first_ms": 18.513765000000003,
+        "median_ms": 18.4947005,
+        "warm_samples_ms": [
+          18.454301,
+          18.485727999999998,
+          18.575533,
+          18.758316,
+          18.503673000000003,
+          18.484798
+        ]
+      },
+      "id": 10,
+      "indexed_original_full_page_plan": [
+        "MATERIALIZE page",
+        "SEARCH entries_core USING INTEGER PRIMARY KEY (rowid=?)",
+        "LIST SUBQUERY 1",
+        "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "original": {
+        "first_ms": 18.462695,
+        "median_ms": 18.6213415,
+        "warm_samples_ms": [
+          18.89147,
+          18.684838,
+          18.324145,
+          18.895849,
+          18.557845,
+          18.491494
+        ]
+      },
+      "original_full_page_plan": [
+        "MATERIALIZE page",
+        "SEARCH entries_core USING INTEGER PRIMARY KEY (rowid=?)",
+        "LIST SUBQUERY 1",
+        "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "query": "name:*0000042*.mkv"
+    },
+    {
+      "complete_entry_page_and_count_equal": true,
+      "covering_index_only": {
+        "first_ms": 397.948146,
+        "median_ms": 402.38878850000003,
+        "warm_samples_ms": [
+          399.18251100000003,
+          404.067666,
+          403.622811,
+          404.497121,
+          401.154766,
+          396.41891499999997
+        ]
+      },
+      "equivalent_fixed_predicate": {
+        "first_ms": 11.807312,
+        "median_ms": 11.660152499999999,
+        "warm_samples_ms": [
+          11.676824,
+          11.745945,
+          11.664988,
+          11.655317,
+          11.576726,
+          11.475904
+        ]
+      },
+      "id": 11,
+      "indexed_original_full_page_plan": [
+        "MATERIALIZE page",
+        "SCAN entries_core USING INDEX entries_name_sort",
+        "LIST SUBQUERY 1",
+        "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "original": {
+        "first_ms": 401.220558,
+        "median_ms": 406.126189,
+        "warm_samples_ms": [
+          415.377936,
+          401.54145200000005,
+          408.122438,
+          404.12994000000003,
+          403.340101,
+          409.912372
+        ]
+      },
+      "original_full_page_plan": [
+        "MATERIALIZE page",
+        "SCAN entries_core USING INDEX entries_name_sort",
+        "LIST SUBQUERY 1",
+        "SCAN entries_trigram VIRTUAL TABLE INDEX 0:M1",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "query": "(ext:mkv OR ext:flac) AND NOT path:*album-0001* AND size:>1GiB",
+      "rewritten_full_page_plan": [
+        "MATERIALIZE page",
+        "SCAN entries_core USING INDEX entries_name_sort",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ]
+    },
+    {
+      "complete_entry_page_and_count_equal": true,
+      "covering_index_only": {
+        "first_ms": 1.6370289999999998,
+        "median_ms": 1.4759865,
+        "warm_samples_ms": [
+          1.571923,
+          1.507207,
+          1.4888290000000002,
+          1.463144,
+          1.432291,
+          1.427237
+        ]
+      },
+      "equivalent_fixed_predicate": {
+        "first_ms": 1.3314620000000001,
+        "median_ms": 1.2690505,
+        "warm_samples_ms": [
+          1.3239040000000002,
+          1.285622,
+          1.25832,
+          1.2727350000000002,
+          1.265366,
+          1.2458339999999999
+        ]
+      },
+      "id": 12,
+      "indexed_original_full_page_plan": [
+        "MATERIALIZE page",
+        "SEARCH entries_core USING INDEX entries_size (size>?)",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "original": {
+        "first_ms": 2.1290419999999997,
+        "median_ms": 1.4541125,
+        "warm_samples_ms": [
+          1.680013,
+          1.517329,
+          1.469995,
+          1.43823,
+          1.401062,
+          1.3739379999999999
+        ]
+      },
+      "original_full_page_plan": [
+        "MATERIALIZE page",
+        "SEARCH entries_core USING INDEX entries_size (size>?)",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ],
+      "query": "size:>9000000000B",
+      "rewritten_full_page_plan": [
+        "MATERIALIZE page",
+        "SEARCH entries_core USING INDEX entries_size (size>?)",
+        "USE TEMP B-TREE FOR ORDER BY",
+        "SCAN p",
+        "SEARCH c USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH p USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ]
+    }
+  ],
+  "response_shape": "250 full Entry structs and continuation probe; same as production search_fast, exact full-field page equality asserted",
+  "rows": 3046027,
+  "sqlite_bytes_after_index": 1527496704
+}
