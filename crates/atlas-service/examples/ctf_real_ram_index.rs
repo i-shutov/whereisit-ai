@@ -10,7 +10,7 @@ use std::time::Instant;
 
 struct Row {
     id:i64, name:String, path:String, description:String,
-    sort:Vec<u8>, ext:String, size:u64, kind:EntryKind,
+    sort:Vec<u8>, ext:String, size:u64,
 }
 struct SearchIndex {
     order:Vec<usize>,
@@ -82,7 +82,7 @@ fn build_rows(c:&ctf_format::CtfCatalog)->Result<Vec<Row>,&'static str> {
             let sort=e.name.as_bytes().iter().map(|b|b.to_ascii_lowercase()).collect();
             out.push(Row{id:out.len() as i64+1,name:e.name.to_lowercase(),
                 path:full.to_lowercase(),description:e.description.to_lowercase(),
-                sort,ext,size:e.size,kind:e.kind});
+                sort,ext,size:e.size});
         }
     }
     Ok(out)
