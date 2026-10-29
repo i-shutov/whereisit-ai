@@ -24,9 +24,12 @@ class CheckpointTest(unittest.TestCase):
         return first,second
 
     def invoke(self,root,first,second,probe,acceptance,output):
+        ram=fake_executable(root/"ram",'''import json
+print(json.dumps({"reports":[{"result":{"status":"passed"}}]*2}))
+''')
         return subprocess.run(
             [sys.executable,str(SCRIPT),"--probe",str(probe),
-             "--acceptance",str(acceptance),"--output",str(output),
+             "--acceptance",str(acceptance),"--ram-index",str(ram),"--output",str(output),
              str(first),str(second)],
             cwd=root,capture_output=True,text=True,check=False
         )
@@ -85,7 +88,7 @@ sys.exit(9)
             self.assertEqual(result.returncode,1)
             manifest=json.loads((dest/"B1_CHECKPOINT.json").read_text())
             self.assertFalse(manifest["passed_available_checks"])
-            self.assertEqual(len(manifest["phases"]),2)
+            self.assertEqual(len(manifest["phases"]),3)
             self.assertEqual(manifest["phases"][0]["status"],"failed")
             self.assertEqual(manifest["phases"][1]["status"],"failed")
 
