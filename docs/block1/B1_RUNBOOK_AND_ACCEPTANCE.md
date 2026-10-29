@@ -27,7 +27,7 @@ Run from the project directory, changing source paths. The `--assert-real-inputs
 $book = 'D:\Catalogs\e-books.CTF'
 $mp3 = 'D:\Catalogs\Mp3-60Gb.CTF'
 py -3 tools/block1/run_private_ctf.py --assert-real-inputs --probe target\release\examples\ctf_real_probe.exe --acceptance target\release\examples\ctf_real_acceptance.exe --ram-index target\release\examples\ctf_real_ram_index.exe --output "$env:USERPROFILE\Documents\WhereIsIt-B1-001" $book $mp3
-uv run --with duckdb==1.5.5 --with polars==1.43.2 python tools/block1/benchmark_columnar.py --cli target\release\atlas.exe --output "$env:USERPROFILE\Documents\WhereIsIt-B1-columnar-001" $book $mp3
+uv run --with duckdb==1.5.5 --with polars==1.43.2 python tools/block1/benchmark_columnar.py --assert-real-inputs --cli target\release\atlas.exe --output "$env:USERPROFILE\Documents\WhereIsIt-B1-columnar-001" $book $mp3
 ```
 
 ## macOS / Linux
@@ -36,10 +36,10 @@ uv run --with duckdb==1.5.5 --with polars==1.43.2 python tools/block1/benchmark_
 cargo +1.90.0 build --release --locked -p atlas-service --example ctf_real_probe --example ctf_real_acceptance --example ctf_real_ram_index
 cargo +1.90.0 build --release --locked -p atlas-cli
 python3 tools/block1/run_private_ctf.py --assert-real-inputs --probe target/release/examples/ctf_real_probe --acceptance target/release/examples/ctf_real_acceptance --ram-index target/release/examples/ctf_real_ram_index --output "$HOME/WhereIsIt-B1-001" "/path/to/e-books.CTF" "/path/to/Mp3-60Gb.CTF"
-uv run --with duckdb==1.5.5 --with polars==1.43.2 python tools/block1/benchmark_columnar.py --cli target/release/atlas --output "$HOME/WhereIsIt-B1-columnar-001" "/path/to/e-books.CTF" "/path/to/Mp3-60Gb.CTF"
+uv run --with duckdb==1.5.5 --with polars==1.43.2 python tools/block1/benchmark_columnar.py --assert-real-inputs --cli target/release/atlas --output "$HOME/WhereIsIt-B1-columnar-001" "/path/to/e-books.CTF" "/path/to/Mp3-60Gb.CTF"
 ```
 
-All output directories must **not already exist**. The native tools can also be downloaded as unsigned, architecture-specific GitHub Actions artifacts. Private source paths and filenames are not emitted in the checkpoint; inputs are identified as `CTF-1`, `CTF-2`. If `--assert-real-inputs` is omitted, the checkpoint records provenance as unverified, even when all synthetic/technical tests pass.
+All output directories must **not already exist**. The native tools can also be downloaded as unsigned, architecture-specific GitHub Actions artifacts. Private source paths and filenames are not emitted in the checkpoint; inputs are identified as `CTF-1`, `CTF-2`. If `--assert-real-inputs` is omitted, the checkpoint records provenance as unverified, even when all synthetic/technical tests pass. The same flag applies to the separate SQLite/DuckDB/Polars experiment; synthetic CI reports retain `unverified_local_ctf` provenance.
 
 ### Fail-closed acceptance checks
 
