@@ -1,0 +1,100 @@
+name: Indexed RAM and native SQL planner follow-up
+on:
+  push:
+    branches: ['perf/indexed-ram-followup-20261029']
+    paths:
+      - 'crates/atlas-service/examples/perf_indexed_ram.rs'
+      - 'crates/atlas-service/examples/perf_sql_ab.rs'
+      - 'tools/perf/index_summary.py'
+      - '.github/workflows/perf-indexed-ram.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: indexed-ram-followup
+  cancel-in-progress: false
+jobs:
+  bench:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [repeated-3m, unique-deep, payload-heavy]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: perf-ctf-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-1.90-v1
+      - run: |
+          rustup toolchain install 1.90.0 --profile minimal
+          cargo build --release --locked -p atlas-service --example perf_ctf_ram --example perf_ctf_profiles --example perf_indexed_ram --example perf_sql_ab
+      - name: Execute native experiments
+        env:
+          PROFILE: ${{ matrix.profile }}
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/native-followup"
+          mkdir -p "$dir" evidence
+          { lscpu; free -b; rustc --version; } > evidence/environment.txt
+          printf 'commit=%s\nrun_id=%s\nprofile=%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$PROFILE" > evidence/provenance.txt
+          collect() { cp "$dir"/*.json evidence/ 2>/dev/null || true; }
+          trap collect EXIT
+          if [ "$PROFILE" = repeated-3m ]; then
+            target/release/examples/perf_ctf_ram generate "$dir" 3046027
+          else
+            target/release/examples/perf_ctf_profiles "$PROFILE" "$dir" 100000
+          fi
+          collect
+          /usr/bin/time -v -o evidence/ram.resources.txt target/release/examples/perf_ctf_ram ram "$dir"
+          collect
+          /usr/bin/time -v -o evidence/indexed.resources.txt target/release/examples/perf_indexed_ram "$dir"
+          collect
+          /usr/bin/time -v -o evidence/app.resources.txt target/release/examples/perf_ctf_ram app "$dir"
+          collect
+          /usr/bin/time -v -o evidence/sql-ab.resources.txt target/release/examples/perf_sql_ab "$dir"
+          collect
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: indexed-${{ matrix.profile }}
+          path: evidence/
+          if-no-files-found: warn
+  collect:
+    needs: bench
+    if: always()
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: indexed-*
+          path: evidence
+      - run: python3 tools/perf/index_summary.py evidence
+      - name: Commit successful aggregate evidence only
+        if: needs.bench.result == 'success'
+        run: |
+          git fetch origin perf/indexed-ram-followup-20261029
+          if [ "$(git rev-parse origin/perf/indexed-ram-followup-20261029)" != "$GITHUB_SHA" ]; then exit 0; fi
+          mkdir -p docs/perf/indexed-ram-20261029
+          cp -R evidence/. docs/perf/indexed-ram-20261029/
+          git config user.name 'whereisit-perf-ci'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/perf/indexed-ram-20261029
+          git commit -m 'perf: measured indexed RAM and same-shape native SQL A/B [skip ci]'
+          git push origin HEAD:refs/heads/perf/indexed-ram-followup-20261029
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: indexed-ram-native-sql-evidence-${{ github.run_id }}
+          path: evidence/
