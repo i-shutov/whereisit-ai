@@ -29,6 +29,7 @@ jobs:
           cargo test --workspace --locked
           cargo clippy --workspace --all-targets --locked -- -D warnings
           python3 -m py_compile tools/block1/run_private_ctf.py tools/block1/benchmark_columnar.py
+          python3 -m unittest discover -s tools/block1 -p 'test_*.py' -v
           cargo run --release --locked -p atlas-service --example ctf_real_probe -- --self-test
           cargo run --release --locked -p atlas-service --example ctf_real_acceptance -- --self-test
       - name: Commit only verified formatting if branch head unchanged
