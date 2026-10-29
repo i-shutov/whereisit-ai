@@ -289,7 +289,7 @@ pub fn export(c: &Catalog, v: &Value) -> Result<Value> {
                 description: r.get(6)?,
                 parent,
                 kind,
-                size: r.get(4)?,
+                size,
                 attributes: r
                     .get::<_, Option<u32>>(7)?
                     .unwrap_or(if kind == EntryKind::Directory { 16 } else { 32 }),
