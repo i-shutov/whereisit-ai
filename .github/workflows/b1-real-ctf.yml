@@ -1,3 +1,4 @@
+# The real source CTFs are never placed on GitHub runners.
 name: B1 read-only real CTF diagnostic tools
 on:
   push:
