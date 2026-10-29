@@ -42,6 +42,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo test --locked --workspace
+          cargo test --locked -p atlas-core --test wal_durability -- --nocapture
           cargo fmt --all -- --check
           cargo clippy --locked --workspace --all-targets -- -D warnings
           cargo tree --locked --duplicates | tee duplicate-dependencies.txt
