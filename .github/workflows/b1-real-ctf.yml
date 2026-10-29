@@ -10,7 +10,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: b1-real-ctf
+  group: b1-real-ctf-${{ github.sha }}
   cancel-in-progress: false
 jobs:
   verify-and-format:
