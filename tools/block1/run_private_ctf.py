@@ -91,6 +91,7 @@ def phase_status(r: dict[str, Any], expected: list[dict[str, Any]]) -> str:
         if phase == "probe":
             roundtrip = entry.get("ctf_roundtrip", {})
             diagnostic = entry.get("parser_diagnostics", {})
+            post_check = entry.get("post_check")
             good = (entry.get("status") == "parsed"
                     and isinstance(roundtrip, dict)
                     and roundtrip.get("status") == "byte_identical"
@@ -98,7 +99,8 @@ def phase_status(r: dict[str, Any], expected: list[dict[str, Any]]) -> str:
                     and roundtrip.get("output_bytes") == identity["size_bytes"]
                     and roundtrip.get("output_sha256") == identity["sha256"]
                     and isinstance(diagnostic, dict) and diagnostic.get("status") == "ok"
-                    and entry.get("post_check", {}).get("source_unchanged") is True
+                    and isinstance(post_check, dict)
+                    and post_check.get("source_unchanged") is True
                     and entry.get("original_ctf_read_only") is True)
         elif phase == "acceptance":
             queries = entry.get("queries")
