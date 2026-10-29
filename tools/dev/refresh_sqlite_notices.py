@@ -34,12 +34,13 @@ def check_sqlite_source() -> Path:
     amalgamation = source / "sqlite3" / "sqlite3.c"
     if not amalgamation.is_file():
         raise RuntimeError("Bundled SQLite amalgamation is missing")
-    with amalgamation.open("rb") as stream:
-        chunk = stream.read(200_000)
+    # SQLite's version define may be well beyond the initial header. Scan
+    # the packaged amalgamation rather than treating the first 200 KiB as all.
+    source_bytes = amalgamation.read_bytes()
     marker = f'#define SQLITE_VERSION "{SQLITE_VERSION}"'.encode()
-    if marker not in chunk:
+    if marker not in source_bytes:
         raise RuntimeError("Bundled sqlite3.c is not the reviewed SQLite " + SQLITE_VERSION)
-    if b"The author disclaims copyright to this source code." not in chunk:
+    if b"The author disclaims copyright to this source code." not in source_bytes:
         raise RuntimeError("SQLite public-domain notice missing from bundled source")
     return amalgamation
 
