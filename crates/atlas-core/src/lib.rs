@@ -335,7 +335,72 @@ impl Catalog {
     where
         F: FnOnce(&mut ImportSession<'_>) -> Result<T>,
     {
-        let tx = self.conn.transaction()?;
+        self.bulk_import_many_impl(write, false)
+    }
+
+    /// For a fresh v3 catalog, build FTS5 once after all rows are inserted.
+    /// No user rows or CTF bytes are skipped: the full external-content view is
+    /// indexed inside the same transaction. On any error, both the new records
+    /// and the trigger changes roll back. Nonempty/v1/v2 catalogs use the
+    /// existing per-row trigger path instead. Callbacks must not update
+    /// already-inserted core rows until the import finishes.
+    pub fn bulk_import_many_fast_fts<F, T>(&mut self, write: F) -> Result<T>
+    where
+        F: FnOnce(&mut ImportSession<'_>) -> Result<T>,
+    {
+        self.bulk_import_many_impl(write, true)
+    }
+
+    fn bulk_import_many_impl<F, T>(&mut self, write: F, fast_fts: bool) -> Result<T>
+    where
+        F: FnOnce(&mut ImportSession<'_>) -> Result<T>,
+    {
+        let tx = if fast_fts {
+            self.conn
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?
+        } else {
+            self.conn.transaction()?
+        };
+        let saved_fts_triggers: Option<Vec<String>> = if fast_fts {
+            let schema: i64 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
+            if schema == 3 {
+                let fresh: bool = tx.query_row(
+                    "SELECT NOT EXISTS(SELECT 1 FROM entries_core LIMIT 1)",
+                    [],
+                    |r| r.get(0),
+                )?;
+                if fresh {
+                    // Reproduce exactly the installed trigger definitions after
+                    // rebuilding, rather than duplicating migration SQL here.
+                    let definitions: Vec<(String, String)> = {
+                        let mut stmt = tx.prepare(
+                            "SELECT name,sql FROM sqlite_master WHERE type='trigger' \
+                             AND name IN ('core_ai','payload_ai') ORDER BY name",
+                        )?;
+                        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                            .collect::<std::result::Result<Vec<_>, _>>()?
+                    };
+                    if definitions.len() != 2
+                        || definitions[0].0 != "core_ai"
+                        || definitions[1].0 != "payload_ai"
+                    {
+                        return Err(Error::new(
+                            "schema_integrity",
+                            "Fresh v3 requires both known FTS insert triggers",
+                        ));
+                    }
+                    tx.execute_batch("DROP TRIGGER core_ai; DROP TRIGGER payload_ai;")?;
+                    Some(definitions.into_iter().map(|(_, sql)| sql).collect())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         let output = {
             let mut session = ImportSession {
                 tx: &tx,
@@ -350,7 +415,15 @@ impl Catalog {
             }
             output
         };
-        // Include newly imported volumes in bounded planner analysis.
+        if let Some(saved) = saved_fts_triggers {
+            // In a single atomic transaction: FTS rebuilt from the live view,
+            // then the insert triggers are restored. Failed rebuild/restore
+            // rolls back the complete import, including DDL.
+            tx.execute_batch("INSERT INTO entries_trigram(entries_trigram) VALUES('rebuild');")?;
+            for sql in saved {
+                tx.execute_batch(&sql)?;
+            }
+        }
         tx.execute_batch("PRAGMA optimize=0x10002")?;
         tx.commit()?;
         Ok(output)
