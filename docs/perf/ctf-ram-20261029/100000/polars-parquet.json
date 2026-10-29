@@ -1,0 +1,290 @@
+{
+  "engine": "polars-parquet",
+  "polars_version": "1.43.2",
+  "threads": 2,
+  "open_and_load_s": 0.0001802620000148636,
+  "queries": [
+    {
+      "id": 0,
+      "case": "ext-size",
+      "page": {
+        "first_ms": 5.490365999975211,
+        "median_ms": 2.8846335000025647,
+        "warm_samples_ms": [
+          2.838404000016226,
+          2.545186000020294,
+          2.9308629999889035,
+          3.138436000000411,
+          3.257295999986809,
+          2.8161699999884604
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 1.6246409999780553,
+      "total": 24716,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    simple π 2/2 [\"id\", \"name_norm\"]\n      Parquet SCAN [/home/runner/work/_temp/ctf-ram-study-100000/canonical.parquet]\n      PROJECT 4/12 COLUMNS\n      SELECTION: (col(\"ext\") == \"mkv\") & (col(\"size\") > 4294967296)\n      ESTIMATED ROWS: 100000"
+    },
+    {
+      "id": 1,
+      "case": "name-substring",
+      "page": {
+        "first_ms": 1.9599930000140375,
+        "median_ms": 1.8407184999915671,
+        "warm_samples_ms": [
+          2.078966999988552,
+          2.056414000008999,
+          1.818574999987277,
+          1.8628619999958573,
+          1.7470859999946242,
+          1.6907920000051035
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 1.10089100002142,
+      "total": 88,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    Parquet SCAN [/home/runner/work/_temp/ctf-ram-study-100000/canonical.parquet]\n    PROJECT 2/12 COLUMNS\n    SELECTION: col(\"name_norm\").str.contains([\"запись-0000200\"])\n    ESTIMATED ROWS: 100000"
+    },
+    {
+      "id": 2,
+      "case": "broad-path-ext",
+      "page": {
+        "first_ms": 3.872303999997939,
+        "median_ms": 2.691872000013973,
+        "warm_samples_ms": [
+          3.552480999985619,
+          2.8861750000146458,
+          2.4123999999972057,
+          2.4975690000133,
+          2.3425850000080572,
+          3.6349350000079994
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 2.273390999988578,
+      "total": 24728,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    simple π 2/2 [\"id\", \"name_norm\"]\n      Parquet SCAN [/home/runner/work/_temp/ctf-ram-study-100000/canonical.parquet]\n      PROJECT 4/12 COLUMNS\n      SELECTION: (col(\"ext\") == \"flac\") & col(\"path_norm\").str.contains([\"медиатека\"])\n      ESTIMATED ROWS: 100000"
+    },
+    {
+      "id": 3,
+      "case": "sparse-description",
+      "page": {
+        "first_ms": 2.122694000007641,
+        "median_ms": 2.0557874999980186,
+        "warm_samples_ms": [
+          1.9971039999973073,
+          1.825375000009899,
+          2.134871999999177,
+          2.2363150000046517,
+          2.0198990000039885,
+          2.0916759999920487
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 1.2418050000064795,
+      "total": 968,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    simple π 2/2 [\"id\", \"name_norm\"]\n      Parquet SCAN [/home/runner/work/_temp/ctf-ram-study-100000/canonical.parquet]\n      PROJECT 3/12 COLUMNS\n      SELECTION: col(\"description\").str.contains([\"редкое\"])\n      ESTIMATED ROWS: 100000"
+    },
+    {
+      "id": 4,
+      "case": "negative-description-ext",
+      "page": {
+        "first_ms": 2.851893999974209,
+        "median_ms": 2.9026304999888453,
+        "warm_samples_ms": [
+          2.9017389999808074,
+          2.854318000004241,
+          2.9583349999882103,
+          2.797031000000061,
+          2.903521999996883,
+          2.9275079999990794
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 1.5163980000068022,
+      "total": 24288,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    simple π 2/2 [\"id\", \"name_norm\"]\n      Parquet SCAN [/home/runner/work/_temp/ctf-ram-study-100000/canonical.parquet]\n      PROJECT 4/12 COLUMNS\n      SELECTION: (col(\"description\").str.contains([\"редкое\"]).not() & (col(\"ext\") == \"mp3\"))\n      ESTIMATED ROWS: 100000"
+    },
+    {
+      "id": 5,
+      "case": "inherited-category-ext",
+      "page": {
+        "first_ms": 2.519413000015902,
+        "median_ms": 2.1910070000075166,
+        "warm_samples_ms": [
+          2.3421049999967636,
+          2.262335000011717,
+          2.1036950000166144,
+          2.106819000005089,
+          2.2840470000176083,
+          2.119679000003316
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 1.3139430000137509,
+      "total": 3372,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    simple π 2/2 [\"id\", \"name_norm\"]\n      Parquet SCAN [/home/runner/work/_temp/ctf-ram-study-100000/canonical.parquet]\n      PROJECT 4/12 COLUMNS\n      SELECTION: (col(\"category\") == 1) & (col(\"ext\") == \"mkv\")\n      ESTIMATED ROWS: 100000"
+    },
+    {
+      "id": 6,
+      "case": "or-cross-field",
+      "page": {
+        "first_ms": 10.12457999999583,
+        "median_ms": 10.381412000000978,
+        "warm_samples_ms": [
+          10.599264999996194,
+          10.879969999990635,
+          10.163559000005762,
+          11.05391199999417,
+          9.466716999980918,
+          9.84573900001351
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 10.72873100000038,
+      "total": 1056,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    simple π 2/2 [\"id\", \"name_norm\"]\n      Parquet SCAN [/home/runner/work/_temp/ctf-ram-study-100000/canonical.parquet]\n      PROJECT 4/12 COLUMNS\n      SELECTION: (((col(\"name_norm\").str.contains([\"музыка\"]) | col(\"path_norm\").str.contains([\"музыка\"])) | col(\"description\").str.contains([\"музыка\"])) | col(\"name_norm\").str.contains([\"0000042\"]))\n      ESTIMATED ROWS: 100000"
+    },
+    {
+      "id": 7,
+      "case": "no-match",
+      "page": {
+        "first_ms": 1.4044399999875168,
+        "median_ms": 1.1001055000008364,
+        "warm_samples_ms": [
+          1.0933799999861549,
+          1.158688000003849,
+          1.3909289999958219,
+          1.096254999993107,
+          1.07302899999695,
+          1.1039560000085658
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 0.9923470000217094,
+      "total": 0,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    Parquet SCAN [/home/runner/work/_temp/ctf-ram-study-100000/canonical.parquet]\n    PROJECT 2/12 COLUMNS\n    SELECTION: col(\"name_norm\").str.contains([\"zzzzzznomatch\"])\n    ESTIMATED ROWS: 100000"
+    },
+    {
+      "id": 8,
+      "case": "short-text",
+      "page": {
+        "first_ms": 4.191965999979175,
+        "median_ms": 3.6414679999978716,
+        "warm_samples_ms": [
+          3.468564999991486,
+          4.049194999993233,
+          3.617119000011826,
+          3.5507679999966513,
+          3.7218970000196805,
+          3.6658169999839174
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 1.67115200000012,
+      "total": 98944,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    Parquet SCAN [/home/runner/work/_temp/ctf-ram-study-100000/canonical.parquet]\n    PROJECT 2/12 COLUMNS\n    SELECTION: col(\"name_norm\").str.contains([\"з\"])\n    ESTIMATED ROWS: 100000"
+    },
+    {
+      "id": 9,
+      "case": "selective-folder-ext",
+      "page": {
+        "first_ms": 1.4636189999919225,
+        "median_ms": 1.3455655000029765,
+        "warm_samples_ms": [
+          1.3295459999937975,
+          1.3615850000121554,
+          1.2909579999984544,
+          1.3001670000107879,
+          1.5550720000021556,
+          1.377158000025247
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 1.106770000006918,
+      "total": 0,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    simple π 2/2 [\"id\", \"name_norm\"]\n      Parquet SCAN [/home/runner/work/_temp/ctf-ram-study-100000/canonical.parquet]\n      PROJECT 4/12 COLUMNS\n      SELECTION: (col(\"ext\") == \"flac\") & col(\"path_norm\").str.contains([\"album-0077\"])\n      ESTIMATED ROWS: 100000"
+    },
+    {
+      "id": 10,
+      "case": "wildcard-name",
+      "page": {
+        "first_ms": 1.3156249999894953,
+        "median_ms": 1.2942360000067765,
+        "warm_samples_ms": [
+          1.420738999996729,
+          1.5151460000026873,
+          1.2503170000002228,
+          1.3381550000133302,
+          1.2155249999921125,
+          1.204478000005338
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 1.130595999995876,
+      "total": 0,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    Parquet SCAN [/home/runner/work/_temp/ctf-ram-study-100000/canonical.parquet]\n    PROJECT 2/12 COLUMNS\n    SELECTION: (col(\"name_norm\").str.contains([\"0000042\"]) & col(\"name_norm\").str.ends_with([\".mkv\"]))\n    ESTIMATED ROWS: 100000"
+    },
+    {
+      "id": 11,
+      "case": "boolean-or-not-size",
+      "page": {
+        "first_ms": 4.016312000004518,
+        "median_ms": 3.9059820000062473,
+        "warm_samples_ms": [
+          4.8925139999767,
+          3.8983729999984007,
+          3.9632659999995212,
+          3.913591000014094,
+          3.837301000004345,
+          3.799447999995209
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 3.343375999975251,
+      "total": 23572,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    simple π 2/2 [\"id\", \"name_norm\"]\n      Parquet SCAN [/home/runner/work/_temp/ctf-ram-study-100000/canonical.parquet]\n      PROJECT 5/12 COLUMNS\n      SELECTION: ((col(\"ext\").is_in([[\"mkv\", \"flac\"]]) & col(\"path_norm\").str.contains([\"album-0001\"]).not()) & (col(\"size\") > 1073741824))\n      ESTIMATED ROWS: 100000"
+    },
+    {
+      "id": 12,
+      "case": "rare-large-size",
+      "page": {
+        "first_ms": 1.1546880000139481,
+        "median_ms": 0.9203189999880124,
+        "warm_samples_ms": [
+          1.0973259999786933,
+          0.926217999989376,
+          0.9144199999866487,
+          0.872116000010692,
+          0.9079400000189253,
+          0.9744500000010703
+        ],
+        "cache": "OS cache not flushed"
+      },
+      "count_once_ms": 0.7730670000114515,
+      "total": 0,
+      "parity": true,
+      "plan": "simple π 1/1 [\"id\"]\n  SORT BY [slice: (0, 250)] [col(\"name_norm\"), col(\"id\")]\n    simple π 2/2 [\"id\", \"name_norm\"]\n      Parquet SCAN [/home/runner/work/_temp/ctf-ram-study-100000/canonical.parquet]\n      PROJECT 3/12 COLUMNS\n      SELECTION: col(\"size\") > 9000000000\n      ESTIMATED ROWS: 100000"
+    }
+  ],
+  "duplicates": {
+    "groups": 1136,
+    "members": 98944,
+    "first_build_ms": 4.658611000024848
+  },
+  "memory": {
+    "peak_rss_kib": 119508,
+    "rss_kib": 119876
+  }
+}
