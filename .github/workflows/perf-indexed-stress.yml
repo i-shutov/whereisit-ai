@@ -1,0 +1,94 @@
+name: RAM index anti-deduplication stress
+on:
+  push:
+    branches: ['perf/indexed-ram-stress-20261029']
+    paths:
+      - 'crates/atlas-service/examples/perf_ctf_unique.rs'
+      - '.github/workflows/perf-indexed-stress.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ram-index-unique-stress
+  cancel-in-progress: false
+jobs:
+  stress:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: unique-3m
+            count: 3046027
+          - profile: unique-payload
+            count: 100000
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: perf-ctf-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-1.90-v1
+      - run: |
+          rustup toolchain install 1.90.0 --profile minimal
+          cargo build --release --locked -p atlas-service --example perf_ctf_ram --example perf_ctf_unique --example perf_indexed_ram
+      - env:
+          PROFILE: ${{ matrix.profile }}
+          COUNT: ${{ matrix.count }}
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/unique-stress"
+          mkdir -p "$dir" evidence
+          { lscpu; free -b; rustc --version; } > evidence/environment.txt
+          printf 'commit=%s\nrun_id=%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > evidence/provenance.txt
+          collect() { cp "$dir"/*.json evidence/ 2>/dev/null || true; }
+          trap collect EXIT
+          /usr/bin/time -v -o evidence/generate.resources.txt target/release/examples/perf_ctf_unique "$PROFILE" "$dir" "$COUNT"
+          collect
+          /usr/bin/time -v -o evidence/ram.resources.txt target/release/examples/perf_ctf_ram ram "$dir"
+          collect
+          /usr/bin/time -v -o evidence/indexed.resources.txt target/release/examples/perf_indexed_ram "$dir"
+          collect
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stress-${{ matrix.profile }}
+          path: evidence/
+          if-no-files-found: warn
+  collect:
+    needs: stress
+    if: always()
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: stress-*
+          path: evidence
+      - run: python3 tools/perf/index_summary.py evidence
+      - name: Record successful aggregate measurements
+        if: needs.stress.result == 'success'
+        run: |
+          git fetch origin perf/indexed-ram-stress-20261029
+          if [ "$(git rev-parse origin/perf/indexed-ram-stress-20261029)" != "$GITHUB_SHA" ]; then exit 0; fi
+          mkdir -p docs/perf/indexed-stress-20261029
+          cp -R evidence/. docs/perf/indexed-stress-20261029/
+          git config user.name 'whereisit-perf-ci'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/perf/indexed-stress-20261029
+          git commit -m 'perf: measured anti-dedup RAM stress with unique names and payload [skip ci]'
+          git push origin HEAD:refs/heads/perf/indexed-ram-stress-20261029
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: anti-dedup-ram-evidence-${{ github.run_id }}
+          path: evidence/
