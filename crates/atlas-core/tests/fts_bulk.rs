@@ -95,14 +95,55 @@ fn fast_fts_and_triggers_equal_original_rows_search_and_late_updates() {
             [], |r| r.get(0),
         ).unwrap();
     assert_eq!(before, 2, "both insert triggers restored");
-    let entry_id: i64 = optimized.conn()
-        .query_row("SELECT id FROM entries_core WHERE name='guide.pdf'", [], |r| r.get(0))
+    let entry_id: i64 = optimized
+        .conn()
+        .query_row(
+            "SELECT id FROM entries_core WHERE name='guide.pdf'",
+            [],
+            |r| r.get(0),
+        )
         .unwrap();
-    optimized.update_entry(entry_id, "Updated searchable terms", "").unwrap();
+    optimized
+        .update_entry(entry_id, "Updated searchable terms", "")
+        .unwrap();
     assert_eq!(
-        optimized.search("description:Updated", None, 0, 5).unwrap().total,
+        optimized
+            .search("description:Updated", None, 0, 5)
+            .unwrap()
+            .total,
         1,
         "post-import FTS update triggers must continue working"
+    );
+    // A previously sparse row exercises the restored payload INSERT trigger.
+    let sparse_id: i64 = optimized
+        .conn()
+        .query_row(
+            "SELECT id FROM entries_core WHERE name='recording-0001.flac'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    optimized
+        .update_entry(sparse_id, "NewUniquePayload", "")
+        .unwrap();
+    assert_eq!(
+        optimized
+            .search("description:NewUniquePayload", None, 0, 5)
+            .unwrap()
+            .total,
+        1,
+        "payload_ai must be restored when the bulk transaction commits"
+    );
+    optimized
+        .bulk_import("after", "offline3", |w| {
+            w.insert(&entry("later.pdf", "later.pdf", None, "file", ""))?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        optimized.search("name:later", None, 0, 5).unwrap().total,
+        1,
+        "core_ai must be restored when the bulk transaction commits"
     );
     fts_integrity(&optimized);
 }
@@ -132,7 +173,8 @@ fn failed_initial_fast_import_restores_every_trigger_and_all_rows() {
     c.bulk_import("recovery", "offline", |w| {
         w.insert(&entry("after.pdf", "after.pdf", None, "file", ""))?;
         Ok(())
-    }).unwrap();
+    })
+    .unwrap();
     fts_integrity(&c);
     assert_eq!(c.search("name:after", None, 0, 5).unwrap().total, 1);
 }
@@ -144,7 +186,8 @@ fn already_populated_v3_falls_back_to_normal_incremental_triggers() {
     c.bulk_import("existing", "offline", |w| {
         w.insert(&entry("previous.flac", "previous.flac", None, "file", ""))?;
         Ok(())
-    }).unwrap();
+    })
+    .unwrap();
     write_synthetic(&mut c, true).unwrap();
     fts_integrity(&c);
     assert_eq!(c.search("ext:flac", None, 0, 5).unwrap().total, 251);
