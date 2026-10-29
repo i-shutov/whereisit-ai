@@ -308,6 +308,8 @@ fn self_test() -> bool {
     assert_eq!(r["statistics"]["duplicates_name_size"]["members"], 2);
     assert_eq!(r["statistics"]["counts"]["non_ascii_names"], 1);
     assert_eq!(r["post_check"]["source_unchanged"], true);
+    assert_eq!(r["ctf_roundtrip"]["status"], "byte_identical");
+    assert_eq!(r["parser_diagnostics"]["status"], "ok");
     println!(
         "{}",
         json!({"self_test":"PASS","synthetic":true,
@@ -329,7 +331,14 @@ fn main() {
     let mut passed = true;
     for (i, path) in args.iter().enumerate() {
         let r = probe(Path::new(path));
-        if r["status"] != "parsed" || r["post_check"]["source_unchanged"] != true {
+        // Parsing alone does not establish CTF interoperability. Fail closed
+        // on any byte mismatch, writer error, failed diagnostics or source edit.
+        if r["status"] != "parsed"
+            || r["post_check"]["source_unchanged"] != true
+            || r["ctf_roundtrip"]["status"] != "byte_identical"
+            || r["parser_diagnostics"]["status"] != "ok"
+            || r["original_ctf_read_only"] != true
+        {
             passed = false;
         }
         reports.push(json!({"dataset_number":i+1,"report":r}));

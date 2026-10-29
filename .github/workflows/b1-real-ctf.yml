@@ -2,9 +2,12 @@
 name: B1 read-only real CTF diagnostic tools
 on:
   push:
-    branches: [research/b1-real-ctf-20261029]
+    branches: [research/b1-real-ctf-20261029, "fix/b1-ctf-*"]
     paths:
       - "crates/atlas-service/examples/ctf_real_probe.rs"
+      - "crates/atlas-service/examples/ctf_real_acceptance.rs"
+      - "crates/atlas-service/examples/ctf_real_ram_index.rs"
+      - "crates/atlas-service/examples/ctf_b1_fixture.rs"
       - "tools/block1/**"
       - ".github/workflows/b1-real-ctf.yml"
   workflow_dispatch:
@@ -17,16 +20,14 @@ jobs:
   verify-and-format:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
       - run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
-      - name: Format and verify workspace + standalone probes
+      - name: Verify exact source SHA, formatting and standalone probes
         run: |
-          cargo fmt --all
+          cargo fmt --all -- --check
           cargo test --workspace --locked
           cargo clippy --workspace --all-targets --locked -- -D warnings
           python3 -m py_compile tools/block1/run_private_ctf.py tools/block1/benchmark_columnar.py
@@ -34,22 +35,41 @@ jobs:
           cargo run --release --locked -p atlas-service --example ctf_real_probe -- --self-test
           cargo run --release --locked -p atlas-service --example ctf_real_ram_index -- --self-test
           cargo run --release --locked -p atlas-service --example ctf_real_acceptance -- --self-test
-      - name: Commit only verified formatting if branch head unchanged
+      - name: Validate complete checkpoint through three real Rust binaries (two generated CTFs)
         shell: bash
         run: |
           set -euo pipefail
-          git fetch origin research/b1-real-ctf-20261029
-          if [ "$(git rev-parse origin/research/b1-real-ctf-20261029)" != "$GITHUB_SHA" ]; then
-            echo 'Branch advanced, refusing to overwrite newer source' >&2
-            exit 1
-          fi
-          git add crates/atlas-service/examples/ctf_real_probe.rs crates/atlas-service/examples/ctf_real_ram_index.rs crates/atlas-service/examples/ctf_b1_fixture.rs
-          if ! git diff --cached --quiet; then
-            git config user.name 'whereisit-ci'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git commit -m 'style(b1): format verified CTF probe [skip ci]'
-            git push origin HEAD:refs/heads/research/b1-real-ctf-20261029
-          fi
+          mkdir -p "$RUNNER_TEMP/b1-generated"
+          cargo build --release --locked -p atlas-service --example ctf_b1_fixture
+          target/release/examples/ctf_b1_fixture "$RUNNER_TEMP/b1-generated/generated-1.CTF" 1000
+          target/release/examples/ctf_b1_fixture "$RUNNER_TEMP/b1-generated/generated-2.CTF" 1200
+          python3 tools/block1/run_private_ctf.py \
+            --probe target/release/examples/ctf_real_probe \
+            --acceptance target/release/examples/ctf_real_acceptance \
+            --ram-index target/release/examples/ctf_real_ram_index \
+            --output "$RUNNER_TEMP/b1-native-checkpoint" \
+            "$RUNNER_TEMP/b1-generated/generated-1.CTF" \
+            "$RUNNER_TEMP/b1-generated/generated-2.CTF"
+          python3 - "$RUNNER_TEMP/b1-native-checkpoint/B1_CHECKPOINT.json" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              result = json.load(stream)
+          assert result["passed_available_checks"]
+          assert result["inputs_are_real_user_ctf"] is False
+          assert result["input_origin_method"] == "unverified"
+          assert len(result["files"]) == 2
+          assert all(f["unchanged"] for f in result["files"])
+          assert [p["status"] for p in result["phases"]] == ["passed"] * 3
+          print("PASS two generated CTFs through native CTF/SQLite/RAM checkpoint")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: b1-generated-native-checkpoint-${{ github.run_id }}
+          path: ${{ runner.temp }}/b1-native-checkpoint/
+          if-no-files-found: warn
+          retention-days: 30
   native-binaries:
     needs: verify-and-format
     strategy:
@@ -61,7 +81,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: research/b1-real-ctf-20261029
+          ref: ${{ github.sha }}
       - run: rustup toolchain install 1.90.0 --profile minimal
         shell: bash
       - name: Build privacy-safe native tools
@@ -100,7 +120,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: research/b1-real-ctf-20261029
+          ref: ${{ github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
