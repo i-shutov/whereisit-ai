@@ -126,7 +126,7 @@ def one_engine(name,kind,source,cases,sqlite_con=None,duck_con=None,polars=None)
             "no_original_names_in_result":True})
     return {"engine":name,"query_count":len(results),"results":results,"memory":peak_memory()}
 
-def run(source:pathlib.Path,cli:pathlib.Path)->dict:
+def run(source:pathlib.Path,cli:pathlib.Path,assert_real_inputs:bool=False)->dict:
     import duckdb
     import polars as pl
     source=source.resolve(strict=True)
@@ -185,7 +185,9 @@ def run(source:pathlib.Path,cli:pathlib.Path)->dict:
         result={
             "format":"whereisit-b1-real-columnar-v1",
             "source":{"size_bytes":source.stat().st_size,"sha256":before},
-            "data_origin":"real locally supplied CTF; source path and entry text not exported",
+            "data_origin":("operator_asserted_real_ctf" if assert_real_inputs else "unverified_local_ctf"),
+            "real_input_provenance_verified_by_software":False,
+            "private_source_paths_and_entry_text_exported":False,
             "entries":num,
             "parquet_bytes":parquet.stat().st_size,
             "sqlite_bytes":db.stat().st_size,
@@ -216,6 +218,8 @@ def main()->int:
     ap.add_argument("--cli",type=pathlib.Path,required=True)
     ap.add_argument("--output",type=pathlib.Path,required=True,
                     help="New directory outside the original CTF folder")
+    ap.add_argument("--assert-real-inputs",action="store_true",
+                    help="Operator declares inputs are real CTFs; cannot be verified automatically")
     ap.add_argument("sources",type=pathlib.Path,nargs="+")
     args=ap.parse_args()
     if args.output.exists():
@@ -224,7 +228,7 @@ def main()->int:
     passed=True
     for i,p in enumerate(args.sources,1):
         try:
-            result=run(p,args.cli)
+            result=run(p,args.cli,args.assert_real_inputs)
             passed &= result["all_engines_agree"] and result["source"]["unchanged"]
         except Exception as e:
             result={"status":"failed","error_class":type(e).__name__,
