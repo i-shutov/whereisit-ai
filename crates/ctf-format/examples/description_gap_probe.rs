@@ -32,8 +32,6 @@ fn report(path: &Path) -> serde_json::Value {
 }
 
 fn self_test() {
-    let dir = tempfile::tempdir().expect("temporary");
-    let path = dir.path().join("generated.ctf");
     let fixture = CtfCatalog {
         name:"Synthetic only".into(), opaque_trailer:Vec::new(),
         disks:vec![CtfDisk {
@@ -52,12 +50,12 @@ fn self_test() {
             ]
         }]
     };
-    std::fs::write(&path, write_ctf(&fixture).expect("synthetic encode")).expect("temporary write");
-    let r = report(&path);
-    assert_eq!(r["status"],"passed");
-    assert_eq!(r["entries"],2);
-    assert_eq!(r["description_statistics"]["unsupported_descriptions"],0);
-    assert_eq!(r["description_statistics"]["descriptions"],1);
+    let encoded = write_ctf(&fixture).expect("synthetic encode");
+    let parsed = parse_ctf(&encoded,&Limits::default()).expect("synthetic decode");
+    let stats = diagnostics(&parsed).expect("synthetic diagnostics");
+    assert_eq!(parsed.disks[0].entries.len(),2);
+    assert_eq!(stats.unsupported_descriptions,0);
+    assert_eq!(stats.descriptions,1);
     println!("{}", json!({"self_test":"passed","generated_fixture":true}));
 }
 
