@@ -39,7 +39,7 @@ def check_sqlite_source() -> Path:
     source_bytes = amalgamation.read_bytes()
     # SQLite amalgamation macros use variable spacing before the quoted value.
     found = re.search(
-        rb'(?m)^[ \\t]*#[ \\t]*define[ \\t]+SQLITE_VERSION[ \\t]+"([0-9]+\\.[0-9]+\\.[0-9]+)"',
+        rb'(?m)^[ \t]*#[ \t]*define[ \t]+SQLITE_VERSION[ \t]+"([0-9]+\.[0-9]+\.[0-9]+)"',
         source_bytes,
     )
     actual = found.group(1).decode("ascii") if found else "not_found"
