@@ -25,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: \${{ github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: true
       - run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
       - name: Resolve exact fixed rusqlite / bundled SQLite and fetch registry licenses
