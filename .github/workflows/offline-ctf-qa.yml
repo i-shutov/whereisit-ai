@@ -5,6 +5,7 @@ on:
     branches: [qa/offline-real-ctf-v3-20261029]
     paths:
       - "tools/qa/offline_ctf_v3.py"
+      - "tools/qa/test_offline_ctf_v3.py"
       - ".github/workflows/offline-ctf-qa.yml"
   workflow_dispatch:
 permissions:
@@ -28,7 +29,8 @@ jobs:
           cargo build --locked --release -p atlas-cli
           test "$(target/release/atlas --sqlite-version)" = 3.51.3
           cargo test --locked -p atlas-cli
-          python3 -m py_compile tools/qa/offline_ctf_v3.py
+          python3 -m py_compile tools/qa/offline_ctf_v3.py tools/qa/test_offline_ctf_v3.py
+          python3 -m unittest discover -s tools/qa -p "test_*.py" -v
       - name: Package local executable with source identity and checksums
         shell: bash
         run: |
