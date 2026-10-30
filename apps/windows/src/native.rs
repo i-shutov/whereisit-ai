@@ -289,8 +289,8 @@ fn verified_overlay_summary(data: &Value, offset: usize) -> String {
 mod annotation_preview_tests {
     use super::{
         annotation_overlay_request, annotation_page_controls, annotation_preview_text,
-        annotation_selection_request, verified_overlay_page_controls, verified_overlay_response_ok,
-        verified_overlay_summary, annotation_reply_current, AnnotationOverlayAction,
+        annotation_reply_current, annotation_selection_request, verified_overlay_page_controls,
+        verified_overlay_response_ok, verified_overlay_summary, AnnotationOverlayAction,
     };
     use serde_json::{json, Value};
 
@@ -477,7 +477,12 @@ mod annotation_preview_tests {
 
     #[test]
     fn closed_or_switched_annotation_session_drops_late_responses() {
-        for tag in ["annotation_preview", "annotation_confirm", "annotation_overlay", "overlay_verified"] {
+        for tag in [
+            "annotation_preview",
+            "annotation_confirm",
+            "annotation_overlay",
+            "overlay_verified",
+        ] {
             assert!(annotation_reply_current(tag, 7, 7));
             assert!(!annotation_reply_current(tag, 7, 8));
         }
@@ -1233,7 +1238,11 @@ impl App {
             {
                 continue;
             }
-            if !annotation_reply_current(reply.tag, reply.annotation_session, self.annotation_session) {
+            if !annotation_reply_current(
+                reply.tag,
+                reply.annotation_session,
+                self.annotation_session,
+            ) {
                 continue;
             }
             if reply.tag == "annotation_confirm" {
