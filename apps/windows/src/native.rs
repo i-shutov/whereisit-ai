@@ -865,15 +865,20 @@ impl App {
                                 } else {
                                     "parquet"
                                 });
-                                linked["mode"] =
-                                    json!(if self.query.is_empty() && self.volume.is_some() {
-                                        "children"
-                                    } else {
-                                        "search"
-                                    });
+                                linked["mode"] = json!(if self.duplicates {
+                                    "duplicates"
+                                } else if self.query.is_empty() && self.volume.is_some() {
+                                    "children"
+                                } else {
+                                    "search"
+                                });
                                 linked["query"] = json!(self.query);
                                 linked["volume_id"] = json!(self.volume);
-                                linked["parent_id"] = json!(self.stack.last().and_then(|p| p.0));
+                                linked["duplicate_mode"] = json!(self.applied_duplicate_mode);
+                                if !self.duplicates {
+                                    linked["parent_id"] =
+                                        json!(self.stack.last().and_then(|p| p.0));
+                                }
                                 self.call("linked_export", linked);
                             } else {
                                 self.call("mutation", json!({"op":operation,"path":path,"overwrite":command==EXPORT,"mode":if self.duplicates {"duplicates"} else if self.query.is_empty()&&self.volume.is_some(){"children"}else{"search"},"query":self.query,"volume_id":self.volume,"parent_id":self.stack.last().and_then(|p|p.0),"duplicate_mode":self.applied_duplicate_mode,"recursive":true}));
