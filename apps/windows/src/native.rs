@@ -187,11 +187,102 @@ fn annotation_preview_text(data: &Value, offset: usize) -> String {
     message
 }
 
+// Only independently verified fresh notes can be shown. Historical audit state
+// must NEVER be treated as a verified live overlay.
+fn verified_overlay_response_ok(data: &Value) -> bool {
+    let view = &data["result"];
+    match view["state"].as_str() {
+        Some("partial_activation" | "activation_conflict") => {
+            view["read_only_source"] == true
+                && view["unresolved_unconfirmed_annotations_not_projected"] == true
+                && view["total"].as_u64().is_some()
+                && view["conflicts"].as_u64().is_some()
+                && view["items"].as_array().is_some_and(|rows| {
+                    rows.len() <= ANNOTATION_PAGE_SIZE
+                        && rows.iter().all(|row| {
+                            row["read_only"] == true
+                                && row["activation"] == "explicit_reviewed_projection"
+                                && row["entry_id"].as_i64().is_some_and(|id| id > 0)
+                                && row["old_entry_id"].as_i64().is_some_and(|id| id > 0)
+                                && row["revision"].as_i64().is_some_and(|id| id > 0)
+                                && row["note"].as_str().is_some()
+                                && row["tags"].as_str().is_some()
+                        })
+                })
+        }
+        Some("uninitialized" | "no_cross_generation_activations") => {
+            view["total"] == 0
+                && view["conflicts"] == 0
+                && view["items"].as_array().is_some_and(Vec::is_empty)
+        }
+        _ => false,
+    }
+}
+
+fn verified_overlay_page_controls(data: &Value, offset: usize) -> (bool, bool) {
+    if !verified_overlay_response_ok(data) {
+        return (false, false);
+    }
+    let view = &data["result"];
+    if !matches!(
+        view["state"].as_str(),
+        Some("partial_activation" | "activation_conflict")
+    ) {
+        return (false, false);
+    }
+    let total = view["total"].as_u64().unwrap_or(0);
+    let shown = view["items"].as_array().map_or(0, Vec::len);
+    (
+        offset > 0,
+        shown > 0 && (offset as u64).saturating_add(shown as u64) < total,
+    )
+}
+
+fn verified_overlay_summary(data: &Value, offset: usize) -> String {
+    if !verified_overlay_response_ok(data) {
+        return "Overlay response failed verification. No private notes are displayed.".into();
+    }
+    let view = &data["result"];
+    if matches!(
+        view["state"].as_str(),
+        Some("uninitialized" | "no_cross_generation_activations")
+    ) {
+        return "No verified cross-generation overlays. No notes were copied or modified.".into();
+    }
+    let total = view["total"].as_u64().unwrap_or(0);
+    let conflicts = view["conflicts"].as_u64().unwrap_or(0);
+    let rows = view["items"].as_array().expect("response checked");
+    let start = if rows.is_empty() { 0 } else { offset + 1 };
+    let end = offset.saturating_add(rows.len());
+    let mut summary = format!(
+        "VERIFIED READ-ONLY OVERLAYS\n\
+         Valid active: {total}\n\
+         Stale/conflicting active audits excluded: {conflicts}\n\
+         Unconfirmed mappings excluded (not counted).\n\
+         Rows {start}–{end} of {total}\n"
+    );
+    for row in rows {
+        let old = row["old_entry_id"].as_i64().unwrap_or(-1);
+        let target = row["entry_id"].as_i64().unwrap_or(-1);
+        let note = row["note"].as_str().unwrap_or("");
+        let excerpt: String = note
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .take(100)
+            .collect();
+        let suffix = if note.chars().count() > 100 { "…" } else { "" };
+        summary.push_str(&format!("\nOld #{old} → target #{target}: {excerpt}{suffix}"));
+    }
+    summary.push_str("\n\nEvery page freshly verifies the external CTF SHA and note revisions. Viewing never writes. An active audit is not proof of a valid overlay.");
+    summary
+}
+
 #[cfg(test)]
 mod annotation_preview_tests {
     use super::{
         annotation_overlay_request, annotation_page_controls, annotation_preview_text,
-        annotation_selection_request, AnnotationOverlayAction,
+        annotation_selection_request, verified_overlay_page_controls, verified_overlay_response_ok,
+        verified_overlay_summary, AnnotationOverlayAction,
     };
     use serde_json::{json, Value};
 
@@ -341,6 +432,48 @@ mod annotation_preview_tests {
         let empty = json!({"result":{"state":"generation_conflict","total":43,"items":[]}});
         assert_eq!(annotation_page_controls(&empty, 60), (true, false));
     }
+    #[test]
+    fn verified_view_fail_closed_and_show_exact_conflict_count() {
+        let original = json!({"result":{"state":"activation_conflict","total":1,"conflicts":2,
+            "read_only_source":true,"unresolved_unconfirmed_annotations_not_projected":true,
+            "items":[{"entry_id":9,"old_entry_id":3,"revision":1,"read_only":true,
+                "activation":"explicit_reviewed_projection",
+                "note":"synthetic private note","tags":"synthetic"}]}});
+        assert!(verified_overlay_response_ok(&original));
+        let summary = verified_overlay_summary(&original, 0);
+        assert!(summary.contains("Valid active: 1"));
+        assert!(summary.contains("active audits excluded: 2"));
+        assert!(summary.contains("synthetic private note"));
+        for key in ["read_only_source", "unresolved_unconfirmed_annotations_not_projected"] {
+            let mut invalid = original.clone();
+            invalid["result"][key] = json!(false);
+            assert!(!verified_overlay_response_ok(&invalid));
+            assert!(!verified_overlay_summary(&invalid, 0).contains("synthetic private note"));
+        }
+        let mut invalid = original.clone();
+        invalid["result"]["items"][0]["activation"] = json!("unverified_audit");
+        assert!(!verified_overlay_response_ok(&invalid));
+        assert!(!verified_overlay_summary(&invalid, 0).contains("synthetic private note"));
+    }
+
+    #[test]
+    fn verified_view_pages_are_bounded_and_empty_is_read_only() {
+        let item = json!({"entry_id":9,"old_entry_id":3,"revision":1,"read_only":true,
+            "activation":"explicit_reviewed_projection","note":"synthetic","tags":""});
+        let mut page = json!({"result":{"state":"partial_activation","total":21,
+            "conflicts":0,"read_only_source":true,
+            "unresolved_unconfirmed_annotations_not_projected":true,
+            "items":vec![item.clone(); 20]}});
+        assert_eq!(verified_overlay_page_controls(&page, 0), (false, true));
+        page["result"]["items"] = json!([item]);
+        assert_eq!(verified_overlay_page_controls(&page, 20), (true, false));
+        assert!(verified_overlay_summary(&page, 20).contains("Rows 21–21 of 21"));
+        let empty = json!({"result":{"state":"no_cross_generation_activations",
+            "items":[],"total":0,"conflicts":0}});
+        assert!(verified_overlay_response_ok(&empty));
+        assert_eq!(verified_overlay_page_controls(&empty, 0), (false, false));
+    }
+
 }
 
 #[derive(Debug)]
@@ -350,6 +483,7 @@ enum AnnotationReviewAction {
     Next,
     Confirm(Value),
     Overlay(Value),
+    Verified,
 }
 
 // Pure selection contract: a radio choice is mandatory at both stages.
@@ -567,7 +701,7 @@ unsafe fn annotation_review_action(
         items.len().saturating_sub(selectable.len())
     );
     loop {
-        let mut actions = vec![(301, "Show all conflicts")];
+        let mut actions = vec![(301, "Show all conflicts"), (306, "Verified overlays (read-only)…")];
         if selectable.iter().any(|index| can_map(*index)) {
             actions.insert(0, (300, "Choose target…"));
         }
@@ -595,6 +729,7 @@ unsafe fn annotation_review_action(
         match button {
             302 if previous => return AnnotationReviewAction::Previous,
             303 if next => return AnnotationReviewAction::Next,
+            306 => return AnnotationReviewAction::Verified,
             301 => {
                 MessageBoxW(
                     owner,
@@ -737,6 +872,43 @@ unsafe fn annotation_review_action(
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum VerifiedOverlayNavigation {
+    Close,
+    Previous,
+    Next,
+}
+
+// TaskDialog has no default choice; the modal has no write actions.
+unsafe fn verified_overlay_action(
+    owner: HWND,
+    data: &Value,
+    offset: usize,
+) -> VerifiedOverlayNavigation {
+    let (previous, next) = verified_overlay_page_controls(data, offset);
+    let mut actions = Vec::new();
+    if previous {
+        actions.push((302, "Previous verified page"));
+    }
+    if next {
+        actions.push((303, "Next verified page"));
+    }
+    let Some((button, _)) = annotation_radio_dialog(
+        owner,
+        "Verified active notes — read-only",
+        &verified_overlay_summary(data, offset),
+        &[],
+        &actions,
+    ) else {
+        return VerifiedOverlayNavigation::Close;
+    };
+    match button {
+        302 if previous => VerifiedOverlayNavigation::Previous,
+        303 if next => VerifiedOverlayNavigation::Next,
+        _ => VerifiedOverlayNavigation::Close,
+    }
+}
+
 struct Reply {
     database: String,
     tag: &'static str,
@@ -764,6 +936,7 @@ struct App {
     pending_link_path: Option<String>,
     annotation_db: Option<String>,
     annotation_offset: usize,
+    verified_overlay_offset: usize,
     volumes: Vec<Value>,
     entries: Vec<Value>,
     volume: Option<i64>,
@@ -803,6 +976,7 @@ impl App {
             pending_link_path: None,
             annotation_db: None,
             annotation_offset: 0,
+            verified_overlay_offset: 0,
             volumes: vec![],
             entries: vec![],
             volume: None,
@@ -849,6 +1023,18 @@ impl App {
         pinned["limit"] = json!(ANNOTATION_PAGE_SIZE);
         self.call("annotation_preview", pinned);
     }
+    fn request_verified_overlay_page(&mut self) {
+        let Some(store) = self.annotation_db.as_ref().cloned() else {
+            return;
+        };
+        let Some(mut pinned) = self.linked_request("ctf_annotations_activated_list_pinned") else {
+            return;
+        };
+        pinned["annotation_db"] = json!(store);
+        pinned["offset"] = json!(self.verified_overlay_offset);
+        pinned["limit"] = json!(ANNOTATION_PAGE_SIZE);
+        self.call("overlay_verified", pinned);
+    }
     fn call(&mut self, tag: &'static str, mut request: Value) {
         request["db"] = json!(self.db);
         let database = self.db.clone();
@@ -873,6 +1059,7 @@ impl App {
         self.pending_link_path = None;
         self.annotation_db = None;
         self.annotation_offset = 0;
+        self.verified_overlay_offset = 0;
         let _ = std::fs::create_dir_all(config_dir());
         self.generation += 1;
         self.volumes.clear();
@@ -990,7 +1177,7 @@ impl App {
             }
             if matches!(
                 reply.tag,
-                "rows" | "annotation_preview" | "annotation_confirm" | "annotation_overlay"
+                "rows" | "annotation_preview" | "annotation_confirm" | "annotation_overlay" | "overlay_verified"
             ) && reply.generation != self.generation
             {
                 continue;
@@ -1042,6 +1229,25 @@ impl App {
                 continue;
             }
             match reply.tag {
+                "overlay_verified" => {
+                    match verified_overlay_action(self.hwnd, data, self.verified_overlay_offset) {
+                        VerifiedOverlayNavigation::Next => {
+                            self.verified_overlay_offset += ANNOTATION_PAGE_SIZE;
+                            self.status("Freshly verifying next live overlay page…");
+                            self.request_verified_overlay_page();
+                        }
+                        VerifiedOverlayNavigation::Previous => {
+                            self.verified_overlay_offset = self
+                                .verified_overlay_offset
+                                .saturating_sub(ANNOTATION_PAGE_SIZE);
+                            self.status("Freshly verifying previous live overlay page…");
+                            self.request_verified_overlay_page();
+                        }
+                        VerifiedOverlayNavigation::Close => {
+                            self.status("Verified view closed without changing private notes.");
+                        }
+                    }
+                }
                 "annotation_preview" => {
                     match annotation_review_action(self.hwnd, data, self.annotation_offset) {
                         AnnotationReviewAction::Next => {
@@ -1084,6 +1290,11 @@ impl App {
                                 self.call("annotation_overlay", pinned);
                             }
                         }
+                        AnnotationReviewAction::Verified => {
+                            self.verified_overlay_offset = 0;
+                            self.status("Independently checking verified overlays and conflicts…");
+                            self.request_verified_overlay_page();
+                        }
                         AnnotationReviewAction::Close => {
                             self.status(
                                 "Annotation review closed; no implicit mapping or migration.",
@@ -1099,6 +1310,7 @@ impl App {
                         self.linked_generation = Some(generation);
                         self.annotation_db = None;
                         self.annotation_offset = 0;
+                        self.verified_overlay_offset = 0;
                         SendMessageW(self.export_format, CB_SETCURSEL, 0, 0);
                         self.volume = None;
                         self.stack = vec![(None, "/".into())];
@@ -1508,6 +1720,7 @@ impl App {
                 if let Some(path) = file_dialog(self.hwnd, false, "annotation") {
                     self.annotation_db = Some(path);
                     self.annotation_offset = 0;
+                    self.verified_overlay_offset = 0;
                     self.status("Verifying CTF generation and annotation conflicts…");
                     self.request_annotation_page();
                 }
