@@ -34,6 +34,7 @@ const DUPLICATES: usize = 111;
 const DUP_MODE: usize = 112;
 const EXPORT_FORMAT: usize = 113;
 const LINK_CTF: usize = 114;
+const ANNOTATION_PREVIEW: usize = 115;
 const DISKS: usize = 120;
 const FILES: usize = 121;
 const CATEGORIES: usize = 122;
@@ -107,6 +108,78 @@ fn default_db() -> String {
                 .to_string_lossy()
                 .into_owned()
         })
+}
+
+// Read-only presentation only. No candidate is accepted by rendering this summary.
+fn annotation_preview_text(data: &Value) -> String {
+    let preview = &data["result"];
+    let state = preview["state"].as_str().unwrap_or("unavailable");
+    let total = preview["total"].as_u64().unwrap_or(0);
+    let mut message = format!(
+        "Linked CTF annotation review (read-only)\nState: {state}\nSaved notes: {total}\n"
+    );
+    if state == "generation_conflict" {
+        if let Some(rows) = preview["items"].as_array() {
+            for row in rows.iter().take(20) {
+                let old_id = row["old_entry_id"].as_i64().unwrap_or(-1);
+                let candidate_state = row["candidate_state"].as_str().unwrap_or("unknown");
+                let count = row["candidate_count_lower_bound"].as_u64().unwrap_or(0);
+                let suffix = if row["candidates_truncated"] == true {
+                    "+"
+                } else {
+                    ""
+                };
+                let stale = if row["confirmation_revision_conflict"] == true
+                    || row["confirmation_payload_conflict"] == true
+                {
+                    " [stale confirmation]"
+                } else {
+                    ""
+                };
+                message.push_str(&format!(
+                    "\nOld ID {old_id}: {candidate_state}, candidates {count}{suffix}{stale}"
+                ));
+            }
+            if total > rows.len() as u64 {
+                message.push_str("\nOnly the first 20 notes are shown.");
+            }
+        }
+    } else if state == "current_generation" {
+        message.push_str("\nNo cross-generation reconciliation is required.");
+    } else if state == "uninitialized" {
+        message.push_str("\nNo user annotation database has been initialized.");
+    }
+    message.push_str(
+        "\n\nPREVIEW ONLY. No candidate is confirmed, activated, or moved. \
+         Close and review any conflicts before taking action."
+    );
+    message
+}
+
+#[cfg(test)]
+mod annotation_preview_tests {
+    use super::annotation_preview_text;
+    use serde_json::json;
+
+    #[test]
+    fn ambiguity_and_stale_confirmation_remain_visible() {
+        let result = json!({"result":{"state":"generation_conflict","total":2,
+            "items":[{"old_entry_id":4,"candidate_state":"ambiguous",
+                "candidate_count_lower_bound":6,"candidates_truncated":true,
+                "confirmation_revision_conflict":true}]}});
+        let text = annotation_preview_text(&result);
+        assert!(text.contains("ambiguous, candidates 6+ [stale confirmation]"));
+        assert!(text.contains("Only the first 20 notes"));
+        assert!(text.contains("No candidate is confirmed"));
+    }
+
+    #[test]
+    fn matching_generation_never_implies_approval() {
+        let result = json!({"result":{"state":"current_generation","total":1,"items":[]}});
+        let text = annotation_preview_text(&result);
+        assert!(text.contains("No cross-generation reconciliation"));
+        assert!(text.contains("PREVIEW ONLY"));
+    }
 }
 
 struct Reply {
@@ -342,7 +415,9 @@ impl App {
             ) {
                 self.job = None;
             }
-            if reply.tag == "rows" && reply.generation != self.generation {
+            if matches!(reply.tag, "rows" | "annotation_preview")
+                && reply.generation != self.generation
+            {
                 continue;
             }
             if reply.result["ok"] != true {
@@ -353,6 +428,16 @@ impl App {
                 continue;
             }
             match reply.tag {
+                "annotation_preview" => {
+                    let summary = annotation_preview_text(data);
+                    MessageBoxW(
+                        self.hwnd,
+                        wide(&summary).as_ptr(),
+                        wide("Review CTF annotations — no changes").as_ptr(),
+                        MB_OK | MB_ICONINFORMATION,
+                    );
+                    self.status("Annotation conflict preview completed; nothing was changed.");
+                }
                 "linked_sync" => {
                     let path = self.pending_link_path.take();
                     let generation = data["generation"].as_str().map(str::to_owned);
@@ -481,6 +566,8 @@ impl App {
                 *hwnd,
                 if *command == CANCEL {
                     self.job.as_ref().is_some_and(|j| j.starts_with("win-")) as i32
+                } else if *command == ANNOTATION_PREVIEW {
+                    (self.linked_mode() && self.job.is_none() && self.pending == 0) as i32
                 } else if [OPEN, NEW, SCAN, IMPORT, LINK_CTF, EXPORT].contains(command) {
                     (self.job.is_none()
                         && self.pending == 0
@@ -762,6 +849,22 @@ impl App {
                     self.call("cancel", json!({"op":"cancel","job_id":job}));
                 }
             }
+            ANNOTATION_PREVIEW
+                if self.linked_mode() && self.job.is_none() && self.pending == 0 =>
+            {
+                if let Some(path) = file_dialog(self.hwnd, false, "annotation") {
+                    let Some(mut pinned) =
+                        self.linked_request("ctf_annotations_preview_pinned")
+                    else {
+                        return;
+                    };
+                    pinned["annotation_db"] = json!(path);
+                    pinned["offset"] = json!(0);
+                    pinned["limit"] = json!(20);
+                    self.status("Verifying CTF generation and annotation conflicts…");
+                    self.call("annotation_preview", pinned);
+                }
+            }
             OPEN | NEW | SCAN | IMPORT | LINK_CTF | EXPORT
                 if self.job.is_none() && self.pending == 0 =>
             {
@@ -941,6 +1044,9 @@ impl App {
                 CATEGORY_CREATE => {
                     MoveWindow(*control, 164, h - 92, 44, 24, 1);
                 }
+                ANNOTATION_PREVIEW => {
+                    MoveWindow(*control, w - 144, 62, 136, 23, 1);
+                }
                 CATEGORY_FILTER => {
                     MoveWindow(*control, 8, h - 64, 88, 24, 1);
                 }
@@ -964,9 +1070,11 @@ impl App {
 
 unsafe fn file_dialog(owner: HWND, save: bool, format: &str) -> Option<String> {
     let mut buffer = vec![0u16; 32768];
-    let filter=wide(match format {"ctf"=>"CTF catalogs (*.ctf)\0*.ctf\0All files\0*.*\0","csv"=>"CSV table (*.csv)\0*.csv\0All files\0*.*\0","parquet"=>"Apache Parquet (*.parquet)\0*.parquet\0All files\0*.*\0",_=>"Atlas SQLite catalog (*.atlas.sqlite;*.sqlite)\0*.atlas.sqlite;*.sqlite\0All files\0*.*\0"});
+    let filter=wide(match format {"annotation"=>"User notes (*.wia.sqlite)\0*.wia.sqlite\0","ctf"=>"CTF catalogs (*.ctf)\0*.ctf\0All files\0*.*\0","csv"=>"CSV table (*.csv)\0*.csv\0All files\0*.*\0","parquet"=>"Apache Parquet (*.parquet)\0*.parquet\0All files\0*.*\0",_=>"Atlas SQLite catalog (*.atlas.sqlite;*.sqlite)\0*.atlas.sqlite;*.sqlite\0All files\0*.*\0"});
     let ext = wide(if format == "sqlite" {
         "atlas.sqlite"
+    } else if format == "annotation" {
+        "wia.sqlite"
     } else {
         format
     });
@@ -1061,6 +1169,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 (SCAN, "&Add disk"),
                 (IMPORT, "&Import CTF"),
                 (LINK_CTF, "&Link CTF"),
+                (ANNOTATION_PREVIEW, "Review &notes…"),
                 (EXPORT, "&Export…"),
                 (CANCEL, "&Cancel scan"),
                 (FIND, "&Search"),
@@ -1141,7 +1250,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             }
             SendMessageW(app.export_format, CB_SETCURSEL, 0, 0);
             let help=control(hwnd,"STATIC","AND  OR  NOT  ( )   name: path: ext: size: category:   Example: ext:mkv AND size:>1GB",0,142);
-            MoveWindow(help, 8, 62, 1000, 18, 1);
+            MoveWindow(help, 8, 62, 700, 18, 1);
             app.disks = control(
                 hwnd,
                 "LISTBOX",

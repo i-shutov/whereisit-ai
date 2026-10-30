@@ -36,6 +36,23 @@ struct LinkedCTFSync: Decodable { let generation: String; let entries: Int64; le
 struct LinkedExportReceipt: Decodable { let result: LinkedExportSummary }
 struct LinkedExportSummary: Decodable { let rows: Int64 }
 struct LinkedCTFResult<T: Decodable>: Decodable { let generation: String; let result: T }
+struct AnnotationReviewRow: Decodable, Identifiable {
+    let old_entry_id: Int64
+    let candidate_state: String
+    let candidate_count_lower_bound: Int
+    let candidates_truncated: Bool
+    let confirmation_revision_conflict: Bool
+    let confirmation_payload_conflict: Bool
+    var id: Int64 { old_entry_id }
+    var conflictText: String {
+        confirmation_revision_conflict || confirmation_payload_conflict ? "Stale confirmation" : "Not yet accepted"
+    }
+}
+struct AnnotationReview: Decodable {
+    let state: String
+    let total: Int64
+    let items: [AnnotationReviewRow]
+}
 
 enum Bridge {
     static func invoke(_ input: Data) -> Data {
@@ -68,6 +85,8 @@ enum Bridge {
     @Published var categoryName = ""
     @Published var exportFormat = "csv"
     @Published var linkedCTFPath: String?
+    @Published var annotationReview: AnnotationReview?
+    @Published var showingAnnotationReview = false
     var linkedGeneration: String?
     var linkedMode: Bool { linkedCTFPath != nil && linkedGeneration != nil }
     var editableAllowed: Bool { mutationAllowed && !linkedMode }
@@ -271,6 +290,35 @@ enum Bridge {
         guard let source = linkedCTFPath, mutationAllowed else { return }
         synchronizeLinkedCTF(source)
     }
+    func reviewAnnotations() {
+        guard linkedMode, mutationAllowed else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Choose your existing .wia.sqlite notes file (preview only)"
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.begin { [weak self] response in
+            guard let self, response == .OK, let url = panel.url else { return }
+            guard url.lastPathComponent.hasSuffix(".wia.sqlite") else {
+                self.error = "Choose an existing .wia.sqlite user annotation file."
+                return
+            }
+            guard let fields = self.linkedFields(), self.mutationAllowed else { return }
+            let token = self.generation
+            var args = fields
+            args["op"] = "ctf_annotations_preview_pinned"
+            args["annotation_db"] = url.path
+            args["offset"] = 0
+            args["limit"] = 20
+            self.status = "Checking pinned CTF generation and annotation conflicts…"
+            self.request(args, as: LinkedCTFResult<AnnotationReview>.self,
+                         generationToken: token) { [weak self] result in
+                guard let self, let result else { return }
+                self.annotationReview = result.result
+                self.showingAnnotationReview = true
+                self.status = "Read-only annotation preview completed; nothing was changed."
+            }
+        }
+    }
     func chooseCatalog(create: Bool) {
         if create {
             let panel = NSSavePanel(); panel.title = "Create Atlas catalog"; panel.nameFieldStringValue = "Catalog.atlas.sqlite"
@@ -404,6 +452,7 @@ enum Bridge {
                 Menu("CTF") {
                     Button("Link read-only CTF…") { model.linkCTF() }
                     Button("Refresh linked CTF") { model.refreshLinkedCTF() }.disabled(!model.linkedMode)
+                    Button("Review notes (read-only)…") { model.reviewAnnotations() }.disabled(!model.linkedMode)
                     Divider()
                     Button("Import CTF copy into SQLite…") { model.importCTF() }.disabled(!model.editableAllowed)
                 }.disabled(!model.mutationAllowed)
@@ -471,6 +520,40 @@ enum Bridge {
             Text(model.linkedMode ? "LINKED CTF (read-only) • " + (model.linkedCTFPath ?? "") : model.database).font(.caption2).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).lineLimit(1).truncationMode(.middle)
         }
         .padding(7).controlSize(.small).frame(minWidth: 960, minHeight: 500)
+        .sheet(isPresented: $model.showingAnnotationReview) {
+            if let preview = model.annotationReview {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("CTF annotation conflicts").font(.headline)
+                    Text("Read-only preview • \(preview.state) • \(preview.total) saved notes")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if preview.state == "generation_conflict" {
+                        List(preview.items) { item in
+                            HStack(spacing: 12) {
+                                Text("Old ID \(item.old_entry_id)").monospacedDigit().frame(width: 120, alignment: .leading)
+                                Text(item.candidate_state).frame(width: 145, alignment: .leading)
+                                Text("Candidates: \(item.candidate_count_lower_bound)\(item.candidates_truncated ? "+" : "")")
+                                    .frame(width: 125, alignment: .leading)
+                                Text(item.conflictText).foregroundStyle(.secondary)
+                            }.font(.caption)
+                        }
+                        Text("Showing up to the first 20 records. Unique matches still require explicit confirmation.")
+                            .font(.caption)
+                    } else {
+                        Text(preview.state == "current_generation"
+                             ? "Notes already match this generation; no reconciliation required."
+                             : "No initialized user annotation store was found.")
+                    }
+                    Text("No mapping was confirmed or activated; neither CTF nor notes were modified.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    HStack {
+                        Spacer()
+                        Button("Close") { model.showingAnnotationReview = false }
+                            .keyboardShortcut(.cancelAction)
+                    }
+                }
+                .padding(14).frame(width: 730, height: 420)
+            }
+        }
         .alert("WhereIsIt AI", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) { Button("OK") { model.error = nil } } message: { Text(model.error ?? "") }
     }
 }
