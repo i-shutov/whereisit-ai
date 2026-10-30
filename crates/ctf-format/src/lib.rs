@@ -1057,7 +1057,7 @@ mod tests {
     fn diagnostics_classifies_description_gaps_without_reading_user_text() {
         assert_eq!(
             undecoded_description_reason(0x10000003, b"abc"),
-            "unsupported_high_flags"
+            "opaque_type1_flag_0x10_semantics_unknown"
         );
         assert_eq!(
             undecoded_description_reason(0x08000003, &0_u32.to_le_bytes()),
@@ -1074,6 +1074,62 @@ mod tests {
         assert_eq!(
             undecoded_description_reason(0x00000004, b"book"),
             "decoded_inline_but_final_description_empty"
+        );
+    }
+
+    #[test]
+    fn diagnostics_separate_nonstandard_type1_from_possible_text_gaps() {
+        fn mock_file(packed: u32, payload: &[u8]) -> CtfEntry {
+            // Synthetic Catalog 3.00 file record with one type-1 extension.
+            // Not an actual user's filename, description or metadata.
+            let mut opaque = vec![0x90, 0, 1, b'x'];
+            opaque.extend(0_u32.to_le_bytes()); // raw DOS modification time
+            opaque.extend(12_u32.to_le_bytes()); // file size
+            opaque.push(1);
+            opaque.extend(packed.to_le_bytes());
+            opaque.extend(payload);
+            opaque.push(0); // extension terminator
+            CtfEntry {
+                name: "synthetic.file".into(),
+                description: String::new(),
+                parent: None,
+                kind: EntryKind::File,
+                size: 12,
+                attributes: 32,
+                modified_dos: 0,
+                created_dos: 0,
+                accessed_dos: 0,
+                opaque,
+            }
+        }
+        let catalog = CtfCatalog {
+            name: "generated-only".into(),
+            opaque_trailer: Vec::new(),
+            disks: vec![CtfDisk {
+                name: "generated-disk".into(),
+                opaque_header: Vec::new(),
+                entries: vec![
+                    mock_file(0x1c00_0125, &[0, 0, 0, 0]),
+                    mock_file(0x0400_0002, &[0xff, 0]),
+                ],
+            }],
+        };
+        let found = diagnostics(&catalog).unwrap();
+        assert_eq!(found.unsupported_descriptions, 2);
+        assert_eq!(found.opaque_type1_flag_0x10_entries, 1);
+        assert_eq!(found.possible_text_description_gap_entries, 1);
+        assert_eq!(
+            found.description_gap_reasons
+                .get("opaque_type1_flag_0x10_semantics_unknown"),
+            Some(&1)
+        );
+        assert_eq!(
+            found.description_gap_reasons.get("invalid_inline_utf8_or_cesu8"),
+            Some(&1)
+        );
+        assert_eq!(
+            found.description_gap_flag_histogram.get("1c"),
+            Some(&1)
         );
     }
 
@@ -1165,7 +1221,12 @@ mod tests {
 /// Reason categories describe decode failures, never original text.
 fn undecoded_description_reason(packed: u32, data: &[u8]) -> &'static str {
     let flags = (packed >> 24) as u8;
-    if flags & !0x0c != 0 {
+    if flags & 0x10 != 0 {
+        // A real CTF shows non-UTF-8 structured payloads under 0x1c.
+        // Whether they are plugin metadata or encoded text is unknown.
+        // Do NOT count these as confirmed missing human descriptions.
+        "opaque_type1_flag_0x10_semantics_unknown"
+    } else if flags & !0x0c != 0 {
         "unsupported_high_flags"
     } else if flags & 0x08 != 0 {
         // The parser may reference a larger disk/blob buffer which a CtfEntry
@@ -1190,6 +1251,15 @@ pub struct ImportDiagnostics {
     pub archived_files: usize,
     pub archive_containers: usize,
     pub descriptions: usize,
+    /// Entries with an empty decoded description and opaque type-1 metadata
+    /// carrying the unresolved high-byte 0x10 flag. May not contain text.
+    #[serde(default)]
+    pub opaque_type1_flag_0x10_entries: usize,
+    /// Entries with empty decoded description and a type-1 extension whose
+    /// flags do NOT carry 0x10. These may indicate a text decoding gap, but
+    /// intentionally empty or multi-extension values also count here.
+    #[serde(default)]
+    pub possible_text_description_gap_entries: usize,
     /// Per-extension reason totals for records in unsupported_descriptions.
     #[serde(default)]
     pub description_gap_reasons: std::collections::BTreeMap<String, usize>,
@@ -1239,11 +1309,18 @@ pub fn diagnostics(c: &CtfCatalog) -> Result<ImportDiagnostics, CtfError> {
             };
             if e.description.is_empty() {
                 let mut gap_found = false;
+                let mut has_unknown_0x10 = false;
+                let mut has_other_type1 = false;
                 for (kind, packed, data) in &ext {
                     if *kind != 1 || packed & 0xffffff == 0 {
                         continue;
                     }
                     gap_found = true;
+                    if (packed >> 24) & 0x10 != 0 {
+                        has_unknown_0x10 = true;
+                    } else {
+                        has_other_type1 = true;
+                    }
                     *d.description_gap_reasons
                         .entry(undecoded_description_reason(*packed, data).to_owned())
                         .or_insert(0) += 1;
@@ -1253,6 +1330,12 @@ pub fn diagnostics(c: &CtfCatalog) -> Result<ImportDiagnostics, CtfError> {
                 }
                 if gap_found {
                     d.unsupported_descriptions += 1;
+                }
+                if has_unknown_0x10 {
+                    d.opaque_type1_flag_0x10_entries += 1;
+                }
+                if has_other_type1 {
+                    d.possible_text_description_gap_entries += 1;
                 }
             }
         }
