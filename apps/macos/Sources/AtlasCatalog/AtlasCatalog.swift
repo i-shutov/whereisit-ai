@@ -380,7 +380,7 @@ enum Bridge {
         guard linkedMode, mutationAllowed else { return }
         let linkedAtOpen = linkedGeneration
         let panel = NSOpenPanel()
-        panel.title = "Choose your existing .wia.sqlite notes file (preview only)"
+        panel.title = "Choose your existing .wia.sqlite notes file (review and explicit actions)"
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         panel.begin { [weak self] response in
@@ -684,7 +684,7 @@ enum Bridge {
                 Menu("CTF") {
                     Button("Link read-only CTF…") { model.linkCTF() }
                     Button("Refresh linked CTF") { model.refreshLinkedCTF() }.disabled(!model.linkedMode)
-                    Button("Review notes (read-only)…") { model.reviewAnnotations() }.disabled(!model.linkedMode)
+                    Button("Review notes and overlays…") { model.reviewAnnotations() }.disabled(!model.linkedMode)
                     Divider()
                     Button("Import CTF copy into SQLite…") { model.importCTF() }.disabled(!model.editableAllowed)
                 }.disabled(!model.mutationAllowed)
@@ -813,7 +813,7 @@ enum Bridge {
                              ? "Notes already match this generation; no reconciliation required."
                              : "No initialized user annotation store was found.")
                     }
-                    Text("The CTF and derived cache stay read-only. Only an explicitly approved mapping is written to the separate notes database.")
+                    Text("The CTF and derived cache remain read-only. Approved mapping, activation and revocation actions write only to the separate user-owned notes database.")
                         .font(.caption).foregroundStyle(.secondary)
                     HStack {
                         Button("Previous") {
