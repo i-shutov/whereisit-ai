@@ -189,11 +189,13 @@ fn annotation_preview_text(data: &Value, offset: usize) -> String {
 
 // Only independently verified fresh notes can be shown. Historical audit state
 // must NEVER be treated as a verified live overlay.
-fn verified_overlay_response_ok(data: &Value) -> bool {
+fn verified_overlay_response_ok(data: &Value, expected_offset: usize) -> bool {
     let view = &data["result"];
     match view["state"].as_str() {
         Some("partial_activation" | "activation_conflict") => {
-            view["read_only_source"] == true
+            view["offset"].as_u64() == Some(expected_offset as u64)
+                && view["limit"].as_u64() == Some(ANNOTATION_PAGE_SIZE as u64)
+                && view["read_only_source"] == true
                 && view["unresolved_unconfirmed_annotations_not_projected"] == true
                 && view["total"].as_u64().is_some()
                 && view["conflicts"].as_u64().is_some()
@@ -220,7 +222,7 @@ fn verified_overlay_response_ok(data: &Value) -> bool {
 }
 
 fn verified_overlay_page_controls(data: &Value, offset: usize) -> (bool, bool) {
-    if !verified_overlay_response_ok(data) {
+    if !verified_overlay_response_ok(data, offset) {
         return (false, false);
     }
     let view = &data["result"];
@@ -239,7 +241,7 @@ fn verified_overlay_page_controls(data: &Value, offset: usize) -> (bool, bool) {
 }
 
 fn verified_overlay_summary(data: &Value, offset: usize) -> String {
-    if !verified_overlay_response_ok(data) {
+    if !verified_overlay_response_ok(data, offset) {
         return "Overlay response failed verification. No private notes are displayed.".into();
     }
     let view = &data["result"];
@@ -288,7 +290,7 @@ mod annotation_preview_tests {
     use super::{
         annotation_overlay_request, annotation_page_controls, annotation_preview_text,
         annotation_selection_request, verified_overlay_page_controls, verified_overlay_response_ok,
-        verified_overlay_summary, AnnotationOverlayAction,
+        verified_overlay_summary, annotation_reply_current, AnnotationOverlayAction,
     };
     use serde_json::{json, Value};
 
@@ -441,11 +443,12 @@ mod annotation_preview_tests {
     #[test]
     fn verified_view_fail_closed_and_show_exact_conflict_count() {
         let original = json!({"result":{"state":"activation_conflict","total":1,"conflicts":2,
+            "offset":0,"limit":20,
             "read_only_source":true,"unresolved_unconfirmed_annotations_not_projected":true,
             "items":[{"entry_id":9,"old_entry_id":3,"revision":1,"read_only":true,
                 "activation":"explicit_reviewed_projection",
                 "note":"synthetic private note","tags":"synthetic"}]}});
-        assert!(verified_overlay_response_ok(&original));
+        assert!(verified_overlay_response_ok(&original, 0));
         let summary = verified_overlay_summary(&original, 0);
         assert!(summary.contains("Valid active: 1"));
         assert!(summary.contains("active audits excluded: 2"));
@@ -456,13 +459,30 @@ mod annotation_preview_tests {
         ] {
             let mut invalid = original.clone();
             invalid["result"][key] = json!(false);
-            assert!(!verified_overlay_response_ok(&invalid));
+            assert!(!verified_overlay_response_ok(&invalid, 0));
             assert!(!verified_overlay_summary(&invalid, 0).contains("synthetic private note"));
         }
         let mut invalid = original.clone();
         invalid["result"]["items"][0]["activation"] = json!("unverified_audit");
-        assert!(!verified_overlay_response_ok(&invalid));
+        assert!(!verified_overlay_response_ok(&invalid, 0));
         assert!(!verified_overlay_summary(&invalid, 0).contains("synthetic private note"));
+        let mut wrong_page = original.clone();
+        wrong_page["result"]["offset"] = json!(20);
+        assert!(!verified_overlay_response_ok(&wrong_page, 0));
+        assert!(!verified_overlay_summary(&wrong_page, 0).contains("synthetic private note"));
+        wrong_page["result"]["offset"] = json!(0);
+        wrong_page["result"]["limit"] = json!(250);
+        assert!(!verified_overlay_response_ok(&wrong_page, 0));
+    }
+
+    #[test]
+    fn closed_or_switched_annotation_session_drops_late_responses() {
+        for tag in ["annotation_preview", "annotation_confirm", "annotation_overlay", "overlay_verified"] {
+            assert!(annotation_reply_current(tag, 7, 7));
+            assert!(!annotation_reply_current(tag, 7, 8));
+        }
+        assert!(annotation_reply_current("rows", 7, 8));
+        assert!(annotation_reply_current("linked_sync", 7, 8));
     }
 
     #[test]
@@ -470,16 +490,17 @@ mod annotation_preview_tests {
         let item = json!({"entry_id":9,"old_entry_id":3,"revision":1,"read_only":true,
             "activation":"explicit_reviewed_projection","note":"synthetic","tags":""});
         let mut page = json!({"result":{"state":"partial_activation","total":21,
-            "conflicts":0,"read_only_source":true,
+            "offset":0,"limit":20,"conflicts":0,"read_only_source":true,
             "unresolved_unconfirmed_annotations_not_projected":true,
             "items":vec![item.clone(); 20]}});
         assert_eq!(verified_overlay_page_controls(&page, 0), (false, true));
         page["result"]["items"] = json!([item]);
+        page["result"]["offset"] = json!(20);
         assert_eq!(verified_overlay_page_controls(&page, 20), (true, false));
         assert!(verified_overlay_summary(&page, 20).contains("Rows 21–21 of 21"));
         let empty = json!({"result":{"state":"no_cross_generation_activations",
             "items":[],"total":0,"conflicts":0}});
-        assert!(verified_overlay_response_ok(&empty));
+        assert!(verified_overlay_response_ok(&empty, 0));
         assert_eq!(verified_overlay_page_controls(&empty, 0), (false, false));
     }
 }
@@ -920,10 +941,20 @@ unsafe fn verified_overlay_action(
     }
 }
 
+// Late replies from a closed review or another selected user sidecar must not
+// populate the current review or trigger a CAS action on the wrong sidecar.
+fn annotation_reply_current(tag: &str, request_session: u64, active_session: u64) -> bool {
+    !matches!(
+        tag,
+        "annotation_preview" | "annotation_confirm" | "annotation_overlay" | "overlay_verified"
+    ) || request_session == active_session
+}
+
 struct Reply {
     database: String,
     tag: &'static str,
     generation: u64,
+    annotation_session: u64,
     result: Value,
 }
 struct App {
@@ -946,6 +977,7 @@ struct App {
     linked_generation: Option<String>,
     pending_link_path: Option<String>,
     annotation_db: Option<String>,
+    annotation_session: u64,
     annotation_offset: usize,
     verified_overlay_offset: usize,
     volumes: Vec<Value>,
@@ -986,6 +1018,7 @@ impl App {
             linked_generation: None,
             pending_link_path: None,
             annotation_db: None,
+            annotation_session: 0,
             annotation_offset: 0,
             verified_overlay_offset: 0,
             volumes: vec![],
@@ -1051,6 +1084,7 @@ impl App {
         let database = self.db.clone();
         let tx = self.tx.clone();
         let generation = self.generation;
+        let annotation_session = self.annotation_session;
         self.pending += 1;
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(|| atlas_service::dispatch_json(&request.to_string()))
@@ -1060,6 +1094,7 @@ impl App {
                 database,
                 tag,
                 generation,
+                annotation_session,
                 result,
             });
         });
@@ -1069,6 +1104,7 @@ impl App {
         self.linked_generation = None;
         self.pending_link_path = None;
         self.annotation_db = None;
+        self.annotation_session = self.annotation_session.wrapping_add(1);
         self.annotation_offset = 0;
         self.verified_overlay_offset = 0;
         let _ = std::fs::create_dir_all(config_dir());
@@ -1197,6 +1233,9 @@ impl App {
             {
                 continue;
             }
+            if !annotation_reply_current(reply.tag, reply.annotation_session, self.annotation_session) {
+                continue;
+            }
             if reply.tag == "annotation_confirm" {
                 if reply.result["ok"] == true {
                     self.status("Selected mapping saved in user notes audit; remains inactive.");
@@ -1259,6 +1298,8 @@ impl App {
                             self.request_verified_overlay_page();
                         }
                         VerifiedOverlayNavigation::Close => {
+                            self.annotation_session = self.annotation_session.wrapping_add(1);
+                            self.annotation_db = None;
                             self.status("Verified view closed without changing private notes.");
                         }
                     }
@@ -1311,6 +1352,8 @@ impl App {
                             self.request_verified_overlay_page();
                         }
                         AnnotationReviewAction::Close => {
+                            self.annotation_session = self.annotation_session.wrapping_add(1);
+                            self.annotation_db = None;
                             self.status(
                                 "Annotation review closed; no implicit mapping or migration.",
                             );
@@ -1324,6 +1367,7 @@ impl App {
                         self.linked_ctf = Some(path);
                         self.linked_generation = Some(generation);
                         self.annotation_db = None;
+                        self.annotation_session = self.annotation_session.wrapping_add(1);
                         self.annotation_offset = 0;
                         self.verified_overlay_offset = 0;
                         SendMessageW(self.export_format, CB_SETCURSEL, 0, 0);
@@ -1733,6 +1777,7 @@ impl App {
             }
             ANNOTATION_PREVIEW if self.linked_mode() && self.job.is_none() && self.pending == 0 => {
                 if let Some(path) = file_dialog(self.hwnd, false, "annotation") {
+                    self.annotation_session = self.annotation_session.wrapping_add(1);
                     self.annotation_db = Some(path);
                     self.annotation_offset = 0;
                     self.verified_overlay_offset = 0;
