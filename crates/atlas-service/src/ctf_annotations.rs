@@ -637,8 +637,9 @@ pub fn confirm(v: &Value) -> Result<Value> {
                 ));
             }
         }
-        // Additive, backward-readable audit journal. The original annotation
-        // rows are retained in full; unresolved rows remain unconfirmed.
+        // Additive, backward-readable audit journal. Do NOT create a foreign
+        // key to editable annotation_entries: user deletion must not become
+        // blocked by a historical confirmation. The audit stays immutable.
         tx.execute_batch(
             "CREATE TABLE IF NOT EXISTS annotation_confirmations (
                 old_entry_id INTEGER NOT NULL,
@@ -648,8 +649,7 @@ pub fn confirm(v: &Value) -> Result<Value> {
                 old_payload_sha256 TEXT NOT NULL,
                 confirmed_at_unix INTEGER NOT NULL,
                 PRIMARY KEY(old_entry_id,new_generation),
-                UNIQUE(new_generation,new_entry_id),
-                FOREIGN KEY(old_entry_id) REFERENCES annotation_entries(entry_id)
+                UNIQUE(new_generation,new_entry_id)
              );",
         )?;
         tx.execute(
