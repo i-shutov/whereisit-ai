@@ -445,7 +445,8 @@ pub fn preview(v: &Value) -> Result<Value> {
                                 "user_confirmed":true
                             }))
                         },
-                    ).optional()?
+                    )
+                    .optional()?
                 } else {
                     None
                 };
@@ -482,7 +483,6 @@ pub fn preview(v: &Value) -> Result<Value> {
     output["annotations_supported"] = json!(true);
     Ok(output)
 }
-
 
 /// Record a single explicit, user-selected *structural* correspondence.
 /// Does not copy/move notes, change the annotation_document generation, or
@@ -546,8 +546,12 @@ pub fn confirm(v: &Value) -> Result<Value> {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             )
             .optional()?;
-        let (old_volume, old_path, old_kind, old_size, old_revision) =
-            old.ok_or_else(|| fail("annotation_revision_conflict", "Old annotation no longer exists"))?;
+        let (old_volume, old_path, old_kind, old_size, old_revision) = old.ok_or_else(|| {
+            fail(
+                "annotation_revision_conflict",
+                "Old annotation no longer exists",
+            )
+        })?;
         if old_revision as u64 != expected {
             return Err(fail(
                 "annotation_revision_conflict",
@@ -567,9 +571,7 @@ pub fn confirm(v: &Value) -> Result<Value> {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
             .optional()?;
-        if candidate.as_ref()
-            != Some(&(old_volume, old_path, old_kind, old_size))
-        {
+        if candidate.as_ref() != Some(&(old_volume, old_path, old_kind, old_size)) {
             return Err(fail(
                 "annotation_candidate_conflict",
                 "Selected entry is absent or not an exact preview candidate",
@@ -582,24 +584,28 @@ pub fn confirm(v: &Value) -> Result<Value> {
             |r| r.get::<_, i64>(0),
         )? != 0;
         if has_table {
-            let previous: Option<i64> = tx.query_row(
-                "SELECT new_entry_id FROM annotation_confirmations
+            let previous: Option<i64> = tx
+                .query_row(
+                    "SELECT new_entry_id FROM annotation_confirmations
                  WHERE old_entry_id=?1 AND new_generation=?2",
-                params![old_id, generation],
-                |r| r.get(0),
-            ).optional()?;
+                    params![old_id, generation],
+                    |r| r.get(0),
+                )
+                .optional()?;
             if previous.is_some() {
                 return Err(fail(
                     "annotation_confirmation_conflict",
                     "This old annotation already has a confirmed destination",
                 ));
             }
-            let occupied: Option<i64> = tx.query_row(
-                "SELECT old_entry_id FROM annotation_confirmations
+            let occupied: Option<i64> = tx
+                .query_row(
+                    "SELECT old_entry_id FROM annotation_confirmations
                  WHERE new_generation=?1 AND new_entry_id=?2",
-                params![generation, new_id],
-                |r| r.get(0),
-            ).optional()?;
+                    params![generation, new_id],
+                    |r| r.get(0),
+                )
+                .optional()?;
             if occupied.is_some() {
                 return Err(fail(
                     "annotation_confirmation_conflict",
