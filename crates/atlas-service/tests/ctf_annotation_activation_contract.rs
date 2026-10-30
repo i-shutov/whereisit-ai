@@ -283,7 +283,10 @@ fn activated_projection_is_reversible_and_preserves_originals() {
         &store,
     ));
     assert_eq!(refreshed["ok"], true, "{refreshed}");
-    assert_eq!(refreshed["data"]["result"]["items"], listed["data"]["result"]["items"]);
+    assert_eq!(
+        refreshed["data"]["result"]["items"],
+        listed["data"]["result"]["items"]
+    );
     assert_eq!(fs::read(&store).unwrap(), notes_before_view);
 
     let mut paged = cmd(
