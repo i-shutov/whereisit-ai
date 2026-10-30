@@ -167,7 +167,11 @@ fn annotation_preview_text(data: &Value, offset: usize) -> String {
         message.push_str(&format!(
             "\n\nYES = {}  |  NO = {}  |  CANCEL = close.",
             if next { "next page" } else { "not available" },
-            if previous { "previous page" } else { "not available" }
+            if previous {
+                "previous page"
+            } else {
+                "not available"
+            }
         ));
     }
     message.push_str(
@@ -501,9 +505,8 @@ impl App {
                         self.status("Re-verifying next read-only notes page…");
                         self.request_annotation_page();
                     } else if response == IDNO && previous {
-                        self.annotation_offset = self
-                            .annotation_offset
-                            .saturating_sub(ANNOTATION_PAGE_SIZE);
+                        self.annotation_offset =
+                            self.annotation_offset.saturating_sub(ANNOTATION_PAGE_SIZE);
                         self.status("Re-verifying previous read-only notes page…");
                         self.request_annotation_page();
                     } else {
