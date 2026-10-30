@@ -57,7 +57,7 @@ fn multiply_linked(_meta: &fs::Metadata) -> bool {
 // cache. Canonicalize the parent before checking containment and reject symlink
 // destinations so a dialog-selected annotation file cannot be the original CTF
 // or a SQLite mirror through a simple alias.
-fn store_path(v: &Value) -> Result<PathBuf> {
+pub(super) fn store_path(v: &Value) -> Result<PathBuf> {
     let requested = PathBuf::from(text(v, "annotation_db")?);
     let name = requested
         .file_name()
@@ -97,7 +97,7 @@ fn store_path(v: &Value) -> Result<PathBuf> {
     Ok(target)
 }
 
-fn check_app(conn: &Connection) -> Result<()> {
+pub(super) fn check_app(conn: &Connection) -> Result<()> {
     let app: i64 = conn.pragma_query_value(None, "application_id", |r| r.get(0))?;
     let schema: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if app != APPLICATION_ID || schema != SCHEMA_VERSION {
@@ -109,7 +109,7 @@ fn check_app(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn open_read(path: &Path) -> Result<Option<Connection>> {
+pub(super) fn open_read(path: &Path) -> Result<Option<Connection>> {
     match fs::symlink_metadata(path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e.into()),
@@ -196,7 +196,7 @@ fn open_write(path: &Path, generation: &str) -> Result<Connection> {
     Ok(conn)
 }
 
-fn metadata(conn: &Connection) -> Result<(String, String)> {
+pub(super) fn metadata(conn: &Connection) -> Result<(String, String)> {
     let (doc, generation, schema): (String, String, i64) = conn.query_row(
         "SELECT document_id,generation,schema_version FROM annotation_document LIMIT 1",
         [],

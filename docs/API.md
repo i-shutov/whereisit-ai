@@ -106,3 +106,7 @@ CTF v1 supports the observed uncompressed Catalog 3.00 and a final empty group. 
 `atlas_abi_version()` returns 1. `atlas_call(const char*)` borrows a valid NUL-terminated UTF-8 request and returns an owned NUL-terminated UTF-8 response. Release it exactly once with `atlas_string_free(char*)`. A null input yields an error response; freeing null is allowed. Arbitrary/dangling pointers are not valid ABI input. Panics are contained before crossing the C boundary.
 
 The Windows client links the Rust service directly. The macOS client uses this ABI via a C module map. No local HTTP server or browser runtime is required.
+
+## Private linked-CTF annotation recovery (stacked draft WP)
+
+`ctf_annotations_backup_pinned` and `ctf_annotations_restore_pinned` provide owner-approved, hash-verified whole-sidecar backup and restore **to new files only**. Backups snapshot all private SQLite tables consistently; restores require the exact returned local backup SHA-256 and document ID. These are not CTF exports and never touch the read-only CTF or derived SQLite. See [snapshot/restore contract](qa/CTF_ANNOTATION_SNAPSHOT_RESTORE_WP_20261030.md) for complete fields, limitations and synthetic QA.
