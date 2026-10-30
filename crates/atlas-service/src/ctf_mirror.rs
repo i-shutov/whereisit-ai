@@ -444,26 +444,44 @@ where
 {
     let requested = text(v, "generation")?;
     if requested.len() != 64 || !requested.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(failure("invalid_request", "Expected 64-character generation digest"));
+        return Err(failure(
+            "invalid_request",
+            "Expected 64-character generation digest",
+        ));
     }
     let source_path = path(v, "path")?;
     let source_meta = fs::symlink_metadata(&source_path).map_err(io_error)?;
     if !source_meta.file_type().is_file()
         || source_meta.len() > CTF_LIMIT
-        || source_path.extension().and_then(|x| x.to_str())
+        || source_path
+            .extension()
+            .and_then(|x| x.to_str())
             .is_none_or(|ext| !ext.eq_ignore_ascii_case("ctf"))
     {
-        return Err(failure("ctf_limit", "Expected an unlinked regular .CTF source"));
+        return Err(failure(
+            "ctf_limit",
+            "Expected an unlinked regular .CTF source",
+        ));
     }
     let original = identity(&source_path)?;
     let used_recipe = recipe();
     let current_key = ctf_sidecar::cache_key(&original, &used_recipe).map_err(io_error)?;
     if requested != current_key {
-        return Err(failure("source_changed", "Original CTF changed; synchronize the new generation"));
+        return Err(failure(
+            "source_changed",
+            "Original CTF changed; synchronize the new generation",
+        ));
     }
     let root = path(v, "cache_root")?;
-    if !fs::symlink_metadata(&root).map_err(io_error)?.file_type().is_dir() {
-        return Err(failure("cache_root", "Pinned mirror root must be a real directory"));
+    if !fs::symlink_metadata(&root)
+        .map_err(io_error)?
+        .file_type()
+        .is_dir()
+    {
+        return Err(failure(
+            "cache_root",
+            "Pinned mirror root must be a real directory",
+        ));
     }
     let key: PinKey = (root.clone(), current_key.clone());
     let pinned = pins()
@@ -474,14 +492,20 @@ where
         .ok_or_else(|| failure("not_pinned", "Call ctf_sync in this process first"))?;
     if pinned.source != original {
         forget(&root, &current_key);
-        return Err(failure("source_changed", "Pinned source generation does not match"));
+        return Err(failure(
+            "source_changed",
+            "Pinned source generation does not match",
+        ));
     }
     let cache_dir = root.join(&current_key);
     let db_path = cache_dir.join("catalog.sqlite");
     let first_stamp = stamp(&db_path)?;
     if first_stamp != pinned.stamp {
         forget(&root, &current_key);
-        return Err(failure("cache_changed", "Pinned SQLite artifact changed; strict ctf_sync required"));
+        return Err(failure(
+            "cache_changed",
+            "Pinned SQLite artifact changed; strict ctf_sync required",
+        ));
     }
     let mut full_cache_recheck = false;
     if pinned.checked_at.elapsed() >= PIN_REFRESH_INTERVAL {
@@ -489,7 +513,10 @@ where
         let after_verify = stamp(&db_path)?;
         if after_verify != first_stamp {
             forget(&root, &current_key);
-            return Err(failure("cache_changed", "SQLite artifact changed during recheck"));
+            return Err(failure(
+                "cache_changed",
+                "SQLite artifact changed during recheck",
+            ));
         }
         let mut registry = pins()
             .lock()
@@ -504,11 +531,17 @@ where
     drop(db);
     if stamp(&db_path)? != first_stamp {
         forget(&root, &current_key);
-        return Err(failure("cache_changed", "SQLite artifact changed during query"));
+        return Err(failure(
+            "cache_changed",
+            "SQLite artifact changed during query",
+        ));
     }
     if identity(&source_path)? != original {
         forget(&root, &current_key);
-        return Err(failure("source_changed", "Original CTF changed during pinned query"));
+        return Err(failure(
+            "source_changed",
+            "Original CTF changed during pinned query",
+        ));
     }
     Ok(json!({
         "generation":current_key,

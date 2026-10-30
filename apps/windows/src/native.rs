@@ -196,7 +196,10 @@ impl App {
     fn linked_request(&self, operation: &str) -> Option<Value> {
         let source = self.linked_ctf.as_ref()?;
         let generation = self.linked_generation.as_ref()?;
-        let cache = config_dir().join("CTF-Mirrors").to_string_lossy().into_owned();
+        let cache = config_dir()
+            .join("CTF-Mirrors")
+            .to_string_lossy()
+            .into_owned();
         Some(json!({"op":operation,"path":source,"cache_root":cache,"generation":generation}))
     }
     fn linked_mode(&self) -> bool {
@@ -275,9 +278,11 @@ impl App {
                 }
             ),
         );
-        if let Some(mut linked) = self.linked_request(
-            if !self.query.is_empty() { "ctf_search_pinned" } else { "ctf_children_pinned" }
-        ) {
+        if let Some(mut linked) = self.linked_request(if !self.query.is_empty() {
+            "ctf_search_pinned"
+        } else {
+            "ctf_children_pinned"
+        }) {
             self.duplicates = false;
             linked["offset"] = json!(self.offset);
             linked["limit"] = json!(LIMIT);
@@ -333,7 +338,9 @@ impl App {
                 continue;
             }
             if reply.result["ok"] != true {
-                if reply.tag == "linked_sync" { self.pending_link_path = None; }
+                if reply.tag == "linked_sync" {
+                    self.pending_link_path = None;
+                }
                 self.error(&reply.result);
                 continue;
             }
@@ -385,7 +392,11 @@ impl App {
                     self.refresh();
                 }
                 "volumes" | "linked_volumes" => {
-                    let values = if reply.tag == "linked_volumes" { &data["result"] } else { data };
+                    let values = if reply.tag == "linked_volumes" {
+                        &data["result"]
+                    } else {
+                        data
+                    };
                     self.volumes = values.as_array().cloned().unwrap_or_default();
                     SendMessageW(self.disks, LB_RESETCONTENT, 0, 0);
                     SendMessageW(
@@ -416,7 +427,11 @@ impl App {
                     }
                 }
                 "rows" => {
-                    let page = if self.linked_mode() { &data["result"] } else { data };
+                    let page = if self.linked_mode() {
+                        &data["result"]
+                    } else {
+                        data
+                    };
                     self.entries = page["items"].as_array().cloned().unwrap_or_default();
                     self.total_known = page["total"].is_u64();
                     self.total = page["total"]
@@ -454,10 +469,18 @@ impl App {
                 } else if [OPEN, NEW, SCAN, IMPORT, LINK_CTF, EXPORT].contains(command) {
                     (self.job.is_none()
                         && self.pending == 0
-                        && (self.linked_ctf.is_none()
-                            || [OPEN, NEW, LINK_CTF].contains(command))) as i32
-                } else if [CATEGORY_FILTER, CATEGORY_ASSIGN, CATEGORY_CREATE,
-                            DUPLICATES, COMPACT_COPY, VALIDATE_CATALOG].contains(command) {
+                        && (self.linked_ctf.is_none() || [OPEN, NEW, LINK_CTF].contains(command)))
+                        as i32
+                } else if [
+                    CATEGORY_FILTER,
+                    CATEGORY_ASSIGN,
+                    CATEGORY_CREATE,
+                    DUPLICATES,
+                    COMPACT_COPY,
+                    VALIDATE_CATALOG,
+                ]
+                .contains(command)
+                {
                     (!self.linked_mode()) as i32
                 } else {
                     1
@@ -593,7 +616,9 @@ impl App {
     }
     unsafe fn command(&mut self, command: usize, notification: usize) {
         match command {
-            COMPACT_COPY | VALIDATE_CATALOG if self.job.is_none() && self.pending == 0 && !self.linked_mode() => {
+            COMPACT_COPY | VALIDATE_CATALOG
+                if self.job.is_none() && self.pending == 0 && !self.linked_mode() =>
+            {
                 let request = if command == COMPACT_COPY {
                     let Some(path) = file_dialog(self.hwnd, true, "sqlite") else {
                         return;
@@ -681,7 +706,9 @@ impl App {
             }
             FIND | DUPLICATES => {
                 if command == DUPLICATES && self.linked_mode() {
-                    self.status("Duplicate candidates in a linked CTF require a separate approved mode.");
+                    self.status(
+                        "Duplicate candidates in a linked CTF require a separate approved mode.",
+                    );
                     return;
                 }
                 let len = GetWindowTextLengthW(self.search);
@@ -723,7 +750,9 @@ impl App {
                     self.call("cancel", json!({"op":"cancel","job_id":job}));
                 }
             }
-            OPEN | NEW | SCAN | IMPORT | LINK_CTF | EXPORT if self.job.is_none() && self.pending == 0 => {
+            OPEN | NEW | SCAN | IMPORT | LINK_CTF | EXPORT
+                if self.job.is_none() && self.pending == 0 =>
+            {
                 if self.linked_mode() && [SCAN, IMPORT, EXPORT].contains(&command) {
                     self.status("Linked CTF is read-only; open a writable SQLite catalog first.");
                     return;
@@ -769,11 +798,17 @@ impl App {
                             self.init();
                         }
                         LINK_CTF => {
-                            let cache_root = config_dir().join("CTF-Mirrors").to_string_lossy().into_owned();
+                            let cache_root = config_dir()
+                                .join("CTF-Mirrors")
+                                .to_string_lossy()
+                                .into_owned();
                             self.pending_link_path = Some(path.clone());
                             self.job = Some("linked-sync".into());
                             self.status("Verifying original CTF and creating read-only mirror…");
-                            self.call("linked_sync", json!({"op":"ctf_sync","path":path,"cache_root":cache_root}));
+                            self.call(
+                                "linked_sync",
+                                json!({"op":"ctf_sync","path":path,"cache_root":cache_root}),
+                            );
                         }
                         IMPORT | EXPORT => {
                             self.job = Some("file-operation".into());
