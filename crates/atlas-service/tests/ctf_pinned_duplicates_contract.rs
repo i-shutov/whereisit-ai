@@ -1,6 +1,7 @@
 //! Metadata duplicate candidates from synthetic, source-verified original CTF.
 //! Never send user CTF, cached SQLite, or media paths to CI.
 use ctf_format::{write_ctf, CtfCatalog, CtfDisk, CtfEntry, EntryKind};
+use parquet::file::reader::{FileReader, SerializedFileReader};
 use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
@@ -271,4 +272,119 @@ fn original_ctf_edit_invalidates_stale_duplicate_generation() {
     assert_eq!(stale["ok"], false, "{stale}");
     assert_eq!(stale["error"]["code"], "source_changed", "{stale}");
     assert_eq!(fs::read(&source).unwrap(), after);
+}
+
+#[test]
+fn exported_duplicate_candidates_match_full_pinned_pages_and_remain_read_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("synthetic.ctf");
+    let cache = dir.path().join("cache");
+    let original = write_source(&source, "Film.MKV");
+    let generation = sync(&source, &cache);
+    let database = cache.join(&generation).join("catalog.sqlite");
+    let db_before = fs::read(&database).unwrap();
+    let manifest = fs::read(cache.join(&generation).join("manifest.json")).unwrap();
+
+    // The export includes the full candidate set (never the 1-row GUI page).
+    let listed = duplicate(&source, &cache, &generation, json!({
+        "duplicate_mode":"name_size","limit":1
+    }));
+    assert_eq!(listed["data"]["result"]["has_more"], true, "{listed}");
+    let csv_path = dir.path().join("candidates.csv");
+    let csv_result = call(json!({
+        "op":"ctf_export_pinned","path":source,"cache_root":cache,
+        "generation":generation,"output":csv_path,"format":"csv",
+        "mode":"duplicates","duplicate_mode":"name_size"
+    }));
+    assert_eq!(csv_result["ok"], true, "{csv_result}");
+    assert_eq!(csv_result["data"]["result"]["rows"], 2);
+    assert_eq!(csv_result["data"]["result"]["duplicate_candidates"], true);
+    assert_eq!(csv_result["data"]["result"]["verified"], false);
+    assert_eq!(csv_result["data"]["result"]["basis"], "metadata_candidates");
+    assert_eq!(csv_result["data"]["result"]["duplicate_mode"], "name_size");
+    assert_eq!(csv_result["data"]["source_sha_checked"], true);
+    let mut reader = csv::Reader::from_path(&csv_path).unwrap();
+    let rows: Vec<_> = reader.records().collect::<Result<_, _>>().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|r| r.get(5) == Some("file") && r.get(12) == Some("2")));
+    assert!(rows.iter().all(|r| r.get(13) == Some("film.mkv:512")));
+
+    let json_path = dir.path().join("names.json");
+    let json_result = call(json!({
+        "op":"ctf_export_pinned","path":source,"cache_root":cache,
+        "generation":generation,"output":json_path,"format":"json",
+        "mode":"duplicates","duplicate_mode":"name","query":"ext:mkv"
+    }));
+    assert_eq!(json_result["ok"], true, "{json_result}");
+    let data: Value = serde_json::from_slice(&fs::read(&json_path).unwrap()).unwrap();
+    let items = data["entries"].as_array().unwrap();
+    assert_eq!(items.len(), 3);
+    assert!(items.iter().all(|r| r["duplicate_count"] == 3));
+    assert!(items.iter().all(|r| r["duplicate_group"] == "film.mkv"));
+
+    let pq_path = dir.path().join("sizes.parquet");
+    let pq = call(json!({
+        "op":"ctf_export_pinned","path":source,"cache_root":cache,
+        "generation":generation,"output":pq_path,"format":"parquet",
+        "mode":"duplicates","duplicate_mode":"size","query":"ext:mp3"
+    }));
+    assert_eq!(pq["ok"], true, "{pq}");
+    assert_eq!(pq["data"]["result"]["rows"], 2);
+    let parquet = SerializedFileReader::new(fs::File::open(&pq_path).unwrap()).unwrap();
+    assert_eq!(parquet.metadata().file_metadata().num_rows(), 2);
+
+    assert_eq!(fs::read(&source).unwrap(), original);
+    assert_eq!(fs::read(&database).unwrap(), db_before);
+    assert_eq!(fs::read(cache.join(&generation).join("manifest.json")).unwrap(), manifest);
+}
+
+#[test]
+fn duplicate_export_rejects_wrong_scope_overwrites_stale_sources_and_hash_claims() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source.ctf");
+    let cache = dir.path().join("cache");
+    let before = write_source(&source, "Film.MKV");
+    let generation = sync(&source, &cache);
+    let output = dir.path().join("test.csv");
+    let base = json!({
+        "op":"ctf_export_pinned","path":source,"cache_root":cache,
+        "generation":generation,"output":output,"format":"csv",
+        "mode":"duplicates"
+    });
+    for (field, value, expected) in [
+        ("duplicate_mode", json!("hash"), "unsupported"),
+        ("query", json!("name:("), "invalid_query"),
+        ("parent_id", json!(1), "invalid_request"),
+        ("limit", json!(1), "invalid_request"),
+        ("offset", json!(0), "invalid_request"),
+    ] {
+        let mut req = base.clone();
+        req[field] = value;
+        let result = call(req);
+        assert_eq!(result["ok"], false, "{field}: {result}");
+        if expected != "invalid_query" {
+            assert_eq!(result["error"]["code"], expected, "{field}: {result}");
+        }
+        assert!(!output.exists(), "{field}: file was created");
+    }
+    fs::write(&output, b"USER OWNED").unwrap();
+    let refuse = call(base.clone());
+    assert_eq!(refuse["error"]["code"], "file_exists", "{refuse}");
+    assert_eq!(fs::read(&output).unwrap(), b"USER OWNED");
+
+    // Same-size replacement by the external source application invalidates
+    // the pinned generation; neither output nor stage is published.
+    let changed = write_source(&source, "File.MKV");
+    assert_eq!(before.len(), changed.len());
+    let stale_path = dir.path().join("stale.csv");
+    let mut stale_req = base.clone();
+    stale_req["output"] = json!(stale_path);
+    let stale = call(stale_req);
+    assert_eq!(stale["error"]["code"], "source_changed", "{stale}");
+    assert!(!stale_path.exists());
+    assert_eq!(fs::read(&source).unwrap(), changed);
+    for item in fs::read_dir(dir.path()).unwrap() {
+        let name = item.unwrap().file_name().to_string_lossy().into_owned();
+        assert!(!name.starts_with(".whereisit-ctf-export-"), "{name}");
+    }
 }
