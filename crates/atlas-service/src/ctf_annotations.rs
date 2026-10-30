@@ -6,6 +6,7 @@ use crate::{ctf_mirror, optional_id, text, unsigned};
 use atlas_core::{Error, Result};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -14,6 +15,19 @@ const APPLICATION_ID: i64 = 0x5749_4131; // WIA1, distinct from an ordinary cata
 const SCHEMA_VERSION: i64 = 1;
 const MAX_NOTE_BYTES: usize = 16 * 1024;
 const MAX_TAG_BYTES: usize = 8 * 1024;
+
+// Bind a confirmation to the reviewed *contents* as well as its revision.
+// In the v1 store deleting and re-creating a row can reset revision to 1;
+// an old confirmation must NOT survive that ABA sequence unnoticed.
+fn annotation_digest(note: &str, tags: &str) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"whereisit-ai:annotation-review:v1\0");
+    digest.update((note.len() as u64).to_be_bytes());
+    digest.update(note.as_bytes());
+    digest.update((tags.len() as u64).to_be_bytes());
+    digest.update(tags.as_bytes());
+    format!("{:x}", digest.finalize())
+}
 
 fn fail(code: &'static str, message: &'static str) -> Error {
     Error::new(code, message)
@@ -433,7 +447,7 @@ pub fn preview(v: &Value) -> Result<Value> {
                 candidates.truncate(MAX_PREVIEW_CANDIDATES);
                 let confirmed_selection: Option<Value> = if has_confirmations {
                     conn.query_row(
-                        "SELECT new_entry_id,old_revision,confirmed_at_unix
+                        "SELECT new_entry_id,old_revision,old_payload_sha256,confirmed_at_unix
                          FROM annotation_confirmations
                          WHERE old_entry_id=?1 AND new_generation=?2",
                         params![old_entry_id, generation],
@@ -441,7 +455,8 @@ pub fn preview(v: &Value) -> Result<Value> {
                             Ok(json!({
                                 "new_entry_id":r.get::<_,i64>(0)?,
                                 "old_revision":r.get::<_,i64>(1)?,
-                                "confirmed_at_unix":r.get::<_,i64>(2)?,
+                                "confirmed_at_unix":r.get::<_,i64>(3)?,
+                                "payload_matches":r.get::<_,String>(2)? == annotation_digest(&note, &tags),
                                 "user_confirmed":true
                             }))
                         },
@@ -454,6 +469,9 @@ pub fn preview(v: &Value) -> Result<Value> {
                     .as_ref()
                     .and_then(|record| record["old_revision"].as_i64())
                     .is_some_and(|confirmed_revision| confirmed_revision != revision);
+                let confirmation_payload_conflict = confirmed_selection
+                    .as_ref()
+                    .is_some_and(|record| record["payload_matches"] == false);
                 let candidate_state = match count_lower_bound {
                     0 => "no_match",
                     1 => "unique_unconfirmed",
@@ -471,8 +489,9 @@ pub fn preview(v: &Value) -> Result<Value> {
                     "candidate_count_lower_bound":count_lower_bound,
                     "candidate_count_exact":!truncated,
                     "candidates_truncated":truncated,
-                    "requires_confirmation":confirmed_selection.is_none() || confirmation_revision_conflict,
+                    "requires_confirmation":confirmed_selection.is_none() || confirmation_revision_conflict || confirmation_payload_conflict,
                     "confirmation_revision_conflict":confirmation_revision_conflict,
+                    "confirmation_payload_conflict":confirmation_payload_conflict,
                     "confirmed_selection":confirmed_selection
                 }))
             })?
@@ -543,15 +562,15 @@ pub fn confirm(v: &Value) -> Result<Value> {
                 "No cross-generation correspondence is needed",
             ));
         }
-        let old: Option<(String, String, String, i64, i64)> = tx
+        let old: Option<(String, String, String, i64, i64, String, String)> = tx
             .query_row(
-                "SELECT volume_label,relative_path,kind,size,revision
+                "SELECT volume_label,relative_path,kind,size,revision,note,tags
                  FROM annotation_entries WHERE entry_id=?1",
                 [old_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
             )
             .optional()?;
-        let (old_volume, old_path, old_kind, old_size, old_revision) = old.ok_or_else(|| {
+        let (old_volume, old_path, old_kind, old_size, old_revision, old_note, old_tags) = old.ok_or_else(|| {
             fail(
                 "annotation_revision_conflict",
                 "Old annotation no longer exists",
@@ -626,6 +645,7 @@ pub fn confirm(v: &Value) -> Result<Value> {
                 new_generation TEXT NOT NULL,
                 new_entry_id INTEGER NOT NULL,
                 old_revision INTEGER NOT NULL,
+                old_payload_sha256 TEXT NOT NULL,
                 confirmed_at_unix INTEGER NOT NULL,
                 PRIMARY KEY(old_entry_id,new_generation),
                 UNIQUE(new_generation,new_entry_id),
@@ -634,9 +654,9 @@ pub fn confirm(v: &Value) -> Result<Value> {
         )?;
         tx.execute(
             "INSERT INTO annotation_confirmations
-             (old_entry_id,new_generation,new_entry_id,old_revision,confirmed_at_unix)
-             VALUES (?1,?2,?3,?4,CAST(strftime('%s','now') AS INTEGER))",
-            params![old_id, generation, new_id, old_revision],
+             (old_entry_id,new_generation,new_entry_id,old_revision,old_payload_sha256,confirmed_at_unix)
+             VALUES (?1,?2,?3,?4,?5,CAST(strftime('%s','now') AS INTEGER))",
+            params![old_id, generation, new_id, old_revision, annotation_digest(&old_note, &old_tags)],
         )?;
         tx.commit()?;
         Ok(json!({
