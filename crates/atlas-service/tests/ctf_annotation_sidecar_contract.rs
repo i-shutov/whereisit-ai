@@ -556,7 +556,6 @@ fn reconciliation_preview_is_read_only_bounded_and_never_automatically_rebinds()
     assert_eq!(fs::read(&mirror).unwrap(), before_mirror);
 }
 
-
 #[test]
 fn explicitly_confirmed_candidates_are_cas_guarded_and_never_activated() {
     let tmp = tempfile::tempdir().unwrap();
@@ -581,10 +580,7 @@ fn explicitly_confirmed_candidates_are_cas_guarded_and_never_activated() {
         assert_eq!(invoke(set)["ok"], true);
     }
 
-    let ctf_bytes = make_flat_ctf(
-        &source,
-        &["keep.mp3", "dupe.mp3", "dupe.mp3", "new.mp3"],
-    );
+    let ctf_bytes = make_flat_ctf(&source, &["keep.mp3", "dupe.mp3", "dupe.mp3", "new.mp3"]);
     let after = sync(&source, &cache);
     let mirror = cache.join(&after).join("catalog.sqlite");
     let mirror_bytes = fs::read(&mirror).unwrap();
@@ -634,8 +630,7 @@ fn explicitly_confirmed_candidates_are_cas_guarded_and_never_activated() {
         invoke(req)
     };
     assert_eq!(
-        without_intent["error"]["code"],
-        "confirmation_required",
+        without_intent["error"]["code"], "confirmation_required",
         "{without_intent}"
     );
     let wrong_revision = {
@@ -644,8 +639,7 @@ fn explicitly_confirmed_candidates_are_cas_guarded_and_never_activated() {
         invoke(req)
     };
     assert_eq!(
-        wrong_revision["error"]["code"],
-        "annotation_revision_conflict",
+        wrong_revision["error"]["code"], "annotation_revision_conflict",
         "{wrong_revision}"
     );
     let wrong_document = {
@@ -654,8 +648,7 @@ fn explicitly_confirmed_candidates_are_cas_guarded_and_never_activated() {
         invoke(req)
     };
     assert_eq!(
-        wrong_document["error"]["code"],
-        "annotation_document_conflict",
+        wrong_document["error"]["code"], "annotation_document_conflict",
         "{wrong_document}"
     );
     let wrong_candidate = {
@@ -664,15 +657,17 @@ fn explicitly_confirmed_candidates_are_cas_guarded_and_never_activated() {
         invoke(req)
     };
     assert_eq!(
-        wrong_candidate["error"]["code"],
-        "annotation_candidate_conflict",
+        wrong_candidate["error"]["code"], "annotation_candidate_conflict",
         "{wrong_candidate}"
     );
     assert_eq!(fs::read(&store).unwrap(), initial_store);
 
     let accepted = invoke(confirm.clone());
     assert_eq!(accepted["ok"], true, "{accepted}");
-    assert_eq!(accepted["data"]["result"]["state"], "confirmed_not_activated");
+    assert_eq!(
+        accepted["data"]["result"]["state"],
+        "confirmed_not_activated"
+    );
     assert_eq!(
         accepted["data"]["result"]["annotation_rows_migrated"],
         false
@@ -702,7 +697,9 @@ fn explicitly_confirmed_candidates_are_cas_guarded_and_never_activated() {
         &after,
         &store,
     ));
-    let items = second_preview["data"]["result"]["items"].as_array().unwrap();
+    let items = second_preview["data"]["result"]["items"]
+        .as_array()
+        .unwrap();
     let accepted_keep = items
         .iter()
         .find(|v| v["fingerprint"]["relative_path"] == "keep.mp3")
@@ -734,7 +731,9 @@ fn explicitly_confirmed_candidates_are_cas_guarded_and_never_activated() {
 
     let conn = rusqlite::Connection::open(&store).unwrap();
     let audits: i64 = conn
-        .query_row("SELECT COUNT(*) FROM annotation_confirmations", [], |r| r.get(0))
+        .query_row("SELECT COUNT(*) FROM annotation_confirmations", [], |r| {
+            r.get(0)
+        })
         .unwrap();
     let originals: i64 = conn
         .query_row("SELECT COUNT(*) FROM annotation_entries", [], |r| r.get(0))
@@ -782,10 +781,7 @@ fn confirmation_never_creates_missing_user_store_and_rejects_double_binding() {
     missing["expected_revision"] = json!(1);
     missing["expected_document_id"] = json!("synthetic");
     missing["confirmation"] = json!("user_selected_exact_candidate");
-    assert_eq!(
-        invoke(missing)["error"]["code"],
-        "annotation_store_missing"
-    );
+    assert_eq!(invoke(missing)["error"]["code"], "annotation_store_missing");
     assert!(!store.exists());
 
     // Use an independent synthetic old catalog with saved annotations.
@@ -834,8 +830,7 @@ fn confirmation_never_creates_missing_user_store_and_rejects_double_binding() {
     choose["old_entry_id"] = rows[1]["old_entry_id"].clone();
     let collision = invoke(choose);
     assert_eq!(
-        collision["error"]["code"],
-        "annotation_confirmation_conflict",
+        collision["error"]["code"], "annotation_confirmation_conflict",
         "{collision}"
     );
 }
