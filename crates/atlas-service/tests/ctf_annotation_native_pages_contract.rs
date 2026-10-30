@@ -158,3 +158,83 @@ fn twenty_record_pages_are_complete_repeatable_and_source_pinned() {
     assert_eq!(stale["ok"], false, "{stale}");
     assert_eq!(fs::read(&notes).unwrap(), original_notes);
 }
+
+#[test]
+fn explicit_native_candidate_choice_is_cas_guarded_and_not_activated() {
+    let temp = tempfile::tempdir().unwrap();
+    let ctf = temp.path().join("synthetic.ctf");
+    let cache = temp.path().join("derived");
+    let notes = temp.path().join("my-notes.wia.sqlite");
+    fixture(&ctf, "original generation");
+    let original = sync(&ctf, &cache);
+    let volumes = invoke(json!({"op":"ctf_volumes_pinned","path":ctf,
+        "cache_root":cache,"generation":original}));
+    assert_eq!(volumes["ok"], true, "{volumes}");
+    let disk = volumes["data"]["result"][0]["id"].as_i64().unwrap();
+    let entries = invoke(json!({"op":"ctf_children_pinned","path":ctf,
+        "cache_root":cache,"generation":original,"volume_id":disk}));
+    assert_eq!(entries["ok"], true, "{entries}");
+    let old_id = entries["data"]["result"]["items"][0]["id"].as_i64().unwrap();
+    let mut create = pinned(&ctf, &cache, &original, &notes, "ctf_annotations_set_pinned");
+    create["entry_id"] = json!(old_id);
+    create["note"] = json!("synthetic local note");
+    create["tags"] = json!("synthetic");
+    create["expected_revision"] = json!(0);
+    assert_eq!(invoke(create)["ok"], true);
+
+    fixture(&ctf, "modified generation");
+    let current = sync(&ctf, &cache);
+    let source_before = fs::read(&ctf).unwrap();
+    let mirror = cache.join(&current).join("catalog.sqlite");
+    let mirror_before = fs::read(&mirror).unwrap();
+    let mut preview = pinned(&ctf, &cache, &current, &notes, "ctf_annotations_preview_pinned");
+    preview["limit"] = json!(20);
+    preview["offset"] = json!(0);
+    let report = invoke(preview.clone());
+    assert_eq!(report["ok"], true, "{report}");
+    let result = &report["data"]["result"];
+    assert_eq!(result["state"], "generation_conflict");
+    let row = &result["items"][0];
+    assert_eq!(row["candidate_state"], "unique_unconfirmed");
+    assert_eq!(row["requires_confirmation"], true);
+    let destination = row["candidates"][0]["entry_id"].as_i64().unwrap();
+    assert_ne!(destination, 0);
+    let mut confirm = pinned(&ctf, &cache, &current, &notes, "ctf_annotations_confirm_pinned");
+    confirm["old_entry_id"] = row["old_entry_id"].clone();
+    confirm["new_entry_id"] = json!(destination);
+    confirm["expected_revision"] = row["revision"].clone();
+    confirm["expected_document_id"] = result["document_id"].clone();
+    confirm["confirmation"] = json!("user_selected_exact_candidate");
+
+    let mut wrong_document = confirm.clone();
+    wrong_document["expected_document_id"] = json!("stale");
+    assert_eq!(invoke(wrong_document)["error"]["code"], "annotation_document_conflict");
+    let mut wrong_revision = confirm.clone();
+    wrong_revision["expected_revision"] = json!(999);
+    assert_eq!(invoke(wrong_revision)["error"]["code"], "annotation_revision_conflict");
+    let mut wrong_candidate = confirm.clone();
+    wrong_candidate["new_entry_id"] = json!(999999);
+    assert_eq!(invoke(wrong_candidate)["error"]["code"], "annotation_candidate_conflict");
+    let mut no_consent = confirm.clone();
+    no_consent["confirmation"] = json!("none");
+    assert_eq!(invoke(no_consent)["error"]["code"], "confirmation_required");
+
+    let recorded = invoke(confirm.clone());
+    assert_eq!(recorded["ok"], true, "{recorded}");
+    assert_eq!(recorded["data"]["result"]["state"], "confirmed_not_activated");
+    assert_eq!(recorded["data"]["result"]["annotation_rows_migrated"], false);
+    let repeat = invoke(confirm.clone());
+    assert_eq!(repeat["error"]["code"], "annotation_confirmation_conflict");
+    let reloaded = invoke(preview);
+    assert_eq!(reloaded["ok"], true, "{reloaded}");
+    let reloaded_row = &reloaded["data"]["result"]["items"][0];
+    assert_eq!(reloaded_row["confirmed_selection"]["new_entry_id"], destination);
+    assert_eq!(reloaded_row["requires_confirmation"], false);
+    assert_eq!(fs::read(&ctf).unwrap(), source_before);
+    assert_eq!(fs::read(&mirror).unwrap(), mirror_before);
+
+    fixture(&ctf, "third generation - stale selection");
+    let drift = invoke(confirm);
+    assert_eq!(drift["ok"], false, "{drift}");
+    assert_eq!(drift["error"]["code"], "source_changed");
+}

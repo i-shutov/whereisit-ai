@@ -36,22 +36,50 @@ struct LinkedCTFSync: Decodable { let generation: String; let entries: Int64; le
 struct LinkedExportReceipt: Decodable { let result: LinkedExportSummary }
 struct LinkedExportSummary: Decodable { let rows: Int64 }
 struct LinkedCTFResult<T: Decodable>: Decodable { let generation: String; let result: T }
+struct AnnotationCandidate: Decodable, Identifiable {
+    let entry_id: Int64
+    let volume_id: Int64
+    let parent_id: Int64?
+    let modified_unix: Int64?
+    var id: Int64 { entry_id }
+}
+struct AnnotationConfirmedSelection: Decodable {
+    let new_entry_id: Int64
+}
 struct AnnotationReviewRow: Decodable, Identifiable {
     let old_entry_id: Int64
+    let revision: Int64
     let candidate_state: String
     let candidate_count_lower_bound: Int
     let candidates_truncated: Bool
+    let candidates: [AnnotationCandidate]
+    let confirmed_selection: AnnotationConfirmedSelection?
     let confirmation_revision_conflict: Bool
     let confirmation_payload_conflict: Bool
     var id: Int64 { old_entry_id }
+    var canSelect: Bool {
+        revision > 0 && confirmed_selection == nil && !candidates.isEmpty
+    }
     var conflictText: String {
-        confirmation_revision_conflict || confirmation_payload_conflict ? "Stale confirmation" : "Not yet accepted"
+        if confirmation_revision_conflict || confirmation_payload_conflict {
+            return "Stale confirmation — resolve separately"
+        }
+        if let confirmed_selection {
+            return "Confirmed #\(confirmed_selection.new_entry_id); inactive"
+        }
+        return "Unconfirmed — explicit approval required"
     }
 }
 struct AnnotationReview: Decodable {
     let state: String
+    let document_id: String?
     let total: Int64
     let items: [AnnotationReviewRow]
+}
+struct AnnotationConfirmReceipt: Decodable {
+    let state: String
+    let old_entry_id: Int64
+    let new_entry_id: Int64
 }
 
 enum Bridge {
@@ -89,6 +117,10 @@ enum Bridge {
     @Published var showingAnnotationReview = false
     @Published var annotationReviewOffset = 0
     @Published var annotationReviewLoading = false
+    @Published var annotationSelectedOldID: Int64?
+    @Published var annotationSelectedCandidateID: Int64?
+    @Published var showingAnnotationConfirmation = false
+    @Published var annotationConfirmationBusy = false
     private var annotationReviewStore: String?
     private var annotationReviewSession = 0
     let annotationPageSize = 20
@@ -311,6 +343,10 @@ enum Bridge {
         annotationReview = nil
         annotationReviewOffset = 0
         annotationReviewLoading = false
+        annotationSelectedOldID = nil
+        annotationSelectedCandidateID = nil
+        showingAnnotationConfirmation = false
+        annotationConfirmationBusy = false
         showingAnnotationReview = false
     }
     func reviewAnnotations() {
@@ -342,6 +378,9 @@ enum Bridge {
         let token = generation
         annotationReviewOffset = offset
         annotationReview = nil
+        annotationSelectedOldID = nil
+        annotationSelectedCandidateID = nil
+        showingAnnotationConfirmation = false
         annotationReviewLoading = true
         var args = fields
         args["op"] = "ctf_annotations_preview_pinned"
@@ -358,6 +397,58 @@ enum Bridge {
             if response != nil {
                 self.status = "Read-only notes page checked; nothing was changed."
             }
+        }
+    }
+    var selectedAnnotationRow: AnnotationReviewRow? {
+        guard let oldID = annotationSelectedOldID else { return nil }
+        return annotationReview?.items.first { $0.old_entry_id == oldID }
+    }
+    var canConfirmAnnotation: Bool {
+        guard showingAnnotationReview, linkedMode, mutationAllowed,
+              !annotationReviewLoading, !annotationConfirmationBusy,
+              annotationReview?.state == "generation_conflict",
+              annotationReview?.document_id != nil,
+              let row = selectedAnnotationRow, row.canSelect,
+              let selectedID = annotationSelectedCandidateID else { return false }
+        return row.candidates.contains { $0.entry_id == selectedID }
+    }
+    func selectAnnotation(_ row: AnnotationReviewRow) {
+        guard row.canSelect, !annotationReviewLoading, !annotationConfirmationBusy else { return }
+        annotationSelectedOldID = row.old_entry_id
+        // Never preselect a candidate, even when the preview found exactly one.
+        annotationSelectedCandidateID = nil
+    }
+    func confirmAnnotationSelection() {
+        guard canConfirmAnnotation, let fields = linkedFields(),
+              let store = annotationReviewStore,
+              let documentID = annotationReview?.document_id,
+              let row = selectedAnnotationRow,
+              let targetID = annotationSelectedCandidateID else { return }
+        let session = annotationReviewSession
+        let token = generation
+        let page = annotationReviewOffset
+        var args = fields
+        args["op"] = "ctf_annotations_confirm_pinned"
+        args["annotation_db"] = store
+        args["expected_document_id"] = documentID
+        args["old_entry_id"] = row.old_entry_id
+        args["new_entry_id"] = targetID
+        args["expected_revision"] = row.revision
+        args["confirmation"] = "user_selected_exact_candidate"
+        annotationConfirmationBusy = true
+        status = "Verifying current CTF generation and explicit mapping…"
+        request(args, as: LinkedCTFResult<AnnotationConfirmReceipt>.self,
+                generationToken: token) { [weak self] response in
+            guard let self, self.annotationReviewSession == session,
+                  self.annotationReviewStore == store, self.showingAnnotationReview else { return }
+            self.annotationConfirmationBusy = false
+            if let receipt = response?.result, receipt.state == "confirmed_not_activated" {
+                self.status = "Mapping #\(receipt.old_entry_id) → #\(receipt.new_entry_id) confirmed; annotation remains inactive."
+            } else {
+                self.status = "Mapping not confirmed. Review the refreshed conflict and choose again."
+            }
+            // Successful or failed CAS must always discard stale page selection.
+            self.loadAnnotationReviewPage(offset: page)
         }
     }
     func chooseCatalog(create: Bool) {
@@ -571,36 +662,72 @@ enum Bridge {
                         Text("Rows \(preview.items.isEmpty ? 0 : model.annotationReviewOffset + 1)–\(model.annotationReviewOffset + preview.items.count) of \(preview.total)")
                             .font(.caption).monospacedDigit()
                         List(preview.items) { item in
-                            HStack(spacing: 12) {
-                                Text("Old ID \(item.old_entry_id)").monospacedDigit().frame(width: 120, alignment: .leading)
-                                Text(item.candidate_state).frame(width: 145, alignment: .leading)
+                            HStack(spacing: 10) {
+                                Text("Old #\(item.old_entry_id)").monospacedDigit().frame(width: 90, alignment: .leading)
+                                Text(item.candidate_state).frame(width: 136, alignment: .leading)
                                 Text("Candidates: \(item.candidate_count_lower_bound)\(item.candidates_truncated ? "+" : "")")
-                                    .frame(width: 125, alignment: .leading)
+                                    .frame(width: 112, alignment: .leading)
                                 Text(item.conflictText).foregroundStyle(.secondary)
+                                Spacer(minLength: 2)
+                                if item.canSelect {
+                                    Button(model.annotationSelectedOldID == item.old_entry_id ? "Selected" : "Choose…") {
+                                        model.selectAnnotation(item)
+                                    }.disabled(model.annotationReviewLoading || model.annotationConfirmationBusy)
+                                }
                             }.font(.caption)
                         }
-                        Text("20 rows per verified page. Unique matches still require explicit confirmation.")
+                        if let selected = model.selectedAnnotationRow {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text("Review old #\(selected.old_entry_id) • \(selected.candidate_state)")
+                                    .font(.subheadline).bold()
+                                HStack {
+                                    Picker("Target entry", selection: $model.annotationSelectedCandidateID) {
+                                        Text("Choose a destination explicitly").tag(nil as Int64?)
+                                        ForEach(selected.candidates) { candidate in
+                                            Text("Entry #\(candidate.entry_id) • disk #\(candidate.volume_id)")
+                                                .tag(candidate.entry_id as Int64?)
+                                        }
+                                    }.pickerStyle(.menu)
+                                    Button("Confirm mapping…") {
+                                        model.showingAnnotationConfirmation = true
+                                    }.disabled(!model.canConfirmAnnotation)
+                                }
+                                Text("Structural metadata is not file-content identity. Confirmation records a choice only, without activating notes.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        Text("20 records per freshly SHA-verified page. No automatic matching or activation.")
                             .font(.caption)
                     } else {
                         Text(preview.state == "current_generation"
                              ? "Notes already match this generation; no reconciliation required."
                              : "No initialized user annotation store was found.")
                     }
-                    Text("No mapping was confirmed or activated; neither CTF nor notes were modified.")
+                    Text("The CTF and derived cache stay read-only. Only an explicitly approved mapping is written to the separate notes database.")
                         .font(.caption).foregroundStyle(.secondary)
                     HStack {
                         Button("Previous") {
                             model.loadAnnotationReviewPage(offset: max(0, model.annotationReviewOffset - model.annotationPageSize))
-                        }.disabled(!model.annotationReviewHasPrevious || model.annotationReviewLoading)
+                        }.disabled(!model.annotationReviewHasPrevious || model.annotationReviewLoading || model.annotationConfirmationBusy)
                         Button("Next") {
                             model.loadAnnotationReviewPage(offset: model.annotationReviewOffset + model.annotationPageSize)
-                        }.disabled(!model.annotationReviewHasNext || model.annotationReviewLoading)
+                        }.disabled(!model.annotationReviewHasNext || model.annotationReviewLoading || model.annotationConfirmationBusy)
                         Spacer()
                         Button("Close") { model.resetAnnotationReview() }
                             .keyboardShortcut(.cancelAction)
                     }
                 }
-                .padding(14).frame(width: 730, height: 420)
+                .padding(14).frame(width: 820, height: 520)
+                .confirmationDialog("Confirm this structural correspondence?",
+                                    isPresented: $model.showingAnnotationConfirmation,
+                                    titleVisibility: .visible) {
+                    Button("Confirm mapping (do not activate notes)") {
+                        model.confirmAnnotationSelection()
+                    }.disabled(!model.canConfirmAnnotation)
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("This records only the exact selected old/new entry pair. No CTF or cache write; no annotation migration or activation. Changes by another writer will be rejected.")
+                }
             } else {
                 VStack(spacing: 12) {
                     if model.annotationReviewLoading { ProgressView("Verifying read-only page…") }
