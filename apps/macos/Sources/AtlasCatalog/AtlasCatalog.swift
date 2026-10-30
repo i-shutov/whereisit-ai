@@ -829,15 +829,35 @@ enum Bridge {
                     }
                 }
                 .padding(14).frame(width: 820, height: 520)
-                .confirmationDialog("Confirm this structural correspondence?",
-                                    isPresented: $model.showingAnnotationConfirmation,
+                .confirmationDialog("Approve this annotation action?",
+                                    isPresented: Binding(
+                                        get: { model.annotationConsent != nil },
+                                        set: { if !$0 { model.annotationConsent = nil } }),
                                     titleVisibility: .visible) {
-                    Button("Confirm mapping (do not activate notes)") {
-                        model.confirmAnnotationSelection()
-                    }.disabled(!model.canConfirmAnnotation)
+                    if model.annotationConsent == .mapping {
+                        Button("Confirm mapping (leave inactive)") {
+                            model.confirmAnnotationSelection()
+                        }.disabled(!model.canConfirmAnnotation)
+                    }
+                    if case .some(.activation(let oldID, let newID)) = model.annotationConsent {
+                        Button("Activate read-only overlay") {
+                            model.applyAnnotationOverlay(.activation(oldID: oldID, newID: newID))
+                        }
+                    }
+                    if case .some(.revocation(let oldID, let newID)) = model.annotationConsent {
+                        Button("Revoke active overlay", role: .destructive) {
+                            model.applyAnnotationOverlay(.revocation(oldID: oldID, newID: newID))
+                        }
+                    }
                     Button("Cancel", role: .cancel) {}
                 } message: {
-                    Text("This records only the exact selected old/new entry pair. No CTF or cache write; no annotation migration or activation. Changes by another writer will be rejected.")
+                    if model.annotationConsent == .mapping {
+                        Text("Save the chosen structural mapping only. Notes remain inactive. No CTF or cache writes.")
+                    } else if case .some(.activation) = model.annotationConsent {
+                        Text("Independently approve a read-only projection. Source SHA, note revision and document are rechecked; original notes remain.")
+                    } else {
+                        Text("Revoke only the chosen active projection. The original notes and private audit remain; revoked mappings cannot be replayed.")
+                    }
                 }
             } else {
                 VStack(spacing: 12) {
