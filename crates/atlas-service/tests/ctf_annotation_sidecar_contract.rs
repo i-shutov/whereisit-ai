@@ -883,14 +883,14 @@ fn edited_old_annotation_invalidates_an_earlier_confirmation_revision() {
     approve["confirmation"] = json!("user_selected_exact_candidate");
     assert_eq!(invoke(approve)["ok"], true);
 
-    fs::write(&source, original_bytes).unwrap();
+    fs::write(&source, &original_bytes).unwrap();
     let returned_gen = sync(&source, &cache);
     assert_eq!(returned_gen, original_gen);
     edit["expected_revision"] = json!(1);
     edit["note"] = json!("Revised note invalidates the previous selection");
     assert_eq!(invoke(edit)["data"]["result"]["revision"], 2);
 
-    fs::write(&source, next_bytes).unwrap();
+    fs::write(&source, &next_bytes).unwrap();
     let latest_gen = sync(&source, &cache);
     assert_eq!(latest_gen, next_gen);
     let changed = invoke(cmd(
@@ -911,4 +911,51 @@ fn edited_old_annotation_invalidates_an_earlier_confirmation_revision() {
         changed["data"]["result"]["automatic_rebinding"],
         false
     );
+
+    // Delete and recreate a row with revision 1: the revision number alone
+    // has an ABA hazard. The reviewed payload digest must invalidate it.
+    fs::write(&source, &original_bytes).unwrap();
+    let back = sync(&source, &cache);
+    assert_eq!(back, original_gen);
+    let mut clear = cmd(
+        "ctf_annotations_set_pinned",
+        &source,
+        &cache,
+        &back,
+        &store,
+    );
+    clear["entry_id"] = json!(old_id);
+    clear["expected_revision"] = json!(2);
+    clear["note"] = json!("");
+    clear["tags"] = json!("");
+    assert_eq!(invoke(clear)["data"]["result"]["revision"], 0);
+    let mut recreated = cmd(
+        "ctf_annotations_set_pinned",
+        &source,
+        &cache,
+        &back,
+        &store,
+    );
+    recreated["entry_id"] = json!(old_id);
+    recreated["expected_revision"] = json!(0);
+    recreated["note"] = json!("Different note, same revision number");
+    recreated["tags"] = json!("");
+    assert_eq!(invoke(recreated)["data"]["result"]["revision"], 1);
+    fs::write(&source, &next_bytes).unwrap();
+    let once_more = sync(&source, &cache);
+    assert_eq!(once_more, next_gen);
+    let aba = invoke(cmd(
+        "ctf_annotations_preview_pinned",
+        &source,
+        &cache,
+        &once_more,
+        &store,
+    ));
+    assert_eq!(aba["ok"], true, "{aba}");
+    let row = &aba["data"]["result"]["items"][0];
+    assert_eq!(row["revision"], 1);
+    assert_eq!(row["confirmed_selection"]["old_revision"], 1);
+    assert_eq!(row["confirmation_revision_conflict"], false);
+    assert_eq!(row["confirmation_payload_conflict"], true);
+    assert_eq!(row["requires_confirmation"], true);
 }
