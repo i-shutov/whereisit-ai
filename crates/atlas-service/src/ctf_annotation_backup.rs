@@ -129,7 +129,10 @@ fn open_snapshot(path: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
-fn validate(conn: &Connection) -> Result<(String, String, Vec<(String, i64)>)> {
+type TableInventory = Vec<(String, i64)>;
+type SnapshotInfo = (String, String, TableInventory);
+
+fn validate(conn: &Connection) -> Result<SnapshotInfo> {
     ctf_annotations::check_app(conn)?;
     let (document, generation) = ctf_annotations::metadata(conn)?;
     let check: String = conn.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
