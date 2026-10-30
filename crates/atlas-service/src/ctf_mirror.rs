@@ -438,7 +438,7 @@ pub fn search(v: &Value) -> Result<Value> {
 /// All pinned reads share the same full original CTF SHA checks and periodic
 /// SQLite cache integrity verification. This returns an explicitly tagged
 /// snapshot response, not a user-editable catalog.
-fn read_pinned<F>(v: &Value, work: F) -> Result<Value>
+pub(crate) fn read_pinned<F>(v: &Value, work: F) -> Result<Value>
 where
     F: FnOnce(&Catalog) -> Result<Value>,
 {
