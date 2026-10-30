@@ -36,7 +36,7 @@ The original CTF is authoritative and always opened read-only. Its hash-checked 
 
 After ctf_sync, callers must use the exact returned generation and provide an explicit annotation_db path. ctf_annotations_list_pinned returns state=uninitialized if no file exists and does not create one. ctf_annotations_set_pinned uses a transaction with optimistic expected_revision: 0 means no current row; a successful insertion returns revision 1; later edits require the current revision and increment it. Clearing both note and tags deletes the annotation. Annotation notes are limited to 16 KiB UTF-8 and tags to 8 KiB; larger payloads fail closed. The store contains its own randomly generated opaque document_id, original entry's disk label/relative path/type/size and source generation for later **review**, not for speculative automatic mapping.
 
-If the original WhereIsIt modifies the CTF, the old pinned generation is rejected with source_changed, including same-size replacements. After a new ctf_sync, an old annotations store produces state=generation_conflict, items=[], requires_explicit_reconciliation=true. SET rejects annotation_generation_conflict. **No old entry ID is assigned to the new CTF, even if filename/size match**. Manual reconciliation of candidates and conflict resolution are a distinct follow-up WP; this WP does not pretend to solve them. The user-owned file must be backed up independently and must not be placed in disposable generation caches.
+If the original WhereIsIt modifies the CTF, the old pinned generation is rejected with source_changed, including same-size replacements. After a new ctf_sync, an old annotations store produces state=generation_conflict, items=[], requires_explicit_reconciliation=true. SET rejects annotation_generation_conflict. **No old entry ID is assigned to the new CTF, even if filename/size match**. The read-only ctf_annotations_preview_pinned operation supplies a bounded manual reconciliation preview after a source-generation conflict; it never changes the user-owned store or binds an old entry ID to a new one. A separate confirmation/migration operation and native conflict UI are not implemented. The user-owned file must be backed up independently and must not be placed in disposable generation caches.
 
 All operations recheck original CTF source SHA at both ends through ctf_mirror::read_pinned, and check the cache stamp. Calls are synchronous and belong on a worker in the native UI. Operations use a separate SQLite rollback-journal store, not the derived read-only catalog. Avoid selecting symlink paths as user annotation destinations.
 
@@ -47,6 +47,20 @@ Example requests use caller-local paths and only illustrative synthetic values (
 {"op":"ctf_annotations_list_pinned","path":"synthetic.ctf","cache_root":"mirror","generation":"<64 hex chars from ctf_sync>","annotation_db":"my-notes.wia.sqlite","offset":0,"limit":100}
 ~~~
 
+
+
+
+### Annotation reconciliation preview (read-only)
+
+After a newly synchronized generation differs from the annotation store's saved generation, call ctf_annotations_preview_pinned with the same path, cache_root, new generation, annotation_db, optional offset and limit (default 50, maximum 50). LIST continues to return generation_conflict with items:[]; SET continues to fail closed. Preview requires the new generation to have been pinned by ctf_sync and verifies full CTF source SHA before and after the operation. It does not create any sidecar.
+
+For each old annotation record, the preview compares the exact original disk label, relative path, kind, and size against the new read-only core. Results have candidate_state values no_match, unique_unconfirmed, ambiguous, a list of candidate new IDs and structural context, and requires_confirmation:true **even when there is exactly one candidate**. Up to eight candidates are returned per record; candidate_count_lower_bound, candidate_count_exact and candidates_truncated distinguish incomplete enumeration. Preview is paged by ascending old entry ID; it never executes an unbounded materialization of all notes. Exact metadata may still identify different bytes or ambiguous duplicates; there is no implied content-hash equality. This first preview does **not** accept mappings, edit either database, or migrate notes. No fuzzy/name-only fallback is silently applied.
+
+Synthetic request shape (only local user paths and data; do not include private replies in public CI logs):
+
+~~~json
+{"op":"ctf_annotations_preview_pinned","path":"synthetic.ctf","cache_root":"mirror","generation":"<new 64 hex generation>","annotation_db":"my-notes.wia.sqlite","offset":0,"limit":50}
+~~~
 
 ## Export selection
 

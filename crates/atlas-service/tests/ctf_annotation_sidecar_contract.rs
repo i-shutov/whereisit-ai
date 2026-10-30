@@ -360,3 +360,196 @@ fn cache_path_and_foreign_sqlite_are_never_annotation_destinations() {
         .unwrap();
     assert_eq!(app, 0);
 }
+
+
+fn make_flat_ctf(path: &Path, names: &[&str]) -> Vec<u8> {
+    let bytes = write_ctf(&CtfCatalog {
+        name: "synthetic reconciliation".into(),
+        opaque_trailer: Vec::new(),
+        disks: vec![CtfDisk {
+            name: "synthetic removable".into(),
+            opaque_header: Vec::new(),
+            entries: names
+                .iter()
+                .map(|name| CtfEntry {
+                    name: (*name).into(),
+                    description: String::new(),
+                    parent: None,
+                    kind: EntryKind::File,
+                    size: 1234,
+                    attributes: 32,
+                    modified_dos: 0,
+                    created_dos: 0,
+                    accessed_dos: 0,
+                    opaque: Vec::new(),
+                })
+                .collect(),
+        }],
+    })
+    .unwrap();
+    fs::write(path, &bytes).unwrap();
+    bytes
+}
+
+fn flat_ids(source: &Path, cache: &Path, generation: &str) -> Vec<(String, i64)> {
+    let volumes = invoke(json!({
+        "op":"ctf_volumes_pinned","path":source,"cache_root":cache,
+        "generation":generation
+    }));
+    assert_eq!(volumes["ok"], true, "{volumes}");
+    let volume = volumes["data"]["result"][0]["id"].as_i64().unwrap();
+    let children = invoke(json!({
+        "op":"ctf_children_pinned","path":source,"cache_root":cache,
+        "generation":generation,"volume_id":volume,"limit":50
+    }));
+    assert_eq!(children["ok"], true, "{children}");
+    children["data"]["result"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| {
+            (
+                entry["relative_path"].as_str().unwrap().to_owned(),
+                entry["id"].as_i64().unwrap(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn reconciliation_preview_is_read_only_bounded_and_never_automatically_rebinds() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("synthetic.ctf");
+    let cache = temp.path().join("mirror");
+    let store = temp.path().join("private-notes.wia.sqlite");
+    make_flat_ctf(&source, &["keep.mp3", "dupe.mp3", "gone.mp3"]);
+    let first = sync(&source, &cache);
+    let previous = flat_ids(&source, &cache, &first);
+    assert_eq!(previous.len(), 3);
+
+    let not_created = invoke(cmd(
+        "ctf_annotations_preview_pinned",
+        &source,
+        &cache,
+        &first,
+        &store,
+    ));
+    assert_eq!(not_created["ok"], true, "{not_created}");
+    assert_eq!(not_created["data"]["result"]["state"], "uninitialized");
+    assert!(!store.exists());
+
+    for (name, entry_id) in &previous {
+        let mut req = cmd(
+            "ctf_annotations_set_pinned",
+            &source,
+            &cache,
+            &first,
+            &store,
+        );
+        req["entry_id"] = json!(entry_id);
+        req["expected_revision"] = json!(0);
+        req["note"] = json!(format!("synthetic note for {name}"));
+        req["tags"] = json!("review");
+        let saved = invoke(req);
+        assert_eq!(saved["ok"], true, "{saved}");
+    }
+    let current = invoke(cmd(
+        "ctf_annotations_preview_pinned",
+        &source,
+        &cache,
+        &first,
+        &store,
+    ));
+    assert_eq!(current["data"]["result"]["state"], "current_generation");
+    assert_eq!(current["data"]["result"]["items"], json!([]));
+
+    let before_store = fs::read(&store).unwrap();
+    let next_ctf = make_flat_ctf(
+        &source,
+        &["keep.mp3", "dupe.mp3", "dupe.mp3", "new.mp3"],
+    );
+    let stale = invoke(cmd(
+        "ctf_annotations_preview_pinned",
+        &source,
+        &cache,
+        &first,
+        &store,
+    ));
+    assert_eq!(stale["error"]["code"], "source_changed", "{stale}");
+
+    let next = sync(&source, &cache);
+    assert_ne!(first, next);
+    let mirror = cache.join(&next).join("catalog.sqlite");
+    let before_mirror = fs::read(&mirror).unwrap();
+
+    let mut page = cmd(
+        "ctf_annotations_preview_pinned",
+        &source,
+        &cache,
+        &next,
+        &store,
+    );
+    page["limit"] = json!(2);
+    let first_page = invoke(page.clone());
+    assert_eq!(first_page["ok"], true, "{first_page}");
+    assert_eq!(first_page["data"]["result"]["state"], "generation_conflict");
+    assert_eq!(first_page["data"]["result"]["total"], 3);
+    assert_eq!(first_page["data"]["result"]["items"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        first_page["data"]["result"]["requires_explicit_confirmation"],
+        true
+    );
+    assert_eq!(first_page["data"]["result"]["automatic_rebinding"], false);
+    page["offset"] = json!(2);
+    let second_page = invoke(page);
+    assert_eq!(second_page["ok"], true, "{second_page}");
+    let mut items = first_page["data"]["result"]["items"]
+        .as_array()
+        .unwrap()
+        .clone();
+    items.extend(
+        second_page["data"]["result"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .cloned(),
+    );
+    assert_eq!(items.len(), 3);
+
+    for item in &items {
+        assert_eq!(item["requires_confirmation"], true);
+        assert_eq!(item["revision"], 1);
+        assert_eq!(item["tags"], "review");
+        let name = item["fingerprint"]["relative_path"].as_str().unwrap();
+        let candidates = item["candidates"].as_array().unwrap();
+        match name {
+            "keep.mp3" => {
+                assert_eq!(item["candidate_state"], "unique_unconfirmed");
+                assert_eq!(candidates.len(), 1);
+                assert_eq!(item["candidate_count_exact"], true);
+            }
+            "dupe.mp3" => {
+                assert_eq!(item["candidate_state"], "ambiguous");
+                assert_eq!(candidates.len(), 2);
+                assert_ne!(candidates[0]["entry_id"], candidates[1]["entry_id"]);
+            }
+            "gone.mp3" => {
+                assert_eq!(item["candidate_state"], "no_match");
+                assert!(candidates.is_empty());
+            }
+            other => panic!("unexpected synthetic annotation {other}"),
+        }
+    }
+    let conflict = invoke(cmd(
+        "ctf_annotations_list_pinned",
+        &source,
+        &cache,
+        &next,
+        &store,
+    ));
+    assert_eq!(conflict["data"]["result"]["state"], "generation_conflict");
+    assert_eq!(conflict["data"]["result"]["items"], json!([]));
+    assert_eq!(fs::read(&store).unwrap(), before_store);
+    assert_eq!(fs::read(&source).unwrap(), next_ctf);
+    assert_eq!(fs::read(&mirror).unwrap(), before_mirror);
+}

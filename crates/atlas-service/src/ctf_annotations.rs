@@ -353,3 +353,108 @@ pub fn set(v: &Value) -> Result<Value> {
     output["annotations_supported"] = json!(true);
     Ok(output)
 }
+
+
+const MAX_PREVIEW_CANDIDATES: usize = 8;
+
+/// Read-only, bounded reconciliation hints after an external CTF save.
+/// Exact metadata matches are NOT content identity. Even one candidate is
+/// unconfirmed. This operation never writes a mapping or migrates a note.
+pub fn preview(v: &Value) -> Result<Value> {
+    let path = store_path(v)?;
+    let generation = text(v, "generation")?;
+    let offset = unsigned(v, "offset", 0)?.min(i64::MAX as u64);
+    let limit = unsigned(v, "limit", 50)?.clamp(1, 50);
+    let mut output = ctf_mirror::read_pinned(v, |catalog| {
+        let Some(conn) = open_read(&path)? else {
+            return Ok(json!({
+                "state":"uninitialized","document_id":null,"items":[],"total":0,
+                "preview_only":true,"read_only_source":true
+            }));
+        };
+        let (document_id, stored_generation) = metadata(&conn)?;
+        let total = count(&conn)?;
+        if stored_generation == generation {
+            return Ok(json!({
+                "state":"current_generation","document_id":document_id,
+                "items":[],"total":total,"preview_only":true,"read_only_source":true
+            }));
+        }
+        let mut old = conn.prepare(
+            "SELECT entry_id,volume_label,relative_path,kind,size,note,tags,revision
+             FROM annotation_entries ORDER BY entry_id LIMIT ?1 OFFSET ?2",
+        )?;
+        // The immutable v3 core has an indexed kind+size predicate. Other
+        // fields match byte-for-byte; no fuzzy or case-folded rebinding.
+        let mut matches = catalog.conn().prepare(
+            "SELECT e.id,e.volume_id,e.parent_id,e.modified_unix
+             FROM entries_core e JOIN volumes v ON v.id=e.volume_id
+             WHERE e.kind=?1 AND e.size=?2
+               AND e.relative_path=?3 COLLATE BINARY
+               AND v.label=?4 COLLATE BINARY
+             ORDER BY e.id LIMIT ?5",
+        )?;
+        let items: Vec<Value> = old
+            .query_map(params![limit as i64, offset as i64], |row| {
+                let old_entry_id: i64 = row.get(0)?;
+                let volume_label: String = row.get(1)?;
+                let relative_path: String = row.get(2)?;
+                let kind: String = row.get(3)?;
+                let size: i64 = row.get(4)?;
+                let note: String = row.get(5)?;
+                let tags: String = row.get(6)?;
+                let revision: i64 = row.get(7)?;
+                let mut candidates: Vec<Value> = matches
+                    .query_map(
+                        params![
+                            kind,
+                            size,
+                            relative_path,
+                            volume_label,
+                            (MAX_PREVIEW_CANDIDATES + 1) as i64
+                        ],
+                        |candidate| {
+                            Ok(json!({
+                                "entry_id":candidate.get::<_, i64>(0)?,
+                                "volume_id":candidate.get::<_, i64>(1)?,
+                                "parent_id":candidate.get::<_, Option<i64>>(2)?,
+                                "modified_unix":candidate.get::<_, Option<i64>>(3)?
+                            }))
+                        },
+                    )?
+                    .collect::<std::result::Result<_, _>>()?;
+                let count_lower_bound = candidates.len();
+                let truncated = count_lower_bound > MAX_PREVIEW_CANDIDATES;
+                candidates.truncate(MAX_PREVIEW_CANDIDATES);
+                let candidate_state = match count_lower_bound {
+                    0 => "no_match",
+                    1 => "unique_unconfirmed",
+                    _ => "ambiguous",
+                };
+                Ok(json!({
+                    "old_entry_id":old_entry_id,
+                    "fingerprint":{
+                        "volume_label":volume_label,"relative_path":relative_path,
+                        "kind":kind,"size":size
+                    },
+                    "note":note,"tags":tags,"revision":revision,
+                    "candidate_state":candidate_state,
+                    "candidates":candidates,
+                    "candidate_count_lower_bound":count_lower_bound,
+                    "candidate_count_exact":!truncated,
+                    "candidates_truncated":truncated,
+                    "requires_confirmation":true
+                }))
+            })?
+            .collect::<std::result::Result<_, _>>()?;
+        Ok(json!({
+            "state":"generation_conflict","document_id":document_id,
+            "items":items,"total":total,"offset":offset,"limit":limit,
+            "preview_only":true,"automatic_rebinding":false,
+            "requires_explicit_confirmation":true,"read_only_source":true,
+            "user_owned_separate_store":true
+        }))
+    })?;
+    output["annotations_supported"] = json!(true);
+    Ok(output)
+}

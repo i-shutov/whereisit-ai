@@ -69,6 +69,7 @@ fn dispatch(input: &str) -> Result<Value> {
         "ctf_children_pinned" => ctf_mirror::children_pinned(&v)?,
         "ctf_export_pinned" => ctf_export::export(&v)?,
         "ctf_annotations_list_pinned" => ctf_annotations::list(&v)?,
+        "ctf_annotations_preview_pinned" => ctf_annotations::preview(&v)?,
         "ctf_annotations_set_pinned" => ctf_annotations::set(&v)?,
         "ctf_duplicates_pinned" => ctf_duplicates::duplicates(&v)?,
         "compact_catalog" => maintenance::compact_copy(&v)?,
