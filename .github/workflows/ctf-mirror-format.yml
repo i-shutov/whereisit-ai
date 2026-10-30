@@ -1,0 +1,64 @@
+name: Format Live CTF Mirror on isolated branch
+on:
+  push:
+    branches: [feat/ctf-live-mirror-20261030]
+    paths:
+      - ".github/workflows/ctf-mirror-format.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: format-ctf-live-mirror
+  cancel-in-progress: false
+jobs:
+  format:
+    if: github.repository == 'i-shutov/whereisit-ai' && github.ref == 'refs/heads/feat/ctf-live-mirror-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: true
+      - run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt
+      - name: Format Rust exactly once, report constrained changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          git diff --name-only > formatted-files.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          accepted = {
+             "crates/atlas-core/src/lib.rs",
+             "crates/atlas-service/ctf_sidecar/mod.rs",
+             "crates/atlas-service/src/lib.rs",
+             "crates/atlas-service/src/ctf_mirror.rs",
+             "crates/atlas-service/tests/ctf_mirror_contract.rs",
+          }
+          changed = set(Path("formatted-files.txt").read_text().splitlines())
+          assert changed <= accepted, f"Unexpected formatter changes: {sorted(changed - accepted)}"
+          print("Verified formatter changes:", sorted(changed))
+          PY
+          cargo fmt --all -- --check
+      - name: Commit formatting only with protected branch lease
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin feat/ctf-live-mirror-20261030
+          test "$(git rev-parse origin/feat/ctf-live-mirror-20261030)" = "$GITHUB_SHA"
+          git add -- crates/atlas-core/src/lib.rs crates/atlas-service/ctf_sidecar/mod.rs crates/atlas-service/src/lib.rs crates/atlas-service/src/ctf_mirror.rs crates/atlas-service/tests/ctf_mirror_contract.rs
+          if ! git diff --cached --quiet; then
+            git config user.name 'whereisit-ci'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'style(ctf): rustfmt live mirror native service and tests'
+            git push origin HEAD:refs/heads/feat/ctf-live-mirror-20261030
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ctf-mirror-formatter-report
+          path: formatted-files.txt
+          if-no-files-found: error
+          retention-days: 14
