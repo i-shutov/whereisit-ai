@@ -9,6 +9,9 @@ use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant, SystemTime};
 
 const CTF_LIMIT: u64 = 2_000_000_000;
 const DB_LIMIT: u64 = 64_000_000_000;
@@ -35,6 +38,80 @@ struct Generation {
     manifest: Manifest,
     built: bool,
 }
+
+const PIN_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+const MAX_PINNED_GENERATIONS: usize = 16;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DbStamp {
+    bytes: u64,
+    modified: Option<SystemTime>,
+    created: Option<SystemTime>,
+    #[cfg(unix)]
+    dev: u64,
+    #[cfg(unix)]
+    inode: u64,
+}
+#[derive(Clone)]
+struct Pinned {
+    source: SourceIdentity,
+    stamp: DbStamp,
+    checked_at: Instant,
+}
+type PinKey = (PathBuf, String);
+static PINS: OnceLock<Mutex<HashMap<PinKey, Pinned>>> = OnceLock::new();
+fn pins() -> &'static Mutex<HashMap<PinKey, Pinned>> {
+    PINS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+fn stamp(path: &Path) -> Result<DbStamp> {
+    let meta = fs::symlink_metadata(path).map_err(io_error)?;
+    if !meta.file_type().is_file() || meta.len() > DB_LIMIT || !meta.permissions().readonly() {
+        return Err(failure("cache_changed", "Pinned SQLite artifact is absent, changed or writable"));
+    }
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt;
+    Ok(DbStamp {
+        bytes: meta.len(),
+        modified: meta.modified().ok(),
+        created: meta.created().ok(),
+        #[cfg(unix)]
+        dev: meta.dev(),
+        #[cfg(unix)]
+        inode: meta.ino(),
+    })
+}
+fn remember(g: &Generation) -> Result<()> {
+    let key = (g.root.clone(), g.key.clone());
+    let db = g.root.join(&g.key).join("catalog.sqlite");
+    let stamped = stamp(&db)?;
+    let mut entries = pins()
+        .lock()
+        .map_err(|_| failure("internal", "Pinned registry is unavailable"))?;
+    if entries.len() >= MAX_PINNED_GENERATIONS && !entries.contains_key(&key) {
+        let evict = entries
+            .iter()
+            .min_by_key(|(_, p)| p.checked_at)
+            .map(|(key, _)| key.clone());
+        if let Some(evict) = evict {
+            entries.remove(&evict);
+        }
+    }
+    entries.insert(
+        key,
+        Pinned {
+            source: g.source.clone(),
+            stamp: stamped,
+            checked_at: Instant::now(),
+        },
+    );
+    Ok(())
+}
+fn forget(root: &Path, key: &str) {
+    if let Ok(mut registry) = pins().lock() {
+        registry.remove(&(root.to_path_buf(), key.to_owned()));
+    }
+}
+
 fn failure(code: &'static str, msg: &'static str) -> Error {
     Error::new(code, msg)
 }
@@ -302,6 +379,7 @@ fn ensure(v: &Value) -> Result<Generation> {
 }
 pub fn sync(v: &Value) -> Result<Value> {
     let generation = ensure(v)?;
+    remember(&generation)?;
     Ok(json!({
         "state":"ready",
         "generation":generation.key,
@@ -328,6 +406,7 @@ pub fn search(v: &Value) -> Result<Value> {
         _ => return Err(failure("invalid_request", "full_count must be boolean")),
     };
     let generation = ensure(v)?;
+    remember(&generation)?;
     let db_path = generation.root.join(&generation.key).join("catalog.sqlite");
     let catalog = Catalog::open_readonly(&db_path)?;
     let page = if full_count {
