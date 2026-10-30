@@ -135,7 +135,7 @@ fn activated_projection_is_reversible_and_preserves_originals() {
     let source = temp.path().join("synthetic.ctf");
     let cache = temp.path().join("derived");
     let store = temp.path().join("my-notes.wia.sqlite");
-    make_ctf(&source, &["keep.mp3", "gone.mp3"]);
+    let old_ctf = make_ctf(&source, &["keep.mp3", "gone.mp3"]);
     let first = sync(&source, &cache);
     let ids = flat_ids(&source, &cache, &first);
     for (name, id) in &ids {
@@ -198,6 +198,34 @@ fn activated_projection_is_reversible_and_preserves_originals() {
         listed["data"]["result"]["unresolved_unconfirmed_annotations_not_projected"],
         true
     );
+
+    let mut paged = cmd(
+        "ctf_annotations_activated_list_pinned",
+        &source, &cache, &second, &store,
+    );
+    paged["offset"] = json!(1);
+    let page = invoke(paged);
+    assert_eq!(page["data"]["result"]["total"], 1);
+    assert_eq!(page["data"]["result"]["items"], json!([]));
+
+    // Old-generation edits after activation invalidate the *read* overlay,
+    // rather than silently projecting a stale private note.
+    fs::write(&source, &old_ctf).unwrap();
+    assert_eq!(sync(&source, &cache), first);
+    let mut edit = cmd("ctf_annotations_set_pinned", &source, &cache, &first, &store);
+    edit["entry_id"] = json!(old_id);
+    edit["expected_revision"] = json!(1);
+    edit["note"] = json!("newer synthetic note");
+    edit["tags"] = json!("reviewed");
+    assert_eq!(invoke(edit)["ok"], true);
+    fs::write(&source, &new_ctf).unwrap();
+    assert_eq!(sync(&source, &cache), second);
+    let conflicted = invoke(cmd(
+        "ctf_annotations_activated_list_pinned", &source, &cache, &second, &store,
+    ));
+    assert_eq!(conflicted["data"]["result"]["state"], "activation_conflict");
+    assert_eq!(conflicted["data"]["result"]["conflicts"], 1);
+    assert_eq!(conflicted["data"]["result"]["items"], json!([]));
 
     // Legacy list and set MUST NOT silently enable new-generation annotation edits.
     let original_list = invoke(cmd(
