@@ -61,6 +61,8 @@ fn dispatch(input: &str) -> Result<Value> {
         "ctf_sync" => ctf_mirror::sync(&v)?,
         "ctf_search" => ctf_mirror::search(&v)?,
         "ctf_search_pinned" => ctf_mirror::search_pinned(&v)?,
+        "ctf_volumes_pinned" => ctf_mirror::volumes_pinned(&v)?,
+        "ctf_children_pinned" => ctf_mirror::children_pinned(&v)?,
         "compact_catalog" => maintenance::compact_copy(&v)?,
         "validate_catalog" => maintenance::validate(&v)?,
         "import_ctf" => legacy::import(&mut Catalog::open(text(&v, "db")?)?, &v)?,
