@@ -286,9 +286,14 @@ fn exported_duplicate_candidates_match_full_pinned_pages_and_remain_read_only() 
     let manifest = fs::read(cache.join(&generation).join("manifest.json")).unwrap();
 
     // The export includes the full candidate set (never the 1-row GUI page).
-    let listed = duplicate(&source, &cache, &generation, json!({
-        "duplicate_mode":"name_size","limit":1
-    }));
+    let listed = duplicate(
+        &source,
+        &cache,
+        &generation,
+        json!({
+            "duplicate_mode":"name_size","limit":1
+        }),
+    );
     assert_eq!(listed["data"]["result"]["has_more"], true, "{listed}");
     let csv_path = dir.path().join("candidates.csv");
     let csv_result = call(json!({
@@ -306,7 +311,9 @@ fn exported_duplicate_candidates_match_full_pinned_pages_and_remain_read_only() 
     let mut reader = csv::Reader::from_path(&csv_path).unwrap();
     let rows: Vec<_> = reader.records().collect::<Result<_, _>>().unwrap();
     assert_eq!(rows.len(), 2);
-    assert!(rows.iter().all(|r| r.get(5) == Some("file") && r.get(12) == Some("2")));
+    assert!(rows
+        .iter()
+        .all(|r| r.get(5) == Some("file") && r.get(12) == Some("2")));
     assert!(rows.iter().all(|r| r.get(13) == Some("film.mkv:512")));
 
     let json_path = dir.path().join("names.json");
@@ -335,7 +342,10 @@ fn exported_duplicate_candidates_match_full_pinned_pages_and_remain_read_only() 
 
     assert_eq!(fs::read(&source).unwrap(), original);
     assert_eq!(fs::read(&database).unwrap(), db_before);
-    assert_eq!(fs::read(cache.join(&generation).join("manifest.json")).unwrap(), manifest);
+    assert_eq!(
+        fs::read(cache.join(&generation).join("manifest.json")).unwrap(),
+        manifest
+    );
 }
 
 #[test]
