@@ -393,6 +393,11 @@ pub fn preview(v: &Value) -> Result<Value> {
             [],
             |row| row.get::<_, i64>(0),
         )? != 0;
+        let has_activations: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='annotation_activations')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )? != 0;
         if stored_generation == generation {
             return Ok(json!({
                 "state":"current_generation","document_id":document_id,
@@ -465,6 +470,22 @@ pub fn preview(v: &Value) -> Result<Value> {
                 } else {
                     None
                 };
+                // Audit state is deliberately separate from verified active projections:
+                // a stale old note can remain 'active' in the journal while
+                // activated_list refuses to present it as a valid overlay.
+                // Keeping this row visible permits explicit revocation even
+                // after the source note changed or its confirmation went stale.
+                let activation_record: Option<(i64, String)> = if has_activations {
+                    conn.query_row(
+                        "SELECT new_entry_id,state FROM annotation_activations
+                         WHERE old_entry_id=?1 AND new_generation=?2",
+                        params![old_entry_id, generation],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .optional()?
+                } else {
+                    None
+                };
                 let confirmation_revision_conflict = confirmed_selection
                     .as_ref()
                     .and_then(|record| record["old_revision"].as_i64())
@@ -492,7 +513,9 @@ pub fn preview(v: &Value) -> Result<Value> {
                     "requires_confirmation":confirmed_selection.is_none() || confirmation_revision_conflict || confirmation_payload_conflict,
                     "confirmation_revision_conflict":confirmation_revision_conflict,
                     "confirmation_payload_conflict":confirmation_payload_conflict,
-                    "confirmed_selection":confirmed_selection
+                    "confirmed_selection":confirmed_selection,
+                    "activation_state":activation_record.as_ref().map(|(_, state)| state.as_str()),
+                    "activation_target_entry_id":activation_record.as_ref().map(|(id, _)| *id)
                 }))
             })?
             .collect::<std::result::Result<_, _>>()?;
