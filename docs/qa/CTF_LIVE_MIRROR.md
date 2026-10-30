@@ -50,3 +50,26 @@ generation identifier so clients can associate a result with its source.
   WhereIsIt acceptance of *modified* exports remain release blockers.
 - Platform-specific power-failure durability of directory publication is not
   proven on Windows/macOS; always retain the authoritative source and backup.
+
+## Additional verified contract cases
+
+The native contract suite also asserts that an unchanged CTF renamed within the
+local filesystem reuses the existing content-addressed generation, without
+rebuilding the SQLite mirror or touching its bytes. A malformed Boolean/search
+expression is parsed before the potentially multi-minute import; malformed or
+missing queries must not even create the cache directory.
+
+A derived, non-authoritative scan timestamp is normalized when publishing a
+mirror. The generation identity comes from original CTF content, not from the
+clock time when a copy happened to be indexed. This does not modify DOS
+timestamps preserved in the CTF entry records or the original source.
+
+### Operational readiness
+
+The commands are accessible through the native Rust service and CLI. They do
+**not** yet constitute a connected compact Windows/macOS GUI workflow, nor a
+source-file watcher. The response returns a generation key; a future UI must
+treat old-generation pages as stale when switching to a new CTF digest. A
+warm-cache lookup currently performs complete SHA-256 checks of both the
+source and the SQLite mirror; the first verified implementation prioritizes
+correctness and remains unsuitable for subsecond queries on very large disks.
