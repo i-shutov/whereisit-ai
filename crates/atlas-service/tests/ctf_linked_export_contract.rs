@@ -78,7 +78,10 @@ fn exports_csv_parquet_and_json_from_one_verified_pinned_generation() {
     assert_eq!(csv["data"]["result"]["output_no_clobber"], true);
     assert_eq!(csv["data"]["source_sha_checked"], true);
     let mut reader = csv::Reader::from_path(&csv_path).unwrap();
-    let rows: Vec<_> = reader.records().collect::<std::result::Result<_, _>>().unwrap();
+    let rows: Vec<_> = reader
+        .records()
+        .collect::<std::result::Result<_, _>>()
+        .unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get(3), Some("песня.mp3"));
 
@@ -114,8 +117,14 @@ fn exports_selected_branch_recursively_with_no_mirror_modification() {
     let disk_id = disk["data"]["result"][0]["id"].as_i64().unwrap();
     let root = request(json!({"op":"ctf_children_pinned","path":source,
         "cache_root":cache,"generation":generation,"volume_id":disk_id}));
-    let folder_id = root["data"]["result"]["items"].as_array().unwrap()
-        .iter().find(|entry| entry["name"] == "Аудио").unwrap()["id"].as_i64().unwrap();
+    let folder_id = root["data"]["result"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "Аудио")
+        .unwrap()["id"]
+        .as_i64()
+        .unwrap();
     let output = dir.path().join("branch.csv");
     let result = request(json!({"op":"ctf_export_pinned","path":source,
         "cache_root":cache,"generation":generation,"output":output,
@@ -127,7 +136,10 @@ fn exports_selected_branch_recursively_with_no_mirror_modification() {
     assert!(data.contains("guide.pdf"));
     assert!(!data.contains("film.mkv"));
     assert_eq!(fs::read(&source).unwrap(), source_bytes);
-    assert_eq!(fs::read(cache.join(&generation).join("manifest.json")).unwrap(), manifest);
+    assert_eq!(
+        fs::read(cache.join(&generation).join("manifest.json")).unwrap(),
+        manifest
+    );
     assert_no_stage(dir.path());
 }
 
@@ -150,13 +162,24 @@ fn invalid_or_existing_targets_fail_closed_and_do_not_overwrite() {
 
     let bad_suffix = export(&source, &cache, &generation, &source, "csv");
     assert_eq!(bad_suffix["ok"], false, "{bad_suffix}");
-    let inside_cache = export(&source, &cache, &generation,
-        &cache.join("untrusted.csv"), "csv");
-    assert_eq!(inside_cache["error"]["code"], "unsafe_output", "{inside_cache}");
+    let inside_cache = export(
+        &source,
+        &cache,
+        &generation,
+        &cache.join("untrusted.csv"),
+        "csv",
+    );
+    assert_eq!(
+        inside_cache["error"]["code"], "unsafe_output",
+        "{inside_cache}"
+    );
     let duplicates = request(json!({"op":"ctf_export_pinned","path":source,
         "cache_root":cache,"generation":generation,"output":dir.path().join("dup.csv"),
         "format":"csv","mode":"duplicates"}));
-    assert_eq!(duplicates["error"]["code"], "invalid_request", "{duplicates}");
+    assert_eq!(
+        duplicates["error"]["code"], "invalid_request",
+        "{duplicates}"
+    );
     assert_eq!(fs::read(&source).unwrap(), source_bytes);
     assert_no_stage(dir.path());
 }

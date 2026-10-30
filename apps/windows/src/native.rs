@@ -331,7 +331,10 @@ impl App {
                 }
                 continue;
             }
-            if matches!(reply.tag, "mutation" | "maintenance" | "linked_sync" | "linked_export") {
+            if matches!(
+                reply.tag,
+                "mutation" | "maintenance" | "linked_sync" | "linked_export"
+            ) {
                 self.job = None;
             }
             if reply.tag == "rows" && reply.generation != self.generation {
@@ -461,7 +464,9 @@ impl App {
                 }
                 "linked_export" => {
                     let rows = data["result"]["rows"].as_u64().unwrap_or(0);
-                    self.status(&format!("Verified linked CTF export: {rows} rows; source unchanged."));
+                    self.status(&format!(
+                        "Verified linked CTF export: {rows} rows; source unchanged."
+                    ));
                 }
                 _ => {}
             }
@@ -769,7 +774,9 @@ impl App {
                     && command == EXPORT
                     && SendMessageW(self.export_format, CB_GETCURSEL, 0, 0) == 2
                 {
-                    self.status("Linked CTF supports only CSV/Parquet export; original stays read-only.");
+                    self.status(
+                        "Linked CTF supports only CSV/Parquet export; original stays read-only.",
+                    );
                     return;
                 }
                 if command == SCAN {
@@ -842,14 +849,24 @@ impl App {
                                 }
                             };
                             if command == EXPORT && self.linked_mode() {
-                                let Some(mut linked) = self.linked_request("ctf_export_pinned") else {
+                                let Some(mut linked) = self.linked_request("ctf_export_pinned")
+                                else {
                                     self.job = None;
                                     self.status("Linked generation is unavailable; refresh CTF.");
                                     return;
                                 };
                                 linked["output"] = json!(path);
-                                linked["format"] = json!(if operation == "export_csv" { "csv" } else { "parquet" });
-                                linked["mode"] = json!(if self.query.is_empty() && self.volume.is_some() { "children" } else { "search" });
+                                linked["format"] = json!(if operation == "export_csv" {
+                                    "csv"
+                                } else {
+                                    "parquet"
+                                });
+                                linked["mode"] =
+                                    json!(if self.query.is_empty() && self.volume.is_some() {
+                                        "children"
+                                    } else {
+                                        "search"
+                                    });
                                 linked["query"] = json!(self.query);
                                 linked["volume_id"] = json!(self.volume);
                                 linked["parent_id"] = json!(self.stack.last().and_then(|p| p.0));

@@ -39,10 +39,16 @@ pub(crate) fn export(v: &Value) -> Result<Value> {
         "csv" => "export_csv",
         "parquet" => "export_parquet",
         "json" => "export_json",
-        _ => return Err(invalid("Linked CTF export supports csv, parquet or json only")),
+        _ => {
+            return Err(invalid(
+                "Linked CTF export supports csv, parquet or json only",
+            ))
+        }
     };
     if v.get("overwrite").and_then(Value::as_bool) == Some(true) {
-        return Err(invalid("Linked CTF exports never overwrite an existing file"));
+        return Err(invalid(
+            "Linked CTF exports never overwrite an existing file",
+        ));
     }
     // Validate the full Boolean query and scope before hashing a large CTF.
     if selection::select(v, false)?.duplicate {
@@ -50,7 +56,9 @@ pub(crate) fn export(v: &Value) -> Result<Value> {
     }
     let mode = v.get("mode").and_then(Value::as_str).unwrap_or("search");
     if !matches!(mode, "search" | "children" | "all") {
-        return Err(invalid("Linked CTF export supports search, children or all"));
+        return Err(invalid(
+            "Linked CTF export supports search, children or all",
+        ));
     }
     let source = PathBuf::from(text(v, "path")?);
     let output = PathBuf::from(text(v, "output")?);
@@ -100,14 +108,11 @@ pub(crate) fn export(v: &Value) -> Result<Value> {
     args["path"] = json!(stage.to_string_lossy().as_ref());
     args["db"] = json!(cache.join(generation).join("catalog.sqlite"));
     args["overwrite"] = json!(true);
-    let mut verified = ctf_mirror::read_pinned(v, |catalog| {
-        exports::export(catalog, &args, operation)
-    })?;
+    let mut verified =
+        ctf_mirror::read_pinned(v, |catalog| exports::export(catalog, &args, operation))?;
 
     let (sha256, bytes) = digest(&stage)?;
-    if verified["result"]["bytes"].as_u64() != Some(bytes)
-        || !verified["result"]["rows"].is_u64()
-    {
+    if verified["result"]["bytes"].as_u64() != Some(bytes) || !verified["result"]["rows"].is_u64() {
         return Err(Error::new("export", "Staged export integrity check failed"));
     }
     // Atomic no-clobber final publication; a raced existing target is refused.
@@ -117,7 +122,10 @@ pub(crate) fn export(v: &Value) -> Result<Value> {
         } else {
             "export"
         };
-        Error::new(code, format!("Export publication failed: {:?}", e.error.kind()))
+        Error::new(
+            code,
+            format!("Export publication failed: {:?}", e.error.kind()),
+        )
     })?;
     verified["result"]["path"] = json!(target);
     verified["result"]["sha256"] = json!(sha256);
