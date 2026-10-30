@@ -278,16 +278,21 @@ impl App {
                 }
             ),
         );
-        if let Some(mut linked) = self.linked_request(if !self.query.is_empty() {
+        if let Some(mut linked) = self.linked_request(if self.duplicates {
+            "ctf_duplicates_pinned"
+        } else if !self.query.is_empty() {
             "ctf_search_pinned"
         } else {
             "ctf_children_pinned"
         }) {
-            self.duplicates = false;
             linked["offset"] = json!(self.offset);
             linked["limit"] = json!(LIMIT);
             linked["volume_id"] = json!(self.volume);
-            if !self.query.is_empty() {
+            if self.duplicates {
+                linked["query"] = json!(self.query);
+                linked["duplicate_mode"] = json!(self.applied_duplicate_mode);
+                self.call("rows", linked);
+            } else if !self.query.is_empty() {
                 linked["query"] = json!(self.query);
                 self.call("rows", linked);
             } else if self.volume.is_some() {
@@ -482,13 +487,13 @@ impl App {
                         && (!self.linked_mode()
                             || [OPEN, NEW, LINK_CTF].contains(command)
                             || (*command == EXPORT
+                                && !self.duplicates
                                 && SendMessageW(self.export_format, CB_GETCURSEL, 0, 0) != 2)))
                         as i32
                 } else if [
                     CATEGORY_FILTER,
                     CATEGORY_ASSIGN,
                     CATEGORY_CREATE,
-                    DUPLICATES,
                     COMPACT_COPY,
                     VALIDATE_CATALOG,
                 ]
@@ -718,12 +723,6 @@ impl App {
                 self.load();
             }
             FIND | DUPLICATES => {
-                if command == DUPLICATES && self.linked_mode() {
-                    self.status(
-                        "Duplicate candidates in a linked CTF require a separate approved mode.",
-                    );
-                    return;
-                }
                 let len = GetWindowTextLengthW(self.search);
                 let mut text = vec![0u16; len as usize + 1];
                 GetWindowTextW(self.search, text.as_mut_ptr(), len + 1);
@@ -770,14 +769,19 @@ impl App {
                     self.status("Linked CTF is read-only; open a writable SQLite catalog first.");
                     return;
                 }
-                if self.linked_mode()
-                    && command == EXPORT
-                    && SendMessageW(self.export_format, CB_GETCURSEL, 0, 0) == 2
-                {
-                    self.status(
-                        "Linked CTF supports only CSV/Parquet export; original stays read-only.",
-                    );
-                    return;
+                if self.linked_mode() && command == EXPORT {
+                    if self.duplicates {
+                        self.status(
+                            "Linked duplicate candidates cannot be exported until a verified duplicate report is implemented.",
+                        );
+                        return;
+                    }
+                    if SendMessageW(self.export_format, CB_GETCURSEL, 0, 0) == 2 {
+                        self.status(
+                            "Linked CTF supports only CSV/Parquet export; original stays read-only.",
+                        );
+                        return;
+                    }
                 }
                 if command == SCAN {
                     if let Some(root) = folder_dialog(self.hwnd) {
