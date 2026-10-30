@@ -64,16 +64,16 @@ impl Plan {
         // candidate entries, never a paginated GUI sample or a broader search.
         let cte = format!(
             "WITH counted AS (
-                SELECT id,volume_id,parent_id,name,relative_path,kind,size,
-                       modified_unix,description,tags,name_norm,
-                       COUNT(*) OVER (PARTITION BY {partition}) AS duplicate_count
+                SELECT id,COUNT(*) OVER (PARTITION BY {partition}) AS duplicate_count,
+                       {label} AS duplicate_group
                 FROM {table}
                 WHERE kind = 'file' AND ({filter}) {volume_clause}
              ), matches AS (
-                SELECT id,volume_id,parent_id,name,relative_path,kind,size,
-                       modified_unix,description,tags,duplicate_count,
-                       {label} AS duplicate_group
-                FROM counted WHERE duplicate_count > 1
+                SELECT e.id,e.volume_id,e.parent_id,e.name,e.relative_path,
+                       e.kind,e.size,e.modified_unix,e.description,e.tags,
+                       c.duplicate_count,c.duplicate_group
+                FROM counted c JOIN entries e ON e.id=c.id
+                WHERE c.duplicate_count > 1
              )",
             partition = self.partition,
             filter = self.filter,
