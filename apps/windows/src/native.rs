@@ -130,7 +130,7 @@ fn annotation_preview_text(data: &Value, offset: usize) -> String {
     let state = preview["state"].as_str().unwrap_or("unavailable");
     let total = preview["total"].as_u64().unwrap_or(0);
     let mut message =
-        format!("Linked CTF annotation review (read-only)\nState: {state}\nSaved notes: {total}\n");
+        format!("Linked CTF annotation review (page read-only)\nState: {state}\nSaved notes: {total}\n");
     if state == "generation_conflict" {
         if let Some(rows) = preview["items"].as_array() {
             let start = if rows.is_empty() { 0 } else { offset + 1 };
@@ -152,8 +152,13 @@ fn annotation_preview_text(data: &Value, offset: usize) -> String {
                 } else {
                     ""
                 };
+                let audit = match row["activation_state"].as_str() {
+                    Some("active") => " [active audit; verify before displaying]",
+                    Some("revoked") => " [revoked; audit retained]",
+                    _ => "",
+                };
                 message.push_str(&format!(
-                    "\nOld ID {old_id}: {candidate_state}, candidates {count}{suffix}{stale}"
+                    "\nOld ID {old_id}: {candidate_state}, candidates {count}{suffix}{stale}{audit}"
                 ));
             }
         }
@@ -175,15 +180,18 @@ fn annotation_preview_text(data: &Value, offset: usize) -> String {
         ));
     }
     message.push_str(
-        "\n\nPREVIEW ONLY. No candidate is confirmed, activated, or moved. \
-         Every page re-verifies the external CTF generation.",
+        "\n\nPREVIEW ONLY: opening a page never writes. Mapping, activation and revocation \
+         each require separate consent. Every page re-verifies the external CTF generation.",
     );
     message
 }
 
 #[cfg(test)]
 mod annotation_preview_tests {
-    use super::{annotation_page_controls, annotation_preview_text, annotation_selection_request};
+    use super::{
+        annotation_overlay_request, annotation_page_controls, annotation_preview_text,
+        annotation_selection_request, AnnotationOverlayAction,
+    };
     use serde_json::{json, Value};
 
     #[test]
@@ -195,7 +203,7 @@ mod annotation_preview_tests {
         let text = annotation_preview_text(&result, 0);
         assert!(text.contains("ambiguous, candidates 6+ [stale confirmation]"));
         assert!(text.contains("Rows 1–1 of 21"));
-        assert!(text.contains("No candidate is confirmed"));
+        assert!(text.contains("opening a page never writes"));
         assert_eq!(annotation_page_controls(&result, 0), (false, true));
     }
 
@@ -242,6 +250,68 @@ mod annotation_preview_tests {
     }
 
     #[test]
+    fn overlay_requires_explicit_confirmed_pair_and_fresh_note() {
+        let preview = json!({"result":{
+            "state":"generation_conflict","document_id":"synthetic-document",
+            "items":[
+                {"old_entry_id":11,"revision":3,
+                 "candidates":[{"entry_id":37}],
+                 "confirmed_selection":{"new_entry_id":37},
+                 "confirmation_revision_conflict":false,
+                 "confirmation_payload_conflict":false,
+                 "activation_state":null,"activation_target_entry_id":null},
+                {"old_entry_id":12,"revision":4,
+                 "candidates":[{"entry_id":38}],
+                 "confirmed_selection":{"new_entry_id":38},
+                 "confirmation_revision_conflict":true,
+                 "confirmation_payload_conflict":false,
+                 "activation_state":"active","activation_target_entry_id":38}
+            ]
+        }});
+        let activate = annotation_overlay_request(&preview, 0, AnnotationOverlayAction::Activate)
+            .expect("explicit fresh confirmation");
+        assert_eq!(activate["op"], "ctf_annotations_activate_pinned");
+        assert_eq!(activate["new_entry_id"], 37);
+        assert_eq!(activate["expected_revision"], 3);
+        assert_eq!(activate["expected_document_id"], "synthetic-document");
+        assert_eq!(activate["activation"], "user_approved_reversible_projection");
+        assert!(annotation_overlay_request(&preview, 0, AnnotationOverlayAction::Revoke).is_none());
+        assert!(annotation_overlay_request(&preview, 1, AnnotationOverlayAction::Activate).is_none());
+        // Stale notes must remain revocable; the backend checks the exact audit pair.
+        let revoke = annotation_overlay_request(&preview, 1, AnnotationOverlayAction::Revoke)
+            .expect("stale active audit is revocable");
+        assert_eq!(revoke["op"], "ctf_annotations_deactivate_pinned");
+        assert_eq!(revoke["new_entry_id"], 38);
+        assert_eq!(revoke["rollback"], "user_confirmed_revoke_projection");
+        assert!(revoke.get("expected_revision").is_none());
+        assert_eq!(revoke["expected_document_id"], "synthetic-document");
+
+        let mut changed = preview.clone();
+        changed["result"]["items"][0]["confirmation_payload_conflict"] = json!(true);
+        assert!(annotation_overlay_request(&changed, 0, AnnotationOverlayAction::Activate).is_none());
+        changed = preview.clone();
+        changed["result"]["items"][0]["candidates"] = json!([{"entry_id":99}]);
+        assert!(annotation_overlay_request(&changed, 0, AnnotationOverlayAction::Activate).is_none());
+        changed = preview.clone();
+        changed["result"]["items"][0]["confirmed_selection"] = Value::Null;
+        assert!(annotation_overlay_request(&changed, 0, AnnotationOverlayAction::Activate).is_none());
+        changed = preview.clone();
+        changed["result"]["items"][1]["activation_state"] = json!("revoked");
+        assert!(annotation_overlay_request(&changed, 1, AnnotationOverlayAction::Revoke).is_none());
+        assert!(annotation_overlay_request(&changed, 1, AnnotationOverlayAction::Activate).is_none());
+        changed = preview.clone();
+        changed["result"]["items"][1]["activation_target_entry_id"] = Value::Null;
+        assert!(annotation_overlay_request(&changed, 1, AnnotationOverlayAction::Revoke).is_none());
+        changed = preview.clone();
+        changed["result"]["document_id"] = json!("");
+        assert!(annotation_overlay_request(&changed, 0, AnnotationOverlayAction::Activate).is_none());
+        changed = preview;
+        changed["result"]["state"] = json!("current_generation");
+        assert!(annotation_overlay_request(&changed, 0, AnnotationOverlayAction::Activate).is_none());
+        assert!(annotation_overlay_request(&changed, 1, AnnotationOverlayAction::Revoke).is_none());
+    }
+
+    #[test]
     fn middle_last_and_empty_pages_are_bounded() {
         let middle = json!({"result":{"state":"generation_conflict","total":43,
             "items": vec![json!({"old_entry_id":1}); 20]}});
@@ -261,6 +331,7 @@ enum AnnotationReviewAction {
     Previous,
     Next,
     Confirm(Value),
+    Overlay(Value),
 }
 
 // Pure selection contract: a radio choice is mandatory at both stages.
@@ -292,6 +363,73 @@ fn annotation_selection_request(
         "expected_document_id": document_id,
         "confirmation": "user_selected_exact_candidate"
     }))
+}
+
+
+// A journal state is not proof of a valid live overlay. Activation requires
+// a fresh confirmed pair; revocation deliberately also permits a stale note.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AnnotationOverlayAction {
+    Activate,
+    Revoke,
+}
+
+fn annotation_overlay_request(
+    data: &Value,
+    row_index: usize,
+    action: AnnotationOverlayAction,
+) -> Option<Value> {
+    let review = &data["result"];
+    if review["state"] != "generation_conflict" {
+        return None;
+    }
+    let document_id = review["document_id"].as_str().filter(|id| !id.is_empty())?;
+    let row = review["items"].as_array()?.get(row_index)?;
+    let old_entry_id = row["old_entry_id"].as_i64().filter(|id| *id > 0)?;
+    match action {
+        AnnotationOverlayAction::Activate => {
+            let revision = row["revision"].as_i64().filter(|revision| *revision > 0)?;
+            if !row["activation_state"].is_null()
+                || row["confirmation_revision_conflict"] == true
+                || row["confirmation_payload_conflict"] == true
+            {
+                return None;
+            }
+            let new_entry_id = row["confirmed_selection"]["new_entry_id"]
+                .as_i64()
+                .filter(|id| *id > 0)?;
+            // A confirmation is only eligible if its exact candidate still
+            // appears in this SHA-verified read-only page.
+            if !row["candidates"].as_array()?.iter().any(|candidate| {
+                candidate["entry_id"].as_i64() == Some(new_entry_id)
+            }) {
+                return None;
+            }
+            Some(json!({
+                "op":"ctf_annotations_activate_pinned",
+                "old_entry_id":old_entry_id,
+                "new_entry_id":new_entry_id,
+                "expected_revision":revision,
+                "expected_document_id":document_id,
+                "activation":"user_approved_reversible_projection"
+            }))
+        }
+        AnnotationOverlayAction::Revoke => {
+            if row["activation_state"] != "active" {
+                return None;
+            }
+            let new_entry_id = row["activation_target_entry_id"]
+                .as_i64()
+                .filter(|id| *id > 0)?;
+            Some(json!({
+                "op":"ctf_annotations_deactivate_pinned",
+                "old_entry_id":old_entry_id,
+                "new_entry_id":new_entry_id,
+                "expected_document_id":document_id,
+                "rollback":"user_confirmed_revoke_projection"
+            }))
+        }
+    }
 }
 
 // TaskDialogIndirect provides native Windows radio buttons and explicitly
@@ -369,36 +507,53 @@ unsafe fn annotation_review_action(
         return AnnotationReviewAction::Close;
     };
     let (previous, next) = annotation_page_controls(data, offset);
-    let eligible: Vec<usize> = (0..items.len())
-        .filter(|index| annotation_selection_request(data, *index, 0).is_some())
+    let can_map = |index| annotation_selection_request(data, index, 0).is_some();
+    let can_activate = |index| {
+        annotation_overlay_request(data, index, AnnotationOverlayAction::Activate).is_some()
+    };
+    let can_revoke = |index| {
+        annotation_overlay_request(data, index, AnnotationOverlayAction::Revoke).is_some()
+    };
+    let selectable: Vec<usize> = (0..items.len())
+        .filter(|index| can_map(*index) || can_activate(*index) || can_revoke(*index))
         .collect();
-    let labels: Vec<String> = eligible
+    let labels: Vec<String> = selectable
         .iter()
         .map(|index| {
             let row = &items[*index];
             let id = row["old_entry_id"].as_i64().unwrap_or(-1);
             let state = row["candidate_state"].as_str().unwrap_or("unknown");
             let count = row["candidate_count_lower_bound"].as_u64().unwrap_or(0);
-            let truncated = if row["candidates_truncated"] == true {
-                "+"
+            let truncated = if row["candidates_truncated"] == true { "+" } else { "" };
+            let audit = if can_revoke(*index) {
+                "ACTIVE audit — eligible for explicit revocation"
+            } else if can_activate(*index) {
+                "confirmed, inactive — eligible for separate activation"
             } else {
-                ""
+                "unconfirmed — choose a structural candidate"
             };
-            format!("Old entry #{id} — {state} ({count}{truncated} candidates)")
+            format!("Old #{id} — {state} ({count}{truncated} candidates) — {audit}")
         })
         .collect();
     let total = preview["total"].as_u64().unwrap_or(0);
     let start = if items.is_empty() { 0 } else { offset + 1 };
     let end = offset.saturating_add(items.len());
     let content = format!(
-        "Rows {start}–{end} of {total}. Select an old note below, then explicitly choose a target. \
-         {} rows on this page need separate conflict resolution. No automatic matching, migration or activation.",
-        items.len().saturating_sub(eligible.len())
+        "Rows {start}–{end} of {total}. Select one old note and a separate action. \
+         {} rows have unresolved or stale conflicts; open All conflicts to inspect them. \
+         The CTF is read-only. Every action re-verifies source SHA and document CAS.",
+        items.len().saturating_sub(selectable.len())
     );
     loop {
         let mut actions = vec![(301, "Show all conflicts")];
-        if !eligible.is_empty() {
+        if selectable.iter().any(|index| can_map(*index)) {
             actions.insert(0, (300, "Choose target…"));
+        }
+        if selectable.iter().any(|index| can_activate(*index)) {
+            actions.push((304, "Activate confirmed mapping…"));
+        }
+        if selectable.iter().any(|index| can_revoke(*index)) {
+            actions.push((305, "Revoke active mapping…"));
         }
         if previous {
             actions.push((302, "Previous page"));
@@ -427,16 +582,25 @@ unsafe fn annotation_review_action(
                 );
             }
             300 => {
-                let Some(row_index) = selected.and_then(|index| eligible.get(index).copied())
+                let Some(row_index) = selected.and_then(|index| selectable.get(index).copied())
                 else {
                     MessageBoxW(
                         owner,
-                        wide("Select an old entry first. No mapping was saved.").as_ptr(),
-                        wide("Explicit selection required").as_ptr(),
+                        wide("Select an old note first; nothing was written.").as_ptr(),
+                        wide("Explicit choice required").as_ptr(),
                         MB_OK | MB_ICONWARNING,
                     );
                     continue;
                 };
+                if !can_map(row_index) {
+                    MessageBoxW(
+                        owner,
+                        wide("This note cannot be mapped from the current page. Open All conflicts and refresh the source.").as_ptr(),
+                        wide("Mapping ineligible").as_ptr(),
+                        MB_OK | MB_ICONWARNING,
+                    );
+                    continue;
+                }
                 let row = &items[row_index];
                 let Some(candidates) = row["candidates"].as_array() else {
                     continue;
@@ -458,7 +622,7 @@ unsafe fn annotation_review_action(
                 let Some((301, Some(candidate_index))) = annotation_radio_dialog(
                     owner,
                     &format!("Choose target for old entry #{old_id}"),
-                    "Select a specific structural candidate. No option is preselected; the original CTF is read-only.",
+                    "Select the exact structural candidate. No radio is preselected; source CTF remains read-only.",
                     &choices,
                     &[(301, "Review selected mapping")],
                 ) else {
@@ -470,7 +634,10 @@ unsafe fn annotation_review_action(
                 };
                 let new_id = request["new_entry_id"].as_i64().unwrap_or(-1);
                 let message = format!(
-                    "Confirm old entry #{old_id} → target #{new_id}?\n\n                     This writes only an audited mapping in your separate notes database.                      Notes stay inactive; the original CTF and derived cache are never modified.                      Changes to the source generation or note revision are rejected."
+                    "Confirm old entry #{old_id} → target #{new_id}?\n\n\
+                     This records an INACTIVE user-owned audit mapping only. \
+                     It never migrates notes or changes source CTF/derived cache. \
+                     Source SHA, document, candidate and revision are rechecked."
                 );
                 if MessageBoxW(
                     owner,
@@ -480,6 +647,64 @@ unsafe fn annotation_review_action(
                 ) == IDYES
                 {
                     return AnnotationReviewAction::Confirm(request);
+                }
+            }
+            304 | 305 => {
+                let Some(row_index) = selected.and_then(|index| selectable.get(index).copied())
+                else {
+                    MessageBoxW(
+                        owner,
+                        wide("Select an old note first. No activation or revocation was performed.").as_ptr(),
+                        wide("Explicit choice required").as_ptr(),
+                        MB_OK | MB_ICONWARNING,
+                    );
+                    continue;
+                };
+                let action = if button == 304 {
+                    AnnotationOverlayAction::Activate
+                } else {
+                    AnnotationOverlayAction::Revoke
+                };
+                let Some(request) = annotation_overlay_request(data, row_index, action) else {
+                    MessageBoxW(
+                        owner,
+                        wide("Selected audit is not eligible for this action. Stale, ambiguous and revoked mappings are never activated automatically. Review conflicts again.").as_ptr(),
+                        wide("Action rejected — conflict").as_ptr(),
+                        MB_OK | MB_ICONWARNING,
+                    );
+                    continue;
+                };
+                let old_id = request["old_entry_id"].as_i64().unwrap_or(-1);
+                let new_id = request["new_entry_id"].as_i64().unwrap_or(-1);
+                let (title, message) = if action == AnnotationOverlayAction::Activate {
+                    (
+                        "Approve a read-only annotation overlay",
+                        format!(
+                            "ACTIVATE old note #{old_id} → target #{new_id}?\n\n\
+                             This is a SEPARATE approval from mapping confirmation. \
+                             Original notes remain unchanged. Source SHA, document, old revision/digest \
+                             and exact candidate are rechecked by the service."
+                        ),
+                    )
+                } else {
+                    (
+                        "Revoke an audited annotation overlay",
+                        format!(
+                            "REVOKE active mapping #{old_id} → #{new_id}?\n\n\
+                             The audit and full original note snapshot are retained. \
+                             This may revoke a stale audit, but a revoked mapping cannot be replayed. \
+                             Source SHA, document and exact active pair are checked."
+                        ),
+                    )
+                };
+                if MessageBoxW(
+                    owner,
+                    wide(&message).as_ptr(),
+                    wide(title).as_ptr(),
+                    MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2,
+                ) == IDYES
+                {
+                    return AnnotationReviewAction::Overlay(request);
                 }
             }
             _ => return AnnotationReviewAction::Close,
@@ -740,7 +965,7 @@ impl App {
             }
             if matches!(
                 reply.tag,
-                "rows" | "annotation_preview" | "annotation_confirm"
+                "rows" | "annotation_preview" | "annotation_confirm" | "annotation_overlay"
             ) && reply.generation != self.generation
             {
                 continue;
@@ -754,6 +979,29 @@ impl App {
                         .unwrap_or("verification_failed");
                     self.status(&format!(
                         "Mapping rejected ({code}); reread conflicts before choosing again."
+                    ));
+                }
+                self.request_annotation_page();
+                continue;
+            }
+            if reply.tag == "annotation_overlay" {
+                if reply.result["ok"] == true {
+                    let state = reply.result["data"]["result"]["state"]
+                        .as_str()
+                        .unwrap_or("unexpected");
+                    if state == "activated_read_only_overlay" {
+                        self.status("Activation recorded in private audit; valid overlays require independent read verification.");
+                    } else if state == "revoked_projection" {
+                        self.status("Projection revoked; private original notes and audit snapshot retained.");
+                    } else {
+                        self.status("Unexpected activation response; review the audit state again.");
+                    }
+                } else {
+                    let code = reply.result["error"]["code"]
+                        .as_str()
+                        .unwrap_or("verification_failed");
+                    self.status(&format!(
+                        "Overlay action rejected ({code}); reload conflicts before another decision."
                     ));
                 }
                 self.request_annotation_page();
@@ -792,6 +1040,21 @@ impl App {
                                 }
                                 self.status("Revalidating exact CTF generation and note revision…");
                                 self.call("annotation_confirm", pinned);
+                            }
+                        }
+                        AnnotationReviewAction::Overlay(request) => {
+                            if let Some(mut pinned) = request["op"]
+                                .as_str()
+                                .and_then(|op| self.linked_request(op))
+                            {
+                                pinned["annotation_db"] = json!(self.annotation_db);
+                                if let Some(fields) = request.as_object() {
+                                    for (key, value) in fields {
+                                        pinned[key] = value.clone();
+                                    }
+                                }
+                                self.status("Verifying source SHA and exact audit CAS before user-approved overlay action…");
+                                self.call("annotation_overlay", pinned);
                             }
                         }
                         AnnotationReviewAction::Close => {
