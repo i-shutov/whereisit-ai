@@ -24,8 +24,29 @@ All clients call the same service. Success: `{"ok":true,"data":...}`. Failure: `
 | `export_csv` / `export_parquet` / `export_json` | `path`, selection below, optional `overwrite`; CSV `bom` | Streamed export, row count, byte count (editable SQLite) |
 | `ctf_export_pinned` | Original CTF `path`, `cache_root`, 64-hex `generation` from `ctf_sync`, new `output`, `format` (`csv`, `parquet`, `json`), `mode` (`search`, `children`, `all`, `duplicates`), optional `query`, `volume_id`, `parent_id` for children, `duplicate_mode` for duplicates | Verified read-only CTF generation; streamed full selection, output SHA-256, row and byte count; no-clobber. Duplicate report explicitly has `verified:false` (metadata candidates, not content hashes). |
 | `ctf_duplicates_pinned` | Original CTF `path`, `cache_root`, `generation`, `duplicate_mode` (`name_size`, `name`, `size`), optional `query`, `volume_id`, `offset`, `limit` | Read-only metadata candidate page: duplicate count/group, `has_more`, `total:null`, `verified:false`; no mutable duplicate cache |
+| `ctf_annotations_list_pinned` | Pinned CTF `path`, `cache_root`, `generation`, explicit `annotation_db` ending `.wia.sqlite`; optional `offset`, `limit` | Lists user-owned annotations with optimistic revisions. Returns `generation_conflict` with **no projected entries** after external CTF changes. Read-only; does not create a store. |
+| `ctf_annotations_set_pinned` | Same pinned fields, `entry_id`, `expected_revision`, `note`, `tags` strings | Creates or updates a **separate user-owned** annotations store. Revision 0 inserts, latest revision updates. Empty note+tags removes entry. Never modifies original CTF or derived mirror. |
 
 Page limits are clamped to 1–1000. Syntax/type errors return an error instead of broadening an export. Native UIs use 250-row pages. Unknown CTF timestamps return `modified_local` as local calendar text, without a UTC suffix; `modified_unix` remains null unless its conversion basis is known.
+
+
+## Linked CTF: durable user-owned annotations (experimental WP)
+
+The original CTF is authoritative and always opened read-only. Its hash-checked generation and the immutable derived SQLite mirror are not an editable catalog. Native notes/tags are stored in an explicitly selected user-owned SQLite file with a name ending in .wia.sqlite **outside** the cache_root. No annotation is written into the CTF, mirror, Parquet export or the original WhereIsIt catalog. Store files are personal data and MUST NOT be uploaded to public CI or attached to GitHub issues.
+
+After ctf_sync, callers must use the exact returned generation and provide an explicit annotation_db path. ctf_annotations_list_pinned returns state=uninitialized if no file exists and does not create one. ctf_annotations_set_pinned uses a transaction with optimistic expected_revision: 0 means no current row; a successful insertion returns revision 1; later edits require the current revision and increment it. Clearing both note and tags deletes the annotation. Annotation notes are limited to 16 KiB UTF-8 and tags to 8 KiB; larger payloads fail closed. The store contains its own randomly generated opaque document_id, original entry's disk label/relative path/type/size and source generation for later **review**, not for speculative automatic mapping.
+
+If the original WhereIsIt modifies the CTF, the old pinned generation is rejected with source_changed, including same-size replacements. After a new ctf_sync, an old annotations store produces state=generation_conflict, items=[], requires_explicit_reconciliation=true. SET rejects annotation_generation_conflict. **No old entry ID is assigned to the new CTF, even if filename/size match**. Manual reconciliation of candidates and conflict resolution are a distinct follow-up WP; this WP does not pretend to solve them. The user-owned file must be backed up independently and must not be placed in disposable generation caches.
+
+All operations recheck original CTF source SHA at both ends through ctf_mirror::read_pinned, and check the cache stamp. Calls are synchronous and belong on a worker in the native UI. Operations use a separate SQLite rollback-journal store, not the derived read-only catalog. Avoid selecting symlink paths as user annotation destinations.
+
+Example requests use caller-local paths and only illustrative synthetic values (never include private paths in logs or public bug reports):
+
+~~~json
+{"op":"ctf_annotations_set_pinned","path":"synthetic.ctf","cache_root":"mirror","generation":"<64 hex chars from ctf_sync>","annotation_db":"my-notes.wia.sqlite","entry_id":7,"expected_revision":0,"note":"My note","tags":"offline"}
+{"op":"ctf_annotations_list_pinned","path":"synthetic.ctf","cache_root":"mirror","generation":"<64 hex chars from ctf_sync>","annotation_db":"my-notes.wia.sqlite","offset":0,"limit":100}
+~~~
+
 
 ## Export selection
 
