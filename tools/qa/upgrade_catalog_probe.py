@@ -112,7 +112,7 @@ def observed(cli: Path, db: Path) -> dict:
         "category_ids": sorted(int(x["id"]) for x in categories),
         "search_total": int(result["total"]),
         "search_items": sorted(
-            [(int(x["id"]), str(x["name"]), int(x["size"])) for x in result["items"]]
+            [[int(x["id"]), str(x["name"]), int(x["size"])] for x in result["items"]]
         ),
         "volume_ids": sorted(int(x["id"]) for x in volumes),
     }
