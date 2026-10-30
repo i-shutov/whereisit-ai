@@ -835,7 +835,6 @@ fn confirmation_never_creates_missing_user_store_and_rejects_double_binding() {
     );
 }
 
-
 #[test]
 fn edited_old_annotation_invalidates_an_earlier_confirmation_revision() {
     let tmp = tempfile::tempdir().unwrap();
@@ -907,35 +906,20 @@ fn edited_old_annotation_invalidates_an_earlier_confirmation_revision() {
     assert_eq!(selected["confirmation_revision_conflict"], true);
     assert_eq!(selected["requires_confirmation"], true);
     assert_eq!(selected["confirmed_selection"]["user_confirmed"], true);
-    assert_eq!(
-        changed["data"]["result"]["automatic_rebinding"],
-        false
-    );
+    assert_eq!(changed["data"]["result"]["automatic_rebinding"], false);
 
     // Delete and recreate a row with revision 1: the revision number alone
     // has an ABA hazard. The reviewed payload digest must invalidate it.
     fs::write(&source, &original_bytes).unwrap();
     let back = sync(&source, &cache);
     assert_eq!(back, original_gen);
-    let mut clear = cmd(
-        "ctf_annotations_set_pinned",
-        &source,
-        &cache,
-        &back,
-        &store,
-    );
+    let mut clear = cmd("ctf_annotations_set_pinned", &source, &cache, &back, &store);
     clear["entry_id"] = json!(old_id);
     clear["expected_revision"] = json!(2);
     clear["note"] = json!("");
     clear["tags"] = json!("");
     assert_eq!(invoke(clear)["data"]["result"]["revision"], 0);
-    let mut recreated = cmd(
-        "ctf_annotations_set_pinned",
-        &source,
-        &cache,
-        &back,
-        &store,
-    );
+    let mut recreated = cmd("ctf_annotations_set_pinned", &source, &cache, &back, &store);
     recreated["entry_id"] = json!(old_id);
     recreated["expected_revision"] = json!(0);
     recreated["note"] = json!("Different note, same revision number");
