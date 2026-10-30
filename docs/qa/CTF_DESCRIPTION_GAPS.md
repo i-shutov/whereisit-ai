@@ -61,3 +61,40 @@ The existing 44-disk file's byte-exact CTF roundtrip must remain true and
 the count of genuinely missing searchable text must be remeasured.
 
 Related: [Issue #23](https://github.com/i-shutov/whereisit-ai/issues/23).
+
+## 2026-10-30: independent evidence changes interpretation
+
+The previous legacy `unsupported_descriptions` field is **not evidence
+that the same number of user-authored descriptions was lost**. A second,
+independent read-only scan of the same 3,046,027-entry real CTF found all
+1,782 candidate type-1 fields with high flag `0x1c`. Of these, 1,688
+pointers landed inside the assumed external metadata blob but none of the
+referenced payloads was ordinary valid UTF-8 text. The remaining 94 pointers
+did not fit the currently assumed text-blob addressing model. Binary
+length/header-like patterns dominate, including payload sizes 277 and
+293 bytes.
+
+The extra bit `0x10` is **not yet defined by an original-app-derived
+specification**. These fields could represent binary/plugin metadata or
+an unknown encoded text format. It is incorrect to discard them *or*
+blindly interpret their bytes as UTF-8. The parser currently keeps them
+opaque and preserves byte-exact unchanged CTF roundtrips.
+
+New additive diagnostic counters keep the legacy combined field unchanged:
+
+- `opaque_type1_flag_0x10_entries`: per-entry count for nonempty type-1
+  extensions with the unresolved 0x10 high flag and no decoded description
+- `possible_text_description_gap_entries`: per-entry count for nonempty
+  type-1 extensions without 0x10 that still have an empty decoded description
+
+An entry with multiple type-1 extensions may count in **both** new buckets;
+the legacy combined field counts the entry once. The reason label
+`opaque_type1_flag_0x10_semantics_unknown` is deliberately cautious:
+it does NOT assert compression, encoding, proprietary plug-in structure or
+loss of searchable user text.
+
+Only numeric aggregates and synthetic fixture bytes appear in GitHub.
+Original names, descriptions, raw CTF, source SHA and disk labels remain local.
+True completeness still requires observing these fields in original WhereIsIt
+or obtaining an authoritative specification for bit 0x10; this classification
+patch does not close the compatibility gate.
