@@ -104,7 +104,10 @@ fn open_read(path: &Path) -> Result<Option<Connection>> {
         }
         Ok(_) => {}
     }
-    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NOFOLLOW)?;
+    let conn = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+    )?;
     conn.busy_timeout(Duration::from_secs(5))?;
     check_app(&conn)?;
     Ok(Some(conn))
