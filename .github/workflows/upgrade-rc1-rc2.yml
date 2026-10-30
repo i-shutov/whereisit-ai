@@ -9,6 +9,7 @@ on:
       - "tools/qa/upgrade_catalog_probe.py"
       - "tools/qa/upgrade-windows.ps1"
       - "tools/qa/upgrade-macos.sh"
+      - "docs/qa/RC1_TO_RC2_UPGRADE.md"
   workflow_dispatch:
 permissions:
   contents: read
@@ -34,6 +35,12 @@ jobs:
             ~/.cargo/git
             target
           key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-1.90-release
+      - name: Verify checked-out release source and version
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(tr -d '\r\n' < VERSION)" = "1.0.0-rc.2"
       - run: rustup toolchain install 1.90.0 --profile minimal
       - name: Build RC2 Windows binary and per-user installer from exact SHA
         shell: pwsh
@@ -85,6 +92,12 @@ jobs:
             ~/.cargo/git
             target
           key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-1.90-release
+      - name: Verify checked-out release source and version
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(tr -d '\r\n' < VERSION)" = "1.0.0-rc.2"
       - run: rustup toolchain install 1.90.0 --profile minimal
       - name: Build RC2 app and PKG/DMG from exact source
         shell: bash
