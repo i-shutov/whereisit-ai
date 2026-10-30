@@ -232,6 +232,31 @@ fn activated_projection_is_reversible_and_preserves_originals() {
         true
     );
 
+    // The native verified viewer repeats a pinned read on every page. Reading
+    // live overlays must never change the source, derived cache or user notes.
+    let notes_before_view = fs::read(&store).unwrap();
+    for _ in 0..3 {
+        let current = invoke(cmd(
+            "ctf_annotations_activated_list_pinned",
+            &source,
+            &cache,
+            &second,
+            &store,
+        ));
+        assert_eq!(current["ok"], true, "{current}");
+        assert_eq!(current["data"]["result"]["items"], listed["data"]["result"]["items"]);
+        assert_eq!(current["data"]["result"]["total"], 1);
+        assert_eq!(current["data"]["result"]["conflicts"], 0);
+        assert_eq!(current["data"]["result"]["read_only_source"], true);
+        assert_eq!(
+            current["data"]["result"]["unresolved_unconfirmed_annotations_not_projected"],
+            true
+        );
+        assert_eq!(fs::read(&source).unwrap(), new_ctf);
+        assert_eq!(fs::read(&mirror).unwrap(), mirror_original);
+        assert_eq!(fs::read(&store).unwrap(), notes_before_view);
+    }
+
     let mut paged = cmd(
         "ctf_annotations_activated_list_pinned",
         &source,
