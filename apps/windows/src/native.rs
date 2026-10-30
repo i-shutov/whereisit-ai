@@ -255,7 +255,6 @@ mod annotation_preview_tests {
     }
 }
 
-
 #[derive(Debug)]
 enum AnnotationReviewAction {
     Close,
@@ -265,7 +264,11 @@ enum AnnotationReviewAction {
 }
 
 // Pure selection contract: a radio choice is mandatory at both stages.
-fn annotation_selection_request(data: &Value, row_index: usize, candidate_index: usize) -> Option<Value> {
+fn annotation_selection_request(
+    data: &Value,
+    row_index: usize,
+    candidate_index: usize,
+) -> Option<Value> {
     let review = &data["result"];
     if review["state"] != "generation_conflict" {
         return None;
@@ -347,7 +350,11 @@ unsafe fn annotation_radio_dialog(
     Some((button, selected))
 }
 
-unsafe fn annotation_review_action(owner: HWND, data: &Value, offset: usize) -> AnnotationReviewAction {
+unsafe fn annotation_review_action(
+    owner: HWND,
+    data: &Value,
+    offset: usize,
+) -> AnnotationReviewAction {
     let preview = &data["result"];
     if preview["state"] != "generation_conflict" {
         MessageBoxW(
@@ -372,7 +379,11 @@ unsafe fn annotation_review_action(owner: HWND, data: &Value, offset: usize) -> 
             let id = row["old_entry_id"].as_i64().unwrap_or(-1);
             let state = row["candidate_state"].as_str().unwrap_or("unknown");
             let count = row["candidate_count_lower_bound"].as_u64().unwrap_or(0);
-            let truncated = if row["candidates_truncated"] == true { "+" } else { "" };
+            let truncated = if row["candidates_truncated"] == true {
+                "+"
+            } else {
+                ""
+            };
             format!("Old entry #{id} — {state} ({count}{truncated} candidates)")
         })
         .collect();
@@ -416,7 +427,8 @@ unsafe fn annotation_review_action(owner: HWND, data: &Value, offset: usize) -> 
                 );
             }
             300 => {
-                let Some(row_index) = selected.and_then(|index| eligible.get(index).copied()) else {
+                let Some(row_index) = selected.and_then(|index| eligible.get(index).copied())
+                else {
                     MessageBoxW(
                         owner,
                         wide("Select an old entry first. No mapping was saved.").as_ptr(),
@@ -452,7 +464,8 @@ unsafe fn annotation_review_action(owner: HWND, data: &Value, offset: usize) -> 
                 ) else {
                     continue;
                 };
-                let Some(request) = annotation_selection_request(data, row_index, candidate_index) else {
+                let Some(request) = annotation_selection_request(data, row_index, candidate_index)
+                else {
                     continue;
                 };
                 let new_id = request["new_entry_id"].as_i64().unwrap_or(-1);
@@ -464,7 +477,8 @@ unsafe fn annotation_review_action(owner: HWND, data: &Value, offset: usize) -> 
                     wide(&message).as_ptr(),
                     wide("Confirm exact annotation mapping").as_ptr(),
                     MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2,
-                ) == IDYES {
+                ) == IDYES
+                {
                     return AnnotationReviewAction::Confirm(request);
                 }
             }
@@ -724,8 +738,10 @@ impl App {
             ) {
                 self.job = None;
             }
-            if matches!(reply.tag, "rows" | "annotation_preview" | "annotation_confirm")
-                && reply.generation != self.generation
+            if matches!(
+                reply.tag,
+                "rows" | "annotation_preview" | "annotation_confirm"
+            ) && reply.generation != self.generation
             {
                 continue;
             }
@@ -759,12 +775,15 @@ impl App {
                             self.request_annotation_page();
                         }
                         AnnotationReviewAction::Previous => {
-                            self.annotation_offset = self.annotation_offset.saturating_sub(ANNOTATION_PAGE_SIZE);
+                            self.annotation_offset =
+                                self.annotation_offset.saturating_sub(ANNOTATION_PAGE_SIZE);
                             self.status("Re-verifying previous notes page…");
                             self.request_annotation_page();
                         }
                         AnnotationReviewAction::Confirm(selection) => {
-                            if let Some(mut pinned) = self.linked_request("ctf_annotations_confirm_pinned") {
+                            if let Some(mut pinned) =
+                                self.linked_request("ctf_annotations_confirm_pinned")
+                            {
                                 pinned["annotation_db"] = json!(self.annotation_db);
                                 if let Some(fields) = selection.as_object() {
                                     for (key, value) in fields {
@@ -776,7 +795,9 @@ impl App {
                             }
                         }
                         AnnotationReviewAction::Close => {
-                            self.status("Annotation review closed; no implicit mapping or migration.");
+                            self.status(
+                                "Annotation review closed; no implicit mapping or migration.",
+                            );
                         }
                     }
                 }
