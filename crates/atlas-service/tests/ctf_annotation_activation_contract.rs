@@ -56,16 +56,34 @@ fn flat_ids(source: &Path, cache: &Path, generation: &str) -> Vec<(String, i64)>
     let children = invoke(json!({"op":"ctf_children_pinned","path":source,
         "cache_root":cache,"generation":generation,"volume_id":volume}));
     assert_eq!(children["ok"], true, "{children}");
-    children["data"]["result"]["items"].as_array().unwrap()
-        .iter().map(|item| (
-            item["relative_path"].as_str().unwrap().to_owned(),
-            item["id"].as_i64().unwrap()
-        )).collect()
+    children["data"]["result"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| {
+            (
+                item["relative_path"].as_str().unwrap().to_owned(),
+                item["id"].as_i64().unwrap(),
+            )
+        })
+        .collect()
 }
 
-fn set_note(source: &Path, cache: &Path, generation: &str, store: &Path,
-            entry_id: i64, note: &str) {
-    let mut request = cmd("ctf_annotations_set_pinned", source, cache, generation, store);
+fn set_note(
+    source: &Path,
+    cache: &Path,
+    generation: &str,
+    store: &Path,
+    entry_id: i64,
+    note: &str,
+) {
+    let mut request = cmd(
+        "ctf_annotations_set_pinned",
+        source,
+        cache,
+        generation,
+        store,
+    );
     request["entry_id"] = json!(entry_id);
     request["note"] = json!(note);
     request["tags"] = json!("reviewed");
@@ -75,14 +93,29 @@ fn set_note(source: &Path, cache: &Path, generation: &str, store: &Path,
 }
 
 fn confirm(source: &Path, cache: &Path, generation: &str, store: &Path) -> (Value, i64, i64) {
-    let preview = invoke(cmd("ctf_annotations_preview_pinned",
-                             source, cache, generation, store));
+    let preview = invoke(cmd(
+        "ctf_annotations_preview_pinned",
+        source,
+        cache,
+        generation,
+        store,
+    ));
     assert_eq!(preview["ok"], true, "{preview}");
-    let row = preview["data"]["result"]["items"].as_array().unwrap()
-        .iter().find(|r| r["fingerprint"]["relative_path"] == "keep.mp3").unwrap();
+    let row = preview["data"]["result"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["fingerprint"]["relative_path"] == "keep.mp3")
+        .unwrap();
     let old_id = row["old_entry_id"].as_i64().unwrap();
     let new_id = row["candidates"][0]["entry_id"].as_i64().unwrap();
-    let mut request = cmd("ctf_annotations_confirm_pinned", source, cache, generation, store);
+    let mut request = cmd(
+        "ctf_annotations_confirm_pinned",
+        source,
+        cache,
+        generation,
+        store,
+    );
     request["old_entry_id"] = json!(old_id);
     request["new_entry_id"] = json!(new_id);
     request["expected_revision"] = row["revision"].clone();
@@ -106,7 +139,14 @@ fn activated_projection_is_reversible_and_preserves_originals() {
     let first = sync(&source, &cache);
     let ids = flat_ids(&source, &cache, &first);
     for (name, id) in &ids {
-        set_note(&source, &cache, &first, &store, *id, &format!("synthetic note: {name}"));
+        set_note(
+            &source,
+            &cache,
+            &first,
+            &store,
+            *id,
+            &format!("synthetic note: {name}"),
+        );
     }
     let new_ctf = make_ctf(&source, &["keep.mp3", "new.mp3"]);
     let second = sync(&source, &cache);
@@ -118,32 +158,68 @@ fn activated_projection_is_reversible_and_preserves_originals() {
         bad["activation"] = json!("implicit");
         invoke(bad)
     };
-    assert_eq!(missing_intent["error"]["code"], "activation_required", "{missing_intent}");
+    assert_eq!(
+        missing_intent["error"]["code"], "activation_required",
+        "{missing_intent}"
+    );
 
     let saved = invoke(activation.clone());
     assert_eq!(saved["ok"], true, "{saved}");
-    assert_eq!(saved["data"]["result"]["state"], "activated_read_only_overlay");
-    assert_eq!(saved["data"]["result"]["original_annotations_preserved"], true);
+    assert_eq!(
+        saved["data"]["result"]["state"],
+        "activated_read_only_overlay"
+    );
+    assert_eq!(
+        saved["data"]["result"]["original_annotations_preserved"],
+        true
+    );
     assert_eq!(saved["data"]["result"]["new_generation_writable"], false);
-    assert_eq!(invoke(activation.clone())["error"]["code"], "annotation_activation_conflict");
+    assert_eq!(
+        invoke(activation.clone())["error"]["code"],
+        "annotation_activation_conflict"
+    );
 
-    let listed = invoke(cmd("ctf_annotations_activated_list_pinned",
-                            &source, &cache, &second, &store));
+    let listed = invoke(cmd(
+        "ctf_annotations_activated_list_pinned",
+        &source,
+        &cache,
+        &second,
+        &store,
+    ));
     assert_eq!(listed["ok"], true, "{listed}");
     assert_eq!(listed["data"]["result"]["state"], "partial_activation");
     assert_eq!(listed["data"]["result"]["total"], 1);
     assert_eq!(listed["data"]["result"]["items"][0]["entry_id"], new_id);
-    assert_eq!(listed["data"]["result"]["items"][0]["note"], "synthetic note: keep.mp3");
-    assert_eq!(listed["data"]["result"]["unresolved_unconfirmed_annotations_not_projected"], true);
+    assert_eq!(
+        listed["data"]["result"]["items"][0]["note"],
+        "synthetic note: keep.mp3"
+    );
+    assert_eq!(
+        listed["data"]["result"]["unresolved_unconfirmed_annotations_not_projected"],
+        true
+    );
 
     // Legacy list and set MUST NOT silently enable new-generation annotation edits.
-    let original_list = invoke(cmd("ctf_annotations_list_pinned",
-        &source, &cache, &second, &store));
-    assert_eq!(original_list["data"]["result"]["state"], "generation_conflict");
+    let original_list = invoke(cmd(
+        "ctf_annotations_list_pinned",
+        &source,
+        &cache,
+        &second,
+        &store,
+    ));
+    assert_eq!(
+        original_list["data"]["result"]["state"],
+        "generation_conflict"
+    );
     assert_eq!(original_list["data"]["result"]["items"], json!([]));
 
-    let mut revocation = cmd("ctf_annotations_deactivate_pinned",
-                             &source, &cache, &second, &store);
+    let mut revocation = cmd(
+        "ctf_annotations_deactivate_pinned",
+        &source,
+        &cache,
+        &second,
+        &store,
+    );
     revocation["expected_document_id"] = activation["expected_document_id"].clone();
     revocation["old_entry_id"] = json!(old_id);
     revocation["new_entry_id"] = json!(new_id);
@@ -151,17 +227,34 @@ fn activated_projection_is_reversible_and_preserves_originals() {
     let reverted = invoke(revocation.clone());
     assert_eq!(reverted["ok"], true, "{reverted}");
     assert_eq!(reverted["data"]["result"]["backup_snapshot_retained"], true);
-    assert_eq!(invoke(revocation)["error"]["code"], "annotation_activation_conflict");
-    assert_eq!(invoke(activation)["error"]["code"], "annotation_activation_conflict");
+    assert_eq!(
+        invoke(revocation)["error"]["code"],
+        "annotation_activation_conflict"
+    );
+    assert_eq!(
+        invoke(activation)["error"]["code"],
+        "annotation_activation_conflict"
+    );
 
-    let cleared = invoke(cmd("ctf_annotations_activated_list_pinned",
-                             &source, &cache, &second, &store));
+    let cleared = invoke(cmd(
+        "ctf_annotations_activated_list_pinned",
+        &source,
+        &cache,
+        &second,
+        &store,
+    ));
     assert_eq!(cleared["data"]["result"]["total"], 0);
     let conn = rusqlite::Connection::open(&store).unwrap();
-    let rows: i64 = conn.query_row("SELECT COUNT(*) FROM annotation_entries", [], |r| r.get(0)).unwrap();
-    let archived: (String, String) = conn.query_row(
-        "SELECT state,note FROM annotation_activations WHERE old_entry_id=?1",
-        [old_id], |r| Ok((r.get(0)?,r.get(1)?))).unwrap();
+    let rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM annotation_entries", [], |r| r.get(0))
+        .unwrap();
+    let archived: (String, String) = conn
+        .query_row(
+            "SELECT state,note FROM annotation_activations WHERE old_entry_id=?1",
+            [old_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
     assert_eq!(rows, 2);
     assert_eq!(archived.0, "revoked");
     assert_eq!(archived.1, "synthetic note: keep.mp3");
@@ -185,7 +278,13 @@ fn changed_note_or_source_generation_rejects_activation_without_side_effects() {
 
     fs::write(&source, &old_ctf).unwrap();
     assert_eq!(sync(&source, &cache), first);
-    let mut edit = cmd("ctf_annotations_set_pinned", &source, &cache, &first, &store);
+    let mut edit = cmd(
+        "ctf_annotations_set_pinned",
+        &source,
+        &cache,
+        &first,
+        &store,
+    );
     edit["entry_id"] = json!(old_id);
     edit["note"] = json!("edited after confirmation");
     edit["tags"] = json!("reviewed");
@@ -195,11 +294,22 @@ fn changed_note_or_source_generation_rejects_activation_without_side_effects() {
     assert_eq!(sync(&source, &cache), second);
 
     let failed = invoke(activation.clone());
-    assert_eq!(failed["error"]["code"], "annotation_revision_conflict", "{failed}");
-    let no_activations = invoke(cmd("ctf_annotations_activated_list_pinned",
-        &source, &cache, &second, &store));
+    assert_eq!(
+        failed["error"]["code"], "annotation_revision_conflict",
+        "{failed}"
+    );
+    let no_activations = invoke(cmd(
+        "ctf_annotations_activated_list_pinned",
+        &source,
+        &cache,
+        &second,
+        &store,
+    ));
     assert_eq!(no_activations["data"]["result"]["total"], 0);
-    assert_eq!(no_activations["data"]["result"]["state"], "no_cross_generation_activations");
+    assert_eq!(
+        no_activations["data"]["result"]["state"],
+        "no_cross_generation_activations"
+    );
 
     make_ctf(&source, &["new-ctf.mp3", "extra.mp3"]);
     let stale = invoke(activation);
