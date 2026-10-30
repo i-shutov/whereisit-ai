@@ -91,6 +91,48 @@ fn sync_reuses_immutable_generation_and_follows_original_external_save() {
 }
 
 #[test]
+fn renamed_identical_original_reuses_content_bound_mirror() {
+    let dir = tempfile::tempdir().unwrap();
+    let old = dir.path().join("old-source.ctf");
+    let new = dir.path().join("renamed-source.CTF");
+    let root = dir.path().join("cache");
+    let original = write_original(&old, "track.mp3");
+    let build = service(json!({"op":"ctf_sync","path":old,"cache_root":root}));
+    assert_eq!(build["ok"], true, "{build}");
+    let digest = build["data"]["source_sha256"].clone();
+    let key = build["data"]["generation"].clone();
+    fs::rename(&old, &new).unwrap();
+    let reused = service(json!({"op":"ctf_sync","path":new,"cache_root":root}));
+    assert_eq!(reused["ok"], true, "{reused}");
+    assert_eq!(reused["data"]["rebuilt"], false);
+    assert_eq!(reused["data"]["generation"], key);
+    assert_eq!(reused["data"]["source_sha256"], digest);
+    let rows = service(json!({"op":"ctf_search","path":new,"cache_root":root,
+        "query":"ext:mp3","full_count":true}));
+    assert_eq!(rows["ok"], true, "{rows}");
+    assert_eq!(rows["data"]["result"]["total"], 1);
+    assert_eq!(fs::read(&new).unwrap(), original);
+}
+
+#[test]
+fn invalid_query_never_creates_an_expensive_mirror() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("input.ctf");
+    let root = dir.path().join("cache");
+    let original = write_original(&source, "track.mp3");
+    for query in ["(", "name:", "ext:mp3 AND"] {
+        let result = service(json!({"op":"ctf_search","path":source,
+            "cache_root":root,"query":query}));
+        assert_eq!(result["ok"], false, "{query}: {result}");
+        assert!(!root.exists(), "Bad query started an expensive mirror build");
+    }
+    let missing = service(json!({"op":"ctf_search","path":source,"cache_root":root}));
+    assert_eq!(missing["ok"], false, "{missing}");
+    assert!(!root.exists());
+    assert_eq!(fs::read(&source).unwrap(), original);
+}
+
+#[test]
 fn corrupt_cache_is_rejected_without_automatic_deletion_or_source_write() {
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join("catalog.ctf");
