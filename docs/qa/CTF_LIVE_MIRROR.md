@@ -73,3 +73,31 @@ treat old-generation pages as stale when switching to a new CTF digest. A
 warm-cache lookup currently performs complete SHA-256 checks of both the
 source and the SQLite mirror; the first verified implementation prioritizes
 correctness and remains unsuitable for subsecond queries on very large disks.
+
+## Verified private real-source acceptance, 2026-10-30
+
+The checksum-verified Linux CLI for commit `504aa08c`, built with SQLite
+3.51.3, was executed **locally** against an original 44-disk CTF containing
+3,046,027 records. This private data was not uploaded to GitHub or included
+in the repository or public CI artifacts.
+
+- First CTF-to-mirror build and validation: 293.926 seconds
+- Reuse of verified unchanged generation: 2.099 seconds
+- Four full-count query operations: 2.400–2.692 seconds, with consistent
+  source generation and expected result counts
+- Published SQLite mirror: 1,675,280,384 bytes
+- Peak child-process RSS: approximately 810 MiB
+- Temporary main SQLite + WAL disk during build: approximately 3.2 GiB
+- Original CTF: SHA-256 unchanged after all operations
+- A disposable copy of the published mirror exported a **byte-identical**
+  144,766,574-byte CTF in 11.4 seconds; the published mirror was unchanged
+
+All comparisons **passed**, but the cache-hashing warm-query latency does
+not meet the intended interactive search experience. The next architectural
+block is a resident generation-pinned search session with a separate
+strict-validation operation and explicit stale-source invalidation. Do not
+market the current API as a fast GUI search implementation until measured.
+
+Original WhereIsIt acceptance of *modified* CTF and the two historical smaller
+private CTF samples remain open gates, as do native UI integration and
+the permanent overlay store for annotations.
