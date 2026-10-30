@@ -33,6 +33,7 @@ const CANCEL: usize = 110;
 const DUPLICATES: usize = 111;
 const DUP_MODE: usize = 112;
 const EXPORT_FORMAT: usize = 113;
+const LINK_CTF: usize = 114;
 const DISKS: usize = 120;
 const FILES: usize = 121;
 const CATEGORIES: usize = 122;
@@ -130,6 +131,9 @@ struct App {
     duplicates: bool,
     applied_duplicate_mode: &'static str,
     db: String,
+    linked_ctf: Option<String>,
+    linked_generation: Option<String>,
+    pending_link_path: Option<String>,
     volumes: Vec<Value>,
     entries: Vec<Value>,
     volume: Option<i64>,
@@ -164,6 +168,9 @@ impl App {
             duplicates: false,
             applied_duplicate_mode: "name_size",
             db: std::env::args().nth(1).unwrap_or_else(default_db),
+            linked_ctf: None,
+            linked_generation: None,
+            pending_link_path: None,
             volumes: vec![],
             entries: vec![],
             volume: None,
@@ -186,6 +193,15 @@ impl App {
     unsafe fn status(&self, text: &str) {
         self.text(self.status, text);
     }
+    fn linked_request(&self, operation: &str) -> Option<Value> {
+        let source = self.linked_ctf.as_ref()?;
+        let generation = self.linked_generation.as_ref()?;
+        let cache = config_dir().join("CTF-Mirrors").to_string_lossy().into_owned();
+        Some(json!({"op":operation,"path":source,"cache_root":cache,"generation":generation}))
+    }
+    fn linked_mode(&self) -> bool {
+        self.linked_ctf.is_some() && self.linked_generation.is_some()
+    }
     fn call(&mut self, tag: &'static str, mut request: Value) {
         request["db"] = json!(self.db);
         let database = self.db.clone();
@@ -205,6 +221,9 @@ impl App {
         });
     }
     unsafe fn init(&mut self) {
+        self.linked_ctf = None;
+        self.linked_generation = None;
+        self.pending_link_path = None;
         let _ = std::fs::create_dir_all(config_dir());
         self.generation += 1;
         self.volumes.clear();
@@ -226,6 +245,13 @@ impl App {
     }
     unsafe fn refresh(&mut self) {
         self.generation += 1;
+        if let Some(linked) = self.linked_request("ctf_volumes_pinned") {
+            self.categories.clear();
+            SendMessageW(self.category_list, LB_RESETCONTENT, 0, 0);
+            self.call("linked_volumes", linked);
+            self.load();
+            return;
+        }
         self.call("volumes", json!({"op":"volumes"}));
         self.call("categories", json!({"op":"categories"}));
         self.load();
@@ -241,7 +267,7 @@ impl App {
             self.location,
             &format!(
                 "{}  —  {}",
-                self.db,
+                self.linked_ctf.as_deref().unwrap_or(&self.db),
                 if self.query.is_empty() {
                     self.stack.last().map(|p| p.1.as_str()).unwrap_or("/")
                 } else {
@@ -249,6 +275,28 @@ impl App {
                 }
             ),
         );
+        if let Some(mut linked) = self.linked_request(
+            if !self.query.is_empty() { "ctf_search_pinned" } else { "ctf_children_pinned" }
+        ) {
+            self.duplicates = false;
+            linked["offset"] = json!(self.offset);
+            linked["limit"] = json!(LIMIT);
+            linked["volume_id"] = json!(self.volume);
+            if !self.query.is_empty() {
+                linked["query"] = json!(self.query);
+                self.call("rows", linked);
+            } else if self.volume.is_some() {
+                linked["parent_id"] = json!(self.stack.last().and_then(|p| p.0));
+                self.call("rows", linked);
+            } else {
+                self.entries.clear();
+                self.total = 0;
+                self.has_more = false;
+                SendMessageW(self.files, LVM_DELETEALLITEMS, 0, 0);
+                self.status("Choose a linked CTF disk or search all disks (read-only).");
+            }
+            return;
+        }
         if self.duplicates {
             self.call("rows",json!({"op":"duplicates","mode":self.applied_duplicate_mode,"query":self.query,"volume_id":self.volume,"offset":self.offset,"limit":LIMIT}));
         } else if !self.query.is_empty() {
@@ -278,17 +326,37 @@ impl App {
                 }
                 continue;
             }
-            if matches!(reply.tag, "mutation" | "maintenance") {
+            if matches!(reply.tag, "mutation" | "maintenance" | "linked_sync") {
                 self.job = None;
             }
             if reply.tag == "rows" && reply.generation != self.generation {
                 continue;
             }
             if reply.result["ok"] != true {
+                if reply.tag == "linked_sync" { self.pending_link_path = None; }
                 self.error(&reply.result);
                 continue;
             }
             match reply.tag {
+                "linked_sync" => {
+                    let path = self.pending_link_path.take();
+                    let generation = data["generation"].as_str().map(str::to_owned);
+                    if let (Some(path), Some(generation)) = (path, generation) {
+                        self.linked_ctf = Some(path);
+                        self.linked_generation = Some(generation);
+                        self.volume = None;
+                        self.stack = vec![(None, "/".into())];
+                        self.query.clear();
+                        self.offset = 0;
+                        self.duplicates = false;
+                        self.entries.clear();
+                        self.text(self.search, "");
+                        self.status("External CTF verified; original kept read-only.");
+                        self.refresh();
+                    } else {
+                        self.status("Linked CTF response is incomplete.");
+                    }
+                }
                 "categories" => {
                     self.categories = data.as_array().cloned().unwrap_or_default();
                     SendMessageW(self.category_list, LB_RESETCONTENT, 0, 0);
@@ -316,8 +384,9 @@ impl App {
                     }
                     self.refresh();
                 }
-                "volumes" => {
-                    self.volumes = data.as_array().cloned().unwrap_or_default();
+                "volumes" | "linked_volumes" => {
+                    let values = if reply.tag == "linked_volumes" { &data["result"] } else { data };
+                    self.volumes = values.as_array().cloned().unwrap_or_default();
                     SendMessageW(self.disks, LB_RESETCONTENT, 0, 0);
                     SendMessageW(
                         self.disks,
@@ -347,13 +416,14 @@ impl App {
                     }
                 }
                 "rows" => {
-                    self.entries = data["items"].as_array().cloned().unwrap_or_default();
-                    self.total_known = data["total"].is_u64();
-                    self.total = data["total"]
+                    let page = if self.linked_mode() { &data["result"] } else { data };
+                    self.entries = page["items"].as_array().cloned().unwrap_or_default();
+                    self.total_known = page["total"].is_u64();
+                    self.total = page["total"]
                         .as_u64()
                         .map(|v| v as usize)
                         .unwrap_or(self.offset + self.entries.len());
-                    self.has_more = data["has_more"]
+                    self.has_more = page["has_more"]
                         .as_bool()
                         .unwrap_or(self.offset + self.entries.len() < self.total);
                     self.render_rows();
@@ -381,13 +451,22 @@ impl App {
                 *hwnd,
                 if *command == CANCEL {
                     self.job.as_ref().is_some_and(|j| j.starts_with("win-")) as i32
-                } else if [OPEN, NEW, SCAN, IMPORT, EXPORT].contains(command) {
-                    (self.job.is_none() && self.pending == 0) as i32
+                } else if [OPEN, NEW, SCAN, IMPORT, LINK_CTF, EXPORT].contains(command) {
+                    (self.job.is_none()
+                        && self.pending == 0
+                        && (self.linked_ctf.is_none()
+                            || [OPEN, NEW, LINK_CTF].contains(command))) as i32
+                } else if [CATEGORY_FILTER, CATEGORY_ASSIGN, CATEGORY_CREATE,
+                            DUPLICATES, COMPACT_COPY, VALIDATE_CATALOG].contains(command) {
+                    (!self.linked_mode()) as i32
                 } else {
                     1
                 },
             );
         }
+        EnableWindow(self.export_format, (!self.linked_mode()) as i32);
+        EnableWindow(self.category_list, (!self.linked_mode()) as i32);
+        EnableWindow(self.category_name, (!self.linked_mode()) as i32);
     }
     unsafe fn error(&self, result: &Value) {
         let text = result["error"]["message"]
@@ -514,7 +593,7 @@ impl App {
     }
     unsafe fn command(&mut self, command: usize, notification: usize) {
         match command {
-            COMPACT_COPY | VALIDATE_CATALOG if self.job.is_none() && self.pending == 0 => {
+            COMPACT_COPY | VALIDATE_CATALOG if self.job.is_none() && self.pending == 0 && !self.linked_mode() => {
                 let request = if command == COMPACT_COPY {
                     let Some(path) = file_dialog(self.hwnd, true, "sqlite") else {
                         return;
@@ -529,7 +608,7 @@ impl App {
                 );
                 self.call("maintenance", request);
             }
-            CATEGORY_FILTER | CATEGORY_ASSIGN => {
+            CATEGORY_FILTER | CATEGORY_ASSIGN if !self.linked_mode() => {
                 let index = SendMessageW(self.category_list, LB_GETCURSEL, 0, 0);
                 if index < 0 {
                     self.status("Select a category first.");
@@ -567,7 +646,7 @@ impl App {
                     }
                 }
             }
-            CATEGORY_CREATE => {
+            CATEGORY_CREATE if !self.linked_mode() => {
                 let len = GetWindowTextLengthW(self.category_name);
                 let mut text = vec![0u16; len as usize + 1];
                 GetWindowTextW(self.category_name, text.as_mut_ptr(), len + 1);
@@ -601,6 +680,10 @@ impl App {
                 self.load();
             }
             FIND | DUPLICATES => {
+                if command == DUPLICATES && self.linked_mode() {
+                    self.status("Duplicate candidates in a linked CTF require a separate approved mode.");
+                    return;
+                }
                 let len = GetWindowTextLengthW(self.search);
                 let mut text = vec![0u16; len as usize + 1];
                 GetWindowTextW(self.search, text.as_mut_ptr(), len + 1);
@@ -640,7 +723,11 @@ impl App {
                     self.call("cancel", json!({"op":"cancel","job_id":job}));
                 }
             }
-            OPEN | NEW | SCAN | IMPORT | EXPORT if self.job.is_none() && self.pending == 0 => {
+            OPEN | NEW | SCAN | IMPORT | LINK_CTF | EXPORT if self.job.is_none() && self.pending == 0 => {
+                if self.linked_mode() && [SCAN, IMPORT, EXPORT].contains(&command) {
+                    self.status("Linked CTF is read-only; open a writable SQLite catalog first.");
+                    return;
+                }
                 if command == SCAN {
                     if let Some(root) = folder_dialog(self.hwnd) {
                         let label = PathBuf::from(&root)
@@ -664,7 +751,7 @@ impl App {
                 } else if let Some(path) = file_dialog(
                     self.hwnd,
                     command == NEW || command == EXPORT,
-                    if command == IMPORT {
+                    if command == IMPORT || command == LINK_CTF {
                         "ctf"
                     } else if command == EXPORT {
                         match SendMessageW(self.export_format, CB_GETCURSEL, 0, 0) {
@@ -680,6 +767,13 @@ impl App {
                         OPEN | NEW => {
                             self.db = path;
                             self.init();
+                        }
+                        LINK_CTF => {
+                            let cache_root = config_dir().join("CTF-Mirrors").to_string_lossy().into_owned();
+                            self.pending_link_path = Some(path.clone());
+                            self.job = Some("linked-sync".into());
+                            self.status("Verifying original CTF and creating read-only mirror…");
+                            self.call("linked_sync", json!({"op":"ctf_sync","path":path,"cache_root":cache_root}));
                         }
                         IMPORT | EXPORT => {
                             self.job = Some("file-operation".into());
@@ -713,12 +807,12 @@ impl App {
         let h = rect.bottom;
         let mut x = 8;
         for (i, hwnd) in &self.buttons {
-            if [OPEN, NEW, SCAN, IMPORT, EXPORT, CANCEL].contains(i) {
-                MoveWindow(*hwnd, x, 6, 94, 24, 1);
-                x += 98;
+            if [OPEN, NEW, SCAN, IMPORT, LINK_CTF, EXPORT, CANCEL].contains(i) {
+                MoveWindow(*hwnd, x, 6, 86, 24, 1);
+                x += 90;
             }
         }
-        MoveWindow(self.export_format, 600, 6, 210, 200, 1);
+        MoveWindow(self.export_format, 648, 6, 188, 200, 1);
         MoveWindow(self.search, 8, 34, (w - 470).max(100), 24, 1);
         MoveWindow(self.duplicate_mode, w - 268, 34, 136, 200, 1);
         for (i, hwnd) in &self.buttons {
@@ -875,6 +969,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 (NEW, "&New catalog"),
                 (SCAN, "&Add disk"),
                 (IMPORT, "&Import CTF"),
+                (LINK_CTF, "&Link CTF"),
                 (EXPORT, "&Export…"),
                 (CANCEL, "&Cancel scan"),
                 (FIND, "&Search"),
