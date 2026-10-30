@@ -1,0 +1,50 @@
+# Synthetic fixture CI only. Does not read user CTF or derivative files.
+name: Linked CTF native CLI — private local acceptance binary
+on:
+  push:
+    branches: [feat/ctf-native-linked-browse-20261030]
+    paths:
+      - ".github/workflows/ctf-linked-cli.yml"
+      - "crates/atlas-service/src/ctf_mirror.rs"
+      - "crates/atlas-service/src/lib.rs"
+      - "crates/atlas-service/tests/ctf_mirror_contract.rs"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: linked-ctf-cli-${{ github.sha }}
+  cancel-in-progress: false
+jobs:
+  linux-cli:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
+      - name: Validate synthetic linked disk and tree contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo test --locked -p atlas-service --test ctf_mirror_contract
+          cargo clippy --locked -p atlas-service --all-targets -- -D warnings
+      - name: Package exact-source local-only CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p atlas-cli
+          test "$(target/release/atlas --sqlite-version)" = "3.51.3"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir dist
+          cp target/release/atlas LICENSE THIRD_PARTY_NOTICES.md dist/
+          printf 'commit=%s\nos_arch=%s/%s\nsqlite=3.51.3\nprivate_CTF_uploaded=false\n' "$GITHUB_SHA" "$RUNNER_OS" "$RUNNER_ARCH" > dist/PROVENANCE.txt
+          (cd dist && sha256sum atlas LICENSE THIRD_PARTY_NOTICES.md PROVENANCE.txt > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linked-ctf-local-cli-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 21

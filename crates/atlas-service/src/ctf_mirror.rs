@@ -435,23 +435,13 @@ pub fn search(v: &Value) -> Result<Value> {
     }))
 }
 
-/// Fast explicit mode for a resident native GUI or atlas serve process.
-/// Requires a fully verified ctf_sync in this same process first. Rehashes
-/// original CTF on every request, including same-size/restored-mtime edits.
-/// A previously verified immutable SQLite artifact is rehashed once per
-/// minute or sooner when its file identity changes. The existing ctf_search
-/// API remains the always-strict full-SHA path.
-pub fn search_pinned(v: &Value) -> Result<Value> {
-    let query = text(v, "query")?;
-    atlas_core::query::compile(query)?;
-    let offset = unsigned(v, "offset", 0)?;
-    let limit = unsigned(v, "limit", 100)?;
-    let volume_id = optional_id(v, "volume_id")?;
-    let full_count = match v.get("full_count") {
-        None => false,
-        Some(Value::Bool(value)) => *value,
-        _ => return Err(failure("invalid_request", "full_count must be boolean")),
-    };
+/// All pinned reads share the same full original CTF SHA checks and periodic
+/// SQLite cache integrity verification. This returns an explicitly tagged
+/// snapshot response, not a user-editable catalog.
+fn read_pinned<F>(v: &Value, work: F) -> Result<Value>
+where
+    F: FnOnce(&Catalog) -> Result<Value>,
+{
     let requested = text(v, "generation")?;
     if requested.len() != 64 || !requested.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(failure(
@@ -479,7 +469,7 @@ pub fn search_pinned(v: &Value) -> Result<Value> {
     if requested != current_key {
         return Err(failure(
             "source_changed",
-            "Original CTF changed; synchronize the new source generation",
+            "Original CTF changed; synchronize the new generation",
         ));
     }
     let root = path(v, "cache_root")?;
@@ -537,12 +527,7 @@ pub fn search_pinned(v: &Value) -> Result<Value> {
         full_cache_recheck = true;
     }
     let db = Catalog::open_readonly(&db_path)?;
-    let page = if full_count {
-        serde_json::to_value(db.search(query, volume_id, offset, limit)?)
-    } else {
-        serde_json::to_value(db.search_fast(query, volume_id, offset, limit)?)
-    }
-    .map_err(|_| failure("internal", "Cannot encode pinned search result"))?;
+    let data = work(&db)?;
     drop(db);
     if stamp(&db_path)? != first_stamp {
         forget(&root, &current_key);
@@ -567,6 +552,51 @@ pub fn search_pinned(v: &Value) -> Result<Value> {
         "verification_mode":"pinned_cache",
         "cache_fully_rehashed_this_query":full_cache_recheck,
         "cache_full_revalidation_interval_seconds":PIN_REFRESH_INTERVAL.as_secs(),
-        "result":page
+        "result":data
     }))
+}
+
+/// Fast explicit mode: query a strictly verified read-only CTF generation
+/// within the process that created the pin. Does not allow source edits.
+pub fn search_pinned(v: &Value) -> Result<Value> {
+    let query = text(v, "query")?;
+    atlas_core::query::compile(query)?;
+    let offset = unsigned(v, "offset", 0)?;
+    let limit = unsigned(v, "limit", 100)?;
+    let volume_id = optional_id(v, "volume_id")?;
+    let full_count = match v.get("full_count") {
+        None => false,
+        Some(Value::Bool(value)) => *value,
+        _ => return Err(failure("invalid_request", "full_count must be boolean")),
+    };
+    read_pinned(v, |db| {
+        if full_count {
+            serde_json::to_value(db.search(query, volume_id, offset, limit)?)
+        } else {
+            serde_json::to_value(db.search_fast(query, volume_id, offset, limit)?)
+        }
+        .map_err(|_| failure("internal", "Cannot encode pinned search result"))
+    })
+}
+
+/// List disks from the exact pinned CTF generation without exposing an
+/// editable SQLite path to the GUI. Source SHA is rechecked at both ends.
+pub fn volumes_pinned(v: &Value) -> Result<Value> {
+    read_pinned(v, |db| {
+        serde_json::to_value(db.volumes()?)
+            .map_err(|_| failure("internal", "Cannot encode CTF volume list"))
+    })
+}
+
+/// Hierarchical directory browsing in a pinned read-only CTF generation.
+pub fn children_pinned(v: &Value) -> Result<Value> {
+    let volume_id = optional_id(v, "volume_id")?
+        .ok_or_else(|| failure("invalid_request", "A positive volume_id is required"))?;
+    let parent_id = optional_id(v, "parent_id")?;
+    let offset = unsigned(v, "offset", 0)?;
+    let limit = unsigned(v, "limit", 250)?;
+    read_pinned(v, |db| {
+        serde_json::to_value(db.children(volume_id, parent_id, offset, limit)?)
+            .map_err(|_| failure("internal", "Cannot encode CTF directory page"))
+    })
 }

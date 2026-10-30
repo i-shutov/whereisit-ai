@@ -283,3 +283,71 @@ fn pinned_mode_does_not_change_always_strict_search_contract() {
     );
     assert_eq!(fs::read(&source).unwrap(), original);
 }
+
+#[test]
+fn pinned_volume_list_and_folder_browsing_have_same_source_generation() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("linked.CTF");
+    let cache = dir.path().join("cache");
+    let original = write_original(&source, "audio.mp3");
+    let synced = service(json!({"op":"ctf_sync","path":source,"cache_root":cache}));
+    assert_eq!(synced["ok"], true, "{synced}");
+    let generation = synced["data"]["generation"].as_str().unwrap();
+    let common = json!({"path":source,"cache_root":cache,"generation":generation});
+    let volumes = service(json!({"op":"ctf_volumes_pinned","path":source,
+        "cache_root":cache,"generation":generation}));
+    assert_eq!(volumes["ok"], true, "{volumes}");
+    assert_eq!(volumes["data"]["generation"], generation);
+    let disks = volumes["data"]["result"].as_array().unwrap();
+    assert_eq!(disks.len(), 1);
+    assert_eq!(disks[0]["entry_count"], 3);
+    let id = disks[0]["id"].as_i64().unwrap();
+    let root = service(json!({"op":"ctf_children_pinned","path":source,
+        "cache_root":cache,"generation":generation,
+        "volume_id":id,"parent_id":null,"limit":100}));
+    assert_eq!(root["ok"], true, "{root}");
+    assert_eq!(root["data"]["result"]["total"], 1);
+    assert_eq!(root["data"]["result"]["items"][0]["name"], "Audio");
+    assert_eq!(root["data"]["generation"], generation);
+    let parent = root["data"]["result"]["items"][0]["id"].as_i64().unwrap();
+    let children = service(json!({"op":"ctf_children_pinned","path":source,
+        "cache_root":cache,"generation":generation,"volume_id":id,
+        "parent_id":parent,"limit":100}));
+    assert_eq!(children["ok"], true, "{children}");
+    assert_eq!(children["data"]["result"]["total"], 2);
+    let listed = children["data"]["result"]["items"].as_array().unwrap();
+    assert!(listed.iter().any(|r| r["name"] == "audio.mp3"));
+    assert!(listed.iter().any(|r| r["name"] == "guide.pdf"));
+    let filtered = service(json!({"op":"ctf_search_pinned","path":source,
+        "cache_root":cache,"generation":generation,"query":"ext:mp3","full_count":true}));
+    assert_eq!(filtered["ok"], true, "{filtered}");
+    assert_eq!(filtered["data"]["result"]["total"], 1);
+    assert_eq!(fs::read(&source).unwrap(), original);
+    let missing_volume = service(json!({"op":"ctf_children_pinned","path":source,
+        "cache_root":cache,"generation":generation}));
+    assert_eq!(missing_volume["ok"], false, "{missing_volume}");
+    assert_eq!(missing_volume["error"]["code"], "invalid_request");
+    assert!(!common["generation"].as_str().unwrap().is_empty());
+}
+
+#[test]
+fn pinned_folder_browse_rejects_external_rewrite_of_original_ctf() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("linked.ctf");
+    let cache = dir.path().join("cache");
+    write_original(&source, "song.mp3");
+    let synced = service(json!({"op":"ctf_sync","path":source,"cache_root":cache}));
+    assert_eq!(synced["ok"], true, "{synced}");
+    let old = synced["data"]["generation"].as_str().unwrap();
+    let changed = write_original(&source, "book.mp3");
+    let stale = service(json!({"op":"ctf_volumes_pinned","path":source,
+        "cache_root":cache,"generation":old}));
+    assert_eq!(stale["ok"], false, "{stale}");
+    assert_eq!(stale["error"]["code"], "source_changed");
+    let id_before: i64 = 1;
+    let rejected = service(json!({"op":"ctf_children_pinned","path":source,
+        "cache_root":cache,"generation":old,"volume_id":id_before}));
+    assert_eq!(rejected["ok"], false, "{rejected}");
+    assert_eq!(rejected["error"]["code"], "source_changed");
+    assert_eq!(fs::read(&source).unwrap(), changed);
+}

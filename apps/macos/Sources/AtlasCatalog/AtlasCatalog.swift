@@ -32,6 +32,8 @@ struct Envelope<T: Decodable>: Decodable { let ok: Bool; let data: T?; let error
 struct EmptyReply: Decodable {}
 struct Category: Decodable, Identifiable { let id: Int64; let parent_id: Int64?; let name: String }
 struct CreatedCategory: Decodable { let id: Int64 }
+struct LinkedCTFSync: Decodable { let generation: String; let entries: Int64; let volumes: Int64; let rebuilt: Bool }
+struct LinkedCTFResult<T: Decodable>: Decodable { let generation: String; let result: T }
 
 enum Bridge {
     static func invoke(_ input: Data) -> Data {
@@ -63,6 +65,18 @@ enum Bridge {
     @Published var categoryID: Int64?
     @Published var categoryName = ""
     @Published var exportFormat = "csv"
+    @Published var linkedCTFPath: String?
+    var linkedGeneration: String?
+    var linkedMode: Bool { linkedCTFPath != nil && linkedGeneration != nil }
+    var editableAllowed: Bool { mutationAllowed && !linkedMode }
+    var linkedCacheRoot: String {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AtlasCatalog/CTF-Mirrors", isDirectory: true).path
+    }
+    func linkedFields() -> [String: Any]? {
+        guard let linkedCTFPath, let linkedGeneration else { return nil }
+        return ["path": linkedCTFPath, "cache_root": linkedCacheRoot, "generation": linkedGeneration]
+    }
     @Published var offset = 0
     @Published var total = 0
     @Published var hasMore = false
@@ -103,6 +117,7 @@ enum Bridge {
         }
     }
     func initialize() {
+        linkedCTFPath = nil; linkedGeneration = nil
         generation += 1; volumeID = nil; stack = [(nil, "/")]; entries = []; query = ""; appliedQuery = ""; showingDuplicates = false; offset = 0
         volumes = []; categories = []; categoryID = nil; selection = nil; total = 0; hasMore = false
         status = "Opening catalog…"
@@ -118,6 +133,16 @@ enum Bridge {
     }
     func refreshVolumes() {
         refreshCategories()
+        if let fields = linkedFields() {
+            var requestData: [String: Any] = ["op": "ctf_volumes_pinned"]
+            requestData.merge(fields) { _, newValue in newValue }
+            request(requestData, as: LinkedCTFResult<[Volume]>.self) { [weak self] response in
+                guard let self, let response else { return }
+                self.volumes = response.result
+                self.status = "\(response.result.count) linked CTF disks • read-only; search or select a disk"
+            }
+            return
+        }
         request(["op": "volumes"], as: [Volume].self) { [weak self] values in
             guard let self, let values else { return }
             self.volumes = values
@@ -125,9 +150,11 @@ enum Bridge {
         }
     }
     func refreshCategories() {
+        if linkedMode { categories = []; categoryID = nil; return }
         request(["op": "categories"], as: [Category].self) { [weak self] values in if let values { self?.categories = values } }
     }
     func createCategory() {
+        guard !linkedMode else { status = "Linked CTF is read-only; category edits are not supported."; return }
         let name = categoryName.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return }
         request(["op": "create_category", "name": name], as: CreatedCategory.self) { [weak self] result in
@@ -139,6 +166,7 @@ enum Bridge {
         query = "category:\"" + category.name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""; search()
     }
     func assignCategory() {
+        guard !linkedMode else { status = "Linked CTF does not accept category writes."; return }
         guard let selection, let categoryID else { return }
         request(["op": "assign_category", "entry_id": selection, "category_id": categoryID], as: EmptyReply.self) { [weak self] result in if result != nil { self?.status = "Category assigned to selected entry." } }
     }
@@ -147,6 +175,29 @@ enum Bridge {
         generation += 1; let token = generation; selection = nil
         var args: [String: Any] = ["offset": offset, "limit": limit]
         if let volumeID { args["volume_id"] = volumeID }
+        if let fields = linkedFields() {
+            if showingDuplicates {
+                showingDuplicates = false
+                status = "Linked CTF duplicate export is not enabled; use a native SQLite catalog."
+                return
+            }
+            if !appliedQuery.isEmpty {
+                args["op"] = "ctf_search_pinned"; args["query"] = appliedQuery
+            } else if volumeID != nil {
+                args["op"] = "ctf_children_pinned"
+                args["parent_id"] = stack.last.flatMap { $0.0 }.map { $0 as Any } ?? NSNull()
+            } else {
+                entries = []; total = 0; hasMore = false
+                status = "Select a linked CTF disk or search all disks."; return
+            }
+            args.merge(fields) { _, newValue in newValue }
+            status = "Searching verified linked CTF…"
+            request(args, as: LinkedCTFResult<EntryPage>.self, generationToken: token) { [weak self] answer in
+                guard let self, let answer else { return }
+                self.applyPage(answer.result, token: token)
+            }
+            return
+        }
         if showingDuplicates {
             args["op"] = "duplicates"; args["mode"] = appliedDuplicateMode; args["query"] = appliedQuery
         } else if !appliedQuery.isEmpty {
@@ -156,14 +207,22 @@ enum Bridge {
         } else { entries = []; total = 0; hasMore = false; status = "Choose a disk or enter an expression to search all disks."; return }
         status = showingDuplicates ? "Finding duplicate candidates by metadata…" : "Loading…"
         request(args, as: EntryPage.self, generationToken: token) { [weak self] page in
-            guard let self, self.generation == token, let page else { return }
-            self.entries = page.items; self.total = page.total ?? (self.offset + page.items.count)
-            self.hasMore = page.has_more ?? (self.offset + page.items.count < self.total)
-            self.status = "\(page.items.isEmpty ? 0 : self.offset + 1)–\(self.offset + page.items.count)" + (page.total.map { " of \($0) items" } ?? (self.hasMore ? " items • more available" : " items")) + (self.showingDuplicates ? " • metadata candidates; content not verified" : "")
+            guard let self, let page else { return }
+            self.applyPage(page, token: token)
         }
     }
+    func applyPage(_ page: EntryPage, token: Int) {
+        guard generation == token else { return }
+        entries = page.items; total = page.total ?? (offset + page.items.count)
+        hasMore = page.has_more ?? (offset + page.items.count < total)
+        status = "\(page.items.isEmpty ? 0 : offset + 1)–\(offset + page.items.count)"
+            + (page.total.map { " of \($0) items" } ?? (hasMore ? " items • more available" : " items"))
+            + (showingDuplicates ? " • metadata candidates; content not verified" : "")
+    }
     func search() { appliedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines); showingDuplicates = false; offset = 0; load() }
-    func duplicates() { appliedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines); appliedDuplicateMode = duplicateMode; showingDuplicates = true; offset = 0; load() }
+    func duplicates() {
+        guard !linkedMode else { status = "Metadata duplicate detection for linked CTF is not enabled."; return }
+        appliedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines); appliedDuplicateMode = duplicateMode; showingDuplicates = true; offset = 0; load() }
     func back() {
         if showingDuplicates || !appliedQuery.isEmpty { showingDuplicates = false; query = ""; appliedQuery = "" }
         else if stack.count > 1 { stack.removeLast() }
@@ -173,6 +232,41 @@ enum Bridge {
         guard let entry = selected, entry.isFolder else { return }
         if volumeID != entry.volume_id { volumeID = entry.volume_id; stack = [(nil, "/")] }
         stack.append((entry.id, entry.relative_path)); showingDuplicates = false; query = ""; appliedQuery = ""; offset = 0; load()
+    }
+    func linkCTF() {
+        guard mutationAllowed else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Link external WhereIsIt CTF (read-only)"
+        panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
+        panel.begin { [weak self] response in
+            guard let self, response == .OK, let url = panel.url else { return }
+            guard url.pathExtension.lowercased() == "ctf" else {
+                self.error = "Choose a WhereIsIt .CTF catalog."; return
+            }
+            self.synchronizeLinkedCTF(url.path)
+        }
+    }
+    func synchronizeLinkedCTF(_ source: String) {
+        guard mutationAllowed else { return }
+        job = "linked-sync"
+        status = "Verifying external CTF and its derived index…"
+        request(["op": "ctf_sync", "path": source, "cache_root": linkedCacheRoot],
+                as: LinkedCTFSync.self) { [weak self] result in
+            guard let self else { return }
+            self.job = nil
+            guard let result else { return }
+            self.linkedCTFPath = source; self.linkedGeneration = result.generation
+            self.volumeID = nil; self.stack = [(nil, "/")]; self.entries = []
+            self.query = ""; self.appliedQuery = ""; self.showingDuplicates = false
+            self.offset = 0; self.selection = nil; self.total = 0; self.hasMore = false
+            self.generation += 1
+            self.status = result.rebuilt ? "New CTF mirror verified; source unchanged." : "Verified existing CTF mirror."
+            self.refreshVolumes()
+        }
+    }
+    func refreshLinkedCTF() {
+        guard let source = linkedCTFPath, mutationAllowed else { return }
+        synchronizeLinkedCTF(source)
     }
     func chooseCatalog(create: Bool) {
         if create {
@@ -184,7 +278,7 @@ enum Bridge {
         }
     }
     func verifyCatalog() {
-        guard mutationAllowed else { return }
+        guard editableAllowed else { return }
         job = "maintenance"
         status = "Verifying catalog without modifying it..."
         request(["op": "validate_catalog"], as: EmptyReply.self) { [weak self] result in
@@ -194,7 +288,7 @@ enum Bridge {
         }
     }
     func compactCopy() {
-        guard mutationAllowed else { return }
+        guard editableAllowed else { return }
         let sourceDatabase = database
         let panel = NSSavePanel()
         panel.title = "Create a verified compact copy; original stays unchanged"
@@ -219,6 +313,7 @@ enum Bridge {
         }
     }
     func addDisk() {
+        guard editableAllowed else { return }
         let panel = NSOpenPanel(); panel.title = "Choose a disk or folder to catalog"; panel.canChooseDirectories = true; panel.canChooseFiles = false
         panel.begin { [weak self] response in
             guard let self, response == .OK, let url = panel.url else { return }
@@ -231,6 +326,7 @@ enum Bridge {
         request(["op": "cancel", "job_id": job], as: EmptyReply.self) { [weak self] _ in self?.status = "Cancellation requested…" }
     }
     func importCTF() {
+        guard editableAllowed else { return }
         let panel = NSOpenPanel(); panel.title = "Import WhereIsIt CTF"; panel.canChooseDirectories = false
         panel.begin { [weak self] response in
             guard let self, response == .OK, let url = panel.url else { return }
@@ -238,6 +334,7 @@ enum Bridge {
         }
     }
     func export() {
+        guard editableAllowed else { return }
         let panel = NSSavePanel(); panel.title = exportFormat == "ctf" ? "Export entire catalog as CTF" : "Export current branch or query results"
         panel.nameFieldStringValue = "Catalog.\(exportFormat)"
         panel.begin { [weak self] response in
@@ -261,15 +358,20 @@ enum Bridge {
             HStack(spacing: 6) {
                 Button("Open…") { model.chooseCatalog(create: false) }.disabled(!model.mutationAllowed)
                 Button("New…") { model.chooseCatalog(create: true) }.disabled(!model.mutationAllowed)
-                Button("Check") { model.verifyCatalog() }.disabled(!model.mutationAllowed)
-                Button("Compact copy…") { model.compactCopy() }.disabled(!model.mutationAllowed)
+                Button("Check") { model.verifyCatalog() }.disabled(!model.editableAllowed)
+                Button("Compact copy…") { model.compactCopy() }.disabled(!model.editableAllowed)
                 Divider().frame(height: 16)
-                Button("Add disk…") { model.addDisk() }.disabled(!model.mutationAllowed)
-                Button("Import CTF…") { model.importCTF() }.disabled(!model.mutationAllowed)
+                Button("Add disk…") { model.addDisk() }.disabled(!model.editableAllowed)
+                Menu("CTF") {
+                    Button("Link read-only CTF…") { model.linkCTF() }
+                    Button("Refresh linked CTF") { model.refreshLinkedCTF() }.disabled(!model.linkedMode)
+                    Divider()
+                    Button("Import CTF copy into SQLite…") { model.importCTF() }.disabled(!model.editableAllowed)
+                }.disabled(!model.mutationAllowed)
                 Picker("Export format", selection: $model.exportFormat) {
                     Text("CSV • current scope").tag("csv"); Text("Parquet • current scope").tag("parquet"); Text("CTF • entire catalog").tag("ctf")
-                }.labelsHidden().frame(width: 174).accessibilityLabel("Export format and scope")
-                Button("Export…") { model.export() }.disabled(!model.mutationAllowed)
+                }.labelsHidden().frame(width: 174).accessibilityLabel("Export format and scope").disabled(model.linkedMode)
+                Button("Export…") { model.export() }.disabled(!model.editableAllowed)
                 Spacer(minLength: 4)
                 if model.pending > 0 { ProgressView().controlSize(.small) }
                 Button("Cancel scan") { model.cancel() }.disabled(!model.canCancel)
@@ -282,7 +384,7 @@ enum Bridge {
                 Picker("Duplicate matching", selection: $model.duplicateMode) {
                     Text("Name + size").tag("name_size"); Text("Size").tag("size"); Text("Name").tag("name")
                 }.labelsHidden().frame(width: 120).accessibilityLabel("Duplicate matching mode")
-                Button("Duplicates") { model.duplicates() }
+                Button("Duplicates") { model.duplicates() }.disabled(model.linkedMode)
             }
             HStack { Text("AND  OR  NOT  ( )   name:  path:  ext:  size:  category:").foregroundStyle(.secondary); Spacer(); Text(model.currentPath).lineLimit(1).truncationMode(.middle) }.font(.caption)
             HSplitView {
@@ -301,12 +403,12 @@ enum Bridge {
                     Text("CATEGORIES").font(.caption.bold()).foregroundStyle(.secondary).padding(.horizontal, 6)
                     List(model.categories, selection: $model.categoryID) { category in Text(category.name).tag(category.id) }.listStyle(.sidebar)
                     HStack(spacing: 4) {
-                        TextField("New category", text: $model.categoryName).onSubmit { model.createCategory() }
-                        Button("+") { model.createCategory() }.disabled(model.categoryName.trimmingCharacters(in: .whitespaces).isEmpty).help("Create category")
+                        TextField("New category", text: $model.categoryName).onSubmit { model.createCategory() }.disabled(model.linkedMode)
+                        Button("+") { model.createCategory() }.disabled(model.linkedMode || model.categoryName.trimmingCharacters(in: .whitespaces).isEmpty).help("Create category")
                     }.padding(.horizontal, 5)
                     HStack(spacing: 4) {
-                        Button("Filter") { model.filterCategory() }.disabled(model.categoryID == nil)
-                        Button("Assign selected") { model.assignCategory() }.disabled(model.selection == nil || model.categoryID == nil)
+                        Button("Filter") { model.filterCategory() }.disabled(model.linkedMode || model.categoryID == nil)
+                        Button("Assign selected") { model.assignCategory() }.disabled(model.linkedMode || model.selection == nil || model.categoryID == nil)
                     }.padding(.horizontal, 5)
                 }.frame(minWidth: 170, idealWidth: 220, maxWidth: 320)
                 Table(model.entries, selection: $model.selection) {
@@ -327,7 +429,7 @@ enum Bridge {
                 Button("Previous") { model.offset = max(0, model.offset - model.limit); model.load() }.disabled(model.offset == 0)
                 Button("Next") { model.offset += model.limit; model.load() }.disabled(!model.hasMore)
             }.font(.caption)
-            Text(model.database).font(.caption2).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).lineLimit(1).truncationMode(.middle)
+            Text(model.linkedMode ? "LINKED CTF (read-only) • " + (model.linkedCTFPath ?? "") : model.database).font(.caption2).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).lineLimit(1).truncationMode(.middle)
         }
         .padding(7).controlSize(.small).frame(minWidth: 960, minHeight: 500)
         .alert("WhereIsIt AI", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) { Button("OK") { model.error = nil } } message: { Text(model.error ?? "") }
