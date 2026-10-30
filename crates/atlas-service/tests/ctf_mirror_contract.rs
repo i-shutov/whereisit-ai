@@ -124,7 +124,10 @@ fn invalid_query_never_creates_an_expensive_mirror() {
         let result = service(json!({"op":"ctf_search","path":source,
             "cache_root":root,"query":query}));
         assert_eq!(result["ok"], false, "{query}: {result}");
-        assert!(!root.exists(), "Bad query started an expensive mirror build");
+        assert!(
+            !root.exists(),
+            "Bad query started an expensive mirror build"
+        );
     }
     let missing = service(json!({"op":"ctf_search","path":source,"cache_root":root}));
     assert_eq!(missing["ok"], false, "{missing}");
