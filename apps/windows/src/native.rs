@@ -129,8 +129,9 @@ fn annotation_preview_text(data: &Value, offset: usize) -> String {
     let preview = &data["result"];
     let state = preview["state"].as_str().unwrap_or("unavailable");
     let total = preview["total"].as_u64().unwrap_or(0);
-    let mut message =
-        format!("Linked CTF annotation review (page read-only)\nState: {state}\nSaved notes: {total}\n");
+    let mut message = format!(
+        "Linked CTF annotation review (page read-only)\nState: {state}\nSaved notes: {total}\n"
+    );
     if state == "generation_conflict" {
         if let Some(rows) = preview["items"].as_array() {
             let start = if rows.is_empty() { 0 } else { offset + 1 };
@@ -274,9 +275,14 @@ mod annotation_preview_tests {
         assert_eq!(activate["new_entry_id"], 37);
         assert_eq!(activate["expected_revision"], 3);
         assert_eq!(activate["expected_document_id"], "synthetic-document");
-        assert_eq!(activate["activation"], "user_approved_reversible_projection");
+        assert_eq!(
+            activate["activation"],
+            "user_approved_reversible_projection"
+        );
         assert!(annotation_overlay_request(&preview, 0, AnnotationOverlayAction::Revoke).is_none());
-        assert!(annotation_overlay_request(&preview, 1, AnnotationOverlayAction::Activate).is_none());
+        assert!(
+            annotation_overlay_request(&preview, 1, AnnotationOverlayAction::Activate).is_none()
+        );
         // Stale notes must remain revocable; the backend checks the exact audit pair.
         let revoke = annotation_overlay_request(&preview, 1, AnnotationOverlayAction::Revoke)
             .expect("stale active audit is revocable");
@@ -288,26 +294,38 @@ mod annotation_preview_tests {
 
         let mut changed = preview.clone();
         changed["result"]["items"][0]["confirmation_payload_conflict"] = json!(true);
-        assert!(annotation_overlay_request(&changed, 0, AnnotationOverlayAction::Activate).is_none());
+        assert!(
+            annotation_overlay_request(&changed, 0, AnnotationOverlayAction::Activate).is_none()
+        );
         changed = preview.clone();
         changed["result"]["items"][0]["candidates"] = json!([{"entry_id":99}]);
-        assert!(annotation_overlay_request(&changed, 0, AnnotationOverlayAction::Activate).is_none());
+        assert!(
+            annotation_overlay_request(&changed, 0, AnnotationOverlayAction::Activate).is_none()
+        );
         changed = preview.clone();
         changed["result"]["items"][0]["confirmed_selection"] = Value::Null;
-        assert!(annotation_overlay_request(&changed, 0, AnnotationOverlayAction::Activate).is_none());
+        assert!(
+            annotation_overlay_request(&changed, 0, AnnotationOverlayAction::Activate).is_none()
+        );
         changed = preview.clone();
         changed["result"]["items"][1]["activation_state"] = json!("revoked");
         assert!(annotation_overlay_request(&changed, 1, AnnotationOverlayAction::Revoke).is_none());
-        assert!(annotation_overlay_request(&changed, 1, AnnotationOverlayAction::Activate).is_none());
+        assert!(
+            annotation_overlay_request(&changed, 1, AnnotationOverlayAction::Activate).is_none()
+        );
         changed = preview.clone();
         changed["result"]["items"][1]["activation_target_entry_id"] = Value::Null;
         assert!(annotation_overlay_request(&changed, 1, AnnotationOverlayAction::Revoke).is_none());
         changed = preview.clone();
         changed["result"]["document_id"] = json!("");
-        assert!(annotation_overlay_request(&changed, 0, AnnotationOverlayAction::Activate).is_none());
+        assert!(
+            annotation_overlay_request(&changed, 0, AnnotationOverlayAction::Activate).is_none()
+        );
         changed = preview;
         changed["result"]["state"] = json!("current_generation");
-        assert!(annotation_overlay_request(&changed, 0, AnnotationOverlayAction::Activate).is_none());
+        assert!(
+            annotation_overlay_request(&changed, 0, AnnotationOverlayAction::Activate).is_none()
+        );
         assert!(annotation_overlay_request(&changed, 1, AnnotationOverlayAction::Revoke).is_none());
     }
 
@@ -365,7 +383,6 @@ fn annotation_selection_request(
     }))
 }
 
-
 // A journal state is not proof of a valid live overlay. Activation requires
 // a fresh confirmed pair; revocation deliberately also permits a stale note.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -400,9 +417,11 @@ fn annotation_overlay_request(
                 .filter(|id| *id > 0)?;
             // A confirmation is only eligible if its exact candidate still
             // appears in this SHA-verified read-only page.
-            if !row["candidates"].as_array()?.iter().any(|candidate| {
-                candidate["entry_id"].as_i64() == Some(new_entry_id)
-            }) {
+            if !row["candidates"]
+                .as_array()?
+                .iter()
+                .any(|candidate| candidate["entry_id"].as_i64() == Some(new_entry_id))
+            {
                 return None;
             }
             Some(json!({
@@ -511,9 +530,8 @@ unsafe fn annotation_review_action(
     let can_activate = |index| {
         annotation_overlay_request(data, index, AnnotationOverlayAction::Activate).is_some()
     };
-    let can_revoke = |index| {
-        annotation_overlay_request(data, index, AnnotationOverlayAction::Revoke).is_some()
-    };
+    let can_revoke =
+        |index| annotation_overlay_request(data, index, AnnotationOverlayAction::Revoke).is_some();
     let selectable: Vec<usize> = (0..items.len())
         .filter(|index| can_map(*index) || can_activate(*index) || can_revoke(*index))
         .collect();
@@ -524,7 +542,11 @@ unsafe fn annotation_review_action(
             let id = row["old_entry_id"].as_i64().unwrap_or(-1);
             let state = row["candidate_state"].as_str().unwrap_or("unknown");
             let count = row["candidate_count_lower_bound"].as_u64().unwrap_or(0);
-            let truncated = if row["candidates_truncated"] == true { "+" } else { "" };
+            let truncated = if row["candidates_truncated"] == true {
+                "+"
+            } else {
+                ""
+            };
             let audit = if can_revoke(*index) {
                 "ACTIVE audit — eligible for explicit revocation"
             } else if can_activate(*index) {
@@ -654,7 +676,10 @@ unsafe fn annotation_review_action(
                 else {
                     MessageBoxW(
                         owner,
-                        wide("Select an old note first. No activation or revocation was performed.").as_ptr(),
+                        wide(
+                            "Select an old note first. No activation or revocation was performed.",
+                        )
+                        .as_ptr(),
                         wide("Explicit choice required").as_ptr(),
                         MB_OK | MB_ICONWARNING,
                     );
@@ -994,7 +1019,9 @@ impl App {
                     } else if state == "revoked_projection" {
                         self.status("Projection revoked; private original notes and audit snapshot retained.");
                     } else {
-                        self.status("Unexpected activation response; review the audit state again.");
+                        self.status(
+                            "Unexpected activation response; review the audit state again.",
+                        );
                     }
                 } else {
                     let code = reply.result["error"]["code"]
