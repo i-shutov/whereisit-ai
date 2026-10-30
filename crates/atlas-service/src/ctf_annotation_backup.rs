@@ -5,7 +5,7 @@ use atlas_core::{Error, Result};
 use rusqlite::{params, Connection, OpenFlags};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
 
@@ -233,7 +233,9 @@ pub fn backup(v: &Value) -> Result<Value> {
         })?;
         source.execute("VACUUM INTO ?1", params![stage_string])?;
         private_permissions(&staged)?;
-        File::open(&staged)?.sync_all()?;
+        // Windows FlushFileBuffers requires a writable handle; read-only File::open
+        // produces ERROR_ACCESS_DENIED even on a valid, fully written snapshot.
+        OpenOptions::new().write(true).open(&staged)?.sync_all()?;
         let cloned = open_snapshot(&staged)?;
         let (cloned_document, cloned_generation, cloned_inventory) = validate(&cloned)?;
         if cloned_document != document || cloned_inventory != original_inventory {
@@ -304,7 +306,9 @@ pub fn restore(v: &Value) -> Result<Value> {
         // copying to prevent source replacement/races from changing bytes.
         fs::copy(&backup, &staged)?;
         private_permissions(&staged)?;
-        File::open(&staged)?.sync_all()?;
+        // Windows FlushFileBuffers requires a writable handle; read-only File::open
+        // produces ERROR_ACCESS_DENIED even on a valid, fully written snapshot.
+        OpenOptions::new().write(true).open(&staged)?.sync_all()?;
         if !digest_file(&staged)?.eq_ignore_ascii_case(expected_hash) {
             return Err(fail(
                 "annotation_backup_changed",
