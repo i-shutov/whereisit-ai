@@ -245,7 +245,10 @@ pub fn set(v: &Value) -> Result<Value> {
     let note = text(v, "note")?;
     let tags = text(v, "tags")?;
     if note.len() > MAX_NOTE_BYTES || tags.len() > MAX_TAG_BYTES {
-        return Err(fail("invalid_request", "Annotation text length limit exceeded"));
+        return Err(fail(
+            "invalid_request",
+            "Annotation text length limit exceeded",
+        ));
     }
 
     let mut output = ctf_mirror::read_pinned(v, |catalog| {
@@ -283,7 +286,10 @@ pub fn set(v: &Value) -> Result<Value> {
             ));
         }
         let revision = if note.is_empty() && tags.is_empty() {
-            tx.execute("DELETE FROM annotation_entries WHERE entry_id=?1", [entry_id])?;
+            tx.execute(
+                "DELETE FROM annotation_entries WHERE entry_id=?1",
+                [entry_id],
+            )?;
             0
         } else {
             let next = previous
@@ -299,7 +305,16 @@ pub fn set(v: &Value) -> Result<Value> {
                  relative_path=excluded.relative_path,
                  kind=excluded.kind,size=excluded.size,
                  note=excluded.note,tags=excluded.tags,revision=excluded.revision",
-                params![entry_id, volume_label, relative_path, kind, size, note, tags, next],
+                params![
+                    entry_id,
+                    volume_label,
+                    relative_path,
+                    kind,
+                    size,
+                    note,
+                    tags,
+                    next
+                ],
             )?;
             next
         };
