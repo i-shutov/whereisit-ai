@@ -6,9 +6,12 @@ use ctf_sidecar::{Recipe, SourceIdentity};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant, SystemTime};
 
 const CTF_LIMIT: u64 = 2_000_000_000;
 const DB_LIMIT: u64 = 64_000_000_000;
@@ -35,6 +38,83 @@ struct Generation {
     manifest: Manifest,
     built: bool,
 }
+
+const PIN_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+const MAX_PINNED_GENERATIONS: usize = 16;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DbStamp {
+    bytes: u64,
+    modified: Option<SystemTime>,
+    created: Option<SystemTime>,
+    #[cfg(unix)]
+    dev: u64,
+    #[cfg(unix)]
+    inode: u64,
+}
+#[derive(Clone)]
+struct Pinned {
+    source: SourceIdentity,
+    stamp: DbStamp,
+    checked_at: Instant,
+}
+type PinKey = (PathBuf, String);
+static PINS: OnceLock<Mutex<HashMap<PinKey, Pinned>>> = OnceLock::new();
+fn pins() -> &'static Mutex<HashMap<PinKey, Pinned>> {
+    PINS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+fn stamp(path: &Path) -> Result<DbStamp> {
+    let meta = fs::symlink_metadata(path).map_err(io_error)?;
+    if !meta.file_type().is_file() || meta.len() > DB_LIMIT || !meta.permissions().readonly() {
+        return Err(failure(
+            "cache_changed",
+            "Pinned SQLite artifact is absent, changed or writable",
+        ));
+    }
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt;
+    Ok(DbStamp {
+        bytes: meta.len(),
+        modified: meta.modified().ok(),
+        created: meta.created().ok(),
+        #[cfg(unix)]
+        dev: meta.dev(),
+        #[cfg(unix)]
+        inode: meta.ino(),
+    })
+}
+fn remember(g: &Generation) -> Result<()> {
+    let key = (g.root.clone(), g.key.clone());
+    let db = g.root.join(&g.key).join("catalog.sqlite");
+    let stamped = stamp(&db)?;
+    let mut entries = pins()
+        .lock()
+        .map_err(|_| failure("internal", "Pinned registry is unavailable"))?;
+    if entries.len() >= MAX_PINNED_GENERATIONS && !entries.contains_key(&key) {
+        let evict = entries
+            .iter()
+            .min_by_key(|(_, p)| p.checked_at)
+            .map(|(key, _)| key.clone());
+        if let Some(evict) = evict {
+            entries.remove(&evict);
+        }
+    }
+    entries.insert(
+        key,
+        Pinned {
+            source: g.source.clone(),
+            stamp: stamped,
+            checked_at: Instant::now(),
+        },
+    );
+    Ok(())
+}
+fn forget(root: &Path, key: &str) {
+    if let Ok(mut registry) = pins().lock() {
+        registry.remove(&(root.to_path_buf(), key.to_owned()));
+    }
+}
+
 fn failure(code: &'static str, msg: &'static str) -> Error {
     Error::new(code, msg)
 }
@@ -302,6 +382,7 @@ fn ensure(v: &Value) -> Result<Generation> {
 }
 pub fn sync(v: &Value) -> Result<Value> {
     let generation = ensure(v)?;
+    remember(&generation)?;
     Ok(json!({
         "state":"ready",
         "generation":generation.key,
@@ -328,6 +409,7 @@ pub fn search(v: &Value) -> Result<Value> {
         _ => return Err(failure("invalid_request", "full_count must be boolean")),
     };
     let generation = ensure(v)?;
+    remember(&generation)?;
     let db_path = generation.root.join(&generation.key).join("catalog.sqlite");
     let catalog = Catalog::open_readonly(&db_path)?;
     let page = if full_count {
@@ -349,6 +431,142 @@ pub fn search(v: &Value) -> Result<Value> {
         "read_only":true,
         "annotations_supported":false,
         "rebuilt":generation.built,
+        "result":page
+    }))
+}
+
+/// Fast explicit mode for a resident native GUI or atlas serve process.
+/// Requires a fully verified ctf_sync in this same process first. Rehashes
+/// original CTF on every request, including same-size/restored-mtime edits.
+/// A previously verified immutable SQLite artifact is rehashed once per
+/// minute or sooner when its file identity changes. The existing ctf_search
+/// API remains the always-strict full-SHA path.
+pub fn search_pinned(v: &Value) -> Result<Value> {
+    let query = text(v, "query")?;
+    atlas_core::query::compile(query)?;
+    let offset = unsigned(v, "offset", 0)?;
+    let limit = unsigned(v, "limit", 100)?;
+    let volume_id = optional_id(v, "volume_id")?;
+    let full_count = match v.get("full_count") {
+        None => false,
+        Some(Value::Bool(value)) => *value,
+        _ => return Err(failure("invalid_request", "full_count must be boolean")),
+    };
+    let requested = text(v, "generation")?;
+    if requested.len() != 64 || !requested.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(failure(
+            "invalid_request",
+            "Expected 64-character generation digest",
+        ));
+    }
+    let source_path = path(v, "path")?;
+    let source_meta = fs::symlink_metadata(&source_path).map_err(io_error)?;
+    if !source_meta.file_type().is_file()
+        || source_meta.len() > CTF_LIMIT
+        || source_path
+            .extension()
+            .and_then(|x| x.to_str())
+            .is_none_or(|ext| !ext.eq_ignore_ascii_case("ctf"))
+    {
+        return Err(failure(
+            "ctf_limit",
+            "Expected an unlinked regular .CTF source",
+        ));
+    }
+    let original = identity(&source_path)?;
+    let used_recipe = recipe();
+    let current_key = ctf_sidecar::cache_key(&original, &used_recipe).map_err(io_error)?;
+    if requested != current_key {
+        return Err(failure(
+            "source_changed",
+            "Original CTF changed; synchronize the new source generation",
+        ));
+    }
+    let root = path(v, "cache_root")?;
+    if !fs::symlink_metadata(&root)
+        .map_err(io_error)?
+        .file_type()
+        .is_dir()
+    {
+        return Err(failure(
+            "cache_root",
+            "Pinned mirror root must be a real directory",
+        ));
+    }
+    let key: PinKey = (root.clone(), current_key.clone());
+    let pinned = pins()
+        .lock()
+        .map_err(|_| failure("internal", "Pinned registry unavailable"))?
+        .get(&key)
+        .cloned()
+        .ok_or_else(|| failure("not_pinned", "Call ctf_sync in this process first"))?;
+    if pinned.source != original {
+        forget(&root, &current_key);
+        return Err(failure(
+            "source_changed",
+            "Pinned source generation does not match",
+        ));
+    }
+    let cache_dir = root.join(&current_key);
+    let db_path = cache_dir.join("catalog.sqlite");
+    let first_stamp = stamp(&db_path)?;
+    if first_stamp != pinned.stamp {
+        forget(&root, &current_key);
+        return Err(failure(
+            "cache_changed",
+            "Pinned SQLite artifact changed; strict ctf_sync required",
+        ));
+    }
+    let mut full_cache_recheck = false;
+    if pinned.checked_at.elapsed() >= PIN_REFRESH_INTERVAL {
+        verify(&cache_dir, &original, &used_recipe)?;
+        let after_verify = stamp(&db_path)?;
+        if after_verify != first_stamp {
+            forget(&root, &current_key);
+            return Err(failure(
+                "cache_changed",
+                "SQLite artifact changed during recheck",
+            ));
+        }
+        let mut registry = pins()
+            .lock()
+            .map_err(|_| failure("internal", "Pinned registry unavailable"))?;
+        if let Some(entry) = registry.get_mut(&key) {
+            entry.checked_at = Instant::now();
+        }
+        full_cache_recheck = true;
+    }
+    let db = Catalog::open_readonly(&db_path)?;
+    let page = if full_count {
+        serde_json::to_value(db.search(query, volume_id, offset, limit)?)
+    } else {
+        serde_json::to_value(db.search_fast(query, volume_id, offset, limit)?)
+    }
+    .map_err(|_| failure("internal", "Cannot encode pinned search result"))?;
+    drop(db);
+    if stamp(&db_path)? != first_stamp {
+        forget(&root, &current_key);
+        return Err(failure(
+            "cache_changed",
+            "SQLite artifact changed during query",
+        ));
+    }
+    if identity(&source_path)? != original {
+        forget(&root, &current_key);
+        return Err(failure(
+            "source_changed",
+            "Original CTF changed during pinned query",
+        ));
+    }
+    Ok(json!({
+        "generation":current_key,
+        "source_sha256":original.sha256,
+        "read_only":true,
+        "annotations_supported":false,
+        "source_sha_checked":true,
+        "verification_mode":"pinned_cache",
+        "cache_fully_rehashed_this_query":full_cache_recheck,
+        "cache_full_revalidation_interval_seconds":PIN_REFRESH_INTERVAL.as_secs(),
         "result":page
     }))
 }

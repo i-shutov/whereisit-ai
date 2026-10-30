@@ -60,6 +60,7 @@ fn dispatch(input: &str) -> Result<Value> {
     let mut data = match op {
         "ctf_sync" => ctf_mirror::sync(&v)?,
         "ctf_search" => ctf_mirror::search(&v)?,
+        "ctf_search_pinned" => ctf_mirror::search_pinned(&v)?,
         "compact_catalog" => maintenance::compact_copy(&v)?,
         "validate_catalog" => maintenance::validate(&v)?,
         "import_ctf" => legacy::import(&mut Catalog::open(text(&v, "db")?)?, &v)?,

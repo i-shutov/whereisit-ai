@@ -1,0 +1,50 @@
+# Synthetic-only GitHub Actions; no private CTF or derived user database.
+name: Pinned CTF search native CLI and synthetic correctness
+on:
+  push:
+    branches: [feat/ctf-pinned-search-20261030]
+    paths:
+      - "crates/atlas-service/src/ctf_mirror.rs"
+      - "crates/atlas-service/src/lib.rs"
+      - "crates/atlas-service/tests/ctf_mirror_contract.rs"
+      - ".github/workflows/ctf-pinned-search.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ctf-pinned-search-${{ github.sha }}
+  cancel-in-progress: false
+jobs:
+  linux-pinned-search:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
+      - name: Strict and pinned CTF contract, formatting, Clippy
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo test --workspace --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Compile exact-source local-only atlas CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p atlas-cli
+          test "$(target/release/atlas --sqlite-version)" = 3.51.3
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p dist
+          cp target/release/atlas LICENSE THIRD_PARTY_NOTICES.md dist/
+          printf 'source_commit=%s\nos_arch=%s/%s\nsqlite=3.51.3\nprivate_user_ctf_uploaded=false\n' "$GITHUB_SHA" "$RUNNER_OS" "$RUNNER_ARCH" > dist/PROVENANCE.txt
+          (cd dist && sha256sum atlas LICENSE THIRD_PARTY_NOTICES.md PROVENANCE.txt > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pinned-ctf-local-cli-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 21
