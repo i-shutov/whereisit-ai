@@ -30,7 +30,8 @@ jobs:
       - run: |
           if test -f tools/storage_audit.py; then python3 tools/storage_audit.py --self-test; fi
           if test -f tools/storage_layout_experiment.py; then python3 tools/storage_layout_experiment.py --self-test; fi
-      - run: bash -n apps/macos/build.sh installers/macos/package.sh installers/macos/smoke-package.sh
+      - run: bash -n apps/macos/build.sh installers/macos/package.sh installers/macos/smoke-package.sh installers/macos/verify-dmg.sh installers/macos/test-verify-dmg.sh
+      - run: bash installers/macos/test-verify-dmg.sh
   windows:
     needs: test
     runs-on: windows-2022
