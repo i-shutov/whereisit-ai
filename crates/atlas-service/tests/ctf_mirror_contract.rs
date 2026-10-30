@@ -142,9 +142,17 @@ fn corrupt_cache_is_rejected_without_automatic_deletion_or_source_write() {
     assert_eq!(sync["ok"], true, "{sync}");
     let key = sync["data"]["generation"].as_str().unwrap();
     let db = root.join(key).join("catalog.sqlite");
-    let mut perms = fs::metadata(&db).unwrap().permissions();
-    perms.set_readonly(false);
-    fs::set_permissions(&db, perms).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&db, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    #[cfg(windows)]
+    {
+        let mut perms = fs::metadata(&db).unwrap().permissions();
+        perms.set_readonly(false);
+        fs::set_permissions(&db, perms).unwrap();
+    }
     fs::write(&db, b"changed SQLite mirror").unwrap();
     let result = service(json!({"op":"ctf_sync","path":source,"cache_root":root}));
     assert_eq!(result["ok"], false, "{result}");
