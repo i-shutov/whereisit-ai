@@ -163,6 +163,24 @@ fn activated_projection_is_reversible_and_preserves_originals() {
         "{missing_intent}"
     );
 
+    // No implicit activation is recorded just because the user selected a
+    // structural candidate. Both the new audit status fields are nullable.
+    let before = invoke(cmd(
+        "ctf_annotations_preview_pinned",
+        &source,
+        &cache,
+        &second,
+        &store,
+    ));
+    let before_row = before["data"]["result"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["old_entry_id"] == old_id)
+        .unwrap();
+    assert_eq!(before_row["activation_state"], Value::Null);
+    assert_eq!(before_row["activation_target_entry_id"], Value::Null);
+
     let saved = invoke(activation.clone());
     assert_eq!(saved["ok"], true, "{saved}");
     assert_eq!(
@@ -178,6 +196,21 @@ fn activated_projection_is_reversible_and_preserves_originals() {
         invoke(activation.clone())["error"]["code"],
         "annotation_activation_conflict"
     );
+    let active_preview = invoke(cmd(
+        "ctf_annotations_preview_pinned",
+        &source,
+        &cache,
+        &second,
+        &store,
+    ));
+    let active_row = active_preview["data"]["result"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["old_entry_id"] == old_id)
+        .unwrap();
+    assert_eq!(active_row["activation_state"], "active");
+    assert_eq!(active_row["activation_target_entry_id"], new_id);
 
     let listed = invoke(cmd(
         "ctf_annotations_activated_list_pinned",
@@ -272,6 +305,21 @@ fn activated_projection_is_reversible_and_preserves_originals() {
         invoke(revocation)["error"]["code"],
         "annotation_activation_conflict"
     );
+    let revoked_preview = invoke(cmd(
+        "ctf_annotations_preview_pinned",
+        &source,
+        &cache,
+        &second,
+        &store,
+    ));
+    let revoked_row = revoked_preview["data"]["result"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["old_entry_id"] == old_id)
+        .unwrap();
+    assert_eq!(revoked_row["activation_state"], "revoked");
+    assert_eq!(revoked_row["activation_target_entry_id"], new_id);
     // The old record was explicitly edited after activation: revision CAS
     // rejects a replay before the revoked-history check is consulted.
     assert_eq!(
