@@ -140,7 +140,10 @@ fn twenty_record_pages_are_complete_repeatable_and_source_pinned() {
     page["offset"] = json!(40);
     let past_end = invoke(page.clone());
     assert_eq!(past_end["ok"], true, "{past_end}");
-    assert!(past_end["data"]["result"]["items"].as_array().unwrap().is_empty());
+    assert!(past_end["data"]["result"]["items"]
+        .as_array()
+        .unwrap()
+        .is_empty());
     page["offset"] = json!(0);
     let repeated = invoke(page.clone());
     assert_eq!(repeated["data"]["result"]["items"], first_result["items"]);
