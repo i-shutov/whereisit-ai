@@ -1,6 +1,6 @@
 //! Export a verified linked CTF snapshot without writing the original or its mirror.
 //! Publication is deliberately no-clobber: an existing output is never replaced.
-use crate::{ctf_mirror, exports, selection, text};
+use crate::{ctf_duplicate_export, ctf_mirror, exports, selection, text};
 use atlas_core::{Error, Result};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -51,15 +51,21 @@ pub(crate) fn export(v: &Value) -> Result<Value> {
         ));
     }
     // Validate the full Boolean query and scope before hashing a large CTF.
-    if selection::select(v, false)?.duplicate {
-        return Err(invalid("Linked CTF duplicate export is not accepted"));
-    }
+    let ordinary_selection = selection::select(v, false)?;
     let mode = v.get("mode").and_then(Value::as_str).unwrap_or("search");
-    if !matches!(mode, "search" | "children" | "all") {
+    if !matches!(mode, "search" | "children" | "all" | "duplicates") {
         return Err(invalid(
-            "Linked CTF export supports search, children or all",
+            "Linked CTF export supports search, children, all or duplicates",
         ));
     }
+    let duplicate_plan = if mode == "duplicates" {
+        Some(ctf_duplicate_export::Plan::parse(v)?)
+    } else {
+        if ordinary_selection.duplicate {
+            return Err(invalid("Invalid linked CTF export selection"));
+        }
+        None
+    };
     let source = PathBuf::from(text(v, "path")?);
     let output = PathBuf::from(text(v, "output")?);
     if output
@@ -108,8 +114,13 @@ pub(crate) fn export(v: &Value) -> Result<Value> {
     args["path"] = json!(stage.to_string_lossy().as_ref());
     args["db"] = json!(cache.join(generation).join("catalog.sqlite"));
     args["overwrite"] = json!(true);
-    let mut verified =
-        ctf_mirror::read_pinned(v, |catalog| exports::export(catalog, &args, operation))?;
+    let mut verified = ctf_mirror::read_pinned(v, |catalog| {
+        if let Some(plan) = &duplicate_plan {
+            exports::export_pinned_selected(catalog, &args, operation, plan.selection(catalog)?)
+        } else {
+            exports::export(catalog, &args, operation)
+        }
+    })?;
 
     let (sha256, bytes) = digest(&stage)?;
     if verified["result"]["bytes"].as_u64() != Some(bytes) || !verified["result"]["rows"].is_u64() {
@@ -132,5 +143,10 @@ pub(crate) fn export(v: &Value) -> Result<Value> {
     verified["result"]["source_snapshot_verified_before_publication"] = json!(true);
     verified["result"]["original_ctf_read_only"] = json!(true);
     verified["result"]["output_no_clobber"] = json!(true);
+    if let Some(plan) = &duplicate_plan {
+        verified["result"]["verified"] = json!(false);
+        verified["result"]["basis"] = json!("metadata_candidates");
+        verified["result"]["duplicate_mode"] = json!(plan.mode);
+    }
     Ok(verified)
 }
