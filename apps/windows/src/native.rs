@@ -35,6 +35,7 @@ const DUP_MODE: usize = 112;
 const EXPORT_FORMAT: usize = 113;
 const LINK_CTF: usize = 114;
 const ANNOTATION_PREVIEW: usize = 115;
+const ANNOTATION_PAGE_SIZE: usize = 20;
 const DISKS: usize = 120;
 const FILES: usize = 121;
 const CATEGORIES: usize = 122;
@@ -110,8 +111,21 @@ fn default_db() -> String {
         })
 }
 
-// Read-only presentation only. No candidate is accepted by rendering this summary.
-fn annotation_preview_text(data: &Value) -> String {
+// Pagination is purely navigational: a page never confirms an annotation.
+fn annotation_page_controls(data: &Value, offset: usize) -> (bool, bool) {
+    let preview = &data["result"];
+    if preview["state"] != "generation_conflict" {
+        return (false, false);
+    }
+    let total = preview["total"].as_u64().unwrap_or(0);
+    let count = preview["items"].as_array().map_or(0, Vec::len);
+    let previous = offset > 0;
+    let next = count > 0 && (offset as u64).saturating_add(count as u64) < total;
+    (previous, next)
+}
+
+// Render only a bounded local preview: opaque CTF and private notes never enter logs.
+fn annotation_preview_text(data: &Value, offset: usize) -> String {
     let preview = &data["result"];
     let state = preview["state"].as_str().unwrap_or("unavailable");
     let total = preview["total"].as_u64().unwrap_or(0);
@@ -119,7 +133,10 @@ fn annotation_preview_text(data: &Value) -> String {
         format!("Linked CTF annotation review (read-only)\nState: {state}\nSaved notes: {total}\n");
     if state == "generation_conflict" {
         if let Some(rows) = preview["items"].as_array() {
-            for row in rows.iter().take(20) {
+            let start = if rows.is_empty() { 0 } else { offset + 1 };
+            let end = offset.saturating_add(rows.len());
+            message.push_str(&format!("Rows {start}–{end} of {total} (20 per page)\n"));
+            for row in rows.iter().take(ANNOTATION_PAGE_SIZE) {
                 let old_id = row["old_entry_id"].as_i64().unwrap_or(-1);
                 let candidate_state = row["candidate_state"].as_str().unwrap_or("unknown");
                 let count = row["candidate_count_lower_bound"].as_u64().unwrap_or(0);
@@ -139,45 +156,65 @@ fn annotation_preview_text(data: &Value) -> String {
                     "\nOld ID {old_id}: {candidate_state}, candidates {count}{suffix}{stale}"
                 ));
             }
-            if total > rows.len() as u64 {
-                message.push_str("\nOnly the first 20 notes are shown.");
-            }
         }
     } else if state == "current_generation" {
         message.push_str("\nNo cross-generation reconciliation is required.");
     } else if state == "uninitialized" {
         message.push_str("\nNo user annotation database has been initialized.");
     }
+    let (previous, next) = annotation_page_controls(data, offset);
+    if previous || next {
+        message.push_str(&format!(
+            "\n\nYES = {}  |  NO = {}  |  CANCEL = close.",
+            if next { "next page" } else { "not available" },
+            if previous { "previous page" } else { "not available" }
+        ));
+    }
     message.push_str(
         "\n\nPREVIEW ONLY. No candidate is confirmed, activated, or moved. \
-         Close and review any conflicts before taking action.",
+         Every page re-verifies the external CTF generation.",
     );
     message
 }
 
 #[cfg(test)]
 mod annotation_preview_tests {
-    use super::annotation_preview_text;
+    use super::{annotation_page_controls, annotation_preview_text};
     use serde_json::json;
 
     #[test]
     fn ambiguity_and_stale_confirmation_remain_visible() {
-        let result = json!({"result":{"state":"generation_conflict","total":2,
+        let result = json!({"result":{"state":"generation_conflict","total":21,
             "items":[{"old_entry_id":4,"candidate_state":"ambiguous",
                 "candidate_count_lower_bound":6,"candidates_truncated":true,
                 "confirmation_revision_conflict":true}]}});
-        let text = annotation_preview_text(&result);
+        let text = annotation_preview_text(&result, 0);
         assert!(text.contains("ambiguous, candidates 6+ [stale confirmation]"));
-        assert!(text.contains("Only the first 20 notes"));
+        assert!(text.contains("Rows 1–1 of 21"));
         assert!(text.contains("No candidate is confirmed"));
+        assert_eq!(annotation_page_controls(&result, 0), (false, true));
     }
 
     #[test]
     fn matching_generation_never_implies_approval() {
         let result = json!({"result":{"state":"current_generation","total":1,"items":[]}});
-        let text = annotation_preview_text(&result);
+        let text = annotation_preview_text(&result, 0);
         assert!(text.contains("No cross-generation reconciliation"));
         assert!(text.contains("PREVIEW ONLY"));
+        assert_eq!(annotation_page_controls(&result, 0), (false, false));
+    }
+
+    #[test]
+    fn middle_last_and_empty_pages_are_bounded() {
+        let middle = json!({"result":{"state":"generation_conflict","total":43,
+            "items": vec![json!({"old_entry_id":1}); 20]}});
+        assert_eq!(annotation_page_controls(&middle, 20), (true, true));
+        assert!(annotation_preview_text(&middle, 20).contains("Rows 21–40 of 43"));
+        let last = json!({"result":{"state":"generation_conflict","total":43,
+            "items": vec![json!({"old_entry_id":1}); 3]}});
+        assert_eq!(annotation_page_controls(&last, 40), (true, false));
+        let empty = json!({"result":{"state":"generation_conflict","total":43,"items":[]}});
+        assert_eq!(annotation_page_controls(&empty, 60), (true, false));
     }
 }
 
@@ -206,6 +243,8 @@ struct App {
     linked_ctf: Option<String>,
     linked_generation: Option<String>,
     pending_link_path: Option<String>,
+    annotation_db: Option<String>,
+    annotation_offset: usize,
     volumes: Vec<Value>,
     entries: Vec<Value>,
     volume: Option<i64>,
@@ -243,6 +282,8 @@ impl App {
             linked_ctf: None,
             linked_generation: None,
             pending_link_path: None,
+            annotation_db: None,
+            annotation_offset: 0,
             volumes: vec![],
             entries: vec![],
             volume: None,
@@ -277,6 +318,18 @@ impl App {
     fn linked_mode(&self) -> bool {
         self.linked_ctf.is_some() && self.linked_generation.is_some()
     }
+    fn request_annotation_page(&mut self) {
+        let Some(store) = self.annotation_db.as_ref().cloned() else {
+            return;
+        };
+        let Some(mut pinned) = self.linked_request("ctf_annotations_preview_pinned") else {
+            return;
+        };
+        pinned["annotation_db"] = json!(store);
+        pinned["offset"] = json!(self.annotation_offset);
+        pinned["limit"] = json!(ANNOTATION_PAGE_SIZE);
+        self.call("annotation_preview", pinned);
+    }
     fn call(&mut self, tag: &'static str, mut request: Value) {
         request["db"] = json!(self.db);
         let database = self.db.clone();
@@ -299,6 +352,8 @@ impl App {
         self.linked_ctf = None;
         self.linked_generation = None;
         self.pending_link_path = None;
+        self.annotation_db = None;
+        self.annotation_offset = 0;
         let _ = std::fs::create_dir_all(config_dir());
         self.generation += 1;
         self.volumes.clear();
@@ -428,14 +483,32 @@ impl App {
             }
             match reply.tag {
                 "annotation_preview" => {
-                    let summary = annotation_preview_text(data);
-                    MessageBoxW(
+                    let page_offset = self.annotation_offset;
+                    let (previous, next) = annotation_page_controls(data, page_offset);
+                    let summary = annotation_preview_text(data, page_offset);
+                    let response = MessageBoxW(
                         self.hwnd,
                         wide(&summary).as_ptr(),
                         wide("Review CTF annotations — no changes").as_ptr(),
-                        MB_OK | MB_ICONINFORMATION,
+                        if previous || next {
+                            MB_YESNOCANCEL | MB_ICONINFORMATION
+                        } else {
+                            MB_OK | MB_ICONINFORMATION
+                        },
                     );
-                    self.status("Annotation conflict preview completed; nothing was changed.");
+                    if response == IDYES && next {
+                        self.annotation_offset += ANNOTATION_PAGE_SIZE;
+                        self.status("Re-verifying next read-only notes page…");
+                        self.request_annotation_page();
+                    } else if response == IDNO && previous {
+                        self.annotation_offset = self
+                            .annotation_offset
+                            .saturating_sub(ANNOTATION_PAGE_SIZE);
+                        self.status("Re-verifying previous read-only notes page…");
+                        self.request_annotation_page();
+                    } else {
+                        self.status("Annotation conflict preview closed; nothing was changed.");
+                    }
                 }
                 "linked_sync" => {
                     let path = self.pending_link_path.take();
@@ -443,6 +516,8 @@ impl App {
                     if let (Some(path), Some(generation)) = (path, generation) {
                         self.linked_ctf = Some(path);
                         self.linked_generation = Some(generation);
+                        self.annotation_db = None;
+                        self.annotation_offset = 0;
                         SendMessageW(self.export_format, CB_SETCURSEL, 0, 0);
                         self.volume = None;
                         self.stack = vec![(None, "/".into())];
@@ -850,15 +925,10 @@ impl App {
             }
             ANNOTATION_PREVIEW if self.linked_mode() && self.job.is_none() && self.pending == 0 => {
                 if let Some(path) = file_dialog(self.hwnd, false, "annotation") {
-                    let Some(mut pinned) = self.linked_request("ctf_annotations_preview_pinned")
-                    else {
-                        return;
-                    };
-                    pinned["annotation_db"] = json!(path);
-                    pinned["offset"] = json!(0);
-                    pinned["limit"] = json!(20);
+                    self.annotation_db = Some(path);
+                    self.annotation_offset = 0;
                     self.status("Verifying CTF generation and annotation conflicts…");
-                    self.call("annotation_preview", pinned);
+                    self.request_annotation_page();
                 }
             }
             OPEN | NEW | SCAN | IMPORT | LINK_CTF | EXPORT
