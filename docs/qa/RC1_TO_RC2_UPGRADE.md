@@ -60,3 +60,34 @@ signed/notarized installer acceptance remain separate.
 Do not mark stable `1.0` ready merely because these tests pass. The published
 `1.0.0-rc.2` files remain immutable: any defect discovered here must be
 fixed in the next new RC, never by overwriting an existing asset or tag.
+
+## Executed checkpoint — 2026-10-30
+
+On exact source commit `4ec54c8386248c4f45172330648be53b03c8f202`:
+[GitHub Actions run 41020945098](https://github.com/i-shutov/whereisit-ai/actions/runs/41020945098).
+
+| Platform | Actual installed RC1→RC2 | Generated catalog | User-data preservation | Result |
+|---|---|---|---|---|
+| Windows Server 2022 x64 CI | Inno Setup upgrade | 5 entries, 1 Unicode category | DB byte hash before/after installer, CTF placeholder, safe uninstall | **PASS** |
+| macOS 15 ARM64 CI | PKG in-place upgrade | 5 entries, 1 Unicode category | DB byte hash, original file, category+search results, uninstall | **PASS** |
+| macOS 15 Intel CI | PKG in-place upgrade | 5 entries, 1 Unicode category | Same invariants, installed app build 10001→10002 | **PASS** |
+
+All platforms validated `SQLite quick_check=ok`, exact category/search
+results and preserved externally stored catalog. The old published RC1
+packages were downloaded from the official release and validated against
+hard-pinned SHA-256 before execution. The rebuilt RC2 packages and code were
+bound to exact source SHA. No real user data or actual original CTF were used.
+
+Evidence artifacts, available on the run page:
+
+- `upgrade-Windows-x64-4ec54c8386248c4f45172330648be53b03c8f202`,
+  artifact SHA-256 `0dcb81297cd83b6fe42e7c5698eddf701b5e25624a1099618d79b5811cca3839`.
+- `upgrade-macos-15-4ec54c8386248c4f45172330648be53b03c8f202`,
+  artifact SHA-256 `54e0064b249db0be5868105eb75aebda49972df5e850e26a56b4298094446d88`.
+- `upgrade-macos-15-intel-4ec54c8386248c4f45172330648be53b03c8f202`,
+  artifact SHA-256 `82108b4d714168381bd437f72ccc3d2ce94d23ab721731dfeacba397b314aaeb`.
+
+**Acceptance update:** the narrowly scoped synthetic catalog continuity
+and safe in-place RC1→RC2 upgrade test is complete on all three CI platforms.
+This does not close manual Windows 10/11 and macOS 13 application GUI, code
+signing/notarization, CTF modified-format or full system power-loss gates.
