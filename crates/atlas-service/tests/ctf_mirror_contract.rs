@@ -135,6 +135,10 @@ fn invalid_query_never_creates_an_expensive_mirror() {
     assert_eq!(fs::read(&source).unwrap(), original);
 }
 
+// This test must deliberately corrupt a read-only cache artifact. On Windows,
+// std::fs has no Unix-style permission bit API; clearing its read-only flag
+// is required solely for the temporary synthetic fixture, never user data.
+#[allow(clippy::permissions_set_readonly_false)]
 #[test]
 fn corrupt_cache_is_rejected_without_automatic_deletion_or_source_write() {
     let dir = tempfile::tempdir().unwrap();
