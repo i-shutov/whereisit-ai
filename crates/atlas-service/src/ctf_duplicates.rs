@@ -7,7 +7,9 @@ use atlas_core::{Error, Result};
 use rusqlite::types::Value as SqlValue;
 use serde_json::{json, Value};
 
-pub fn duplicates(v: &Value) -> Result<Value> {
+/// Canonical grouping specification shared by linked duplicate *pages* and
+/// linked duplicate *exports*, so they cannot silently disagree on membership.
+pub(crate) fn grouping(v: &Value) -> Result<(&'static str, &'static str, &'static str)> {
     let mode = match v.get("duplicate_mode") {
         None => "name_size",
         Some(Value::String(s)) => s.as_str(),
@@ -18,23 +20,23 @@ pub fn duplicates(v: &Value) -> Result<Value> {
             ))
         }
     };
-    if mode == "hash" {
-        return Err(Error::new(
+    match mode {
+        "name_size" => Ok(("name_size", "name_norm,size", "name_norm || ':' || size")),
+        "name" => Ok(("name", "name_norm", "name_norm")),
+        "size" => Ok(("size", "size", "CAST(size AS TEXT)")),
+        "hash" => Err(Error::new(
             "unsupported",
             "File content hashes are not available for offline CTF entries",
-        ));
+        )),
+        _ => Err(Error::new(
+            "invalid_request",
+            "Duplicate mode must be name_size, name or size",
+        )),
     }
-    let (partition, label) = match mode {
-        "name_size" => ("name_norm,size", "name_norm || ':' || size"),
-        "name" => ("name_norm", "name_norm"),
-        "size" => ("size", "CAST(size AS TEXT)"),
-        _ => {
-            return Err(Error::new(
-                "invalid_request",
-                "Duplicate mode must be name_size, name or size",
-            ))
-        }
-    };
+}
+
+pub fn duplicates(v: &Value) -> Result<Value> {
+    let (mode, partition, label) = grouping(v)?;
     // User query errors must fail before hashing any potentially huge source.
     let query = match v.get("query") {
         None => "",
