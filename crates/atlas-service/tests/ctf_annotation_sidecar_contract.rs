@@ -316,8 +316,7 @@ fn cache_path_and_foreign_sqlite_are_never_annotation_destinations() {
         hardlink["tags"] = json!("");
         let denied = invoke(hardlink);
         assert_eq!(
-            denied["error"]["code"],
-            "unsafe_annotation_store",
+            denied["error"]["code"], "unsafe_annotation_store",
             "{denied}"
         );
         let original = fs::read(&source).unwrap();
