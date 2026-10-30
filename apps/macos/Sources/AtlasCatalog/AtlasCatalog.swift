@@ -139,6 +139,7 @@ enum Bridge {
     }
     func initialize() {
         linkedCTFPath = nil; linkedGeneration = nil
+        annotationReview = nil; showingAnnotationReview = false
         generation += 1; volumeID = nil; stack = [(nil, "/")]; entries = []; query = ""; appliedQuery = ""; showingDuplicates = false; offset = 0
         volumes = []; categories = []; categoryID = nil; selection = nil; total = 0; hasMore = false
         status = "Opening catalog…"
@@ -269,6 +270,7 @@ enum Bridge {
     }
     func synchronizeLinkedCTF(_ source: String) {
         guard mutationAllowed else { return }
+        annotationReview = nil; showingAnnotationReview = false
         job = "linked-sync"
         status = "Verifying external CTF and its derived index…"
         request(["op": "ctf_sync", "path": source, "cache_root": linkedCacheRoot],

@@ -115,9 +115,8 @@ fn annotation_preview_text(data: &Value) -> String {
     let preview = &data["result"];
     let state = preview["state"].as_str().unwrap_or("unavailable");
     let total = preview["total"].as_u64().unwrap_or(0);
-    let mut message = format!(
-        "Linked CTF annotation review (read-only)\nState: {state}\nSaved notes: {total}\n"
-    );
+    let mut message =
+        format!("Linked CTF annotation review (read-only)\nState: {state}\nSaved notes: {total}\n");
     if state == "generation_conflict" {
         if let Some(rows) = preview["items"].as_array() {
             for row in rows.iter().take(20) {
@@ -151,7 +150,7 @@ fn annotation_preview_text(data: &Value) -> String {
     }
     message.push_str(
         "\n\nPREVIEW ONLY. No candidate is confirmed, activated, or moved. \
-         Close and review any conflicts before taking action."
+         Close and review any conflicts before taking action.",
     );
     message
 }
@@ -849,12 +848,9 @@ impl App {
                     self.call("cancel", json!({"op":"cancel","job_id":job}));
                 }
             }
-            ANNOTATION_PREVIEW
-                if self.linked_mode() && self.job.is_none() && self.pending == 0 =>
-            {
+            ANNOTATION_PREVIEW if self.linked_mode() && self.job.is_none() && self.pending == 0 => {
                 if let Some(path) = file_dialog(self.hwnd, false, "annotation") {
-                    let Some(mut pinned) =
-                        self.linked_request("ctf_annotations_preview_pinned")
+                    let Some(mut pinned) = self.linked_request("ctf_annotations_preview_pinned")
                     else {
                         return;
                     };
