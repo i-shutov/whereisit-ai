@@ -113,13 +113,17 @@ struct VerifiedOverlayPage: Decodable {
     let total: Int64
     let conflicts: Int64
     let items: [VerifiedAnnotation]
+    let offset: Int64?
+    let limit: Int64?
     let read_only_source: Bool?
     let unresolved_unconfirmed_annotations_not_projected: Bool?
-    var isDisplaySafe: Bool {
+    func isDisplaySafe(expectedOffset: Int) -> Bool {
+        guard expectedOffset >= 0 else { return false }
         if state == "uninitialized" || state == "no_cross_generation_activations" {
             return total == 0 && conflicts == 0 && items.isEmpty
         }
         return (state == "partial_activation" || state == "activation_conflict")
+            && offset == Int64(expectedOffset) && limit == 20
             && read_only_source == true
             && unresolved_unconfirmed_annotations_not_projected == true
             && total >= 0 && conflicts >= 0 && items.count <= 20
@@ -197,10 +201,10 @@ enum Bridge {
         return Int64(annotationReviewOffset + review.items.count) < review.total
     }
     var verifiedOverlayHasPrevious: Bool {
-        verifiedOverlay?.isDisplaySafe == true && verifiedOverlayOffset > 0
+        verifiedOverlay?.isDisplaySafe(expectedOffset: verifiedOverlayOffset) == true && verifiedOverlayOffset > 0
     }
     var verifiedOverlayHasNext: Bool {
-        guard let page = verifiedOverlay, page.isDisplaySafe, !page.items.isEmpty else { return false }
+        guard let page = verifiedOverlay, page.isDisplaySafe(expectedOffset: verifiedOverlayOffset), !page.items.isEmpty else { return false }
         return Int64(verifiedOverlayOffset + page.items.count) < page.total
     }
     var linkedGeneration: String?
@@ -477,8 +481,9 @@ enum Bridge {
     func loadVerifiedOverlayPage(offset: Int) {
         guard showingAnnotationReview, linkedMode, mutationAllowed,
               let fields = linkedFields(), let store = annotationReviewStore,
-              offset >= 0, !annotationConfirmationBusy, !annotationReviewLoading else { return }
-        if let prior = verifiedOverlay, prior.isDisplaySafe,
+              offset >= 0, !annotationConfirmationBusy, !annotationReviewLoading,
+              !verifiedOverlayLoading else { return }
+        if let prior = verifiedOverlay, prior.isDisplaySafe(expectedOffset: verifiedOverlayOffset),
            offset > 0 && Int64(offset) >= prior.total { return }
         let session = annotationReviewSession
         let token = generation
@@ -498,10 +503,10 @@ enum Bridge {
         request(args, as: LinkedCTFResult<VerifiedOverlayPage>.self,
                 generationToken: token) { [weak self] response in
             guard let self, self.annotationReviewSession == session,
-                  self.annotationReviewStore == store,
+                  self.annotationReviewStore == store, self.verifiedOverlayOffset == offset,
                   self.showingAnnotationReview, self.showingVerifiedOverlay else { return }
             self.verifiedOverlayLoading = false
-            if let page = response?.result, page.isDisplaySafe {
+            if let page = response?.result, page.isDisplaySafe(expectedOffset: offset) {
                 self.verifiedOverlay = page
                 self.status = "\(page.total) verified active notes; \(page.conflicts) stale/conflicting audits excluded."
             } else {
@@ -851,7 +856,7 @@ enum Bridge {
                         .font(.caption).foregroundStyle(.secondary)
                     if model.verifiedOverlayLoading {
                         ProgressView("Rechecking source generation and old-note revisions…")
-                    } else if let page = model.verifiedOverlay, page.isDisplaySafe {
+                    } else if let page = model.verifiedOverlay, page.isDisplaySafe(expectedOffset: model.verifiedOverlayOffset) {
                         Text("Valid live overlays: \(page.total) • stale/conflicting active audits excluded: \(page.conflicts)")
                             .font(.subheadline).monospacedDigit()
                         Text("Unconfirmed or unresolved mappings are excluded; this API does not count them.")
