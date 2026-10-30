@@ -1,6 +1,7 @@
 //! Shared command service for native clients and CLI.
 use atlas_core::{Catalog, Error, Result};
 use serde_json::{json, Value};
+mod ctf_export;
 mod ctf_mirror;
 #[path = "../ctf_sidecar/mod.rs"]
 mod ctf_sidecar;
@@ -63,6 +64,7 @@ fn dispatch(input: &str) -> Result<Value> {
         "ctf_search_pinned" => ctf_mirror::search_pinned(&v)?,
         "ctf_volumes_pinned" => ctf_mirror::volumes_pinned(&v)?,
         "ctf_children_pinned" => ctf_mirror::children_pinned(&v)?,
+        "ctf_export_pinned" => ctf_export::export(&v)?,
         "compact_catalog" => maintenance::compact_copy(&v)?,
         "validate_catalog" => maintenance::validate(&v)?,
         "import_ctf" => legacy::import(&mut Catalog::open(text(&v, "db")?)?, &v)?,

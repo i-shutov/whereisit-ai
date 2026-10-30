@@ -9,10 +9,14 @@ The native UI now has two explicit catalog modes:
    The application displays disks with ctf_volumes_pinned, browses folders
    with ctf_children_pinned and searches with ctf_search_pinned.
 
-Linked mode does NOT write the source CTF, does not allow native category/tag
-assignment, scanning, imports or export from the disposable mirror. A distinct
-future annotation overlay is mandatory before permitting those edits. The
-original CTF can still be opened and saved independently in WhereIsIt.
+Linked mode does NOT write the source CTF and does not allow native category/tag
+assignment, scanning, importing to a disposable mirror, duplicate grouping or
+CTF output. It DOES permit **derived CSV/Parquet reports** of selected search
+results or recursive folders, written to a *new* file only with a source-hash-
+pinned read-only mirror. A distinct durable annotation overlay is mandatory
+before permitting user metadata edits. The original CTF may still be saved
+independently in WhereIsIt; any external change invalidates pinned operations.
+See [CTF_PINNED_EXPORT.md](CTF_PINNED_EXPORT.md) for failure/no-clobber rules.
 
 Every linked page checks the original CTF SHA-256 before and after the read.
 An external save causes source_changed, and the client must run ctf_sync for
@@ -26,11 +30,13 @@ so source synchronization executes off the UI thread.
 
 - Windows: compact Link CTF action alongside Import CTF; disk pane, folder
   double-click and query results use read-only CTF-backed pinned APIs. Open or
-  New local catalog switches back to editable SQLite. Categories/duplicates
-  and export are disabled while linked.
+  New local catalog switches back to editable SQLite. Category edits,
+  duplicates and CTF exports are disabled; CSV/Parquet reports are allowed
+  only as new files through the verified pinned export API.
 - macOS: compact CTF menu groups Link read-only, Refresh linked CTF and Import
   copy. Disk sidebar, folder navigation, global search and status line reflect
-  linked mode; unsafe editing/export actions are disabled.
+  linked mode; unsafe editing/CTF-export actions are disabled. CSV/Parquet
+  report export remains available, without modifying the linked CTF.
 - No original CTF file is written. The initial linked generation must be
   explicitly confirmed by the native sync API; never reuse arbitrary stale
   source offsets or category IDs.

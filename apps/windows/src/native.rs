@@ -331,7 +331,10 @@ impl App {
                 }
                 continue;
             }
-            if matches!(reply.tag, "mutation" | "maintenance" | "linked_sync") {
+            if matches!(
+                reply.tag,
+                "mutation" | "maintenance" | "linked_sync" | "linked_export"
+            ) {
                 self.job = None;
             }
             if reply.tag == "rows" && reply.generation != self.generation {
@@ -351,6 +354,7 @@ impl App {
                     if let (Some(path), Some(generation)) = (path, generation) {
                         self.linked_ctf = Some(path);
                         self.linked_generation = Some(generation);
+                        SendMessageW(self.export_format, CB_SETCURSEL, 0, 0);
                         self.volume = None;
                         self.stack = vec![(None, "/".into())];
                         self.query.clear();
@@ -458,6 +462,12 @@ impl App {
                     self.status("Operation completed.");
                     self.refresh();
                 }
+                "linked_export" => {
+                    let rows = data["result"]["rows"].as_u64().unwrap_or(0);
+                    self.status(&format!(
+                        "Verified linked CTF export: {rows} rows; source unchanged."
+                    ));
+                }
                 _ => {}
             }
         }
@@ -469,7 +479,10 @@ impl App {
                 } else if [OPEN, NEW, SCAN, IMPORT, LINK_CTF, EXPORT].contains(command) {
                     (self.job.is_none()
                         && self.pending == 0
-                        && (self.linked_ctf.is_none() || [OPEN, NEW, LINK_CTF].contains(command)))
+                        && (!self.linked_mode()
+                            || [OPEN, NEW, LINK_CTF].contains(command)
+                            || (*command == EXPORT
+                                && SendMessageW(self.export_format, CB_GETCURSEL, 0, 0) != 2)))
                         as i32
                 } else if [
                     CATEGORY_FILTER,
@@ -487,7 +500,7 @@ impl App {
                 },
             );
         }
-        EnableWindow(self.export_format, (!self.linked_mode()) as i32);
+        EnableWindow(self.export_format, 1);
         EnableWindow(self.category_list, (!self.linked_mode()) as i32);
         EnableWindow(self.category_name, (!self.linked_mode()) as i32);
     }
@@ -753,8 +766,17 @@ impl App {
             OPEN | NEW | SCAN | IMPORT | LINK_CTF | EXPORT
                 if self.job.is_none() && self.pending == 0 =>
             {
-                if self.linked_mode() && [SCAN, IMPORT, EXPORT].contains(&command) {
+                if self.linked_mode() && [SCAN, IMPORT].contains(&command) {
                     self.status("Linked CTF is read-only; open a writable SQLite catalog first.");
+                    return;
+                }
+                if self.linked_mode()
+                    && command == EXPORT
+                    && SendMessageW(self.export_format, CB_GETCURSEL, 0, 0) == 2
+                {
+                    self.status(
+                        "Linked CTF supports only CSV/Parquet export; original stays read-only.",
+                    );
                     return;
                 }
                 if command == SCAN {
@@ -826,7 +848,32 @@ impl App {
                                     _ => "export_ctf",
                                 }
                             };
-                            self.call("mutation",json!({"op":operation,"path":path,"overwrite":command==EXPORT,"mode":if self.duplicates {"duplicates"} else if self.query.is_empty()&&self.volume.is_some(){"children"}else{"search"},"query":self.query,"volume_id":self.volume,"parent_id":self.stack.last().and_then(|p|p.0),"duplicate_mode":self.applied_duplicate_mode,"recursive":true}));
+                            if command == EXPORT && self.linked_mode() {
+                                let Some(mut linked) = self.linked_request("ctf_export_pinned")
+                                else {
+                                    self.job = None;
+                                    self.status("Linked generation is unavailable; refresh CTF.");
+                                    return;
+                                };
+                                linked["output"] = json!(path);
+                                linked["format"] = json!(if operation == "export_csv" {
+                                    "csv"
+                                } else {
+                                    "parquet"
+                                });
+                                linked["mode"] =
+                                    json!(if self.query.is_empty() && self.volume.is_some() {
+                                        "children"
+                                    } else {
+                                        "search"
+                                    });
+                                linked["query"] = json!(self.query);
+                                linked["volume_id"] = json!(self.volume);
+                                linked["parent_id"] = json!(self.stack.last().and_then(|p| p.0));
+                                self.call("linked_export", linked);
+                            } else {
+                                self.call("mutation", json!({"op":operation,"path":path,"overwrite":command==EXPORT,"mode":if self.duplicates {"duplicates"} else if self.query.is_empty()&&self.volume.is_some(){"children"}else{"search"},"query":self.query,"volume_id":self.volume,"parent_id":self.stack.last().and_then(|p|p.0),"duplicate_mode":self.applied_duplicate_mode,"recursive":true}));
+                            }
                         }
                         _ => {}
                     }
