@@ -201,7 +201,10 @@ fn activated_projection_is_reversible_and_preserves_originals() {
 
     let mut paged = cmd(
         "ctf_annotations_activated_list_pinned",
-        &source, &cache, &second, &store,
+        &source,
+        &cache,
+        &second,
+        &store,
     );
     paged["offset"] = json!(1);
     let page = invoke(paged);
@@ -212,7 +215,13 @@ fn activated_projection_is_reversible_and_preserves_originals() {
     // rather than silently projecting a stale private note.
     fs::write(&source, &old_ctf).unwrap();
     assert_eq!(sync(&source, &cache), first);
-    let mut edit = cmd("ctf_annotations_set_pinned", &source, &cache, &first, &store);
+    let mut edit = cmd(
+        "ctf_annotations_set_pinned",
+        &source,
+        &cache,
+        &first,
+        &store,
+    );
     edit["entry_id"] = json!(old_id);
     edit["expected_revision"] = json!(1);
     edit["note"] = json!("newer synthetic note");
@@ -221,7 +230,11 @@ fn activated_projection_is_reversible_and_preserves_originals() {
     fs::write(&source, &new_ctf).unwrap();
     assert_eq!(sync(&source, &cache), second);
     let conflicted = invoke(cmd(
-        "ctf_annotations_activated_list_pinned", &source, &cache, &second, &store,
+        "ctf_annotations_activated_list_pinned",
+        &source,
+        &cache,
+        &second,
+        &store,
     ));
     assert_eq!(conflicted["data"]["result"]["state"], "activation_conflict");
     assert_eq!(conflicted["data"]["result"]["conflicts"], 1);
