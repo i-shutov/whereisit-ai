@@ -56,11 +56,31 @@ struct AnnotationReviewRow: Decodable, Identifiable {
     let confirmed_selection: AnnotationConfirmedSelection?
     let confirmation_revision_conflict: Bool
     let confirmation_payload_conflict: Bool
+    // Audit status alone is NOT proof of a verified active projection.
+    let activation_state: String?
+    let activation_target_entry_id: Int64?
     var id: Int64 { old_entry_id }
+    var canActivate: Bool {
+        guard activation_state == nil, revision > 0,
+              !confirmation_revision_conflict, !confirmation_payload_conflict,
+              let target = confirmed_selection?.new_entry_id else { return false }
+        return candidates.contains { $0.entry_id == target }
+    }
+    var canRevoke: Bool {
+        activation_state == "active" && activation_target_entry_id != nil
+    }
     var canSelect: Bool {
         revision > 0 && confirmed_selection == nil && !candidates.isEmpty
     }
     var conflictText: String {
+        if activation_state == "active" {
+            return confirmation_revision_conflict || confirmation_payload_conflict
+                ? "Active audit is stale — revoke to clear"
+                : "Active audit recorded — independently verified on read"
+        }
+        if activation_state == "revoked" {
+            return "Revoked — audit retained; cannot replay"
+        }
         if confirmation_revision_conflict || confirmation_payload_conflict {
             return "Stale confirmation — resolve separately"
         }
@@ -80,6 +100,13 @@ struct AnnotationConfirmReceipt: Decodable {
     let state: String
     let old_entry_id: Int64
     let new_entry_id: Int64
+}
+
+// Each state requires a separate native consent. Mapping never activates.
+enum AnnotationConsent: Equatable {
+    case mapping
+    case activation(oldID: Int64, newID: Int64)
+    case revocation(oldID: Int64, newID: Int64)
 }
 
 enum Bridge {
@@ -119,7 +146,7 @@ enum Bridge {
     @Published var annotationReviewLoading = false
     @Published var annotationSelectedOldID: Int64?
     @Published var annotationSelectedCandidateID: Int64?
-    @Published var showingAnnotationConfirmation = false
+    @Published var annotationConsent: AnnotationConsent?
     @Published var annotationConfirmationBusy = false
     private var annotationReviewStore: String?
     private var annotationReviewSession = 0
@@ -345,7 +372,7 @@ enum Bridge {
         annotationReviewLoading = false
         annotationSelectedOldID = nil
         annotationSelectedCandidateID = nil
-        showingAnnotationConfirmation = false
+        annotationConsent = nil
         annotationConfirmationBusy = false
         showingAnnotationReview = false
     }
@@ -380,7 +407,7 @@ enum Bridge {
         annotationReview = nil
         annotationSelectedOldID = nil
         annotationSelectedCandidateID = nil
-        showingAnnotationConfirmation = false
+        annotationConsent = nil
         annotationReviewLoading = true
         var args = fields
         args["op"] = "ctf_annotations_preview_pinned"
