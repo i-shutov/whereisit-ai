@@ -207,3 +207,74 @@ fn read_only_mirror_rejects_annotation_write_but_supports_query() {
     );
     assert_eq!(fs::read(&source).unwrap(), original);
 }
+
+
+#[test]
+fn pinned_search_requires_strict_same_process_sync_and_detects_same_mtime_external_save() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source.ctf");
+    let root = dir.path().join("cache");
+    let other_root = dir.path().join("other-cache");
+    fs::create_dir(&other_root).unwrap();
+    let before = write_original(&source, "audio.mp3");
+    let sync = service(json!({"op":"ctf_sync","path":source,"cache_root":root}));
+    assert_eq!(sync["ok"], true, "{sync}");
+    let generation = sync["data"]["generation"].as_str().unwrap().to_owned();
+    let not_pinned = service(json!({"op":"ctf_search_pinned","path":source,
+        "cache_root":other_root,"query":"ext:mp3","generation":generation}));
+    assert_eq!(not_pinned["ok"], false, "{not_pinned}");
+    assert_eq!(not_pinned["error"]["code"], "not_pinned");
+    let invalid = service(json!({"op":"ctf_search_pinned","path":source,
+        "cache_root":root,"query":"ext:mp3","generation":"../path"}));
+    assert_eq!(invalid["ok"], false, "{invalid}");
+    assert_eq!(invalid["error"]["code"], "invalid_request");
+
+    let pinned = service(json!({"op":"ctf_search_pinned","path":source,
+        "cache_root":root,"query":"ext:mp3","full_count":true,
+        "generation":generation,"limit":100}));
+    assert_eq!(pinned["ok"], true, "{pinned}");
+    assert_eq!(pinned["data"]["result"]["total"], 1);
+    assert_eq!(pinned["data"]["verification_mode"], "pinned_cache");
+    assert_eq!(pinned["data"]["source_sha_checked"], true);
+    assert_eq!(pinned["data"]["cache_fully_rehashed_this_query"], false);
+
+    let modified_time = fs::metadata(&source).unwrap().modified().unwrap();
+    let after = write_original(&source, "other.mp3");
+    assert_eq!(after.len(), before.len());
+    File::options().write(true).open(&source).unwrap()
+        .set_times(FileTimes::new().set_modified(modified_time)).unwrap();
+    let stale = service(json!({"op":"ctf_search_pinned","path":source,
+        "cache_root":root,"query":"ext:mp3","generation":generation}));
+    assert_eq!(stale["ok"], false, "{stale}");
+    assert_eq!(stale["error"]["code"], "source_changed");
+    let refreshed = service(json!({"op":"ctf_sync","path":source,"cache_root":root}));
+    assert_eq!(refreshed["ok"], true, "{refreshed}");
+    let next_key = refreshed["data"]["generation"].as_str().unwrap();
+    assert_ne!(next_key, generation);
+    let now = service(json!({"op":"ctf_search_pinned","path":source,"cache_root":root,
+        "query":"ext:mp3","generation":next_key,"full_count":true}));
+    assert_eq!(now["ok"], true, "{now}");
+    assert_eq!(now["data"]["result"]["items"][0]["name"], "other.mp3");
+    assert_eq!(fs::read(&source).unwrap(), after);
+}
+
+#[test]
+fn pinned_mode_does_not_change_always_strict_search_contract() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source.CTF");
+    let root = dir.path().join("cache");
+    let original = write_original(&source, "track.mp3");
+    let strict = service(json!({"op":"ctf_search","path":source,
+        "cache_root":root,"query":"ext:mp3","full_count":true}));
+    assert_eq!(strict["ok"], true, "{strict}");
+    assert_eq!(strict["data"]["result"]["total"], 1);
+    let key = strict["data"]["generation"].as_str().unwrap();
+    let pinned = service(json!({"op":"ctf_search_pinned","path":source,
+        "cache_root":root,"query":"ext:mp3","generation":key,"full_count":true}));
+    assert_eq!(pinned["ok"], true, "{pinned}");
+    assert_eq!(
+        strict["data"]["result"]["items"][0]["id"],
+        pinned["data"]["result"]["items"][0]["id"]
+    );
+    assert_eq!(fs::read(&source).unwrap(), original);
+}
