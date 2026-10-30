@@ -478,6 +478,79 @@ enum Bridge {
             self.loadAnnotationReviewPage(offset: page)
         }
     }
+    func proposeAnnotationOverlay(_ consent: AnnotationConsent) {
+        guard showingAnnotationReview, linkedMode, mutationAllowed,
+              !annotationReviewLoading, !annotationConfirmationBusy,
+              let review = annotationReview, review.state == "generation_conflict",
+              review.document_id != nil else { return }
+        switch consent {
+        case .mapping: return
+        case .activation(let oldID, let newID):
+            guard review.items.contains(where: {
+                $0.old_entry_id == oldID && $0.canActivate &&
+                $0.confirmed_selection?.new_entry_id == newID
+            }) else { return }
+        case .revocation(let oldID, let newID):
+            guard review.items.contains(where: {
+                $0.old_entry_id == oldID && $0.canRevoke &&
+                $0.activation_target_entry_id == newID
+            }) else { return }
+        }
+        annotationConsent = consent
+    }
+    func applyAnnotationOverlay(_ consent: AnnotationConsent) {
+        guard showingAnnotationReview, linkedMode, mutationAllowed,
+              !annotationReviewLoading, !annotationConfirmationBusy,
+              let fields = linkedFields(), let store = annotationReviewStore,
+              let review = annotationReview, review.state == "generation_conflict",
+              let documentID = review.document_id else { return }
+        var args = fields
+        args["annotation_db"] = store
+        args["expected_document_id"] = documentID
+        let verb: String
+        switch consent {
+        case .mapping: return
+        case .activation(let oldID, let newID):
+            guard let row = review.items.first(where: { $0.old_entry_id == oldID }),
+                  row.canActivate, row.confirmed_selection?.new_entry_id == newID else { return }
+            args["op"] = "ctf_annotations_activate_pinned"
+            args["old_entry_id"] = oldID
+            args["new_entry_id"] = newID
+            args["expected_revision"] = row.revision
+            args["activation"] = "user_approved_reversible_projection"
+            verb = "Activation"
+        case .revocation(let oldID, let newID):
+            // Revocation must work even when an activation has become stale.
+            // The journal's active pair is the revocation CAS.
+            guard let row = review.items.first(where: { $0.old_entry_id == oldID }),
+                  row.canRevoke, row.activation_target_entry_id == newID else { return }
+            args["op"] = "ctf_annotations_deactivate_pinned"
+            args["old_entry_id"] = oldID
+            args["new_entry_id"] = newID
+            args["rollback"] = "user_confirmed_revoke_projection"
+            verb = "Revocation"
+        }
+        let session = annotationReviewSession
+        let token = generation
+        let page = annotationReviewOffset
+        annotationConsent = nil
+        annotationConfirmationBusy = true
+        status = "\(verb): rechecking source SHA, document and audit state…"
+        request(args, as: LinkedCTFResult<AnnotationConfirmReceipt>.self,
+                generationToken: token) { [weak self] response in
+            guard let self, self.annotationReviewSession == session,
+                  self.annotationReviewStore == store, self.showingAnnotationReview else { return }
+            self.annotationConfirmationBusy = false
+            if let result = response?.result,
+               result.state == "activated_read_only_overlay" || result.state == "revoked_projection" {
+                self.status = "\(verb) verified for old #\(result.old_entry_id) → target #\(result.new_entry_id); old notes retained."
+            } else {
+                self.status = "\(verb) rejected; reread the conflict before another decision."
+            }
+            // A previous preview and its consent must never be reused.
+            self.loadAnnotationReviewPage(offset: page)
+        }
+    }
     func chooseCatalog(create: Bool) {
         if create {
             let panel = NSSavePanel(); panel.title = "Create Atlas catalog"; panel.nameFieldStringValue = "Catalog.atlas.sqlite"
