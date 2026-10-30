@@ -270,8 +270,14 @@ fn verified_overlay_summary(data: &Value, offset: usize) -> String {
             .map(|c| if c.is_control() { ' ' } else { c })
             .take(100)
             .collect();
-        let suffix = if note.chars().count() > 100 { "…" } else { "" };
-        summary.push_str(&format!("\nOld #{old} → target #{target}: {excerpt}{suffix}"));
+        let suffix = if note.chars().count() > 100 {
+            "…"
+        } else {
+            ""
+        };
+        summary.push_str(&format!(
+            "\nOld #{old} → target #{target}: {excerpt}{suffix}"
+        ));
     }
     summary.push_str("\n\nEvery page freshly verifies the external CTF SHA and note revisions. Viewing never writes. An active audit is not proof of a valid overlay.");
     summary
@@ -444,7 +450,10 @@ mod annotation_preview_tests {
         assert!(summary.contains("Valid active: 1"));
         assert!(summary.contains("active audits excluded: 2"));
         assert!(summary.contains("synthetic private note"));
-        for key in ["read_only_source", "unresolved_unconfirmed_annotations_not_projected"] {
+        for key in [
+            "read_only_source",
+            "unresolved_unconfirmed_annotations_not_projected",
+        ] {
             let mut invalid = original.clone();
             invalid["result"][key] = json!(false);
             assert!(!verified_overlay_response_ok(&invalid));
@@ -473,7 +482,6 @@ mod annotation_preview_tests {
         assert!(verified_overlay_response_ok(&empty));
         assert_eq!(verified_overlay_page_controls(&empty, 0), (false, false));
     }
-
 }
 
 #[derive(Debug)]
@@ -701,7 +709,10 @@ unsafe fn annotation_review_action(
         items.len().saturating_sub(selectable.len())
     );
     loop {
-        let mut actions = vec![(301, "Show all conflicts"), (306, "Verified overlays (read-only)…")];
+        let mut actions = vec![
+            (301, "Show all conflicts"),
+            (306, "Verified overlays (read-only)…"),
+        ];
         if selectable.iter().any(|index| can_map(*index)) {
             actions.insert(0, (300, "Choose target…"));
         }
@@ -1177,7 +1188,11 @@ impl App {
             }
             if matches!(
                 reply.tag,
-                "rows" | "annotation_preview" | "annotation_confirm" | "annotation_overlay" | "overlay_verified"
+                "rows"
+                    | "annotation_preview"
+                    | "annotation_confirm"
+                    | "annotation_overlay"
+                    | "overlay_verified"
             ) && reply.generation != self.generation
             {
                 continue;
