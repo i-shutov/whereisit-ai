@@ -431,3 +431,113 @@ pub fn search(v: &Value) -> Result<Value> {
         "result":page
     }))
 }
+
+
+/// Fast explicit mode for a resident native GUI or atlas serve process.
+/// Requires a fully verified ctf_sync in this same process first. Rehashes
+/// original CTF on every request, including same-size/restored-mtime edits.
+/// A previously verified immutable SQLite artifact is rehashed once per
+/// minute or sooner when its file identity changes. The existing ctf_search
+/// API remains the always-strict full-SHA path.
+pub fn search_pinned(v: &Value) -> Result<Value> {
+    let query = text(v, "query")?;
+    atlas_core::query::compile(query)?;
+    let offset = unsigned(v, "offset", 0)?;
+    let limit = unsigned(v, "limit", 100)?;
+    let volume_id = optional_id(v, "volume_id")?;
+    let full_count = match v.get("full_count") {
+        None => false,
+        Some(Value::Bool(value)) => *value,
+        _ => return Err(failure("invalid_request", "full_count must be boolean")),
+    };
+    let requested = text(v, "generation")?;
+    if requested.len() != 64 || !requested.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(failure("invalid_request", "Expected 64-character generation digest"));
+    }
+    let source_path = path(v, "path")?;
+    let source_meta = fs::symlink_metadata(&source_path).map_err(io_error)?;
+    if !source_meta.file_type().is_file()
+        || source_meta.len() > CTF_LIMIT
+        || source_path.extension().and_then(|x| x.to_str())
+            .is_none_or(|ext| !ext.eq_ignore_ascii_case("ctf"))
+    {
+        return Err(failure("ctf_limit", "Expected an unlinked regular .CTF source"));
+    }
+    let original = identity(&source_path)?;
+    let used_recipe = recipe();
+    let current_key = ctf_sidecar::cache_key(&original, &used_recipe).map_err(io_error)?;
+    if requested != current_key {
+        return Err(failure(
+            "source_changed",
+            "Original CTF changed; synchronize the new source generation",
+        ));
+    }
+    let root = path(v, "cache_root")?;
+    if !fs::symlink_metadata(&root).map_err(io_error)?.file_type().is_dir() {
+        return Err(failure("cache_root", "Pinned mirror root must be a real directory"));
+    }
+    let key: PinKey = (root.clone(), current_key.clone());
+    let pinned = pins()
+        .lock()
+        .map_err(|_| failure("internal", "Pinned registry unavailable"))?
+        .get(&key)
+        .cloned()
+        .ok_or_else(|| failure("not_pinned", "Call ctf_sync in this process first"))?;
+    if pinned.source != original {
+        forget(&root, &current_key);
+        return Err(failure("source_changed", "Pinned source generation does not match"));
+    }
+    let cache_dir = root.join(&current_key);
+    let db_path = cache_dir.join("catalog.sqlite");
+    let first_stamp = stamp(&db_path)?;
+    if first_stamp != pinned.stamp {
+        forget(&root, &current_key);
+        return Err(failure(
+            "cache_changed",
+            "Pinned SQLite artifact changed; strict ctf_sync required",
+        ));
+    }
+    let mut full_cache_recheck = false;
+    if pinned.checked_at.elapsed() >= PIN_REFRESH_INTERVAL {
+        verify(&cache_dir, &original, &used_recipe)?;
+        let after_verify = stamp(&db_path)?;
+        if after_verify != first_stamp {
+            forget(&root, &current_key);
+            return Err(failure("cache_changed", "SQLite artifact changed during recheck"));
+        }
+        let mut registry = pins()
+            .lock()
+            .map_err(|_| failure("internal", "Pinned registry unavailable"))?;
+        if let Some(entry) = registry.get_mut(&key) {
+            entry.checked_at = Instant::now();
+        }
+        full_cache_recheck = true;
+    }
+    let db = Catalog::open_readonly(&db_path)?;
+    let page = if full_count {
+        serde_json::to_value(db.search(query, volume_id, offset, limit)?)
+    } else {
+        serde_json::to_value(db.search_fast(query, volume_id, offset, limit)?)
+    }
+    .map_err(|_| failure("internal", "Cannot encode pinned search result"))?;
+    drop(db);
+    if stamp(&db_path)? != first_stamp {
+        forget(&root, &current_key);
+        return Err(failure("cache_changed", "SQLite artifact changed during query"));
+    }
+    if identity(&source_path)? != original {
+        forget(&root, &current_key);
+        return Err(failure("source_changed", "Original CTF changed during pinned query"));
+    }
+    Ok(json!({
+        "generation":current_key,
+        "source_sha256":original.sha256,
+        "read_only":true,
+        "annotations_supported":false,
+        "source_sha_checked":true,
+        "verification_mode":"pinned_cache",
+        "cache_fully_rehashed_this_query":full_cache_recheck,
+        "cache_full_revalidation_interval_seconds":PIN_REFRESH_INTERVAL.as_secs(),
+        "result":page
+    }))
+}
