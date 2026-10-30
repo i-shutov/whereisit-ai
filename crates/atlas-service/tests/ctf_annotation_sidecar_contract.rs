@@ -297,6 +297,33 @@ fn cache_path_and_foreign_sqlite_are_never_annotation_destinations() {
     );
     assert!(!inside_cache.exists());
 
+    // A hardlink has a different name but the SAME bytes and inode as source.
+    // The .wia.sqlite extension must not permit writing through that alias.
+    #[cfg(unix)]
+    {
+        let alias = tmp.path().join("alias.wia.sqlite");
+        fs::hard_link(&source, &alias).unwrap();
+        let mut hardlink = cmd(
+            "ctf_annotations_set_pinned",
+            &source,
+            &cache,
+            &generation,
+            &alias,
+        );
+        hardlink["entry_id"] = json!(id);
+        hardlink["expected_revision"] = json!(0);
+        hardlink["note"] = json!("MUST NOT WRITE");
+        hardlink["tags"] = json!("");
+        let denied = invoke(hardlink);
+        assert_eq!(
+            denied["error"]["code"],
+            "unsafe_annotation_store",
+            "{denied}"
+        );
+        let original = fs::read(&source).unwrap();
+        assert_eq!(original, fs::read(&alias).unwrap());
+    }
+
     let foreign = tmp.path().join("foreign.wia.sqlite");
     let conn = rusqlite::Connection::open(&foreign).unwrap();
     conn.execute_batch(
