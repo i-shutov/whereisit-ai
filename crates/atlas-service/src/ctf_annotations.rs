@@ -567,15 +567,26 @@ pub fn confirm(v: &Value) -> Result<Value> {
                 "SELECT volume_label,relative_path,kind,size,revision,note,tags
                  FROM annotation_entries WHERE entry_id=?1",
                 [old_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                    ))
+                },
             )
             .optional()?;
-        let (old_volume, old_path, old_kind, old_size, old_revision, old_note, old_tags) = old.ok_or_else(|| {
-            fail(
-                "annotation_revision_conflict",
-                "Old annotation no longer exists",
-            )
-        })?;
+        let (old_volume, old_path, old_kind, old_size, old_revision, old_note, old_tags) = old
+            .ok_or_else(|| {
+                fail(
+                    "annotation_revision_conflict",
+                    "Old annotation no longer exists",
+                )
+            })?;
         if old_revision as u64 != expected {
             return Err(fail(
                 "annotation_revision_conflict",
