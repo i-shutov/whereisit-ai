@@ -555,3 +555,287 @@ fn reconciliation_preview_is_read_only_bounded_and_never_automatically_rebinds()
     assert_eq!(fs::read(&source).unwrap(), next_ctf);
     assert_eq!(fs::read(&mirror).unwrap(), before_mirror);
 }
+
+
+#[test]
+fn explicitly_confirmed_candidates_are_cas_guarded_and_never_activated() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("synthetic.ctf");
+    let cache = tmp.path().join("derived");
+    let store = tmp.path().join("notes.wia.sqlite");
+    make_flat_ctf(&source, &["keep.mp3", "dupe.mp3", "lost.mp3"]);
+    let before = sync(&source, &cache);
+    let old_ids = flat_ids(&source, &cache, &before);
+    for (name, id) in &old_ids {
+        let mut set = cmd(
+            "ctf_annotations_set_pinned",
+            &source,
+            &cache,
+            &before,
+            &store,
+        );
+        set["entry_id"] = json!(id);
+        set["expected_revision"] = json!(0);
+        set["note"] = json!(format!("reviewed: {name}"));
+        set["tags"] = json!("synthetic");
+        assert_eq!(invoke(set)["ok"], true);
+    }
+
+    let ctf_bytes = make_flat_ctf(
+        &source,
+        &["keep.mp3", "dupe.mp3", "dupe.mp3", "new.mp3"],
+    );
+    let after = sync(&source, &cache);
+    let mirror = cache.join(&after).join("catalog.sqlite");
+    let mirror_bytes = fs::read(&mirror).unwrap();
+    let initial_store = fs::read(&store).unwrap();
+
+    let preview = invoke(cmd(
+        "ctf_annotations_preview_pinned",
+        &source,
+        &cache,
+        &after,
+        &store,
+    ));
+    assert_eq!(preview["ok"], true, "{preview}");
+    let doc = preview["data"]["result"]["document_id"].as_str().unwrap();
+    let entries = preview["data"]["result"]["items"].as_array().unwrap();
+    let keep = entries
+        .iter()
+        .find(|v| v["fingerprint"]["relative_path"] == "keep.mp3")
+        .unwrap();
+    let dupe = entries
+        .iter()
+        .find(|v| v["fingerprint"]["relative_path"] == "dupe.mp3")
+        .unwrap();
+    let lost = entries
+        .iter()
+        .find(|v| v["fingerprint"]["relative_path"] == "lost.mp3")
+        .unwrap();
+    let keep_target = keep["candidates"][0]["entry_id"].as_i64().unwrap();
+    let dupe_target = dupe["candidates"][1]["entry_id"].as_i64().unwrap();
+
+    let mut confirm = cmd(
+        "ctf_annotations_confirm_pinned",
+        &source,
+        &cache,
+        &after,
+        &store,
+    );
+    confirm["old_entry_id"] = keep["old_entry_id"].clone();
+    confirm["new_entry_id"] = json!(keep_target);
+    confirm["expected_revision"] = keep["revision"].clone();
+    confirm["expected_document_id"] = json!(doc);
+    confirm["confirmation"] = json!("user_selected_exact_candidate");
+
+    let without_intent = {
+        let mut req = confirm.clone();
+        req["confirmation"] = json!("maybe");
+        invoke(req)
+    };
+    assert_eq!(
+        without_intent["error"]["code"],
+        "confirmation_required",
+        "{without_intent}"
+    );
+    let wrong_revision = {
+        let mut req = confirm.clone();
+        req["expected_revision"] = json!(42);
+        invoke(req)
+    };
+    assert_eq!(
+        wrong_revision["error"]["code"],
+        "annotation_revision_conflict",
+        "{wrong_revision}"
+    );
+    let wrong_document = {
+        let mut req = confirm.clone();
+        req["expected_document_id"] = json!("not-the-original-document");
+        invoke(req)
+    };
+    assert_eq!(
+        wrong_document["error"]["code"],
+        "annotation_document_conflict",
+        "{wrong_document}"
+    );
+    let wrong_candidate = {
+        let mut req = confirm.clone();
+        req["new_entry_id"] = json!(dupe_target);
+        invoke(req)
+    };
+    assert_eq!(
+        wrong_candidate["error"]["code"],
+        "annotation_candidate_conflict",
+        "{wrong_candidate}"
+    );
+    assert_eq!(fs::read(&store).unwrap(), initial_store);
+
+    let accepted = invoke(confirm.clone());
+    assert_eq!(accepted["ok"], true, "{accepted}");
+    assert_eq!(accepted["data"]["result"]["state"], "confirmed_not_activated");
+    assert_eq!(
+        accepted["data"]["result"]["annotation_rows_migrated"],
+        false
+    );
+    assert_eq!(
+        invoke(confirm)["error"]["code"],
+        "annotation_confirmation_conflict"
+    );
+    let mut other = cmd(
+        "ctf_annotations_confirm_pinned",
+        &source,
+        &cache,
+        &after,
+        &store,
+    );
+    other["old_entry_id"] = dupe["old_entry_id"].clone();
+    other["new_entry_id"] = json!(dupe_target);
+    other["expected_revision"] = dupe["revision"].clone();
+    other["expected_document_id"] = json!(doc);
+    other["confirmation"] = json!("user_selected_exact_candidate");
+    assert_eq!(invoke(other)["ok"], true);
+
+    let second_preview = invoke(cmd(
+        "ctf_annotations_preview_pinned",
+        &source,
+        &cache,
+        &after,
+        &store,
+    ));
+    let items = second_preview["data"]["result"]["items"].as_array().unwrap();
+    let accepted_keep = items
+        .iter()
+        .find(|v| v["fingerprint"]["relative_path"] == "keep.mp3")
+        .unwrap();
+    assert_eq!(
+        accepted_keep["confirmed_selection"]["new_entry_id"],
+        keep_target
+    );
+    assert_eq!(accepted_keep["requires_confirmation"], false);
+    let still_unresolved = items
+        .iter()
+        .find(|v| v["old_entry_id"] == lost["old_entry_id"])
+        .unwrap();
+    assert_eq!(still_unresolved["candidate_state"], "no_match");
+    assert_eq!(still_unresolved["confirmed_selection"], Value::Null);
+    assert_eq!(still_unresolved["requires_confirmation"], true);
+
+    // A recorded confirmation is NOT an annotation migration or a silent
+    // rebind in the ordinary LIST/SET operations.
+    let listed = invoke(cmd(
+        "ctf_annotations_list_pinned",
+        &source,
+        &cache,
+        &after,
+        &store,
+    ));
+    assert_eq!(listed["data"]["result"]["state"], "generation_conflict");
+    assert_eq!(listed["data"]["result"]["items"], json!([]));
+
+    let conn = rusqlite::Connection::open(&store).unwrap();
+    let audits: i64 = conn
+        .query_row("SELECT COUNT(*) FROM annotation_confirmations", [], |r| r.get(0))
+        .unwrap();
+    let originals: i64 = conn
+        .query_row("SELECT COUNT(*) FROM annotation_entries", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(audits, 2);
+    assert_eq!(originals, 3);
+    drop(conn);
+    assert_eq!(fs::read(&source).unwrap(), ctf_bytes);
+    assert_eq!(fs::read(&mirror).unwrap(), mirror_bytes);
+
+    // A later external replacement invalidates this old generation pin,
+    // even if a confirmation has already been recorded in the user store.
+    make_flat_ctf(&source, &["next.mp3", "dupe.mp3", "dupe.mp3", "new.mp3"]);
+    let stale = invoke(cmd(
+        "ctf_annotations_preview_pinned",
+        &source,
+        &cache,
+        &after,
+        &store,
+    ));
+    assert_eq!(stale["error"]["code"], "source_changed", "{stale}");
+}
+
+#[test]
+fn confirmation_never_creates_missing_user_store_and_rejects_double_binding() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("fixture.ctf");
+    let cache = tmp.path().join("cache");
+    let store = tmp.path().join("user.wia.sqlite");
+    make_flat_ctf(&source, &["same.mp3", "same.mp3"]);
+    let old_generation = sync(&source, &cache);
+    let ids = flat_ids(&source, &cache, &old_generation);
+
+    let new_bytes = make_flat_ctf(&source, &["same.mp3", "same.mp3", "extra.mp3"]);
+    let new_generation = sync(&source, &cache);
+    let mut missing = cmd(
+        "ctf_annotations_confirm_pinned",
+        &source,
+        &cache,
+        &new_generation,
+        &store,
+    );
+    missing["old_entry_id"] = json!(ids[0].1);
+    missing["new_entry_id"] = json!(1);
+    missing["expected_revision"] = json!(1);
+    missing["expected_document_id"] = json!("synthetic");
+    missing["confirmation"] = json!("user_selected_exact_candidate");
+    assert_eq!(
+        invoke(missing)["error"]["code"],
+        "annotation_store_missing"
+    );
+    assert!(!store.exists());
+
+    // Use an independent synthetic old catalog with saved annotations.
+    make_flat_ctf(&source, &["same.mp3", "same.mp3"]);
+    let restored = sync(&source, &cache);
+    for (_, id) in &ids {
+        let mut request = cmd(
+            "ctf_annotations_set_pinned",
+            &source,
+            &cache,
+            &restored,
+            &store,
+        );
+        request["entry_id"] = json!(id);
+        request["expected_revision"] = json!(0);
+        request["note"] = json!("synthetic");
+        request["tags"] = json!("");
+        assert_eq!(invoke(request)["ok"], true);
+    }
+    fs::write(&source, new_bytes).unwrap();
+    let fresh = sync(&source, &cache);
+    let preview = invoke(cmd(
+        "ctf_annotations_preview_pinned",
+        &source,
+        &cache,
+        &fresh,
+        &store,
+    ));
+    let rows = preview["data"]["result"]["items"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    let target = rows[0]["candidates"][0]["entry_id"].as_i64().unwrap();
+    let document = preview["data"]["result"]["document_id"].clone();
+    let mut choose = cmd(
+        "ctf_annotations_confirm_pinned",
+        &source,
+        &cache,
+        &fresh,
+        &store,
+    );
+    choose["confirmation"] = json!("user_selected_exact_candidate");
+    choose["expected_document_id"] = document;
+    choose["expected_revision"] = json!(1);
+    choose["new_entry_id"] = json!(target);
+    choose["old_entry_id"] = rows[0]["old_entry_id"].clone();
+    assert_eq!(invoke(choose.clone())["ok"], true);
+    choose["old_entry_id"] = rows[1]["old_entry_id"].clone();
+    let collision = invoke(choose);
+    assert_eq!(
+        collision["error"]["code"],
+        "annotation_confirmation_conflict",
+        "{collision}"
+    );
+}
