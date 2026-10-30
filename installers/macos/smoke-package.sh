@@ -19,7 +19,8 @@ ARCHS="$(lipo -archs "$APP/Contents/MacOS/AtlasCatalog")"
 [[ " $ARCHS " == *" $ARCH "* ]] || { echo 'Wrong architecture' >&2; exit 1; }
 otool -L "$APP/Contents/MacOS/AtlasCatalog" | grep -q 'libatlas_ffi'
 codesign --verify --deep --strict "$APP"
-hdiutil verify "$DMG" >/dev/null
+(cd "$(dirname "$DMG")" && shasum -a 256 -c "SHA256-$ARCH.txt" >/dev/null)
+bash "$ROOT/installers/macos/verify-dmg.sh" "$DMG"
 WORK="$(mktemp -d)"
 MOUNT="$WORK/mount"
 mkdir -p "$MOUNT"
