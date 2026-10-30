@@ -10,8 +10,10 @@ The native UI now has two explicit catalog modes:
    with ctf_children_pinned and searches with ctf_search_pinned.
 
 Linked mode does NOT write the source CTF and does not allow native category/tag
-assignment, scanning, importing to a disposable mirror, duplicate grouping or
-CTF output. It DOES permit **derived CSV/Parquet reports** of selected search
+assignment, scanning, importing to a disposable mirror or CTF output.
+Read-only **duplicate candidate browsing** is now permitted via
+ctf_duplicates_pinned; it never proves matching file contents. Export of the
+linked duplicate-only result is still disabled. It DOES permit **derived CSV/Parquet reports** of selected search
 results or recursive folders, written to a *new* file only with a source-hash-
 pinned read-only mirror. A distinct durable annotation overlay is mandatory
 before permitting user metadata edits. The original CTF may still be saved
@@ -30,9 +32,10 @@ so source synchronization executes off the UI thread.
 
 - Windows: compact Link CTF action alongside Import CTF; disk pane, folder
   double-click and query results use read-only CTF-backed pinned APIs. Open or
-  New local catalog switches back to editable SQLite. Category edits,
-  duplicates and CTF exports are disabled; CSV/Parquet reports are allowed
-  only as new files through the verified pinned export API.
+  New local catalog switches back to editable SQLite. Category edits and CTF
+  exports are disabled. The Duplicates button queries read-only metadata
+  candidates; ordinary search/branch CSV/Parquet reports are allowed only
+  as new files, not from the duplicate-only view.
 - macOS: compact CTF menu groups Link read-only, Refresh linked CTF and Import
   copy. Disk sidebar, folder navigation, global search and status line reflect
   linked mode; unsafe editing/CTF-export actions are disabled. CSV/Parquet
@@ -43,9 +46,12 @@ so source synchronization executes off the UI thread.
 - No source file watcher or automatic GUI refresh is claimed. When the user
   needs an updated source, use the explicit Refresh/Link action. The backend
   returns source_changed instead of displaying mismatched results.
-- The UI presently does not provide duplicate grouping, native-only category
-  edits or modified-CTF writes in linked mode. Those require durable overlays
-  and original-app compatibility acceptance.
+- The UI provides read-only metadata candidate groups by name, name+size or
+  size with `verified:false`; performance of the full 3M duplicate query is
+  still unmeasured and duplicate-candidate export is not enabled. Native-only
+  category edits and modified-CTF writes remain blocked pending durable
+  overlays and original-app compatibility acceptance.
+  See [CTF_PINNED_DUPLICATES.md](CTF_PINNED_DUPLICATES.md).
 
 ## Acceptance gates
 
