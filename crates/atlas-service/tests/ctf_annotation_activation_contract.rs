@@ -152,7 +152,7 @@ fn activated_projection_is_reversible_and_preserves_originals() {
     let second = sync(&source, &cache);
     let mirror = cache.join(&second).join("catalog.sqlite");
     let mirror_original = fs::read(&mirror).unwrap();
-    let (mut activation, old_id, new_id) = confirm(&source, &cache, &second, &store);
+    let (activation, old_id, new_id) = confirm(&source, &cache, &second, &store);
     let missing_intent = {
         let mut bad = activation.clone();
         bad["activation"] = json!("implicit");
