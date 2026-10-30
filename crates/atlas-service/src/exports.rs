@@ -1,5 +1,5 @@
 use crate::{
-    selection::{select, COLUMNS},
+    selection::{select, Selection, COLUMNS},
     text,
 };
 use atlas_core::{Catalog, Error, Result};
@@ -181,8 +181,27 @@ impl ExportRow {
 }
 
 pub(crate) fn export(c: &Catalog, v: &Value, format: &str) -> Result<Value> {
-    let s = select(v, false)?;
-    let snapshot = if s.duplicate {
+    export_impl(c, v, format, select(v, false)?, true)
+}
+
+/// Linked CTF duplicates use a read-only query, never a mutable duplicate cache.
+pub(crate) fn export_pinned_selected(
+    c: &Catalog,
+    v: &Value,
+    format: &str,
+    selection: Selection,
+) -> Result<Value> {
+    export_impl(c, v, format, selection, false)
+}
+
+fn export_impl(
+    c: &Catalog,
+    v: &Value,
+    format: &str,
+    s: Selection,
+    use_editable_duplicate_cache: bool,
+) -> Result<Value> {
+    let snapshot = if s.duplicate && use_editable_duplicate_cache {
         Some(crate::duplicates::export_snapshot(c, v)?)
     } else {
         None
