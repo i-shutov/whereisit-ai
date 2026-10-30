@@ -90,13 +90,24 @@ fn user_owned_annotations_are_durable_and_revision_guarded() {
     let original_mirror = fs::read(&mirror).unwrap();
 
     let missing = invoke(cmd(
-        "ctf_annotations_list_pinned", &source, &cache, &generation, &store,
+        "ctf_annotations_list_pinned",
+        &source,
+        &cache,
+        &generation,
+        &store,
     ));
-    assert_eq!(missing["data"]["result"]["state"], "uninitialized", "{missing}");
+    assert_eq!(
+        missing["data"]["result"]["state"], "uninitialized",
+        "{missing}"
+    );
     assert!(!store.exists(), "Listing must not create a sidecar");
 
     let mut request = cmd(
-        "ctf_annotations_set_pinned", &source, &cache, &generation, &store,
+        "ctf_annotations_set_pinned",
+        &source,
+        &cache,
+        &generation,
+        &store,
     );
     request["entry_id"] = json!(entry);
     request["note"] = json!("Private note (synthetic)");
@@ -112,7 +123,11 @@ fn user_owned_annotations_are_durable_and_revision_guarded() {
         "{stale}"
     );
     let listed = invoke(cmd(
-        "ctf_annotations_list_pinned", &source, &cache, &generation, &store,
+        "ctf_annotations_list_pinned",
+        &source,
+        &cache,
+        &generation,
+        &store,
     ));
     assert_eq!(listed["ok"], true, "{listed}");
     assert_eq!(listed["data"]["result"]["total"], 1);
@@ -123,7 +138,11 @@ fn user_owned_annotations_are_durable_and_revision_guarded() {
     assert_eq!(record["revision"], 1);
 
     let mut update = cmd(
-        "ctf_annotations_set_pinned", &source, &cache, &generation, &store,
+        "ctf_annotations_set_pinned",
+        &source,
+        &cache,
+        &generation,
+        &store,
     );
     update["entry_id"] = json!(entry);
     update["note"] = json!("Second revision");
@@ -136,19 +155,24 @@ fn user_owned_annotations_are_durable_and_revision_guarded() {
     assert_eq!(fs::read(&mirror).unwrap(), original_mirror);
     // Connection teardown and reopening are part of the test, not just RAM.
     let persisted = invoke(cmd(
-        "ctf_annotations_list_pinned", &source, &cache, &generation, &store,
+        "ctf_annotations_list_pinned",
+        &source,
+        &cache,
+        &generation,
+        &store,
     ));
     assert_eq!(
         persisted["data"]["result"]["items"][0]["note"],
         "Second revision"
     );
-    assert_eq!(
-        persisted["data"]["result"]["items"][0]["revision"],
-        2
-    );
+    assert_eq!(persisted["data"]["result"]["items"][0]["revision"], 2);
 
     let mut clear = cmd(
-        "ctf_annotations_set_pinned", &source, &cache, &generation, &store,
+        "ctf_annotations_set_pinned",
+        &source,
+        &cache,
+        &generation,
+        &store,
     );
     clear["entry_id"] = json!(entry);
     clear["note"] = json!("");
@@ -157,7 +181,11 @@ fn user_owned_annotations_are_durable_and_revision_guarded() {
     let removed = invoke(clear);
     assert_eq!(removed["data"]["result"]["revision"], 0, "{removed}");
     let empty = invoke(cmd(
-        "ctf_annotations_list_pinned", &source, &cache, &generation, &store,
+        "ctf_annotations_list_pinned",
+        &source,
+        &cache,
+        &generation,
+        &store,
     ));
     assert_eq!(empty["data"]["result"]["total"], 0, "{empty}");
 }
@@ -172,7 +200,13 @@ fn external_ctf_generation_change_is_conflict_not_silent_reassociation() {
     let first = sync(&source, &cache);
     let id = file_id(&source, &cache, &first);
 
-    let mut edit = cmd("ctf_annotations_set_pinned", &source, &cache, &first, &store);
+    let mut edit = cmd(
+        "ctf_annotations_set_pinned",
+        &source,
+        &cache,
+        &first,
+        &store,
+    );
     edit["entry_id"] = json!(id);
     edit["expected_revision"] = json!(0);
     edit["note"] = json!("Keep this, not in CTF");
@@ -181,22 +215,41 @@ fn external_ctf_generation_change_is_conflict_not_silent_reassociation() {
     let sidecar_bytes = fs::read(&store).unwrap();
 
     let modified = make_ctf(&source, "bravo.mp3");
-    assert_eq!(original.len(), modified.len(), "Same-size replacement fixture");
+    assert_eq!(
+        original.len(),
+        modified.len(),
+        "Same-size replacement fixture"
+    );
     let stale = invoke(cmd(
-        "ctf_annotations_list_pinned", &source, &cache, &first, &store,
+        "ctf_annotations_list_pinned",
+        &source,
+        &cache,
+        &first,
+        &store,
     ));
     assert_eq!(stale["error"]["code"], "source_changed", "{stale}");
 
     let next = sync(&source, &cache);
     assert_ne!(first, next);
     let conflict = invoke(cmd(
-        "ctf_annotations_list_pinned", &source, &cache, &next, &store,
+        "ctf_annotations_list_pinned",
+        &source,
+        &cache,
+        &next,
+        &store,
     ));
     assert_eq!(conflict["ok"], true, "{conflict}");
     assert_eq!(conflict["data"]["result"]["state"], "generation_conflict");
-    assert_eq!(conflict["data"]["result"]["items"].as_array().unwrap().len(), 0);
     assert_eq!(
-        conflict["data"]["result"]["requires_explicit_reconciliation"], true
+        conflict["data"]["result"]["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    assert_eq!(
+        conflict["data"]["result"]["requires_explicit_reconciliation"],
+        true
     );
     assert_eq!(conflict["data"]["result"]["total"], 1);
     assert_eq!(fs::read(&store).unwrap(), sidecar_bytes);
@@ -226,21 +279,38 @@ fn cache_path_and_foreign_sqlite_are_never_annotation_destinations() {
     let id = file_id(&source, &cache, &generation);
 
     let inside_cache = cache.join("notes.wia.sqlite");
-    let mut bad = cmd("ctf_annotations_set_pinned", &source, &cache, &generation, &inside_cache);
+    let mut bad = cmd(
+        "ctf_annotations_set_pinned",
+        &source,
+        &cache,
+        &generation,
+        &inside_cache,
+    );
     bad["entry_id"] = json!(id);
     bad["expected_revision"] = json!(0);
     bad["note"] = json!("test");
     bad["tags"] = json!("");
     let rejected = invoke(bad);
-    assert_eq!(rejected["error"]["code"], "unsafe_annotation_store", "{rejected}");
+    assert_eq!(
+        rejected["error"]["code"], "unsafe_annotation_store",
+        "{rejected}"
+    );
     assert!(!inside_cache.exists());
 
     let foreign = tmp.path().join("foreign.wia.sqlite");
     let conn = rusqlite::Connection::open(&foreign).unwrap();
-    conn.execute_batch("CREATE TABLE valuables (v TEXT); INSERT INTO valuables VALUES('leave me alone');")
-        .unwrap();
+    conn.execute_batch(
+        "CREATE TABLE valuables (v TEXT); INSERT INTO valuables VALUES('leave me alone');",
+    )
+    .unwrap();
     drop(conn);
-    let mut attempt = cmd("ctf_annotations_set_pinned", &source, &cache, &generation, &foreign);
+    let mut attempt = cmd(
+        "ctf_annotations_set_pinned",
+        &source,
+        &cache,
+        &generation,
+        &foreign,
+    );
     attempt["entry_id"] = json!(id);
     attempt["expected_revision"] = json!(0);
     attempt["note"] = json!("test");
@@ -251,8 +321,12 @@ fn cache_path_and_foreign_sqlite_are_never_annotation_destinations() {
         "{denial}"
     );
     let conn = rusqlite::Connection::open(&foreign).unwrap();
-    let count: i64 = conn.query_row("SELECT COUNT(*) FROM valuables", [], |r| r.get(0)).unwrap();
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM valuables", [], |r| r.get(0))
+        .unwrap();
     assert_eq!(count, 1);
-    let app: i64 = conn.pragma_query_value(None, "application_id", |r| r.get(0)).unwrap();
+    let app: i64 = conn
+        .pragma_query_value(None, "application_id", |r| r.get(0))
+        .unwrap();
     assert_eq!(app, 0);
 }
