@@ -686,7 +686,6 @@ pub fn confirm(v: &Value) -> Result<Value> {
     Ok(output)
 }
 
-
 /// Non-destructive, explicitly reviewed projection of confirmed annotations.
 /// Old annotation rows and their original generation remain the recovery copy.
 /// The additive activation snapshot lives ONLY in the separate user sidecar.
@@ -727,14 +726,23 @@ pub fn activate(v: &Value) -> Result<Value> {
         .ok_or_else(|| fail("invalid_request", "Positive new_entry_id required"))?;
     let expected = unsigned(v, "expected_revision", u64::MAX)?;
     if expected == 0 || expected > i64::MAX as u64 {
-        return Err(fail("invalid_request", "Positive expected_revision is required"));
+        return Err(fail(
+            "invalid_request",
+            "Positive expected_revision is required",
+        ));
     }
     if text(v, "activation")? != "user_approved_reversible_projection" {
-        return Err(fail("activation_required", "Explicit user approval is required"));
+        return Err(fail(
+            "activation_required",
+            "Explicit user approval is required",
+        ));
     }
     let mut output = ctf_mirror::read_pinned(v, |catalog| {
         if open_read(&path)?.is_none() {
-            return Err(fail("annotation_store_missing", "Existing user store is required"));
+            return Err(fail(
+                "annotation_store_missing",
+                "Existing user store is required",
+            ));
         }
         let mut conn = Connection::open_with_flags(
             &path,
@@ -745,25 +753,43 @@ pub fn activate(v: &Value) -> Result<Value> {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let (actual_document, old_generation) = metadata(&tx)?;
         if actual_document != document {
-            return Err(fail("annotation_document_conflict", "Annotation document changed"));
+            return Err(fail(
+                "annotation_document_conflict",
+                "Annotation document changed",
+            ));
         }
         if old_generation == generation {
-            return Err(fail("annotation_generation_conflict", "No activation across the same generation"));
+            return Err(fail(
+                "annotation_generation_conflict",
+                "No activation across the same generation",
+            ));
         }
         let old: Option<(String, String, String, i64, String, String, i64)> = tx
             .query_row(
                 "SELECT volume_label,relative_path,kind,size,note,tags,revision
                  FROM annotation_entries WHERE entry_id=?1",
                 [old_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?,
-                         r.get(4)?, r.get(5)?, r.get(6)?)),
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                    ))
+                },
             )
             .optional()?;
-        let (volume, relative, kind, size, note, tags, revision) = old
-            .ok_or_else(|| fail("annotation_revision_conflict", "Annotation was removed"))?;
+        let (volume, relative, kind, size, note, tags, revision) =
+            old.ok_or_else(|| fail("annotation_revision_conflict", "Annotation was removed"))?;
         let digest = annotation_digest(&note, &tags);
         if revision as u64 != expected {
-            return Err(fail("annotation_revision_conflict", "Annotation revision changed"));
+            return Err(fail(
+                "annotation_revision_conflict",
+                "Annotation revision changed",
+            ));
         }
         // A recorded confirmation alone is NOT consent to activation.
         let confirmed: Option<(i64, i64, String)> = tx
@@ -776,8 +802,10 @@ pub fn activate(v: &Value) -> Result<Value> {
             )
             .optional()?;
         if confirmed.as_ref() != Some(&(new_id, revision, digest.clone())) {
-            return Err(fail("annotation_confirmation_conflict",
-                            "Missing or stale explicitly reviewed confirmation"));
+            return Err(fail(
+                "annotation_confirmation_conflict",
+                "Missing or stale explicitly reviewed confirmation",
+            ));
         }
         let candidate: Option<(String, String, String, i64)> = catalog
             .conn()
@@ -790,7 +818,10 @@ pub fn activate(v: &Value) -> Result<Value> {
             )
             .optional()?;
         if candidate.as_ref() != Some(&(volume.clone(), relative.clone(), kind.clone(), size)) {
-            return Err(fail("annotation_candidate_conflict", "Candidate fingerprint changed"));
+            return Err(fail(
+                "annotation_candidate_conflict",
+                "Candidate fingerprint changed",
+            ));
         }
         activation_schema(&tx)?;
         let previous: Option<String> = tx
@@ -802,8 +833,10 @@ pub fn activate(v: &Value) -> Result<Value> {
             )
             .optional()?;
         if previous.is_some() {
-            return Err(fail("annotation_activation_conflict",
-                            "Activation already exists; revoked history cannot be reused"));
+            return Err(fail(
+                "annotation_activation_conflict",
+                "Activation already exists; revoked history cannot be reused",
+            ));
         }
         let occupied: i64 = tx.query_row(
             "SELECT COUNT(*) FROM annotation_activations
@@ -812,8 +845,10 @@ pub fn activate(v: &Value) -> Result<Value> {
             |r| r.get(0),
         )?;
         if occupied != 0 {
-            return Err(fail("annotation_activation_conflict",
-                            "Another active annotation occupies this target"));
+            return Err(fail(
+                "annotation_activation_conflict",
+                "Another active annotation occupies this target",
+            ));
         }
         tx.execute(
             "INSERT INTO annotation_activations
@@ -822,7 +857,10 @@ pub fn activate(v: &Value) -> Result<Value> {
               activated_at_unix,revoked_at_unix)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,'active',
                      CAST(strftime('%s','now') AS INTEGER),NULL)",
-            params![old_id,generation,new_id,revision,digest,volume,relative,kind,size,note,tags],
+            params![
+                old_id, generation, new_id, revision, digest, volume, relative, kind, size, note,
+                tags
+            ],
         )?;
         tx.commit()?;
         Ok(json!({
@@ -876,28 +914,53 @@ pub fn activated_list(v: &Value) -> Result<Value> {
         let mut conflicts = 0_u64;
         let rows = statement.query_map([generation], |r| {
             Ok((
-                r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?,
-                r.get::<_, String>(3)?, r.get::<_, String>(4)?,
-                r.get::<_, String>(5)?, r.get::<_, String>(6)?, r.get::<_, i64>(7)?,
-                r.get::<_, String>(8)?, r.get::<_, String>(9)?,
-                r.get::<_, Option<i64>>(10)?, r.get::<_, Option<String>>(11)?,
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, String>(6)?,
+                r.get::<_, i64>(7)?,
+                r.get::<_, String>(8)?,
+                r.get::<_, String>(9)?,
+                r.get::<_, Option<i64>>(10)?,
+                r.get::<_, Option<String>>(11)?,
                 r.get::<_, Option<String>>(12)?,
             ))
         })?;
         for row in rows {
-            let (old_id,new_id,revision,digest,volume,relative,kind,size,note,tags,
-                 live_revision,live_note,live_tags) = row?;
+            let (
+                old_id,
+                new_id,
+                revision,
+                digest,
+                volume,
+                relative,
+                kind,
+                size,
+                note,
+                tags,
+                live_revision,
+                live_note,
+                live_tags,
+            ) = row?;
             let valid_original = live_revision == Some(revision)
-                && live_note.as_ref().zip(live_tags.as_ref())
-                    .is_some_and(|(n,t)| annotation_digest(n,t) == digest)
-                && annotation_digest(&note,&tags) == digest;
-            let current: Option<(String,String,String,i64)> = catalog.conn().query_row(
-                "SELECT v.label,e.relative_path,e.kind,e.size
+                && live_note
+                    .as_ref()
+                    .zip(live_tags.as_ref())
+                    .is_some_and(|(n, t)| annotation_digest(n, t) == digest)
+                && annotation_digest(&note, &tags) == digest;
+            let current: Option<(String, String, String, i64)> = catalog
+                .conn()
+                .query_row(
+                    "SELECT v.label,e.relative_path,e.kind,e.size
                  FROM entries_core e JOIN volumes v ON v.id=e.volume_id WHERE e.id=?1",
-                [new_id],
-                |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)),
-            ).optional()?;
-            if !valid_original || current.as_ref() != Some(&(volume,relative,kind,size)) {
+                    [new_id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )
+                .optional()?;
+            if !valid_original || current.as_ref() != Some(&(volume, relative, kind, size)) {
                 conflicts += 1;
                 continue;
             }
@@ -907,8 +970,11 @@ pub fn activated_list(v: &Value) -> Result<Value> {
                              "read_only":true}));
         }
         let total = valid.len();
-        let items: Vec<Value> = valid.into_iter()
-            .skip(offset as usize).take(limit as usize).collect();
+        let items: Vec<Value> = valid
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect();
         Ok(json!({
             "state":if conflicts == 0 {"partial_activation"} else {"activation_conflict"},
             "document_id":document,"items":items,"total":total,"conflicts":conflicts,
@@ -933,11 +999,17 @@ pub fn deactivate(v: &Value) -> Result<Value> {
     let new_id = optional_id(v, "new_entry_id")?
         .ok_or_else(|| fail("invalid_request", "Positive new_entry_id required"))?;
     if text(v, "rollback")? != "user_confirmed_revoke_projection" {
-        return Err(fail("activation_rollback_required", "Explicit rollback is required"));
+        return Err(fail(
+            "activation_rollback_required",
+            "Explicit rollback is required",
+        ));
     }
     let mut output = ctf_mirror::read_pinned(v, |_catalog| {
         if open_read(&path)?.is_none() {
-            return Err(fail("annotation_store_missing", "Existing user store is required"));
+            return Err(fail(
+                "annotation_store_missing",
+                "Existing user store is required",
+            ));
         }
         let mut conn = Connection::open_with_flags(
             &path,
@@ -948,16 +1020,22 @@ pub fn deactivate(v: &Value) -> Result<Value> {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let (actual_document, old_generation) = metadata(&tx)?;
         if actual_document != document || old_generation == generation {
-            return Err(fail("annotation_document_conflict", "Document/generation CAS failed"));
+            return Err(fail(
+                "annotation_document_conflict",
+                "Document/generation CAS failed",
+            ));
         }
         let updated = tx.execute(
             "UPDATE annotation_activations
              SET state='revoked',revoked_at_unix=CAST(strftime('%s','now') AS INTEGER)
              WHERE old_entry_id=?1 AND new_generation=?2 AND new_entry_id=?3 AND state='active'",
-            params![old_id,generation,new_id],
+            params![old_id, generation, new_id],
         )?;
         if updated != 1 {
-            return Err(fail("annotation_activation_conflict", "Active projection not found"));
+            return Err(fail(
+                "annotation_activation_conflict",
+                "Active projection not found",
+            ));
         }
         tx.commit()?;
         Ok(json!({"state":"revoked_projection",
