@@ -208,7 +208,6 @@ fn read_only_mirror_rejects_annotation_write_but_supports_query() {
     assert_eq!(fs::read(&source).unwrap(), original);
 }
 
-
 #[test]
 fn pinned_search_requires_strict_same_process_sync_and_detects_same_mtime_external_save() {
     let dir = tempfile::tempdir().unwrap();
@@ -241,8 +240,12 @@ fn pinned_search_requires_strict_same_process_sync_and_detects_same_mtime_extern
     let modified_time = fs::metadata(&source).unwrap().modified().unwrap();
     let after = write_original(&source, "other.mp3");
     assert_eq!(after.len(), before.len());
-    File::options().write(true).open(&source).unwrap()
-        .set_times(FileTimes::new().set_modified(modified_time)).unwrap();
+    File::options()
+        .write(true)
+        .open(&source)
+        .unwrap()
+        .set_times(FileTimes::new().set_modified(modified_time))
+        .unwrap();
     let stale = service(json!({"op":"ctf_search_pinned","path":source,
         "cache_root":root,"query":"ext:mp3","generation":generation}));
     assert_eq!(stale["ok"], false, "{stale}");
@@ -251,8 +254,10 @@ fn pinned_search_requires_strict_same_process_sync_and_detects_same_mtime_extern
     assert_eq!(refreshed["ok"], true, "{refreshed}");
     let next_key = refreshed["data"]["generation"].as_str().unwrap();
     assert_ne!(next_key, generation);
-    let now = service(json!({"op":"ctf_search_pinned","path":source,"cache_root":root,
-        "query":"ext:mp3","generation":next_key,"full_count":true}));
+    let now = service(
+        json!({"op":"ctf_search_pinned","path":source,"cache_root":root,
+        "query":"ext:mp3","generation":next_key,"full_count":true}),
+    );
     assert_eq!(now["ok"], true, "{now}");
     assert_eq!(now["data"]["result"]["items"][0]["name"], "other.mp3");
     assert_eq!(fs::read(&source).unwrap(), after);

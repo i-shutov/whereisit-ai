@@ -6,10 +6,10 @@ use ctf_sidecar::{Recipe, SourceIdentity};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -66,7 +66,10 @@ fn pins() -> &'static Mutex<HashMap<PinKey, Pinned>> {
 fn stamp(path: &Path) -> Result<DbStamp> {
     let meta = fs::symlink_metadata(path).map_err(io_error)?;
     if !meta.file_type().is_file() || meta.len() > DB_LIMIT || !meta.permissions().readonly() {
-        return Err(failure("cache_changed", "Pinned SQLite artifact is absent, changed or writable"));
+        return Err(failure(
+            "cache_changed",
+            "Pinned SQLite artifact is absent, changed or writable",
+        ));
     }
     #[cfg(unix)]
     use std::os::unix::fs::MetadataExt;
@@ -432,7 +435,6 @@ pub fn search(v: &Value) -> Result<Value> {
     }))
 }
 
-
 /// Fast explicit mode for a resident native GUI or atlas serve process.
 /// Requires a fully verified ctf_sync in this same process first. Rehashes
 /// original CTF on every request, including same-size/restored-mtime edits.
@@ -452,16 +454,24 @@ pub fn search_pinned(v: &Value) -> Result<Value> {
     };
     let requested = text(v, "generation")?;
     if requested.len() != 64 || !requested.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(failure("invalid_request", "Expected 64-character generation digest"));
+        return Err(failure(
+            "invalid_request",
+            "Expected 64-character generation digest",
+        ));
     }
     let source_path = path(v, "path")?;
     let source_meta = fs::symlink_metadata(&source_path).map_err(io_error)?;
     if !source_meta.file_type().is_file()
         || source_meta.len() > CTF_LIMIT
-        || source_path.extension().and_then(|x| x.to_str())
+        || source_path
+            .extension()
+            .and_then(|x| x.to_str())
             .is_none_or(|ext| !ext.eq_ignore_ascii_case("ctf"))
     {
-        return Err(failure("ctf_limit", "Expected an unlinked regular .CTF source"));
+        return Err(failure(
+            "ctf_limit",
+            "Expected an unlinked regular .CTF source",
+        ));
     }
     let original = identity(&source_path)?;
     let used_recipe = recipe();
@@ -473,8 +483,15 @@ pub fn search_pinned(v: &Value) -> Result<Value> {
         ));
     }
     let root = path(v, "cache_root")?;
-    if !fs::symlink_metadata(&root).map_err(io_error)?.file_type().is_dir() {
-        return Err(failure("cache_root", "Pinned mirror root must be a real directory"));
+    if !fs::symlink_metadata(&root)
+        .map_err(io_error)?
+        .file_type()
+        .is_dir()
+    {
+        return Err(failure(
+            "cache_root",
+            "Pinned mirror root must be a real directory",
+        ));
     }
     let key: PinKey = (root.clone(), current_key.clone());
     let pinned = pins()
@@ -485,7 +502,10 @@ pub fn search_pinned(v: &Value) -> Result<Value> {
         .ok_or_else(|| failure("not_pinned", "Call ctf_sync in this process first"))?;
     if pinned.source != original {
         forget(&root, &current_key);
-        return Err(failure("source_changed", "Pinned source generation does not match"));
+        return Err(failure(
+            "source_changed",
+            "Pinned source generation does not match",
+        ));
     }
     let cache_dir = root.join(&current_key);
     let db_path = cache_dir.join("catalog.sqlite");
@@ -503,7 +523,10 @@ pub fn search_pinned(v: &Value) -> Result<Value> {
         let after_verify = stamp(&db_path)?;
         if after_verify != first_stamp {
             forget(&root, &current_key);
-            return Err(failure("cache_changed", "SQLite artifact changed during recheck"));
+            return Err(failure(
+                "cache_changed",
+                "SQLite artifact changed during recheck",
+            ));
         }
         let mut registry = pins()
             .lock()
@@ -523,11 +546,17 @@ pub fn search_pinned(v: &Value) -> Result<Value> {
     drop(db);
     if stamp(&db_path)? != first_stamp {
         forget(&root, &current_key);
-        return Err(failure("cache_changed", "SQLite artifact changed during query"));
+        return Err(failure(
+            "cache_changed",
+            "SQLite artifact changed during query",
+        ));
     }
     if identity(&source_path)? != original {
         forget(&root, &current_key);
-        return Err(failure("source_changed", "Original CTF changed during pinned query"));
+        return Err(failure(
+            "source_changed",
+            "Original CTF changed during pinned query",
+        ));
     }
     Ok(json!({
         "generation":current_key,
