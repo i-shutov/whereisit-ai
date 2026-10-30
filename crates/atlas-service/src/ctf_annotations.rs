@@ -450,6 +450,10 @@ pub fn preview(v: &Value) -> Result<Value> {
                 } else {
                     None
                 };
+                let confirmation_revision_conflict = confirmed_selection
+                    .as_ref()
+                    .and_then(|record| record["old_revision"].as_i64())
+                    .is_some_and(|confirmed_revision| confirmed_revision != revision);
                 let candidate_state = match count_lower_bound {
                     0 => "no_match",
                     1 => "unique_unconfirmed",
@@ -467,7 +471,8 @@ pub fn preview(v: &Value) -> Result<Value> {
                     "candidate_count_lower_bound":count_lower_bound,
                     "candidate_count_exact":!truncated,
                     "candidates_truncated":truncated,
-                    "requires_confirmation":confirmed_selection.is_none(),
+                    "requires_confirmation":confirmed_selection.is_none() || confirmation_revision_conflict,
+                    "confirmation_revision_conflict":confirmation_revision_conflict,
                     "confirmed_selection":confirmed_selection
                 }))
             })?
