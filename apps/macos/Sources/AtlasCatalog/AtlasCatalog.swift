@@ -774,6 +774,16 @@ enum Bridge {
                                         model.selectAnnotation(item)
                                     }.disabled(model.annotationReviewLoading || model.annotationConfirmationBusy)
                                 }
+                                if item.canActivate, let target = item.confirmed_selection?.new_entry_id {
+                                    Button("Activate…") {
+                                        model.proposeAnnotationOverlay(.activation(oldID: item.old_entry_id, newID: target))
+                                    }.disabled(model.annotationReviewLoading || model.annotationConfirmationBusy)
+                                }
+                                if item.canRevoke, let target = item.activation_target_entry_id {
+                                    Button("Revoke…") {
+                                        model.proposeAnnotationOverlay(.revocation(oldID: item.old_entry_id, newID: target))
+                                    }.disabled(model.annotationReviewLoading || model.annotationConfirmationBusy)
+                                }
                             }.font(.caption)
                         }
                         if let selected = model.selectedAnnotationRow {
@@ -789,14 +799,14 @@ enum Bridge {
                                         }
                                     }.pickerStyle(.menu)
                                     Button("Confirm mapping…") {
-                                        model.showingAnnotationConfirmation = true
+                                        model.annotationConsent = .mapping
                                     }.disabled(!model.canConfirmAnnotation)
                                 }
                                 Text("Structural metadata is not file-content identity. Confirmation records a choice only, without activating notes.")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                         }
-                        Text("20 records per freshly SHA-verified page. No automatic matching or activation.")
+                        Text("20 records per freshly SHA-verified page. Mapping, activation and revocation require separate consent; journal state does not prove a stale note is valid.")
                             .font(.caption)
                     } else {
                         Text(preview.state == "current_generation"
@@ -815,6 +825,7 @@ enum Bridge {
                         Spacer()
                         Button("Close") { model.resetAnnotationReview() }
                             .keyboardShortcut(.cancelAction)
+                            .disabled(model.annotationConfirmationBusy)
                     }
                 }
                 .padding(14).frame(width: 820, height: 520)
