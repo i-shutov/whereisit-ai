@@ -244,7 +244,10 @@ fn activated_projection_is_reversible_and_preserves_originals() {
             &store,
         ));
         assert_eq!(current["ok"], true, "{current}");
-        assert_eq!(current["data"]["result"]["items"], listed["data"]["result"]["items"]);
+        assert_eq!(
+            current["data"]["result"]["items"],
+            listed["data"]["result"]["items"]
+        );
         assert_eq!(current["data"]["result"]["total"], 1);
         assert_eq!(current["data"]["result"]["conflicts"], 0);
         assert_eq!(current["data"]["result"]["read_only_source"], true);
