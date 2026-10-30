@@ -204,6 +204,11 @@ fn ensure(v: &Value) -> Result<Generation> {
         "UPDATE ctf_sources SET source_path='' WHERE source_path<>''",
         [],
     )?;
+    // Capture time belongs to a scan, not to the source CTF. Ensure two
+    // independently built mirrors of identical CTF bytes have the same
+    // non-user metadata, regardless of their build timestamp.
+    db.conn()
+        .execute("UPDATE volumes SET scanned_at=0 WHERE scanned_at<>0", [])?;
     db.conn().execute(
         "INSERT INTO entries_trigram(entries_trigram,rank) VALUES('integrity-check',1)",
         [],
@@ -311,8 +316,9 @@ pub fn sync(v: &Value) -> Result<Value> {
     }))
 }
 pub fn search(v: &Value) -> Result<Value> {
-    let generation = ensure(v)?;
     let query = text(v, "query")?;
+    // Reject malformed queries before potentially multi-minute imports.
+    atlas_core::query::compile(query)?;
     let offset = unsigned(v, "offset", 0)?;
     let limit = unsigned(v, "limit", 100)?;
     let volume_id = optional_id(v, "volume_id")?;
@@ -321,6 +327,7 @@ pub fn search(v: &Value) -> Result<Value> {
         Some(Value::Bool(value)) => *value,
         _ => return Err(failure("invalid_request", "full_count must be boolean")),
     };
+    let generation = ensure(v)?;
     let db_path = generation.root.join(&generation.key).join("catalog.sqlite");
     let catalog = Catalog::open_readonly(&db_path)?;
     let page = if full_count {
