@@ -1,8 +1,10 @@
 # External WhereIsIt CTF — read-only native search mirror
 
 The original CTF is the authoritative source. This is the first end-to-end
-native **service/CLI** integration of the content-addressed cache; the Windows
-and macOS GUI file-watching/switching interface is a subsequent separate gate.
+native **service/CLI** integration of the content-addressed cache. Windows and
+macOS now offer explicit **Link CTF** actions, read-only browsing/search, and
+new-file CSV/Parquet export. An automatic filesystem watcher and native
+annotation reconciliation are still separate future gates.
 
 Call through the native application JSON service or installed CLI:
 
@@ -45,7 +47,9 @@ generation identifier so clients can associate a result with its source.
 - Search on a new 3M-row CTF can take minutes for initial build. Even warm
   requests hash the entire mirror for integrity and may take seconds. This
   prioritizes correctness, not the future <=150 ms warm GUI SLO.
-- The UI has not yet connected its Open CTF action to this service.
+- Native GUI linked-mode access is now wired to the verified pinned APIs;
+  it is **explicit Link CTF**, not automatic file watching. Safe report
+  export is specified in [CTF_PINNED_EXPORT.md](CTF_PINNED_EXPORT.md).
 - Native-only categories/annotations, legacy category mapping and original
   WhereIsIt acceptance of *modified* exports remain release blockers.
 - Platform-specific power-failure durability of directory publication is not
@@ -66,10 +70,11 @@ timestamps preserved in the CTF entry records or the original source.
 
 ### Operational readiness
 
-The commands are accessible through the native Rust service and CLI. They do
-**not** yet constitute a connected compact Windows/macOS GUI workflow, nor a
-source-file watcher. The response returns a generation key; a future UI must
-treat old-generation pages as stale when switching to a new CTF digest. A
+The commands are accessible through the native Rust service and CLI, and
+linked generation browsing/search is wired to both compact native Windows
+and macOS UIs. This is **not** a live source-file watcher, verified manual GUI
+acceptance or durable native annotation store. The response includes a
+generation key; both UIs must reject stale generations after source changes. A
 warm-cache lookup currently performs complete SHA-256 checks of both the
 source and the SQLite mirror; the first verified implementation prioritizes
 correctness and remains unsuitable for subsecond queries on very large disks.

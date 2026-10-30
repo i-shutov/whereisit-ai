@@ -21,7 +21,8 @@ All clients call the same service. Success: `{"ok":true,"data":...}`. Failure: `
 | `import_ctf` | `path`, optional `utc_offset_minutes` | Atomic multi-volume import and diagnostics |
 | `ctf_info` | `path`; `db` is not required | Structural counts, format and SHA-256 |
 | `export_ctf` | `path`, optional `name`, `overwrite`, `allow_lossy` | Whole catalog in observed CTF variant |
-| `export_csv` / `export_parquet` / `export_json` | `path`, selection below, optional `overwrite`; CSV `bom` | Streamed export, row count, byte count |
+| `export_csv` / `export_parquet` / `export_json` | `path`, selection below, optional `overwrite`; CSV `bom` | Streamed export, row count, byte count (editable SQLite) |
+| `ctf_export_pinned` | Original CTF `path`, `cache_root`, 64-hex `generation` from `ctf_sync`, new `output`, `format` (`csv`, `parquet`, `json`), `mode` (`search`, `children`, `all`), optional `query`, `volume_id`, `parent_id` | Verified read-only CTF generation; streamed selection, output SHA-256, row and byte count; no-clobber final publication |
 
 Page limits are clamped to 1–1000. Syntax/type errors return an error instead of broadening an export. Native UIs use 250-row pages. Unknown CTF timestamps return `modified_local` as local calendar text, without a UTC suffix; `modified_unix` remains null unless its conversion basis is known.
 
@@ -29,7 +30,7 @@ Page limits are clamped to 1–1000. Syntax/type errors return an error instead 
 
 `mode:"search"` selects the full result of `query`, optionally within `volume_id`. An empty query selects all entries in scope. `mode:"children"` requires `volume_id` or `parent_id`: a non-null parent includes that selected entry and every descendant, while a null parent selects the volume. `mode:"duplicates"` uses `duplicate_mode:"name_size"|"name"|"size"` and the query/volume filter. Pagination does not truncate exports.
 
-Exports use a temporary file beside the destination and publish it by rename only after successful completion. Existing files require `overwrite:true`; UIs set this only after their native save dialog. The active database, its WAL/shared-memory siblings and original CTF are protected. CSV preserves original field values; quote/newline escaping follows CSV rules. A CSV should be treated as data when imported into spreadsheet software.
+Exports use a temporary file beside the destination and publish it by rename only after successful completion. **For editable SQLite exports only**, existing files require `overwrite:true`; native UIs set this after their native save dialog. **Linked CTF export always refuses overwrite and an existing destination**, even if the save dialog was accepted. `ctf_export_pinned` exports a generated report, never a CTF file, from a source-hash-verified read-only generation; if the CTF changes during the request the operation aborts without publishing its staging file. The active database, its WAL/shared-memory siblings and original CTF are protected. CSV preserves original field values; quote/newline escaping follows CSV rules. A CSV should be treated as data when imported into spreadsheet software.
 
 The CSV/Parquet schema contains `id`, `volume_id`, `parent_id`, `name`, `relative_path`, `kind`, `size`, `modified_unix`, `description`, `tags`, `volume_label`, `categories`, `duplicate_count`, `duplicate_group`, `modified_local`. Sizes are exact 64-bit integers; Parquet stores nullable dates and parents. `categories` lists direct assignments separated by `; `, not a reversible encoding of arbitrary category names or inherited assignments. Native search does account for folder inheritance.
 
