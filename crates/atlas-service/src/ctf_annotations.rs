@@ -19,6 +19,23 @@ fn fail(code: &'static str, message: &'static str) -> Error {
     Error::new(code, message)
 }
 
+#[cfg(unix)]
+fn multiply_linked(meta: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    meta.nlink() != 1
+}
+
+#[cfg(windows)]
+fn multiply_linked(meta: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    meta.number_of_links().map_or(true, |links| links != 1)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn multiply_linked(_meta: &fs::Metadata) -> bool {
+    true // Fail closed on platforms whose file identity we cannot verify.
+}
+
 // A separate, explicitly selected .wia.sqlite is user data, not a generation
 // cache. Canonicalize the parent before checking containment and reject symlink
 // destinations so a dialog-selected annotation file cannot be the original CTF
@@ -50,10 +67,10 @@ fn store_path(v: &Value) -> Result<PathBuf> {
         ));
     }
     match fs::symlink_metadata(&target) {
-        Ok(meta) if !meta.file_type().is_file() => {
+        Ok(meta) if !meta.file_type().is_file() || multiply_linked(&meta) => {
             return Err(fail(
                 "unsafe_annotation_store",
-                "Annotation destination must be a regular non-symlink file",
+                "Annotation destination must be one regular non-linked file",
             ));
         }
         Ok(_) => {}
@@ -82,12 +99,12 @@ fn open_read(path: &Path) -> Result<Option<Connection>> {
         Ok(meta) if !meta.file_type().is_file() => {
             return Err(fail(
                 "unsafe_annotation_store",
-                "Annotation file was replaced by a non-regular file",
+                "Annotation file was replaced or multiply linked",
             ));
         }
         Ok(_) => {}
     }
-    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NOFOLLOW)?;
     conn.busy_timeout(Duration::from_secs(5))?;
     check_app(&conn)?;
     Ok(Some(conn))
@@ -99,7 +116,9 @@ fn open_read(path: &Path) -> Result<Option<Connection>> {
 fn open_write(path: &Path, generation: &str) -> Result<Connection> {
     let conn = Connection::open_with_flags(
         path,
-        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
+        OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_CREATE
+            | OpenFlags::SQLITE_OPEN_NOFOLLOW,
     )?;
     conn.busy_timeout(Duration::from_secs(5))?;
     // Check foreign SQLite before changing its journal mode or any pragma.
