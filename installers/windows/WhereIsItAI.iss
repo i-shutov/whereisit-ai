@@ -3,7 +3,7 @@
 ; The application never bundles or copies the user's private catalog.
 #define AppName "WhereIsIt AI"
 #ifndef AppVersion
-  #define AppVersion "1.0.0-rc.1"
+  #define AppVersion "1.0.0-rc.2"
 #endif
 #ifndef BuildDir
   #define BuildDir "../../target/release"
