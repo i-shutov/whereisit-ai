@@ -179,11 +179,10 @@ enum Bridge {
         if let volumeID { args["volume_id"] = volumeID }
         if let fields = linkedFields() {
             if showingDuplicates {
-                showingDuplicates = false
-                status = "Linked CTF duplicate export is not enabled; use a native SQLite catalog."
-                return
-            }
-            if !appliedQuery.isEmpty {
+                args["op"] = "ctf_duplicates_pinned"
+                args["duplicate_mode"] = appliedDuplicateMode
+                args["query"] = appliedQuery
+            } else if !appliedQuery.isEmpty {
                 args["op"] = "ctf_search_pinned"; args["query"] = appliedQuery
             } else if volumeID != nil {
                 args["op"] = "ctf_children_pinned"
@@ -193,7 +192,9 @@ enum Bridge {
                 status = "Select a linked CTF disk or search all disks."; return
             }
             args.merge(fields) { _, newValue in newValue }
-            status = "Searching verified linked CTF…"
+            status = showingDuplicates
+                ? "Finding read-only CTF metadata duplicates (may be slow on huge catalogs)…"
+                : "Searching verified linked CTF…"
             request(args, as: LinkedCTFResult<EntryPage>.self, generationToken: token) { [weak self] answer in
                 guard let self, let answer else { return }
                 self.applyPage(answer.result, token: token)
@@ -223,7 +224,6 @@ enum Bridge {
     }
     func search() { appliedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines); showingDuplicates = false; offset = 0; load() }
     func duplicates() {
-        guard !linkedMode else { status = "Metadata duplicate detection for linked CTF is not enabled."; return }
         appliedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines); appliedDuplicateMode = duplicateMode; showingDuplicates = true; offset = 0; load() }
     func back() {
         if showingDuplicates || !appliedQuery.isEmpty { showingDuplicates = false; query = ""; appliedQuery = "" }
@@ -338,6 +338,10 @@ enum Bridge {
     }
     func export() {
         guard mutationAllowed else { return }
+        guard !(linkedMode && showingDuplicates) else {
+            status = "Export of linked duplicate candidates is not yet supported; return to Search or a folder."
+            return
+        }
         guard !linkedMode || exportFormat != "ctf" else {
             status = "Linked CTF supports CSV/Parquet only; the original is read-only."
             return
@@ -408,7 +412,7 @@ enum Bridge {
                 Picker("Export format", selection: $model.exportFormat) {
                     Text("CSV • current scope").tag("csv"); Text("Parquet • current scope").tag("parquet"); Text("CTF • entire catalog").tag("ctf")
                 }.labelsHidden().frame(width: 174).accessibilityLabel("Export format and scope")
-                Button("Export…") { model.export() }.disabled(!model.mutationAllowed || (model.linkedMode && model.exportFormat == "ctf"))
+                Button("Export…") { model.export() }.disabled(!model.mutationAllowed || (model.linkedMode && (model.exportFormat == "ctf" || model.showingDuplicates)))
                 Spacer(minLength: 4)
                 if model.pending > 0 { ProgressView().controlSize(.small) }
                 Button("Cancel scan") { model.cancel() }.disabled(!model.canCancel)
@@ -421,7 +425,7 @@ enum Bridge {
                 Picker("Duplicate matching", selection: $model.duplicateMode) {
                     Text("Name + size").tag("name_size"); Text("Size").tag("size"); Text("Name").tag("name")
                 }.labelsHidden().frame(width: 120).accessibilityLabel("Duplicate matching mode")
-                Button("Duplicates") { model.duplicates() }.disabled(model.linkedMode)
+                Button("Duplicates") { model.duplicates() }
             }
             HStack { Text("AND  OR  NOT  ( )   name:  path:  ext:  size:  category:").foregroundStyle(.secondary); Spacer(); Text(model.currentPath).lineLimit(1).truncationMode(.middle) }.font(.caption)
             HSplitView {

@@ -8,7 +8,8 @@ or a claim of complete CTF interoperability.
 Link the **original** WhereIsIt `.CTF` in native Win32/SwiftUI, wait for
 `ctf_sync`, select an offline disk, folder or global Boolean query, then choose
 **CSV** or **Parquet** and Export. The source is never rewritten. CSV/Parquet
-are reports, **not** replacements for CTF. Duplicates and native annotation
+are reports, **not** replacements for CTF. Read-only duplicate **browsing** is
+available, but exporting a duplicate-only result and native annotation
 edits remain unavailable in linked mode.
 
 The native CLI/service can also export JSON. It has the same protection.
