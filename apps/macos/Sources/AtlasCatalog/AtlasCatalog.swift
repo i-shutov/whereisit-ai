@@ -87,6 +87,19 @@ enum Bridge {
     @Published var linkedCTFPath: String?
     @Published var annotationReview: AnnotationReview?
     @Published var showingAnnotationReview = false
+    @Published var annotationReviewOffset = 0
+    @Published var annotationReviewLoading = false
+    private var annotationReviewStore: String?
+    private var annotationReviewSession = 0
+    let annotationPageSize = 20
+    var annotationReviewHasPrevious: Bool {
+        annotationReview?.state == "generation_conflict" && annotationReviewOffset > 0
+    }
+    var annotationReviewHasNext: Bool {
+        guard let review = annotationReview, review.state == "generation_conflict",
+              !review.items.isEmpty else { return false }
+        return Int64(annotationReviewOffset + review.items.count) < review.total
+    }
     var linkedGeneration: String?
     var linkedMode: Bool { linkedCTFPath != nil && linkedGeneration != nil }
     var editableAllowed: Bool { mutationAllowed && !linkedMode }
@@ -139,7 +152,7 @@ enum Bridge {
     }
     func initialize() {
         linkedCTFPath = nil; linkedGeneration = nil
-        annotationReview = nil; showingAnnotationReview = false
+        resetAnnotationReview()
         generation += 1; volumeID = nil; stack = [(nil, "/")]; entries = []; query = ""; appliedQuery = ""; showingDuplicates = false; offset = 0
         volumes = []; categories = []; categoryID = nil; selection = nil; total = 0; hasMore = false
         status = "Opening catalog…"
@@ -270,7 +283,7 @@ enum Bridge {
     }
     func synchronizeLinkedCTF(_ source: String) {
         guard mutationAllowed else { return }
-        annotationReview = nil; showingAnnotationReview = false
+        resetAnnotationReview()
         job = "linked-sync"
         status = "Verifying external CTF and its derived index…"
         request(["op": "ctf_sync", "path": source, "cache_root": linkedCacheRoot],
@@ -292,8 +305,17 @@ enum Bridge {
         guard let source = linkedCTFPath, mutationAllowed else { return }
         synchronizeLinkedCTF(source)
     }
+    func resetAnnotationReview() {
+        annotationReviewSession += 1
+        annotationReviewStore = nil
+        annotationReview = nil
+        annotationReviewOffset = 0
+        annotationReviewLoading = false
+        showingAnnotationReview = false
+    }
     func reviewAnnotations() {
         guard linkedMode, mutationAllowed else { return }
+        let linkedAtOpen = linkedGeneration
         let panel = NSOpenPanel()
         panel.title = "Choose your existing .wia.sqlite notes file (preview only)"
         panel.canChooseDirectories = false
@@ -304,20 +326,37 @@ enum Bridge {
                 self.error = "Choose an existing .wia.sqlite user annotation file."
                 return
             }
-            guard let fields = self.linkedFields(), self.mutationAllowed else { return }
-            let token = self.generation
-            var args = fields
-            args["op"] = "ctf_annotations_preview_pinned"
-            args["annotation_db"] = url.path
-            args["offset"] = 0
-            args["limit"] = 20
-            self.status = "Checking pinned CTF generation and annotation conflicts…"
-            self.request(args, as: LinkedCTFResult<AnnotationReview>.self,
-                         generationToken: token) { [weak self] result in
-                guard let self, let result else { return }
-                self.annotationReview = result.result
-                self.showingAnnotationReview = true
-                self.status = "Read-only annotation preview completed; nothing was changed."
+            guard self.linkedGeneration == linkedAtOpen, self.mutationAllowed else { return }
+            self.resetAnnotationReview()
+            self.annotationReviewStore = url.path
+            self.showingAnnotationReview = true
+            self.loadAnnotationReviewPage(offset: 0)
+        }
+    }
+    func loadAnnotationReviewPage(offset: Int) {
+        guard linkedMode, let fields = linkedFields(), let store = annotationReviewStore,
+              !annotationReviewLoading, pending == 0, offset >= 0 else { return }
+        if let review = annotationReview, review.state == "generation_conflict",
+           offset > 0 && Int64(offset) >= review.total { return }
+        let session = annotationReviewSession
+        let token = generation
+        annotationReviewOffset = offset
+        annotationReview = nil
+        annotationReviewLoading = true
+        var args = fields
+        args["op"] = "ctf_annotations_preview_pinned"
+        args["annotation_db"] = store
+        args["offset"] = offset
+        args["limit"] = annotationPageSize
+        status = "Verifying source generation and notes page (read-only)…"
+        request(args, as: LinkedCTFResult<AnnotationReview>.self,
+                generationToken: token) { [weak self] response in
+            guard let self, self.annotationReviewSession == session,
+                  self.annotationReviewStore == store, self.showingAnnotationReview else { return }
+            self.annotationReviewLoading = false
+            self.annotationReview = response?.result
+            if response != nil {
+                self.status = "Read-only notes page checked; nothing was changed."
             }
         }
     }
@@ -529,6 +568,8 @@ enum Bridge {
                     Text("Read-only preview • \(preview.state) • \(preview.total) saved notes")
                         .font(.caption).foregroundStyle(.secondary)
                     if preview.state == "generation_conflict" {
+                        Text("Rows \(preview.items.isEmpty ? 0 : model.annotationReviewOffset + 1)–\(model.annotationReviewOffset + preview.items.count) of \(preview.total)")
+                            .font(.caption).monospacedDigit()
                         List(preview.items) { item in
                             HStack(spacing: 12) {
                                 Text("Old ID \(item.old_entry_id)").monospacedDigit().frame(width: 120, alignment: .leading)
@@ -538,7 +579,7 @@ enum Bridge {
                                 Text(item.conflictText).foregroundStyle(.secondary)
                             }.font(.caption)
                         }
-                        Text("Showing up to the first 20 records. Unique matches still require explicit confirmation.")
+                        Text("20 rows per verified page. Unique matches still require explicit confirmation.")
                             .font(.caption)
                     } else {
                         Text(preview.state == "current_generation"
@@ -548,12 +589,25 @@ enum Bridge {
                     Text("No mapping was confirmed or activated; neither CTF nor notes were modified.")
                         .font(.caption).foregroundStyle(.secondary)
                     HStack {
+                        Button("Previous") {
+                            model.loadAnnotationReviewPage(offset: max(0, model.annotationReviewOffset - model.annotationPageSize))
+                        }.disabled(!model.annotationReviewHasPrevious || model.annotationReviewLoading)
+                        Button("Next") {
+                            model.loadAnnotationReviewPage(offset: model.annotationReviewOffset + model.annotationPageSize)
+                        }.disabled(!model.annotationReviewHasNext || model.annotationReviewLoading)
                         Spacer()
-                        Button("Close") { model.showingAnnotationReview = false }
+                        Button("Close") { model.resetAnnotationReview() }
                             .keyboardShortcut(.cancelAction)
                     }
                 }
                 .padding(14).frame(width: 730, height: 420)
+            } else {
+                VStack(spacing: 12) {
+                    if model.annotationReviewLoading { ProgressView("Verifying read-only page…") }
+                    else { Text("Preview could not be loaded. No notes were changed.") }
+                    Button("Close") { model.resetAnnotationReview() }
+                        .keyboardShortcut(.cancelAction)
+                }.padding(20).frame(width: 500, height: 160)
             }
         }
         .alert("WhereIsIt AI", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) { Button("OK") { model.error = nil } } message: { Text(model.error ?? "") }
