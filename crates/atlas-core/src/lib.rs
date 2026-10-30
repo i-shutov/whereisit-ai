@@ -143,8 +143,7 @@ impl Catalog {
     pub fn open_readonly(path: impl AsRef<Path>) -> Result<Self> {
         let conn = Connection::open_with_flags(
             path,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
-                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
         conn.create_scalar_function(
             "unicode_lower",
@@ -157,7 +156,10 @@ impl Catalog {
         conn.execute_batch("PRAGMA query_only=ON; PRAGMA foreign_keys=ON;")?;
         let v: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
         if v != 3 {
-            return Err(Error::new("schema_version", "Read-only CTF mirror requires schema v3"));
+            return Err(Error::new(
+                "schema_version",
+                "Read-only CTF mirror requires schema v3",
+            ));
         }
         Ok(Self { conn })
     }

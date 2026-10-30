@@ -83,7 +83,10 @@ fn sync_reuses_immutable_generation_and_follows_original_external_save() {
     assert_eq!(changed["data"]["rebuilt"], true);
     assert_ne!(changed["data"]["generation"], first_key);
     assert_eq!(changed["data"]["result"]["items"][0]["name"], "other.mp3");
-    assert!(root.join(first_key).is_dir(), "Old immutable generation retained");
+    assert!(
+        root.join(first_key).is_dir(),
+        "Old immutable generation retained"
+    );
     assert_eq!(fs::read(&source).unwrap(), modified);
 }
 
@@ -129,12 +132,21 @@ fn read_only_mirror_rejects_annotation_write_but_supports_query() {
     let original = write_original(&source, "song.mp3");
     let result = service(json!({"op":"ctf_sync","path":source,"cache_root":root}));
     assert_eq!(result["ok"], true, "{result}");
-    let path = root.join(result["data"]["generation"].as_str().unwrap())
+    let path = root
+        .join(result["data"]["generation"].as_str().unwrap())
         .join("catalog.sqlite");
     let catalog = atlas_core::Catalog::open_readonly(path).unwrap();
     let page = catalog.search("ext:mp3", None, 0, 10).unwrap();
     assert_eq!(page.total, 1);
-    assert!(catalog.update_entry(page.items[0].id, "must not persist", "").is_err());
-    assert_eq!(catalog.search("description:must", None, 0, 10).unwrap().total, 0);
+    assert!(catalog
+        .update_entry(page.items[0].id, "must not persist", "")
+        .is_err());
+    assert_eq!(
+        catalog
+            .search("description:must", None, 0, 10)
+            .unwrap()
+            .total,
+        0
+    );
     assert_eq!(fs::read(&source).unwrap(), original);
 }

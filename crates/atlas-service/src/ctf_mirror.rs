@@ -35,11 +35,15 @@ struct Generation {
     manifest: Manifest,
     built: bool,
 }
-fn failure(code: &'static str, msg: &'static str) -> Error { Error::new(code, msg) }
+fn failure(code: &'static str, msg: &'static str) -> Error {
+    Error::new(code, msg)
+}
 fn io_error(e: std::io::Error) -> Error {
     Error::new("io", format!("CTF mirror I/O error: {:?}", e.kind()))
 }
-fn path(v: &Value, field: &str) -> Result<PathBuf> { Ok(PathBuf::from(text(v, field)?)) }
+fn path(v: &Value, field: &str) -> Result<PathBuf> {
+    Ok(PathBuf::from(text(v, field)?))
+}
 fn identity(path: &Path) -> Result<SourceIdentity> {
     ctf_sidecar::identity(path, CTF_LIMIT).map_err(io_error)
 }
@@ -57,7 +61,10 @@ fn recipe() -> Recipe {
 fn hash_file(path: &Path) -> Result<SourceIdentity> {
     let metadata = fs::symlink_metadata(path).map_err(io_error)?;
     if !metadata.file_type().is_file() || metadata.len() > DB_LIMIT {
-        return Err(failure("cache_corrupt", "Missing, linked or oversized SQLite mirror"));
+        return Err(failure(
+            "cache_corrupt",
+            "Missing, linked or oversized SQLite mirror",
+        ));
     }
     let mut stream = File::open(path).map_err(io_error)?;
     let mut h = Sha256::new();
@@ -65,26 +72,42 @@ fn hash_file(path: &Path) -> Result<SourceIdentity> {
     let mut block = [0u8; 262_144];
     loop {
         let n = stream.read(&mut block).map_err(io_error)?;
-        if n == 0 { break; }
-        bytes = bytes.checked_add(n as u64)
+        if n == 0 {
+            break;
+        }
+        bytes = bytes
+            .checked_add(n as u64)
             .ok_or_else(|| failure("cache_corrupt", "SQLite mirror size overflow"))?;
         if bytes > DB_LIMIT {
             return Err(failure("cache_corrupt", "SQLite mirror exceeds limit"));
         }
         h.update(&block[..n]);
     }
-    Ok(SourceIdentity { sha256: format!("{:x}", h.finalize()), size_bytes: bytes })
+    Ok(SourceIdentity {
+        sha256: format!("{:x}", h.finalize()),
+        size_bytes: bytes,
+    })
 }
 fn sync_dir(path: &Path) -> Result<()> {
     #[cfg(target_os = "linux")]
-    File::open(path).map_err(io_error)?.sync_all().map_err(io_error)?;
+    File::open(path)
+        .map_err(io_error)?
+        .sync_all()
+        .map_err(io_error)?;
     #[cfg(not(target_os = "linux"))]
     let _ = path;
     Ok(())
 }
 fn verify(target: &Path, source: &SourceIdentity, recipe: &Recipe) -> Result<Manifest> {
-    if !fs::symlink_metadata(target).map_err(io_error)?.file_type().is_dir() {
-        return Err(failure("cache_corrupt", "Invalid mirror generation directory"));
+    if !fs::symlink_metadata(target)
+        .map_err(io_error)?
+        .file_type()
+        .is_dir()
+    {
+        return Err(failure(
+            "cache_corrupt",
+            "Invalid mirror generation directory",
+        ));
     }
     let manifest_file = target.join("manifest.json");
     let metadata = fs::symlink_metadata(&manifest_file).map_err(io_error)?;
@@ -94,33 +117,48 @@ fn verify(target: &Path, source: &SourceIdentity, recipe: &Recipe) -> Result<Man
     let raw = fs::read(manifest_file).map_err(io_error)?;
     let manifest: Manifest = serde_json::from_slice(&raw)
         .map_err(|_| failure("cache_corrupt", "Malformed mirror manifest"))?;
-    if manifest.version != FORMAT || manifest.source != *source
-        || manifest.recipe != *recipe || manifest.sqlite != rusqlite::version()
+    if manifest.version != FORMAT
+        || manifest.source != *source
+        || manifest.recipe != *recipe
+        || manifest.sqlite != rusqlite::version()
         || !manifest.readonly
     {
         return Err(failure("cache_stale", "Mirror recipe or source mismatch"));
     }
     let actual = hash_file(&target.join("catalog.sqlite"))?;
     if actual.sha256 != manifest.db_sha256 || actual.size_bytes != manifest.db_bytes {
-        return Err(failure("cache_corrupt", "SQLite mirror changed after publication"));
+        return Err(failure(
+            "cache_corrupt",
+            "SQLite mirror changed after publication",
+        ));
     }
     Ok(manifest)
 }
 fn ensure(v: &Value) -> Result<Generation> {
     let source_path = path(v, "path")?;
     let metadata = fs::symlink_metadata(&source_path).map_err(io_error)?;
-    if !metadata.file_type().is_file() || metadata.len() > CTF_LIMIT
-        || source_path.extension().and_then(|x| x.to_str())
+    if !metadata.file_type().is_file()
+        || metadata.len() > CTF_LIMIT
+        || source_path
+            .extension()
+            .and_then(|x| x.to_str())
             .is_none_or(|x| !x.eq_ignore_ascii_case("ctf"))
     {
-        return Err(failure("ctf_limit", "Expected an unlinked regular .CTF file"));
+        return Err(failure(
+            "ctf_limit",
+            "Expected an unlinked regular .CTF file",
+        ));
     }
     let source = identity(&source_path)?;
     let recipe = recipe();
     let key = ctf_sidecar::cache_key(&source, &recipe).map_err(io_error)?;
     let root = path(v, "cache_root")?;
     if root.exists() {
-        if !fs::symlink_metadata(&root).map_err(io_error)?.file_type().is_dir() {
+        if !fs::symlink_metadata(&root)
+            .map_err(io_error)?
+            .file_type()
+            .is_dir()
+        {
             return Err(failure("cache_root", "Cache root must be a real directory"));
         }
     } else {
@@ -130,36 +168,56 @@ fn ensure(v: &Value) -> Result<Generation> {
     if target.exists() {
         let manifest = verify(&target, &source, &recipe)?;
         if identity(&source_path)? != source {
-            return Err(failure("source_changed", "CTF changed while opening cached generation"));
+            return Err(failure(
+                "source_changed",
+                "CTF changed while opening cached generation",
+            ));
         }
-        return Ok(Generation { root, key, source, manifest, built: false });
+        return Ok(Generation {
+            root,
+            key,
+            source,
+            manifest,
+            built: false,
+        });
     }
-    let temp = tempfile::Builder::new().prefix("ctf-building-")
-        .tempdir_in(&root).map_err(io_error)?;
+    let temp = tempfile::Builder::new()
+        .prefix("ctf-building-")
+        .tempdir_in(&root)
+        .map_err(io_error)?;
     let db_path = temp.path().join("catalog.sqlite");
     let mut db = Catalog::open(&db_path)?;
     let imported = legacy::import(
-        &mut db, &json!({"path":source_path.to_string_lossy().to_string()})
+        &mut db,
+        &json!({"path":source_path.to_string_lossy().to_string()}),
     )?;
-    let entries = imported["entries"].as_u64()
+    let entries = imported["entries"]
+        .as_u64()
         .ok_or_else(|| failure("ctf", "Importer did not report entries"))?;
-    let volumes = imported["volumes"].as_array()
+    let volumes = imported["volumes"]
+        .as_array()
         .map(|a| a.len() as u64)
         .ok_or_else(|| failure("ctf", "Importer did not report volumes"))?;
     // Remove local locator from a content-addressed derivative so byte-identical
     // renamed source copies can safely share the immutable mirror.
-    db.conn().execute("UPDATE ctf_sources SET source_path='' WHERE source_path<>''", [])?;
     db.conn().execute(
-        "INSERT INTO entries_trigram(entries_trigram,rank) VALUES('integrity-check',1)",[]
+        "UPDATE ctf_sources SET source_path='' WHERE source_path<>''",
+        [],
+    )?;
+    db.conn().execute(
+        "INSERT INTO entries_trigram(entries_trigram,rank) VALUES('integrity-check',1)",
+        [],
     )?;
     db.conn().execute_batch(
-        "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;"
+        "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;",
     )?;
     drop(db);
     let checked = maintenance::validate(&json!({"db":db_path.to_string_lossy()}))?;
     if checked["schema_version"] != 3
-        || checked["entries"] != entries || checked["volumes"] != volumes
-        || checked["quick_check"] != "ok" || checked["foreign_key_errors"] != 0
+        || checked["entries"] != entries
+        || checked["volumes"] != volumes
+        || checked["quick_check"] != "ok"
+        || checked["foreign_key_errors"] != 0
     {
         return Err(failure("integrity", "Mirror validation failed"));
     }
@@ -177,7 +235,8 @@ fn ensure(v: &Value) -> Result<Generation> {
         sqlite: rusqlite::version().to_owned(),
         db_sha256: image.sha256,
         db_bytes: image.size_bytes,
-        entries, volumes,
+        entries,
+        volumes,
         readonly: true,
     };
     let encoded = serde_json::to_vec_pretty(&manifest)
@@ -185,30 +244,56 @@ fn ensure(v: &Value) -> Result<Generation> {
     if encoded.len() as u64 > MANIFEST_LIMIT {
         return Err(failure("cache_corrupt", "Mirror manifest exceeds limit"));
     }
-    let mut file = OpenOptions::new().write(true).create_new(true)
-        .open(temp.path().join("manifest.json")).map_err(io_error)?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(temp.path().join("manifest.json"))
+        .map_err(io_error)?;
     file.write_all(&encoded).map_err(io_error)?;
     file.sync_all().map_err(io_error)?;
     drop(file);
     sync_dir(temp.path())?;
     if let Err(error) = fs::rename(temp.path(), &target) {
-        if !target.exists() { return Err(io_error(error)); }
+        if !target.exists() {
+            return Err(io_error(error));
+        }
         // A concurrently built generation is usable only if its manifest and
         // derived bytes are identical. Never delete a conflicting generation.
         let other = verify(&target, &source, &recipe)?;
         if other.db_sha256 != manifest.db_sha256 {
-            return Err(failure("cache_conflict", "Different concurrent mirror generation"));
+            return Err(failure(
+                "cache_conflict",
+                "Different concurrent mirror generation",
+            ));
         }
         if identity(&source_path)? != source {
-            return Err(failure("source_changed", "CTF changed during concurrent publication"));
+            return Err(failure(
+                "source_changed",
+                "CTF changed during concurrent publication",
+            ));
         }
-        return Ok(Generation { root, key, source, manifest: other, built: false });
+        return Ok(Generation {
+            root,
+            key,
+            source,
+            manifest: other,
+            built: false,
+        });
     }
     sync_dir(&root)?;
     if identity(&source_path)? != source {
-        return Err(failure("source_changed", "CTF changed after mirror publication"));
+        return Err(failure(
+            "source_changed",
+            "CTF changed after mirror publication",
+        ));
     }
-    Ok(Generation { root, key, source, manifest, built: true })
+    Ok(Generation {
+        root,
+        key,
+        source,
+        manifest,
+        built: true,
+    })
 }
 pub fn sync(v: &Value) -> Result<Value> {
     let generation = ensure(v)?;
@@ -242,10 +327,14 @@ pub fn search(v: &Value) -> Result<Value> {
         serde_json::to_value(catalog.search(query, volume_id, offset, limit)?)
     } else {
         serde_json::to_value(catalog.search_fast(query, volume_id, offset, limit)?)
-    }.map_err(|_| failure("internal", "Search page encoding failed"))?;
+    }
+    .map_err(|_| failure("internal", "Search page encoding failed"))?;
     drop(catalog);
     if identity(&path(v, "path")?)? != generation.source {
-        return Err(failure("source_changed", "CTF changed during mirror search"));
+        return Err(failure(
+            "source_changed",
+            "CTF changed during mirror search",
+        ));
     }
     Ok(json!({
         "generation":generation.key,
