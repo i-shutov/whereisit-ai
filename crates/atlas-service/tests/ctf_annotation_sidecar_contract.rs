@@ -299,7 +299,9 @@ fn cache_path_and_foreign_sqlite_are_never_annotation_destinations() {
 
     // A hardlink has a different name but the SAME bytes and inode as source.
     // The .wia.sqlite extension must not permit writing through that alias.
-    #[cfg(unix)]
+    // Windows fails closed at the foreign SQLite header check; Unix also
+    // rejects the multiply-linked inode before opening SQLite.
+    #[cfg(any(unix, windows))]
     {
         let alias = tmp.path().join("alias.wia.sqlite");
         fs::hard_link(&source, &alias).unwrap();
@@ -315,6 +317,8 @@ fn cache_path_and_foreign_sqlite_are_never_annotation_destinations() {
         hardlink["note"] = json!("MUST NOT WRITE");
         hardlink["tags"] = json!("");
         let denied = invoke(hardlink);
+        assert_eq!(denied["ok"], false, "{denied}");
+        #[cfg(unix)]
         assert_eq!(
             denied["error"]["code"], "unsafe_annotation_store",
             "{denied}"
