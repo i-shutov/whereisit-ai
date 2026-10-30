@@ -26,9 +26,12 @@ fn multiply_linked(meta: &fs::Metadata) -> bool {
 }
 
 #[cfg(windows)]
-fn multiply_linked(meta: &fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    meta.number_of_links().map_or(true, |links| links != 1)
+fn multiply_linked(_meta: &fs::Metadata) -> bool {
+    // std::os::windows::fs::MetadataExt::number_of_links is unstable on
+    // the pinned Rust 1.90 Windows runner (E0658). SQLite NOFOLLOW and the
+    // application-id/foreign-schema checks still reject CTF/mirror aliases
+    // before any mutation. Do not claim generic Windows hardlink detection.
+    false
 }
 
 #[cfg(not(any(unix, windows)))]
