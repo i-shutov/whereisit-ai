@@ -21,12 +21,15 @@ fn target(v: &Value, key: &str, suffix: &str) -> Result<PathBuf> {
         .file_name()
         .ok_or_else(|| fail("invalid_request", "Snapshot filename is required"))?;
     if !filename.to_string_lossy().ends_with(suffix) {
-        return Err(fail("invalid_request", "Unexpected snapshot filename extension"));
+        return Err(fail(
+            "invalid_request",
+            "Unexpected snapshot filename extension",
+        ));
     }
     let parent = supplied
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."))
+        .unwrap_or(Path::new("."))
         .canonicalize()?;
     let path = parent.join(filename);
     let original = PathBuf::from(text(v, "path")?).canonicalize()?;
@@ -188,7 +191,10 @@ fn publish(staged: &Path, destination: &Path) -> Result<()> {
 /// only then is the validated private copy published.
 pub fn backup(v: &Value) -> Result<Value> {
     if text(v, "backup")? != "user_approved_new_snapshot" {
-        return Err(fail("annotation_backup_consent", "Explicit backup consent required"));
+        return Err(fail(
+            "annotation_backup_consent",
+            "Explicit backup consent required",
+        ));
     }
     let expected = text(v, "expected_document_id")?;
     let store = ctf_annotations::store_path(v)?;
@@ -204,7 +210,10 @@ pub fn backup(v: &Value) -> Result<Value> {
     let staged = temp.path().join("snapshot.sqlite");
     let mut out = ctf_mirror::read_pinned(v, |_catalog| {
         let source = ctf_annotations::open_read(&store)?.ok_or_else(|| {
-            fail("annotation_store_missing", "No existing user annotation store to back up")
+            fail(
+                "annotation_store_missing",
+                "No existing user annotation store to back up",
+            )
         })?;
         let (document, _generation, original_inventory) = validate(&source)?;
         if document != expected {
@@ -214,7 +223,10 @@ pub fn backup(v: &Value) -> Result<Value> {
             ));
         }
         let stage_string = staged.to_str().ok_or_else(|| {
-            fail("invalid_request", "Non-Unicode snapshot path is unsupported")
+            fail(
+                "invalid_request",
+                "Non-Unicode snapshot path is unsupported",
+            )
         })?;
         source.execute("VACUUM INTO ?1", params![stage_string])?;
         private_permissions(&staged)?;
@@ -261,9 +273,7 @@ pub fn restore(v: &Value) -> Result<Value> {
     }
     let expected_document = text(v, "expected_document_id")?;
     let expected_hash = text(v, "expected_backup_sha256")?;
-    if expected_hash.len() != 64
-        || !expected_hash.bytes().all(|c| c.is_ascii_hexdigit())
-    {
+    if expected_hash.len() != 64 || !expected_hash.bytes().all(|c| c.is_ascii_hexdigit()) {
         return Err(fail("invalid_request", "Expected exact backup SHA-256"));
     }
     let destination = ctf_annotations::store_path(v)?;
