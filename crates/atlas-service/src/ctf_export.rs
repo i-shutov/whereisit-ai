@@ -4,7 +4,7 @@ use crate::{ctf_mirror, exports, selection, text};
 use atlas_core::{Error, Result};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
