@@ -83,8 +83,12 @@ fn name_and_size_modes_return_only_matching_file_candidates_across_disks() {
     let db_before = fs::read(&sql_path).unwrap();
     let manifest_before = fs::read(cache.join(&generation).join("manifest.json")).unwrap();
 
-    let both = duplicate(&source, &cache, &generation,
-        json!({"duplicate_mode":"name_size","limit":20}));
+    let both = duplicate(
+        &source,
+        &cache,
+        &generation,
+        json!({"duplicate_mode":"name_size","limit":20}),
+    );
     assert_eq!(both["ok"], true, "{both}");
     assert_eq!(both["data"]["read_only"], true);
     assert_eq!(both["data"]["source_sha_checked"], true);
@@ -97,24 +101,41 @@ fn name_and_size_modes_return_only_matching_file_candidates_across_disks() {
     assert!(rows.iter().all(|r| r["kind"] == "file"));
     assert!(rows.iter().all(|r| r["size"] == 512));
 
-    let by_name = duplicate(&source, &cache, &generation,
-        json!({"duplicate_mode":"name","query":"ext:mkv"}));
+    let by_name = duplicate(
+        &source,
+        &cache,
+        &generation,
+        json!({"duplicate_mode":"name","query":"ext:mkv"}),
+    );
     assert_eq!(by_name["ok"], true, "{by_name}");
     let names = by_name["data"]["result"]["items"].as_array().unwrap();
     assert_eq!(names.len(), 3);
     assert!(names.iter().all(|r| r["duplicate_count"] == 3));
     assert!(names.iter().any(|r| r["size"] == 900));
 
-    let by_size = duplicate(&source, &cache, &generation,
-        json!({"duplicate_mode":"size"}));
+    let by_size = duplicate(
+        &source,
+        &cache,
+        &generation,
+        json!({"duplicate_mode":"size"}),
+    );
     assert_eq!(by_size["ok"], true, "{by_size}");
     let sizes = by_size["data"]["result"]["items"].as_array().unwrap();
     assert_eq!(sizes.len(), 5);
-    assert_eq!(sizes.iter().filter(|r| r["duplicate_count"] == 3).count(), 3);
-    assert_eq!(sizes.iter().filter(|r| r["duplicate_count"] == 2).count(), 2);
+    assert_eq!(
+        sizes.iter().filter(|r| r["duplicate_count"] == 3).count(),
+        3
+    );
+    assert_eq!(
+        sizes.iter().filter(|r| r["duplicate_count"] == 2).count(),
+        2
+    );
     assert_eq!(fs::read(&source).unwrap(), before);
     assert_eq!(fs::read(&sql_path).unwrap(), db_before);
-    assert_eq!(fs::read(cache.join(&generation).join("manifest.json")).unwrap(), manifest_before);
+    assert_eq!(
+        fs::read(cache.join(&generation).join("manifest.json")).unwrap(),
+        manifest_before
+    );
 }
 
 #[test]
@@ -129,36 +150,74 @@ fn query_filter_volume_scope_and_pagination_stay_consistent() {
     assert_eq!(volumes["ok"], true, "{volumes}");
     let disks = volumes["data"]["result"].as_array().unwrap();
     assert_eq!(disks.len(), 2);
-    let first_volume = disks.iter().find(|v| v["label"] == "disc one").unwrap()["id"].as_i64().unwrap();
-    let second_volume = disks.iter().find(|v| v["label"] == "disc two").unwrap()["id"].as_i64().unwrap();
+    let first_volume = disks.iter().find(|v| v["label"] == "disc one").unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    let second_volume = disks.iter().find(|v| v["label"] == "disc two").unwrap()["id"]
+        .as_i64()
+        .unwrap();
 
-    let one = duplicate(&source, &cache, &generation, json!({
-        "duplicate_mode":"name_size","volume_id":first_volume,"limit":1,"offset":0
-    }));
+    let one = duplicate(
+        &source,
+        &cache,
+        &generation,
+        json!({
+            "duplicate_mode":"name_size","volume_id":first_volume,"limit":1,"offset":0
+        }),
+    );
     assert_eq!(one["ok"], true, "{one}");
     assert_eq!(one["data"]["result"]["items"].as_array().unwrap().len(), 1);
     assert_eq!(one["data"]["result"]["has_more"], true);
     assert!(one["data"]["result"]["total"].is_null());
     let one_id = one["data"]["result"]["items"][0]["id"].as_i64().unwrap();
-    let two = duplicate(&source, &cache, &generation, json!({
-        "duplicate_mode":"name_size","volume_id":first_volume,"limit":1,"offset":1
-    }));
+    let two = duplicate(
+        &source,
+        &cache,
+        &generation,
+        json!({
+            "duplicate_mode":"name_size","volume_id":first_volume,"limit":1,"offset":1
+        }),
+    );
     assert_eq!(two["ok"], true, "{two}");
     assert_eq!(two["data"]["result"]["items"].as_array().unwrap().len(), 1);
     assert_eq!(two["data"]["result"]["has_more"], false);
-    assert_ne!(one_id, two["data"]["result"]["items"][0]["id"].as_i64().unwrap());
-    assert_eq!(two["data"]["result"]["items"][0]["duplicate_group"],
-               one["data"]["result"]["items"][0]["duplicate_group"]);
-    let only_second = duplicate(&source, &cache, &generation, json!({
-        "duplicate_mode":"name","volume_id":second_volume,"query":"ext:mkv"
-    }));
+    assert_ne!(
+        one_id,
+        two["data"]["result"]["items"][0]["id"].as_i64().unwrap()
+    );
+    assert_eq!(
+        two["data"]["result"]["items"][0]["duplicate_group"],
+        one["data"]["result"]["items"][0]["duplicate_group"]
+    );
+    let only_second = duplicate(
+        &source,
+        &cache,
+        &generation,
+        json!({
+            "duplicate_mode":"name","volume_id":second_volume,"query":"ext:mkv"
+        }),
+    );
     assert_eq!(only_second["ok"], true, "{only_second}");
-    assert!(only_second["data"]["result"]["items"].as_array().unwrap().is_empty());
-    let filtered = duplicate(&source, &cache, &generation, json!({
-        "duplicate_mode":"size","query":"ext:mp3"
-    }));
+    assert!(only_second["data"]["result"]["items"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    let filtered = duplicate(
+        &source,
+        &cache,
+        &generation,
+        json!({
+            "duplicate_mode":"size","query":"ext:mp3"
+        }),
+    );
     assert_eq!(filtered["ok"], true, "{filtered}");
-    assert_eq!(filtered["data"]["result"]["items"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        filtered["data"]["result"]["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
 }
 
 #[test]
@@ -170,13 +229,26 @@ fn unsupported_hash_and_bad_query_fail_before_mutating_a_cache() {
     let generation = sync(&source, &cache);
     let database = cache.join(&generation).join("catalog.sqlite");
     let before = fs::read(&database).unwrap();
-    let hash = duplicate(&source, &cache, &generation, json!({"duplicate_mode":"hash"}));
+    let hash = duplicate(
+        &source,
+        &cache,
+        &generation,
+        json!({"duplicate_mode":"hash"}),
+    );
     assert_eq!(hash["error"]["code"], "unsupported", "{hash}");
-    let invalid = duplicate(&source, &cache, &generation,
-        json!({"duplicate_mode":"name","query":"name:("}));
+    let invalid = duplicate(
+        &source,
+        &cache,
+        &generation,
+        json!({"duplicate_mode":"name","query":"name:("}),
+    );
     assert_eq!(invalid["ok"], false, "{invalid}");
-    let bad_limit = duplicate(&source, &cache, &generation,
-        json!({"duplicate_mode":"name","offset":-1}));
+    let bad_limit = duplicate(
+        &source,
+        &cache,
+        &generation,
+        json!({"duplicate_mode":"name","offset":-1}),
+    );
     assert_eq!(bad_limit["error"]["code"], "invalid_request", "{bad_limit}");
     assert_eq!(fs::read(&database).unwrap(), before);
 }
@@ -190,7 +262,12 @@ fn original_ctf_edit_invalidates_stale_duplicate_generation() {
     let generation = sync(&source, &cache);
     let after = write_source(&source, "File.MKV");
     assert_eq!(before.len(), after.len());
-    let stale = duplicate(&source, &cache, &generation, json!({"duplicate_mode":"name"}));
+    let stale = duplicate(
+        &source,
+        &cache,
+        &generation,
+        json!({"duplicate_mode":"name"}),
+    );
     assert_eq!(stale["ok"], false, "{stale}");
     assert_eq!(stale["error"]["code"], "source_changed", "{stale}");
     assert_eq!(fs::read(&source).unwrap(), after);
