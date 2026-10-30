@@ -1,0 +1,65 @@
+name: Format linked CTF native GUI branch
+on:
+  push:
+    branches: [feat/ctf-native-linked-browse-20261030]
+    paths:
+      - ".github/workflows/ctf-linked-format.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ctf-linked-format
+  cancel-in-progress: false
+jobs:
+  format:
+    if: github.repository == 'i-shutov/whereisit-ai' && github.ref == 'refs/heads/feat/ctf-native-linked-browse-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: true
+      - run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
+      - name: Format only native linked CTF changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          git diff --name-only > formatted.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          accepted = {
+            'crates/atlas-service/src/ctf_mirror.rs',
+            'crates/atlas-service/src/lib.rs',
+            'crates/atlas-service/tests/ctf_mirror_contract.rs',
+            'apps/windows/src/native.rs'
+          }
+          changed = set(Path('formatted.txt').read_text().splitlines())
+          assert changed <= accepted, f'Unexpected source formatting: {sorted(changed-accepted)}'
+          print('Formatted:', sorted(changed))
+          PY
+          cargo fmt --all -- --check
+          cargo test --locked -p atlas-service --test ctf_mirror_contract
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Commit only verified formatting with branch lease
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin feat/ctf-native-linked-browse-20261030
+          test "$(git rev-parse origin/feat/ctf-native-linked-browse-20261030)" = "$GITHUB_SHA"
+          git add -- crates/atlas-service/src/ctf_mirror.rs crates/atlas-service/src/lib.rs crates/atlas-service/tests/ctf_mirror_contract.rs apps/windows/src/native.rs
+          if ! git diff --cached --quiet; then
+            git config user.name 'whereisit-ci'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'style(ctf): format linked read-only native browse API and Win32 code'
+            git push origin HEAD:refs/heads/feat/ctf-native-linked-browse-20261030
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linked-ctf-formatter-report
+          path: formatted.txt
+          if-no-files-found: error
+          retention-days: 14
