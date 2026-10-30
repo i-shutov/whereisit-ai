@@ -56,11 +56,20 @@ immutable, per-generation derived duplicates cache. Do not claim fast
 subsecond global duplicates or a content-hash match without measured
 evidence.
 
-CSV/Parquet export from linked CTF is available for ordinary search/folder
-results (see `CTF_PINNED_EXPORT.md`). It is **disabled while viewing linked
-duplicate candidates**, since a duplicate-only report needs a separate
-verified exporter: silently substituting all matching search results would
-be incorrect.
+CSV/Parquet/JSON duplicate-candidate export now uses the same immutable
+source-generation check as normal linked reports. From the Duplicates view
+choose **Export…** (Windows) or **Export** (macOS). The service call is
+`ctf_export_pinned` with `mode:"duplicates"`, `duplicate_mode`, the
+optional Boolean `query` and `volume_id`. It exports **every candidate
+in the filtered grouping scope**, not merely the visible GUI page.
+The output reports `duplicate_candidates:true`, `verified:false`,
+`basis:"metadata_candidates"`, and the grouping mode. Neither the original
+CTF nor its read-only SQLite mirror is written; the output is a new,
+no-clobber file verified against the pinned source both before and after
+streaming. A linked duplicate report cannot include a parent subtree or
+an offset/limit: such requests fail explicitly instead of exporting a
+different scope. A hash-based duplicate report remains unsupported.
+See `CTF_PINNED_EXPORT.md` for publication and stage cleanup contracts.
 
 ## Test contract
 
@@ -71,7 +80,10 @@ names, same/different sizes, a directory, mixed extensions. They verify:
 1. file-only name/size/name+size grouping, with explicit `verified:false`;
 2. optional Boolean query, disk-scoped counts and deterministic pagination;
 3. unsupported hashes, invalid inputs and immutable SQLite bytes;
-4. same-size external CTF rewrite invalidates a pinned request.
+4. same-size external CTF rewrite invalidates a pinned request;
+5. full duplicate candidate CSV, JSON and physical Parquet row counts match
+   the selected metadata grouping, not a paginated or broader search; stale
+   generation, no-clobber, hash mode, and illegal scopes fail closed.
 
 Full CI additionally requires Linux tests/fmt/Clippy, Windows native
 installer and both macOS architecture app/package smoke jobs. No private
