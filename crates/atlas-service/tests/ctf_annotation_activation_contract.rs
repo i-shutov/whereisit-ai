@@ -273,6 +273,26 @@ fn activated_projection_is_reversible_and_preserves_originals() {
     assert_eq!(conflicted["data"]["result"]["conflicts"], 1);
     assert_eq!(conflicted["data"]["result"]["items"], json!([]));
 
+    // A now-stale active journal row must still be visible for explicit
+    // revocation. GUI must NOT treat this audit status as a verified overlay.
+    let stale_audit = invoke(cmd(
+        "ctf_annotations_preview_pinned",
+        &source,
+        &cache,
+        &second,
+        &store,
+    ));
+    assert_eq!(stale_audit["ok"], true, "{stale_audit}");
+    let stale_row = stale_audit["data"]["result"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["old_entry_id"] == old_id)
+        .unwrap();
+    assert_eq!(stale_row["activation_state"], "active");
+    assert_eq!(stale_row["activation_target_entry_id"], new_id);
+    assert_eq!(stale_row["confirmation_revision_conflict"], true);
+
     // Legacy list and set MUST NOT silently enable new-generation annotation edits.
     let original_list = invoke(cmd(
         "ctf_annotations_list_pinned",
