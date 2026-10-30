@@ -183,8 +183,8 @@ fn annotation_preview_text(data: &Value, offset: usize) -> String {
 
 #[cfg(test)]
 mod annotation_preview_tests {
-    use super::{annotation_page_controls, annotation_preview_text};
-    use serde_json::json;
+    use super::{annotation_page_controls, annotation_preview_text, annotation_selection_request};
+    use serde_json::{json, Value};
 
     #[test]
     fn ambiguity_and_stale_confirmation_remain_visible() {
@@ -209,6 +209,39 @@ mod annotation_preview_tests {
     }
 
     #[test]
+    fn no_default_or_stale_candidate_is_ever_implicitly_selected() {
+        let preview = json!({"result":{
+            "state":"generation_conflict","document_id":"synthetic-document",
+            "total":1,"items":[{"old_entry_id":7,"revision":2,
+                "candidates":[{"entry_id":19,"volume_id":3},{"entry_id":23,"volume_id":3}],
+                "confirmed_selection":null,"confirmation_revision_conflict":false,
+                "confirmation_payload_conflict":false}]
+        }});
+        let first = annotation_selection_request(&preview, 0, 0).unwrap();
+        let second = annotation_selection_request(&preview, 0, 1).unwrap();
+        assert_eq!(first["new_entry_id"], 19);
+        assert_eq!(second["new_entry_id"], 23);
+        assert_eq!(first["confirmation"], "user_selected_exact_candidate");
+        assert!(annotation_selection_request(&preview, 0, 2).is_none());
+        assert!(annotation_selection_request(&preview, 1, 0).is_none());
+        let mut stale = preview.clone();
+        stale["result"]["items"][0]["confirmation_revision_conflict"] = json!(true);
+        assert!(annotation_selection_request(&stale, 0, 0).is_none());
+        stale = preview.clone();
+        stale["result"]["items"][0]["revision"] = json!(0);
+        assert!(annotation_selection_request(&stale, 0, 0).is_none());
+        stale = preview.clone();
+        stale["result"]["items"][0]["confirmed_selection"] = json!({"new_entry_id":19});
+        assert!(annotation_selection_request(&stale, 0, 0).is_none());
+        stale = preview.clone();
+        stale["result"]["document_id"] = Value::Null;
+        assert!(annotation_selection_request(&stale, 0, 0).is_none());
+        stale = preview;
+        stale["result"]["state"] = json!("current_generation");
+        assert!(annotation_selection_request(&stale, 0, 0).is_none());
+    }
+
+    #[test]
     fn middle_last_and_empty_pages_are_bounded() {
         let middle = json!({"result":{"state":"generation_conflict","total":43,
             "items": vec![json!({"old_entry_id":1}); 20]}});
@@ -219,6 +252,224 @@ mod annotation_preview_tests {
         assert_eq!(annotation_page_controls(&last, 40), (true, false));
         let empty = json!({"result":{"state":"generation_conflict","total":43,"items":[]}});
         assert_eq!(annotation_page_controls(&empty, 60), (true, false));
+    }
+}
+
+
+#[derive(Debug)]
+enum AnnotationReviewAction {
+    Close,
+    Previous,
+    Next,
+    Confirm(Value),
+}
+
+// Pure selection contract: a radio choice is mandatory at both stages.
+fn annotation_selection_request(data: &Value, row_index: usize, candidate_index: usize) -> Option<Value> {
+    let review = &data["result"];
+    if review["state"] != "generation_conflict" {
+        return None;
+    }
+    let document_id = review["document_id"].as_str()?;
+    let row = review["items"].as_array()?.get(row_index)?;
+    let revision = row["revision"].as_i64().filter(|revision| *revision > 0)?;
+    let old_entry_id = row["old_entry_id"].as_i64()?;
+    if row["confirmed_selection"].is_object()
+        || row["confirmation_revision_conflict"] == true
+        || row["confirmation_payload_conflict"] == true
+    {
+        return None;
+    }
+    let candidate = row["candidates"].as_array()?.get(candidate_index)?;
+    let new_entry_id = candidate["entry_id"].as_i64()?;
+    Some(json!({
+        "old_entry_id": old_entry_id,
+        "new_entry_id": new_entry_id,
+        "expected_revision": revision,
+        "expected_document_id": document_id,
+        "confirmation": "user_selected_exact_candidate"
+    }))
+}
+
+// TaskDialogIndirect provides native Windows radio buttons and explicitly
+// disables the default radio choice; no candidate is approved by navigation.
+unsafe fn annotation_radio_dialog(
+    owner: HWND,
+    instruction: &str,
+    content: &str,
+    options: &[String],
+    actions: &[(i32, &str)],
+) -> Option<(i32, Option<usize>)> {
+    let title = wide("WhereIsIt AI — CTF annotation review");
+    let instruction = wide(instruction);
+    let content = wide(content);
+    let radio_labels: Vec<Vec<u16>> = options.iter().map(|label| wide(label)).collect();
+    let radio_buttons: Vec<TASKDIALOG_BUTTON> = radio_labels
+        .iter()
+        .enumerate()
+        .map(|(index, label)| TASKDIALOG_BUTTON {
+            nButtonID: 1000 + index as i32,
+            pszButtonText: label.as_ptr(),
+        })
+        .collect();
+    let button_labels: Vec<Vec<u16>> = actions.iter().map(|(_, label)| wide(label)).collect();
+    let buttons: Vec<TASKDIALOG_BUTTON> = actions
+        .iter()
+        .zip(button_labels.iter())
+        .map(|((id, _), label)| TASKDIALOG_BUTTON {
+            nButtonID: *id,
+            pszButtonText: label.as_ptr(),
+        })
+        .collect();
+    let mut config: TASKDIALOGCONFIG = std::mem::zeroed();
+    config.cbSize = std::mem::size_of::<TASKDIALOGCONFIG>() as u32;
+    config.hwndParent = owner;
+    config.dwFlags = TDF_NO_DEFAULT_RADIO_BUTTON | TDF_ALLOW_DIALOG_CANCELLATION;
+    config.dwCommonButtons = TDCBF_CANCEL_BUTTON;
+    config.pszWindowTitle = title.as_ptr();
+    config.pszMainInstruction = instruction.as_ptr();
+    config.pszContent = content.as_ptr();
+    config.cRadioButtons = radio_buttons.len() as u32;
+    config.pRadioButtons = radio_buttons.as_ptr();
+    config.nDefaultRadioButton = 0;
+    config.cButtons = buttons.len() as u32;
+    config.pButtons = buttons.as_ptr();
+    config.nDefaultButton = IDCANCEL;
+    config.cxWidth = 320;
+    let mut button = IDCANCEL;
+    let mut radio = 0;
+    if TaskDialogIndirect(&config, &mut button, &mut radio, null_mut()) < 0 {
+        return None;
+    }
+    let selected = usize::try_from(radio - 1000)
+        .ok()
+        .filter(|index| *index < options.len());
+    Some((button, selected))
+}
+
+unsafe fn annotation_review_action(owner: HWND, data: &Value, offset: usize) -> AnnotationReviewAction {
+    let preview = &data["result"];
+    if preview["state"] != "generation_conflict" {
+        MessageBoxW(
+            owner,
+            wide(&annotation_preview_text(data, offset)).as_ptr(),
+            wide("CTF annotation review — no changes").as_ptr(),
+            MB_OK | MB_ICONINFORMATION,
+        );
+        return AnnotationReviewAction::Close;
+    }
+    let Some(items) = preview["items"].as_array() else {
+        return AnnotationReviewAction::Close;
+    };
+    let (previous, next) = annotation_page_controls(data, offset);
+    let eligible: Vec<usize> = (0..items.len())
+        .filter(|index| annotation_selection_request(data, *index, 0).is_some())
+        .collect();
+    let labels: Vec<String> = eligible
+        .iter()
+        .map(|index| {
+            let row = &items[*index];
+            let id = row["old_entry_id"].as_i64().unwrap_or(-1);
+            let state = row["candidate_state"].as_str().unwrap_or("unknown");
+            let count = row["candidate_count_lower_bound"].as_u64().unwrap_or(0);
+            let truncated = if row["candidates_truncated"] == true { "+" } else { "" };
+            format!("Old entry #{id} — {state} ({count}{truncated} candidates)")
+        })
+        .collect();
+    let total = preview["total"].as_u64().unwrap_or(0);
+    let start = if items.is_empty() { 0 } else { offset + 1 };
+    let end = offset.saturating_add(items.len());
+    let content = format!(
+        "Rows {start}–{end} of {total}. Select an old note below, then explicitly choose a target. \
+         {} rows on this page need separate conflict resolution. No automatic matching, migration or activation.",
+        items.len().saturating_sub(eligible.len())
+    );
+    loop {
+        let mut actions = vec![(301, "Show all conflicts")];
+        if !eligible.is_empty() {
+            actions.insert(0, (300, "Choose target…"));
+        }
+        if previous {
+            actions.push((302, "Previous page"));
+        }
+        if next {
+            actions.push((303, "Next page"));
+        }
+        let Some((button, selected)) = annotation_radio_dialog(
+            owner,
+            "Generation-pinned annotation review",
+            &content,
+            &labels,
+            &actions,
+        ) else {
+            return AnnotationReviewAction::Close;
+        };
+        match button {
+            302 if previous => return AnnotationReviewAction::Previous,
+            303 if next => return AnnotationReviewAction::Next,
+            301 => {
+                MessageBoxW(
+                    owner,
+                    wide(&annotation_preview_text(data, offset)).as_ptr(),
+                    wide("All annotation conflicts — read-only").as_ptr(),
+                    MB_OK | MB_ICONINFORMATION,
+                );
+            }
+            300 => {
+                let Some(row_index) = selected.and_then(|index| eligible.get(index).copied()) else {
+                    MessageBoxW(
+                        owner,
+                        wide("Select an old entry first. No mapping was saved.").as_ptr(),
+                        wide("Explicit selection required").as_ptr(),
+                        MB_OK | MB_ICONWARNING,
+                    );
+                    continue;
+                };
+                let row = &items[row_index];
+                let Some(candidates) = row["candidates"].as_array() else {
+                    continue;
+                };
+                let choices: Vec<String> = candidates
+                    .iter()
+                    .take(8)
+                    .map(|candidate| {
+                        format!(
+                            "Target #{} • volume #{} • parent #{} • modified {}",
+                            candidate["entry_id"].as_i64().unwrap_or(-1),
+                            candidate["volume_id"].as_i64().unwrap_or(-1),
+                            candidate["parent_id"].as_i64().unwrap_or(-1),
+                            candidate["modified_unix"].as_i64().unwrap_or(-1)
+                        )
+                    })
+                    .collect();
+                let old_id = row["old_entry_id"].as_i64().unwrap_or(-1);
+                let Some((301, Some(candidate_index))) = annotation_radio_dialog(
+                    owner,
+                    &format!("Choose target for old entry #{old_id}"),
+                    "Select a specific structural candidate. No option is preselected; the original CTF is read-only.",
+                    &choices,
+                    &[(301, "Review selected mapping")],
+                ) else {
+                    continue;
+                };
+                let Some(request) = annotation_selection_request(data, row_index, candidate_index) else {
+                    continue;
+                };
+                let new_id = request["new_entry_id"].as_i64().unwrap_or(-1);
+                let message = format!(
+                    "Confirm old entry #{old_id} → target #{new_id}?\n\n                     This writes only an audited mapping in your separate notes database.                      Notes stay inactive; the original CTF and derived cache are never modified.                      Changes to the source generation or note revision are rejected."
+                );
+                if MessageBoxW(
+                    owner,
+                    wide(&message).as_ptr(),
+                    wide("Confirm exact annotation mapping").as_ptr(),
+                    MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2,
+                ) == IDYES {
+                    return AnnotationReviewAction::Confirm(request);
+                }
+            }
+            _ => return AnnotationReviewAction::Close,
+        }
     }
 }
 
@@ -473,9 +724,23 @@ impl App {
             ) {
                 self.job = None;
             }
-            if matches!(reply.tag, "rows" | "annotation_preview")
+            if matches!(reply.tag, "rows" | "annotation_preview" | "annotation_confirm")
                 && reply.generation != self.generation
             {
+                continue;
+            }
+            if reply.tag == "annotation_confirm" {
+                if reply.result["ok"] == true {
+                    self.status("Selected mapping saved in user notes audit; remains inactive.");
+                } else {
+                    let code = reply.result["error"]["code"]
+                        .as_str()
+                        .unwrap_or("verification_failed");
+                    self.status(&format!(
+                        "Mapping rejected ({code}); reread conflicts before choosing again."
+                    ));
+                }
+                self.request_annotation_page();
                 continue;
             }
             if reply.result["ok"] != true {
@@ -487,30 +752,32 @@ impl App {
             }
             match reply.tag {
                 "annotation_preview" => {
-                    let page_offset = self.annotation_offset;
-                    let (previous, next) = annotation_page_controls(data, page_offset);
-                    let summary = annotation_preview_text(data, page_offset);
-                    let response = MessageBoxW(
-                        self.hwnd,
-                        wide(&summary).as_ptr(),
-                        wide("Review CTF annotations — no changes").as_ptr(),
-                        if previous || next {
-                            MB_YESNOCANCEL | MB_ICONINFORMATION
-                        } else {
-                            MB_OK | MB_ICONINFORMATION
-                        },
-                    );
-                    if response == IDYES && next {
-                        self.annotation_offset += ANNOTATION_PAGE_SIZE;
-                        self.status("Re-verifying next read-only notes page…");
-                        self.request_annotation_page();
-                    } else if response == IDNO && previous {
-                        self.annotation_offset =
-                            self.annotation_offset.saturating_sub(ANNOTATION_PAGE_SIZE);
-                        self.status("Re-verifying previous read-only notes page…");
-                        self.request_annotation_page();
-                    } else {
-                        self.status("Annotation conflict preview closed; nothing was changed.");
+                    match annotation_review_action(self.hwnd, data, self.annotation_offset) {
+                        AnnotationReviewAction::Next => {
+                            self.annotation_offset += ANNOTATION_PAGE_SIZE;
+                            self.status("Re-verifying next notes page…");
+                            self.request_annotation_page();
+                        }
+                        AnnotationReviewAction::Previous => {
+                            self.annotation_offset = self.annotation_offset.saturating_sub(ANNOTATION_PAGE_SIZE);
+                            self.status("Re-verifying previous notes page…");
+                            self.request_annotation_page();
+                        }
+                        AnnotationReviewAction::Confirm(selection) => {
+                            if let Some(mut pinned) = self.linked_request("ctf_annotations_confirm_pinned") {
+                                pinned["annotation_db"] = json!(self.annotation_db);
+                                if let Some(fields) = selection.as_object() {
+                                    for (key, value) in fields {
+                                        pinned[key] = value.clone();
+                                    }
+                                }
+                                self.status("Revalidating exact CTF generation and note revision…");
+                                self.call("annotation_confirm", pinned);
+                            }
+                        }
+                        AnnotationReviewAction::Close => {
+                            self.status("Annotation review closed; no implicit mapping or migration.");
+                        }
                     }
                 }
                 "linked_sync" => {
