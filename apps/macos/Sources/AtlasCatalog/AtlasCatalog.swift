@@ -338,10 +338,6 @@ enum Bridge {
     }
     func export() {
         guard mutationAllowed else { return }
-        guard !(linkedMode && showingDuplicates) else {
-            status = "Export of linked duplicate candidates is not yet supported; return to Search or a folder."
-            return
-        }
         guard !linkedMode || exportFormat != "ctf" else {
             status = "Linked CTF supports CSV/Parquet only; the original is read-only."
             return
@@ -351,7 +347,7 @@ enum Bridge {
         let originalLinkedPath = linkedCTFPath
         let originalGeneration = linkedGeneration
         let panel = NSSavePanel()
-        panel.title = chosenFormat == "ctf" ? "Export entire catalog as CTF" : "Export current branch or query results"
+        panel.title = chosenFormat == "ctf" ? "Export entire catalog as CTF" : (showingDuplicates ? "Export all matching duplicate candidates" : "Export current branch or query results")
         panel.nameFieldStringValue = "Catalog.\(chosenFormat)"
         panel.begin { [weak self] response in
             guard let self, response == .OK, let url = panel.url,
@@ -372,7 +368,9 @@ enum Bridge {
                 args["query"] = self.appliedQuery
                 args["duplicate_mode"] = self.appliedDuplicateMode
                 if let volumeID = self.volumeID { args["volume_id"] = volumeID }
-                args["parent_id"] = self.stack.last.flatMap { $0.0 }.map { $0 as Any } ?? NSNull()
+                if !self.showingDuplicates {
+                    args["parent_id"] = self.stack.last.flatMap { $0.0 }.map { $0 as Any } ?? NSNull()
+                }
                 args["recursive"] = true
             }
             self.job = "export"
