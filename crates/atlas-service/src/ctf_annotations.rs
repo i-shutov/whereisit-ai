@@ -102,20 +102,30 @@ fn open_write(path: &Path, generation: &str) -> Result<Connection> {
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
     )?;
     conn.busy_timeout(Duration::from_secs(5))?;
-    conn.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;")?;
+    // Check foreign SQLite before changing its journal mode or any pragma.
     let app: i64 = conn.pragma_query_value(None, "application_id", |r| r.get(0))?;
+    if app != 0 && app != APPLICATION_ID {
+        return Err(fail(
+            "annotation_store_invalid",
+            "Refusing to modify a foreign SQLite application database",
+        ));
+    }
+    let tables: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%'",
+        [],
+        |r| r.get(0),
+    )?;
+    if app == 0 && tables != 0 {
+        return Err(fail(
+            "annotation_store_invalid",
+            "Refusing to initialize an existing foreign SQLite database",
+        ));
+    }
+    if app == APPLICATION_ID {
+        check_app(&conn)?;
+    }
+    conn.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;")?;
     if app == 0 {
-        let tables: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%'",
-            [],
-            |r| r.get(0),
-        )?;
-        if tables != 0 {
-            return Err(fail(
-                "annotation_store_invalid",
-                "Refusing to initialize an existing foreign SQLite database",
-            ));
-        }
         let doc: String = conn.query_row("SELECT lower(hex(randomblob(16)))", [], |r| r.get(0))?;
         conn.execute_batch(
             "BEGIN IMMEDIATE;
