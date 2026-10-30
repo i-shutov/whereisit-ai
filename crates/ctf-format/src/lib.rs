@@ -1119,18 +1119,18 @@ mod tests {
         assert_eq!(found.opaque_type1_flag_0x10_entries, 1);
         assert_eq!(found.possible_text_description_gap_entries, 1);
         assert_eq!(
-            found.description_gap_reasons
+            found
+                .description_gap_reasons
                 .get("opaque_type1_flag_0x10_semantics_unknown"),
             Some(&1)
         );
         assert_eq!(
-            found.description_gap_reasons.get("invalid_inline_utf8_or_cesu8"),
+            found
+                .description_gap_reasons
+                .get("invalid_inline_utf8_or_cesu8"),
             Some(&1)
         );
-        assert_eq!(
-            found.description_gap_flag_histogram.get("1c"),
-            Some(&1)
-        );
+        assert_eq!(found.description_gap_flag_histogram.get("1c"), Some(&1));
     }
 
     #[test]
