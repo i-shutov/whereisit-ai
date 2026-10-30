@@ -96,6 +96,39 @@ struct AnnotationReview: Decodable {
     let total: Int64
     let items: [AnnotationReviewRow]
 }
+// Only freshly verified results from ctf_annotations_activated_list_pinned
+// may appear here. Historical 'active' audit status is not an overlay.
+struct VerifiedAnnotation: Decodable, Identifiable {
+    let entry_id: Int64
+    let old_entry_id: Int64
+    let revision: Int64
+    let note: String
+    let tags: String
+    let read_only: Bool
+    let activation: String
+    var id: Int64 { old_entry_id }
+}
+struct VerifiedOverlayPage: Decodable {
+    let state: String
+    let total: Int64
+    let conflicts: Int64
+    let items: [VerifiedAnnotation]
+    let read_only_source: Bool?
+    let unresolved_unconfirmed_annotations_not_projected: Bool?
+    var isDisplaySafe: Bool {
+        if state == "uninitialized" || state == "no_cross_generation_activations" {
+            return total == 0 && conflicts == 0 && items.isEmpty
+        }
+        return (state == "partial_activation" || state == "activation_conflict")
+            && read_only_source == true
+            && unresolved_unconfirmed_annotations_not_projected == true
+            && total >= 0 && conflicts >= 0 && items.count <= 20
+            && items.allSatisfy {
+                $0.read_only && $0.activation == "explicit_reviewed_projection"
+                && $0.entry_id > 0 && $0.old_entry_id > 0 && $0.revision > 0
+            }
+    }
+}
 struct AnnotationConfirmReceipt: Decodable {
     let state: String
     let old_entry_id: Int64
@@ -148,6 +181,10 @@ enum Bridge {
     @Published var annotationSelectedCandidateID: Int64?
     @Published var annotationConsent: AnnotationConsent?
     @Published var annotationConfirmationBusy = false
+    @Published var showingVerifiedOverlay = false
+    @Published var verifiedOverlay: VerifiedOverlayPage?
+    @Published var verifiedOverlayOffset = 0
+    @Published var verifiedOverlayLoading = false
     private var annotationReviewStore: String?
     private var annotationReviewSession = 0
     let annotationPageSize = 20
@@ -158,6 +195,13 @@ enum Bridge {
         guard let review = annotationReview, review.state == "generation_conflict",
               !review.items.isEmpty else { return false }
         return Int64(annotationReviewOffset + review.items.count) < review.total
+    }
+    var verifiedOverlayHasPrevious: Bool {
+        verifiedOverlay?.isDisplaySafe == true && verifiedOverlayOffset > 0
+    }
+    var verifiedOverlayHasNext: Bool {
+        guard let page = verifiedOverlay, page.isDisplaySafe, !page.items.isEmpty else { return false }
+        return Int64(verifiedOverlayOffset + page.items.count) < page.total
     }
     var linkedGeneration: String?
     var linkedMode: Bool { linkedCTFPath != nil && linkedGeneration != nil }
@@ -374,6 +418,10 @@ enum Bridge {
         annotationSelectedCandidateID = nil
         annotationConsent = nil
         annotationConfirmationBusy = false
+        verifiedOverlay = nil
+        verifiedOverlayOffset = 0
+        verifiedOverlayLoading = false
+        showingVerifiedOverlay = false
         showingAnnotationReview = false
     }
     func reviewAnnotations() {
@@ -425,6 +473,49 @@ enum Bridge {
                 self.status = "Read-only notes page checked; nothing was changed."
             }
         }
+    }
+    func loadVerifiedOverlayPage(offset: Int) {
+        guard showingAnnotationReview, linkedMode, mutationAllowed,
+              let fields = linkedFields(), let store = annotationReviewStore,
+              offset >= 0, !annotationConfirmationBusy, !annotationReviewLoading else { return }
+        if let prior = verifiedOverlay, prior.isDisplaySafe,
+           offset > 0 && Int64(offset) >= prior.total { return }
+        let session = annotationReviewSession
+        let token = generation
+        verifiedOverlayOffset = offset
+        verifiedOverlay = nil
+        verifiedOverlayLoading = true
+        showingVerifiedOverlay = true
+        annotationConsent = nil
+        annotationSelectedOldID = nil
+        annotationSelectedCandidateID = nil
+        var args = fields
+        args["op"] = "ctf_annotations_activated_list_pinned"
+        args["annotation_db"] = store
+        args["offset"] = offset
+        args["limit"] = annotationPageSize
+        status = "Independently verifying active notes and stale audit counts…"
+        request(args, as: LinkedCTFResult<VerifiedOverlayPage>.self,
+                generationToken: token) { [weak self] response in
+            guard let self, self.annotationReviewSession == session,
+                  self.annotationReviewStore == store,
+                  self.showingAnnotationReview, self.showingVerifiedOverlay else { return }
+            self.verifiedOverlayLoading = false
+            if let page = response?.result, page.isDisplaySafe {
+                self.verifiedOverlay = page
+                self.status = "\(page.total) verified active notes; \(page.conflicts) stale/conflicting audits excluded."
+            } else {
+                self.verifiedOverlay = nil
+                self.status = "Overlay read failed validation; no private notes displayed."
+            }
+        }
+    }
+    func backToAnnotationConflicts() {
+        guard showingAnnotationReview, !verifiedOverlayLoading else { return }
+        showingVerifiedOverlay = false
+        verifiedOverlay = nil
+        // The old review page could now be stale: reload it through pinned SHA.
+        loadAnnotationReviewPage(offset: annotationReviewOffset)
     }
     var selectedAnnotationRow: AnnotationReviewRow? {
         guard let oldID = annotationSelectedOldID else { return nil }
@@ -753,7 +844,54 @@ enum Bridge {
         }
         .padding(7).controlSize(.small).frame(minWidth: 960, minHeight: 500)
         .sheet(isPresented: $model.showingAnnotationReview) {
-            if let preview = model.annotationReview {
+            if model.showingVerifiedOverlay {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Verified active annotations").font(.headline)
+                    Text("Independent SHA-pinned read • no writes • not the historical activation audit")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if model.verifiedOverlayLoading {
+                        ProgressView("Rechecking source generation and old-note revisions…")
+                    } else if let page = model.verifiedOverlay, page.isDisplaySafe {
+                        Text("Valid live overlays: \(page.total) • stale/conflicting active audits excluded: \(page.conflicts)")
+                            .font(.subheadline).monospacedDigit()
+                        Text("Unconfirmed or unresolved mappings are excluded; this API does not count them.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        if page.state == "uninitialized" || page.state == "no_cross_generation_activations" {
+                            Text("No approved cross-generation notes are active.")
+                        } else {
+                            Text("Rows \(page.items.isEmpty ? 0 : model.verifiedOverlayOffset + 1)–\(model.verifiedOverlayOffset + page.items.count) of \(page.total)")
+                                .font(.caption).monospacedDigit()
+                            List(page.items) { item in
+                                HStack(alignment: .top, spacing: 12) {
+                                    Text("Old #\(item.old_entry_id) → #\(item.entry_id)")
+                                        .monospacedDigit().frame(width: 180, alignment: .leading)
+                                    Text(String(item.note.prefix(160)))
+                                        .lineLimit(2)
+                                    Spacer(minLength: 4)
+                                    Text("rev \(item.revision)").foregroundStyle(.secondary)
+                                }.font(.caption)
+                            }
+                        }
+                    } else {
+                        Text("Verified view unavailable or invalid; no private notes displayed.")
+                    }
+                    Spacer(minLength: 2)
+                    HStack {
+                        Button("Previous") {
+                            model.loadVerifiedOverlayPage(offset: max(0, model.verifiedOverlayOffset - model.annotationPageSize))
+                        }.disabled(!model.verifiedOverlayHasPrevious || model.verifiedOverlayLoading)
+                        Button("Next") {
+                            model.loadVerifiedOverlayPage(offset: model.verifiedOverlayOffset + model.annotationPageSize)
+                        }.disabled(!model.verifiedOverlayHasNext || model.verifiedOverlayLoading)
+                        Spacer()
+                        Button("Back to conflicts") { model.backToAnnotationConflicts() }
+                            .disabled(model.verifiedOverlayLoading)
+                        Button("Close") { model.resetAnnotationReview() }
+                            .keyboardShortcut(.cancelAction)
+                            .disabled(model.verifiedOverlayLoading)
+                    }
+                }.padding(14).frame(width: 820, height: 520)
+            } else if let preview = model.annotationReview {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("CTF annotation conflicts").font(.headline)
                     Text("Read-only preview • \(preview.state) • \(preview.total) saved notes")
@@ -823,6 +961,8 @@ enum Bridge {
                             model.loadAnnotationReviewPage(offset: model.annotationReviewOffset + model.annotationPageSize)
                         }.disabled(!model.annotationReviewHasNext || model.annotationReviewLoading || model.annotationConfirmationBusy)
                         Spacer()
+                        Button("Verified live notes…") { model.loadVerifiedOverlayPage(offset: 0) }
+                            .disabled(model.annotationReviewLoading || model.annotationConfirmationBusy)
                         Button("Close") { model.resetAnnotationReview() }
                             .keyboardShortcut(.cancelAction)
                             .disabled(model.annotationConfirmationBusy)
