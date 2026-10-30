@@ -33,6 +33,8 @@ struct EmptyReply: Decodable {}
 struct Category: Decodable, Identifiable { let id: Int64; let parent_id: Int64?; let name: String }
 struct CreatedCategory: Decodable { let id: Int64 }
 struct LinkedCTFSync: Decodable { let generation: String; let entries: Int64; let volumes: Int64; let rebuilt: Bool }
+struct LinkedExportReceipt: Decodable { let result: LinkedExportSummary }
+struct LinkedExportSummary: Decodable { let rows: Int64 }
 struct LinkedCTFResult<T: Decodable>: Decodable { let generation: String; let result: T }
 
 enum Bridge {
@@ -256,6 +258,7 @@ enum Bridge {
             self.job = nil
             guard let result else { return }
             self.linkedCTFPath = source; self.linkedGeneration = result.generation
+            if self.exportFormat == "ctf" { self.exportFormat = "csv" }
             self.volumeID = nil; self.stack = [(nil, "/")]; self.entries = []
             self.query = ""; self.appliedQuery = ""; self.showingDuplicates = false
             self.offset = 0; self.selection = nil; self.total = 0; self.hasMore = false
@@ -334,19 +337,53 @@ enum Bridge {
         }
     }
     func export() {
-        guard editableAllowed else { return }
-        let panel = NSSavePanel(); panel.title = exportFormat == "ctf" ? "Export entire catalog as CTF" : "Export current branch or query results"
-        panel.nameFieldStringValue = "Catalog.\(exportFormat)"
+        guard mutationAllowed else { return }
+        guard !linkedMode || exportFormat != "ctf" else {
+            status = "Linked CTF supports CSV/Parquet only; the original is read-only."
+            return
+        }
+        let chosenFormat = exportFormat
+        let originalDatabase = database
+        let originalLinkedPath = linkedCTFPath
+        let originalGeneration = linkedGeneration
+        let panel = NSSavePanel()
+        panel.title = chosenFormat == "ctf" ? "Export entire catalog as CTF" : "Export current branch or query results"
+        panel.nameFieldStringValue = "Catalog.\(chosenFormat)"
         panel.begin { [weak self] response in
-            guard let self, response == .OK, let url = panel.url else { return }
-            var args: [String: Any] = ["op": "export_\(self.exportFormat)", "path": url.path, "overwrite": true]
-            if self.exportFormat != "ctf" {
-                args["mode"] = self.showingDuplicates ? "duplicates" : (self.appliedQuery.isEmpty && self.volumeID != nil ? "children" : "search")
-                args["query"] = self.appliedQuery; args["duplicate_mode"] = self.appliedDuplicateMode
-                if let volumeID = self.volumeID { args["volume_id"] = volumeID }
-                args["parent_id"] = self.stack.last.flatMap { $0.0 }.map { $0 as Any } ?? NSNull(); args["recursive"] = true
+            guard let self, response == .OK, let url = panel.url,
+                  self.mutationAllowed, self.database == originalDatabase,
+                  self.linkedCTFPath == originalLinkedPath,
+                  self.linkedGeneration == originalGeneration else { return }
+            var args: [String: Any]
+            if let linked = self.linkedFields() {
+                guard chosenFormat != "ctf" else { return }
+                // Always create a new output: never overwrite another user file.
+                args = ["op": "ctf_export_pinned", "output": url.path, "format": chosenFormat]
+                args.merge(linked) { _, new in new }
+            } else {
+                args = ["op": "export_\(chosenFormat)", "path": url.path, "overwrite": true]
             }
-            self.job = "export"; self.mutate(args, label: "Exporting \(self.exportFormat.uppercased())…")
+            if chosenFormat != "ctf" {
+                args["mode"] = self.showingDuplicates ? "duplicates" : (self.appliedQuery.isEmpty && self.volumeID != nil ? "children" : "search")
+                args["query"] = self.appliedQuery
+                args["duplicate_mode"] = self.appliedDuplicateMode
+                if let volumeID = self.volumeID { args["volume_id"] = volumeID }
+                args["parent_id"] = self.stack.last.flatMap { $0.0 }.map { $0 as Any } ?? NSNull()
+                args["recursive"] = true
+            }
+            self.job = "export"
+            if self.linkedMode {
+                self.status = "Exporting verified linked CTF to new \(chosenFormat.uppercased())…"
+                self.request(args, as: LinkedExportReceipt.self) { [weak self] result in
+                    guard let self else { return }
+                    self.job = nil
+                    if let result {
+                        self.status = "Exported \(result.result.rows) rows; original CTF unchanged."
+                    }
+                }
+            } else {
+                self.mutate(args, label: "Exporting \(chosenFormat.uppercased())…")
+            }
         }
     }
 }
@@ -370,8 +407,8 @@ enum Bridge {
                 }.disabled(!model.mutationAllowed)
                 Picker("Export format", selection: $model.exportFormat) {
                     Text("CSV • current scope").tag("csv"); Text("Parquet • current scope").tag("parquet"); Text("CTF • entire catalog").tag("ctf")
-                }.labelsHidden().frame(width: 174).accessibilityLabel("Export format and scope").disabled(model.linkedMode)
-                Button("Export…") { model.export() }.disabled(!model.editableAllowed)
+                }.labelsHidden().frame(width: 174).accessibilityLabel("Export format and scope")
+                Button("Export…") { model.export() }.disabled(!model.mutationAllowed || (model.linkedMode && model.exportFormat == "ctf"))
                 Spacer(minLength: 4)
                 if model.pending > 0 { ProgressView().controlSize(.small) }
                 Button("Cancel scan") { model.cancel() }.disabled(!model.canCancel)
