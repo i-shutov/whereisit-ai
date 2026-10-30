@@ -32,7 +32,8 @@ path = root / "apps/macos/Info.plist"
 with path.open("rb") as handle:
     info = plistlib.load(handle)
 info["CFBundleShortVersionString"] = numeric
-info["CFBundleVersion"] = "10001" if "-rc." in version else "10099"
+rc_match = re.search(r"-rc\.(\d+)$", version)
+info["CFBundleVersion"] = str(10000 + int(rc_match.group(1))) if rc_match else "10099"
 info["WhereIsItReleaseVersion"] = version
 info["CFBundleGetInfoString"] = "WhereIsIt AI " + version
 with path.open("wb") as handle:
