@@ -373,6 +373,12 @@ pub fn preview(v: &Value) -> Result<Value> {
         };
         let (document_id, stored_generation) = metadata(&conn)?;
         let total = count(&conn)?;
+        // Additive audit table: v1 stores without confirmations remain readable.
+        let has_confirmations: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='annotation_confirmations')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )? != 0;
         if stored_generation == generation {
             return Ok(json!({
                 "state":"current_generation","document_id":document_id,
@@ -425,6 +431,24 @@ pub fn preview(v: &Value) -> Result<Value> {
                 let count_lower_bound = candidates.len();
                 let truncated = count_lower_bound > MAX_PREVIEW_CANDIDATES;
                 candidates.truncate(MAX_PREVIEW_CANDIDATES);
+                let confirmed_selection: Option<Value> = if has_confirmations {
+                    conn.query_row(
+                        "SELECT new_entry_id,old_revision,confirmed_at_unix
+                         FROM annotation_confirmations
+                         WHERE old_entry_id=?1 AND new_generation=?2",
+                        params![old_entry_id, generation],
+                        |r| {
+                            Ok(json!({
+                                "new_entry_id":r.get::<_,i64>(0)?,
+                                "old_revision":r.get::<_,i64>(1)?,
+                                "confirmed_at_unix":r.get::<_,i64>(2)?,
+                                "user_confirmed":true
+                            }))
+                        },
+                    ).optional()?
+                } else {
+                    None
+                };
                 let candidate_state = match count_lower_bound {
                     0 => "no_match",
                     1 => "unique_unconfirmed",
@@ -442,7 +466,8 @@ pub fn preview(v: &Value) -> Result<Value> {
                     "candidate_count_lower_bound":count_lower_bound,
                     "candidate_count_exact":!truncated,
                     "candidates_truncated":truncated,
-                    "requires_confirmation":true
+                    "requires_confirmation":confirmed_selection.is_none(),
+                    "confirmed_selection":confirmed_selection
                 }))
             })?
             .collect::<std::result::Result<_, _>>()?;
@@ -452,6 +477,167 @@ pub fn preview(v: &Value) -> Result<Value> {
             "preview_only":true,"automatic_rebinding":false,
             "requires_explicit_confirmation":true,"read_only_source":true,
             "user_owned_separate_store":true
+        }))
+    })?;
+    output["annotations_supported"] = json!(true);
+    Ok(output)
+}
+
+
+/// Record a single explicit, user-selected *structural* correspondence.
+/// Does not copy/move notes, change the annotation_document generation, or
+/// project an old ID into the live annotation view. A separate activation WP
+/// must review the immutable journal before using the selection.
+pub fn confirm(v: &Value) -> Result<Value> {
+    let path = store_path(v)?;
+    let generation = text(v, "generation")?;
+    let document = text(v, "expected_document_id")?;
+    let old_id = optional_id(v, "old_entry_id")?
+        .ok_or_else(|| fail("invalid_request", "Positive old_entry_id required"))?;
+    let new_id = optional_id(v, "new_entry_id")?
+        .ok_or_else(|| fail("invalid_request", "Positive new_entry_id required"))?;
+    let expected = unsigned(v, "expected_revision", u64::MAX)?;
+    if expected == 0 || expected > i64::MAX as u64 {
+        return Err(fail(
+            "invalid_request",
+            "Positive expected_revision is required for confirmation",
+        ));
+    }
+    if text(v, "confirmation")? != "user_selected_exact_candidate" {
+        return Err(fail(
+            "confirmation_required",
+            "Explicit user_selected_exact_candidate confirmation is required",
+        ));
+    }
+
+    let mut output = ctf_mirror::read_pinned(v, |catalog| {
+        // Never create an annotation sidecar as a consequence of a confirm.
+        if open_read(&path)?.is_none() {
+            return Err(fail(
+                "annotation_store_missing",
+                "No existing user annotation store to reconcile",
+            ));
+        }
+        let mut conn = Connection::open_with_flags(
+            &path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        )?;
+        conn.busy_timeout(Duration::from_secs(5))?;
+        check_app(&conn)?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (actual_document, old_generation) = metadata(&tx)?;
+        if actual_document != document {
+            return Err(fail(
+                "annotation_document_conflict",
+                "Annotation document changed since the preview",
+            ));
+        }
+        if old_generation == generation {
+            return Err(fail(
+                "annotation_generation_conflict",
+                "No cross-generation correspondence is needed",
+            ));
+        }
+        let old: Option<(String, String, String, i64, i64)> = tx
+            .query_row(
+                "SELECT volume_label,relative_path,kind,size,revision
+                 FROM annotation_entries WHERE entry_id=?1",
+                [old_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .optional()?;
+        let (old_volume, old_path, old_kind, old_size, old_revision) =
+            old.ok_or_else(|| fail("annotation_revision_conflict", "Old annotation no longer exists"))?;
+        if old_revision as u64 != expected {
+            return Err(fail(
+                "annotation_revision_conflict",
+                "Old annotation revision differs from the reviewed value",
+            ));
+        }
+
+        // The destination is read from the *new pinned* immutable catalog,
+        // never guessed from the old numeric entry ID or a filename.
+        let candidate: Option<(String, String, String, i64)> = catalog
+            .conn()
+            .query_row(
+                "SELECT v.label,e.relative_path,e.kind,e.size
+                 FROM entries_core e JOIN volumes v ON v.id=e.volume_id
+                 WHERE e.id=?1",
+                [new_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()?;
+        if candidate.as_ref()
+            != Some(&(old_volume, old_path, old_kind, old_size))
+        {
+            return Err(fail(
+                "annotation_candidate_conflict",
+                "Selected entry is absent or not an exact preview candidate",
+            ));
+        }
+
+        let has_table: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='annotation_confirmations')",
+            [],
+            |r| r.get::<_, i64>(0),
+        )? != 0;
+        if has_table {
+            let previous: Option<i64> = tx.query_row(
+                "SELECT new_entry_id FROM annotation_confirmations
+                 WHERE old_entry_id=?1 AND new_generation=?2",
+                params![old_id, generation],
+                |r| r.get(0),
+            ).optional()?;
+            if previous.is_some() {
+                return Err(fail(
+                    "annotation_confirmation_conflict",
+                    "This old annotation already has a confirmed destination",
+                ));
+            }
+            let occupied: Option<i64> = tx.query_row(
+                "SELECT old_entry_id FROM annotation_confirmations
+                 WHERE new_generation=?1 AND new_entry_id=?2",
+                params![generation, new_id],
+                |r| r.get(0),
+            ).optional()?;
+            if occupied.is_some() {
+                return Err(fail(
+                    "annotation_confirmation_conflict",
+                    "Another old annotation already claims this destination",
+                ));
+            }
+        }
+        // Additive, backward-readable audit journal. The original annotation
+        // rows are retained in full; unresolved rows remain unconfirmed.
+        tx.execute_batch(
+            "CREATE TABLE IF NOT EXISTS annotation_confirmations (
+                old_entry_id INTEGER NOT NULL,
+                new_generation TEXT NOT NULL,
+                new_entry_id INTEGER NOT NULL,
+                old_revision INTEGER NOT NULL,
+                confirmed_at_unix INTEGER NOT NULL,
+                PRIMARY KEY(old_entry_id,new_generation),
+                UNIQUE(new_generation,new_entry_id),
+                FOREIGN KEY(old_entry_id) REFERENCES annotation_entries(entry_id)
+             );",
+        )?;
+        tx.execute(
+            "INSERT INTO annotation_confirmations
+             (old_entry_id,new_generation,new_entry_id,old_revision,confirmed_at_unix)
+             VALUES (?1,?2,?3,?4,CAST(strftime('%s','now') AS INTEGER))",
+            params![old_id, generation, new_id, old_revision],
+        )?;
+        tx.commit()?;
+        Ok(json!({
+            "state":"confirmed_not_activated",
+            "document_id":actual_document,
+            "old_entry_id":old_id,
+            "new_entry_id":new_id,
+            "old_revision":old_revision,
+            "source_generation_bound":true,
+            "annotation_rows_migrated":false,
+            "user_owned_separate_store":true,
+            "read_only_source":true
         }))
     })?;
     output["annotations_supported"] = json!(true);
