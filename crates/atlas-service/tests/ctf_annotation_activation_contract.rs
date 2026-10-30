@@ -260,6 +260,32 @@ fn activated_projection_is_reversible_and_preserves_originals() {
         assert_eq!(fs::read(&store).unwrap(), notes_before_view);
     }
 
+    // A pending native view must not expose any old verified note when the
+    // external CTF is edited, even with its derived mirror still on disk.
+    let changed_ctf = make_ctf(&source, &["keep.mp3", "alt.mp3"]);
+    assert_ne!(changed_ctf, new_ctf);
+    let stale = invoke(cmd(
+        "ctf_annotations_activated_list_pinned",
+        &source,
+        &cache,
+        &second,
+        &store,
+    ));
+    assert_eq!(stale["error"]["code"], "source_changed", "{stale}");
+    assert_eq!(fs::read(&store).unwrap(), notes_before_view);
+    assert_eq!(fs::read(&mirror).unwrap(), mirror_original);
+    fs::write(&source, &new_ctf).unwrap();
+    let refreshed = invoke(cmd(
+        "ctf_annotations_activated_list_pinned",
+        &source,
+        &cache,
+        &second,
+        &store,
+    ));
+    assert_eq!(refreshed["ok"], true, "{refreshed}");
+    assert_eq!(refreshed["data"]["result"]["items"], listed["data"]["result"]["items"]);
+    assert_eq!(fs::read(&store).unwrap(), notes_before_view);
+
     let mut paged = cmd(
         "ctf_annotations_activated_list_pinned",
         &source,
@@ -383,6 +409,8 @@ fn activated_projection_is_reversible_and_preserves_originals() {
         &store,
     ));
     assert_eq!(cleared["data"]["result"]["total"], 0);
+    assert_eq!(cleared["data"]["result"]["items"], json!([]));
+    assert_eq!(cleared["data"]["result"]["conflicts"], 0);
     let conn = rusqlite::Connection::open(&store).unwrap();
     let rows: i64 = conn
         .query_row("SELECT COUNT(*) FROM annotation_entries", [], |r| r.get(0))
