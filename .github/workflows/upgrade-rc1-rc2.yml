@@ -1,0 +1,109 @@
+# Regress the REAL published RC1 installer against current RC2 sources.
+# Synthetic local fixtures only. Never upload generated SQLite/CTF files.
+name: Native release RC1 to RC2 upgrade acceptance
+on:
+  push:
+    branches: [qa/upgrade-rc1-to-rc2-20261030]
+    paths:
+      - ".github/workflows/upgrade-rc1-rc2.yml"
+      - "tools/qa/upgrade_catalog_probe.py"
+      - "tools/qa/upgrade-windows.ps1"
+      - "tools/qa/upgrade-macos.sh"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-rc1-rc2-upgrade-${{ github.sha }}
+  cancel-in-progress: false
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-1.90-release
+      - run: rustup toolchain install 1.90.0 --profile minimal
+      - name: Build RC2 Windows binary and per-user installer from exact SHA
+        shell: pwsh
+        run: |
+          cargo test --workspace --locked
+          if ($LASTEXITCODE -ne 0) { throw 'Rust tests failed' }
+          cargo build --release --locked -p atlas-windows -p atlas-cli
+          if ($LASTEXITCODE -ne 0) { throw 'Rust release build failed' }
+          choco install innosetup --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup unavailable' }
+          ./installers/windows/build-installer.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Current installer build failed' }
+      - name: Install immutable RC1 then RC2 in-place, verify user catalog and CTF survival
+        shell: pwsh
+        run: |
+          python -m py_compile tools/qa/upgrade_catalog_probe.py
+          if ($LASTEXITCODE -ne 0) { throw 'QA probe failed Python compilation' }
+          ./tools/qa/upgrade-windows.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows upgrade QA failed' }
+      - name: Verify immutable checkout source
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: upgrade-Windows-x64-${{ github.sha }}
+          path: dist/qa-upgrade/windows/UPGRADE-WINDOWS.json
+          if-no-files-found: warn
+          retention-days: 30
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-1.90-release
+      - run: rustup toolchain install 1.90.0 --profile minimal
+      - name: Build RC2 app and PKG/DMG from exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --workspace --locked
+          bash apps/macos/build.sh
+          bash installers/macos/package.sh
+      - name: Run real RC1 to RC2 on-device PKG upgrade and data persistence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/qa/upgrade_catalog_probe.py
+          bash tools/qa/upgrade-macos.sh
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: upgrade-${{ matrix.os }}-${{ github.sha }}
+          path: dist/qa-upgrade/*/UPGRADE-MACOS.json
+          if-no-files-found: warn
+          retention-days: 30
