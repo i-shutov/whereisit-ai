@@ -1,8 +1,8 @@
 //! Shared command service for native clients and CLI.
 use atlas_core::{Catalog, Error, Result};
 use serde_json::{json, Value};
-mod ctf_duplicates;
 mod ctf_duplicate_export;
+mod ctf_duplicates;
 mod ctf_export;
 mod ctf_mirror;
 #[path = "../ctf_sidecar/mod.rs"]
