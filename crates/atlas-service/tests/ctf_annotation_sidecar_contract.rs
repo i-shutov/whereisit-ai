@@ -361,7 +361,6 @@ fn cache_path_and_foreign_sqlite_are_never_annotation_destinations() {
     assert_eq!(app, 0);
 }
 
-
 fn make_flat_ctf(path: &Path, names: &[&str]) -> Vec<u8> {
     let bytes = write_ctf(&CtfCatalog {
         name: "synthetic reconciliation".into(),
@@ -464,10 +463,7 @@ fn reconciliation_preview_is_read_only_bounded_and_never_automatically_rebinds()
     assert_eq!(current["data"]["result"]["items"], json!([]));
 
     let before_store = fs::read(&store).unwrap();
-    let next_ctf = make_flat_ctf(
-        &source,
-        &["keep.mp3", "dupe.mp3", "dupe.mp3", "new.mp3"],
-    );
+    let next_ctf = make_flat_ctf(&source, &["keep.mp3", "dupe.mp3", "dupe.mp3", "new.mp3"]);
     let stale = invoke(cmd(
         "ctf_annotations_preview_pinned",
         &source,
@@ -494,7 +490,13 @@ fn reconciliation_preview_is_read_only_bounded_and_never_automatically_rebinds()
     assert_eq!(first_page["ok"], true, "{first_page}");
     assert_eq!(first_page["data"]["result"]["state"], "generation_conflict");
     assert_eq!(first_page["data"]["result"]["total"], 3);
-    assert_eq!(first_page["data"]["result"]["items"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        first_page["data"]["result"]["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
     assert_eq!(
         first_page["data"]["result"]["requires_explicit_confirmation"],
         true

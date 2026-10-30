@@ -354,7 +354,6 @@ pub fn set(v: &Value) -> Result<Value> {
     Ok(output)
 }
 
-
 const MAX_PREVIEW_CANDIDATES: usize = 8;
 
 /// Read-only, bounded reconciliation hints after an external CTF save.
