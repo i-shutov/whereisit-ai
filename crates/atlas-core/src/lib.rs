@@ -139,6 +139,31 @@ impl Catalog {
         }
         Ok(Self { conn })
     }
+    /// Open only an already-built v3 mirror; never create/migrate/write it.
+    pub fn open_readonly(path: impl AsRef<Path>) -> Result<Self> {
+        let conn = Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        conn.create_scalar_function(
+            "unicode_lower",
+            1,
+            rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC
+                | rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+            |ctx| Ok(ctx.get::<String>(0)?.to_lowercase()),
+        )?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        conn.execute_batch("PRAGMA query_only=ON; PRAGMA foreign_keys=ON;")?;
+        let v: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        if v != 3 {
+            return Err(Error::new(
+                "schema_version",
+                "Read-only CTF mirror requires schema v3",
+            ));
+        }
+        Ok(Self { conn })
+    }
+
     /// Hot predicates select the indexed core directly. Annotations are joined
     /// only for the final display page, or when requested by the predicate.
     pub fn query_table(&self, query: &str) -> Result<&'static str> {

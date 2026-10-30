@@ -111,6 +111,14 @@ fn stream_identity(path: &Path, limit: u64) -> io::Result<SourceIdentity> {
     })
 }
 
+/// Hash a live source using bounded memory; never trust name/mtime as identity.
+pub fn identity(path: &Path, max_bytes: u64) -> io::Result<SourceIdentity> {
+    if max_bytes == 0 || max_bytes > MAX_SOURCE_BYTES {
+        return Err(invalid("Unsupported source size limit"));
+    }
+    stream_identity(path, max_bytes)
+}
+
 /// Capture bytes, reopen the path and verify a second full digest. Detects ordinary
 /// in-place edits and replacement between reads, including same-size/restored-mtime
 /// changes. Does NOT lock an uncooperative external editor or prevent future changes.
