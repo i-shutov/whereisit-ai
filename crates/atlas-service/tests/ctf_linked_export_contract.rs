@@ -173,12 +173,12 @@ fn invalid_or_existing_targets_fail_closed_and_do_not_overwrite() {
         inside_cache["error"]["code"], "unsafe_output",
         "{inside_cache}"
     );
-    let duplicates = request(json!({"op":"ctf_export_pinned","path":source,
+    let unsupported_hash = request(json!({"op":"ctf_export_pinned","path":source,
         "cache_root":cache,"generation":generation,"output":dir.path().join("dup.csv"),
-        "format":"csv","mode":"duplicates"}));
+        "format":"csv","mode":"duplicates","duplicate_mode":"hash"}));
     assert_eq!(
-        duplicates["error"]["code"], "invalid_request",
-        "{duplicates}"
+        unsupported_hash["error"]["code"], "unsupported",
+        "{unsupported_hash}"
     );
     assert_eq!(fs::read(&source).unwrap(), source_bytes);
     assert_no_stage(dir.path());
