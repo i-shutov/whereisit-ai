@@ -259,9 +259,11 @@ fn activated_projection_is_reversible_and_preserves_originals() {
         invoke(revocation)["error"]["code"],
         "annotation_activation_conflict"
     );
+    // The old record was explicitly edited after activation: revision CAS
+    // rejects a replay before the revoked-history check is consulted.
     assert_eq!(
         invoke(activation)["error"]["code"],
-        "annotation_activation_conflict"
+        "annotation_revision_conflict"
     );
 
     let cleared = invoke(cmd(
