@@ -4,6 +4,10 @@ on:
     branches: [feat/ctf-live-mirror-20261030]
     paths:
       - ".github/workflows/ctf-mirror-format.yml"
+      - "crates/atlas-core/src/lib.rs"
+      - "crates/atlas-service/src/ctf_mirror.rs"
+      - "crates/atlas-service/tests/ctf_mirror_contract.rs"
+      - "crates/atlas-service/src/lib.rs"
   workflow_dispatch:
 permissions:
   contents: read
@@ -43,6 +47,12 @@ jobs:
           print("Verified formatter changes:", sorted(changed))
           PY
           cargo fmt --all -- --check
+      - name: Run focused Rust tests after formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked -p atlas-service --test ctf_mirror_contract
+          cargo clippy --locked -p atlas-service --all-targets -- -D warnings
       - name: Commit formatting only with protected branch lease
         shell: bash
         run: |
