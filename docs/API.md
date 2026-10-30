@@ -26,6 +26,7 @@ All clients call the same service. Success: `{"ok":true,"data":...}`. Failure: `
 | `ctf_duplicates_pinned` | Original CTF `path`, `cache_root`, `generation`, `duplicate_mode` (`name_size`, `name`, `size`), optional `query`, `volume_id`, `offset`, `limit` | Read-only metadata candidate page: duplicate count/group, `has_more`, `total:null`, `verified:false`; no mutable duplicate cache |
 | `ctf_annotations_list_pinned` | Pinned CTF `path`, `cache_root`, `generation`, explicit `annotation_db` ending `.wia.sqlite`; optional `offset`, `limit` | Lists user-owned annotations with optimistic revisions. Returns `generation_conflict` with **no projected entries** after external CTF changes. Read-only; does not create a store. |
 | `ctf_annotations_set_pinned` | Same pinned fields, `entry_id`, `expected_revision`, `note`, `tags` strings | Creates or updates a **separate user-owned** annotations store. Revision 0 inserts, latest revision updates. Empty note+tags removes entry. Never modifies original CTF or derived mirror. |
+| `ctf_annotations_confirm_pinned` | Original read-only pinned fields, existing `annotation_db`, `expected_document_id`, `old_entry_id`, `new_entry_id`, positive `expected_revision`, `confirmation:"user_selected_exact_candidate"` | User-confirmed metadata candidate, CAS-guarded append-only audit record in user-owned store; **does not activate or migrate notes**. |
 
 Page limits are clamped to 1–1000. Syntax/type errors return an error instead of broadening an export. Native UIs use 250-row pages. Unknown CTF timestamps return `modified_local` as local calendar text, without a UTC suffix; `modified_unix` remains null unless its conversion basis is known.
 
@@ -61,6 +62,20 @@ Synthetic request shape (only local user paths and data; do not include private 
 ~~~json
 {"op":"ctf_annotations_preview_pinned","path":"synthetic.ctf","cache_root":"mirror","generation":"<new 64 hex generation>","annotation_db":"my-notes.wia.sqlite","offset":0,"limit":50}
 ~~~
+
+### Explicit annotation candidate confirmation (service-level journal)
+
+A user, not an automatic heuristic, must select a target ID from the read-only reconciliation preview and explicitly confirm it. `ctf_annotations_confirm_pinned` requires the exact document ID and revision from preview, the pinned **new** generation, a positive old entry ID, a positive selected new entry ID, and `confirmation:"user_selected_exact_candidate"`. The selected new entry must still have the exact old disk label, relative path, kind and size. This is a **structural match only**, never proof of equal file contents. Same-generation confirmation is invalid; missing stores are not created.
+
+A successful operation records an additive durable `annotation_confirmations` row in the **user-owned** `.wia.sqlite`, using an IMMEDIATE transaction and one-to-one constraints. It returns `state:"confirmed_not_activated"` and `annotation_rows_migrated:false`. Stale revisions/documents, repeated choices and target collisions return explicit conflicts and never overwrite prior decisions. The preview includes `confirmed_selection` for already approved rows; all unresolved records remain visible. **Existing annotation rows, notes, original source generation, CTF and derived mirror stay unchanged.** LIST remains in `generation_conflict` after recording confirmations; SET still rejects edits to the new generation. Explicit activation, lossless backup/rollback and native review dialogs remain future work. A later source edit invalidates the previous generation pin.
+
+Synthetic example (never publish real local paths, private names or hashes):
+
+~~~json
+{"op":"ctf_annotations_confirm_pinned","path":"synthetic.ctf","cache_root":"mirror","generation":"<new 64-hex generation>","annotation_db":"my-notes.wia.sqlite","expected_document_id":"<document id from preview>","old_entry_id":7,"new_entry_id":12,"expected_revision":1,"confirmation":"user_selected_exact_candidate"}
+~~~
+
+See [bounded confirmation WP](qa/CTF_ANNOTATION_CONFIRMATION_CAS_WP_20261030.md) for risks and reproducible tests.
 
 ## Export selection
 
