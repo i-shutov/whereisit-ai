@@ -834,3 +834,81 @@ fn confirmation_never_creates_missing_user_store_and_rejects_double_binding() {
         "{collision}"
     );
 }
+
+
+#[test]
+fn edited_old_annotation_invalidates_an_earlier_confirmation_revision() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("synthetic.ctf");
+    let cache = tmp.path().join("mirror");
+    let store = tmp.path().join("user.wia.sqlite");
+    let original_bytes = make_flat_ctf(&source, &["keep.mp3"]);
+    let original_gen = sync(&source, &cache);
+    let old_id = flat_ids(&source, &cache, &original_gen)[0].1;
+
+    let mut edit = cmd(
+        "ctf_annotations_set_pinned",
+        &source,
+        &cache,
+        &original_gen,
+        &store,
+    );
+    edit["entry_id"] = json!(old_id);
+    edit["expected_revision"] = json!(0);
+    edit["note"] = json!("Original synthetic note");
+    edit["tags"] = json!("");
+    assert_eq!(invoke(edit.clone())["ok"], true);
+
+    let next_bytes = make_flat_ctf(&source, &["keep.mp3", "other.mp3"]);
+    let next_gen = sync(&source, &cache);
+    let review = invoke(cmd(
+        "ctf_annotations_preview_pinned",
+        &source,
+        &cache,
+        &next_gen,
+        &store,
+    ));
+    let row = &review["data"]["result"]["items"][0];
+    let mut approve = cmd(
+        "ctf_annotations_confirm_pinned",
+        &source,
+        &cache,
+        &next_gen,
+        &store,
+    );
+    approve["old_entry_id"] = row["old_entry_id"].clone();
+    approve["new_entry_id"] = row["candidates"][0]["entry_id"].clone();
+    approve["expected_revision"] = row["revision"].clone();
+    approve["expected_document_id"] = review["data"]["result"]["document_id"].clone();
+    approve["confirmation"] = json!("user_selected_exact_candidate");
+    assert_eq!(invoke(approve)["ok"], true);
+
+    fs::write(&source, original_bytes).unwrap();
+    let returned_gen = sync(&source, &cache);
+    assert_eq!(returned_gen, original_gen);
+    edit["expected_revision"] = json!(1);
+    edit["note"] = json!("Revised note invalidates the previous selection");
+    assert_eq!(invoke(edit)["data"]["result"]["revision"], 2);
+
+    fs::write(&source, next_bytes).unwrap();
+    let latest_gen = sync(&source, &cache);
+    assert_eq!(latest_gen, next_gen);
+    let changed = invoke(cmd(
+        "ctf_annotations_preview_pinned",
+        &source,
+        &cache,
+        &latest_gen,
+        &store,
+    ));
+    assert_eq!(changed["ok"], true, "{changed}");
+    let selected = &changed["data"]["result"]["items"][0];
+    assert_eq!(selected["revision"], 2);
+    assert_eq!(selected["confirmed_selection"]["old_revision"], 1);
+    assert_eq!(selected["confirmation_revision_conflict"], true);
+    assert_eq!(selected["requires_confirmation"], true);
+    assert_eq!(selected["confirmed_selection"]["user_confirmed"], true);
+    assert_eq!(
+        changed["data"]["result"]["automatic_rebinding"],
+        false
+    );
+}
