@@ -910,7 +910,8 @@ pub fn activated_list(v: &Value) -> Result<Value> {
              WHERE a.new_generation=?1 AND a.state='active'
              ORDER BY a.old_entry_id",
         )?;
-        let mut valid: Vec<Value> = Vec::new();
+        let mut items: Vec<Value> = Vec::new();
+        let mut total = 0_u64;
         let mut conflicts = 0_u64;
         let rows = statement.query_map([generation], |r| {
             Ok((
@@ -964,17 +965,15 @@ pub fn activated_list(v: &Value) -> Result<Value> {
                 conflicts += 1;
                 continue;
             }
-            valid.push(json!({"entry_id":new_id,"old_entry_id":old_id,
-                             "revision":revision,"note":note,"tags":tags,
-                             "activation":"explicit_reviewed_projection",
-                             "read_only":true}));
+            if total >= offset && (items.len() as u64) < limit {
+                items.push(json!({
+                    "entry_id":new_id,"old_entry_id":old_id,
+                    "revision":revision,"note":note,"tags":tags,
+                    "activation":"explicit_reviewed_projection","read_only":true
+                }));
+            }
+            total += 1;
         }
-        let total = valid.len();
-        let items: Vec<Value> = valid
-            .into_iter()
-            .skip(offset as usize)
-            .take(limit as usize)
-            .collect();
         Ok(json!({
             "state":if conflicts == 0 {"partial_activation"} else {"activation_conflict"},
             "document_id":document,"items":items,"total":total,"conflicts":conflicts,
