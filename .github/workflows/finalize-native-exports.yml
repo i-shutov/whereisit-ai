@@ -1,0 +1,49 @@
+name: Apply bounded native export integration repair
+on:
+  push:
+    branches: [release/finalization-20261031]
+    paths:
+      - tools/dev/finalize_native_exports.py
+      - .github/workflows/finalize-native-exports.yml
+permissions:
+  contents: read
+jobs:
+  apply-owned-branch:
+    if: github.repository == 'i-shutov/whereisit-ai' && github.ref == 'refs/heads/release/finalization-20261031'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-1.90-test
+      - run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
+      - run: python3 tools/dev/finalize_native_exports.py
+      - name: Format and verify repaired integration
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          python3 -m unittest discover -s tools/qa -p 'test_native_export_wiring.py' -v
+          python3 -m unittest discover -s tools/qa -p 'test_upgrade_catalog_probe.py' -v
+          cargo test --workspace --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          git diff --check
+      - name: Commit only native code on unchanged owned branch
+        run: |
+          set -euo pipefail
+          branch=release/finalization-20261031
+          remote="$(git ls-remote origin "refs/heads/$branch" | cut -f1)"
+          test "$remote" = "$GITHUB_SHA" || { echo 'Concurrent change: refusing overwrite'; exit 1; }
+          git config user.name 'whereisit-ci'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add apps/windows/src/native.rs apps/macos/Sources/AtlasCatalog/AtlasCatalog.swift
+          git commit -m 'fix(native): expose linked duplicate/JSON exports and pin macOS save-panel scope'
+          git push origin "HEAD:refs/heads/$branch"
