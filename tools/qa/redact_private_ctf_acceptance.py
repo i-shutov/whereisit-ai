@@ -78,6 +78,25 @@ def checked_exports(report: dict) -> str:
     return "PASS"
 
 
+def checked_field_parity(report: dict) -> str:
+    """Only explicitly completed, independent all-field equality can be PASS."""
+    evidence = report.get("derived_export_parity")
+    if evidence is None:
+        return "NOT_RUN"
+    if not isinstance(evidence, dict):
+        return "FAIL"
+    valid = (evidence.get("status") == "passed"
+             and evidence.get("all_values_equal") is True
+             and evidence.get("checker") == "independent_duckdb_row_and_field_comparison"
+             and type(evidence.get("rows")) is int
+             and evidence["rows"] == report.get("entries")
+             and evidence["rows"] > 0
+             and type(evidence.get("columns")) is int
+             and evidence["columns"] == 15
+             and checked_exports(report) == "PASS")
+    return "PASS" if valid else "FAIL"
+
+
 def summarize(report: dict, label: str) -> dict:
     if not isinstance(report, dict) or report.get("format") != "whereisit-local-ctf-v3-acceptance-v1":
         raise Refused()
@@ -111,6 +130,7 @@ def summarize(report: dict, label: str) -> dict:
         "four_first_page_search_parities": check(checked_queries(report), query_present),
         "unchanged_ctf_roundtrip": check(roundtrip_valid, roundtrip_present),
         "csv_and_parquet_created_not_compared": checked_exports(report),
+        "csv_parquet_all_15_fields_equal": checked_field_parity(report),
     }
     mandatory = ["source_stable", "sqlite_3_51_3", "import_and_validate",
                  "four_first_page_search_parities", "unchanged_ctf_roundtrip"]
@@ -118,6 +138,7 @@ def summarize(report: dict, label: str) -> dict:
     available_pass = (report["status"] == "passed_available_checks"
                       and all(checks[k] == "PASS" for k in mandatory)
                       and checks["csv_and_parquet_created_not_compared"] != "FAIL"
+                      and checks["csv_parquet_all_15_fields_equal"] != "FAIL"
                       and report.get("source_written") is False
                       and report.get("test_original_whereisit_compatibility") is False)
     return {
@@ -170,7 +191,7 @@ def redact(first: dict, second: dict) -> dict:
             "opaque_0x10_meaning_confirmed": "NOT_RUN",
         },
         "stable_1_0_acceptance": "BLOCKED",
-        "note": "Local inputs were not independently attested; only unchanged-byte roundtrip and listed checks may pass. This is not proof of modified-CTF compatibility, export equality, physical GUI, signing or SLO.",
+        "note": "Local inputs were not independently attested. Export field equality is PASS only when the separate independent DuckDB checker completed on both temporary exports. This does not prove original-app modified-CTF compatibility, physical GUI, signing or target SLO.",
         "redaction": "strict static allowlist; private hashes, paths, file names, entry IDs, query text, raw errors, logs and source contents excluded",
     }
 
