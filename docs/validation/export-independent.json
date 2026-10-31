@@ -77,8 +77,8 @@
   "ctf_sqlite_roundtrip": {
     "input_bytes": 144766574,
     "output_bytes": 144766574,
-    "source_sha256": "f9339112d0a2b3da114cb4f4efa026d4501da0933d294f01f02896fda08f33d5",
-    "output_sha256": "f9339112d0a2b3da114cb4f4efa026d4501da0933d294f01f02896fda08f33d5",
+    "source_sha256": "REDACTED_SHA256",
+    "output_sha256": "REDACTED_SHA256",
     "byte_identical_by_sha256_and_length": true
   },
   "large_file_audit_utc": "2026-10-28T11:38:21.168391+00:00"

@@ -1,7 +1,7 @@
 {
   "elapsed_seconds": 586.594,
   "peak_rss_kib_children_linux": 828520,
-  "source_sha256": "f9339112d0a2b3da114cb4f4efa026d4501da0933d294f01f02896fda08f33d5",
+  "source_sha256": "REDACTED_SHA256",
   "volumes": 44,
   "entries": 3046027,
   "quick_check": "ok",
@@ -11,5 +11,5 @@
     0
   ],
   "db_bytes": 2537275392,
-  "db_sha256": "44f89aae60d813be21a762f533cc9225ff553ea566d14320ccdcbd31e2b76e17"
+  "db_sha256": "REDACTED_SHA256"
 }

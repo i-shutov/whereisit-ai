@@ -3,7 +3,7 @@
 **Status:** plan approved for staged execution, not a claim of completion.
 **Baseline:** `v1.0.0-rc.1`, `main` at `7b771385cb15545861156d036dd5433f8ff590fc`.
 **Companion draft:** [PR #17](https://github.com/i-shutov/whereisit-ai/pull/17).
-**Inputs:** user-provided `e-books.CTF` (4,488,883 bytes) and `Mp3-60Gb.CTF` (2,420,847 bytes). These are **private**; never commit or upload to this public GitHub repository, its Actions or its release assets.
+**Inputs:** user-provided `source-A.CTF` (4,488,883 bytes) and `source-B.CTF` (2,420,847 bytes). These are **private**; never commit or upload to this public GitHub repository, its Actions or its release assets.
 
 ## Block 1 — Real CTF characterization and reproducible baseline (P0)
 

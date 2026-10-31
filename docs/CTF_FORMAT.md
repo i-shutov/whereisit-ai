@@ -4,7 +4,7 @@ This document describes a clean-room implementation based on the user-supplied c
 
 ## Evidence and validation
 
-The inspected input is 144,766,574 bytes, SHA-256 `f9339112d0a2b3da114cb4f4efa026d4501da0933d294f01f02896fda08f33d5`.
+The inspected input is 144,766,574 bytes, SHA-256 `REDACTED_SHA256`.
 
 The parser consumed and cross-checked:
 
@@ -136,13 +136,13 @@ From the workspace root:
 
 ```sh
 cargo test -p ctf-format
-cargo run --release -p ctf-format --example inspect -- /path/USB-drives.CTF
-cargo run --release -p ctf-format --example verify -- /path/USB-drives.CTF /tmp/rebuilt.CTF
-cargo run --release -p ctf-format --example summary -- /path/USB-drives.CTF /tmp/summary.json
+cargo run --release -p ctf-format --example inspect -- /path/private-catalog.CTF
+cargo run --release -p ctf-format --example verify -- /path/private-catalog.CTF /tmp/rebuilt.CTF
+cargo run --release -p ctf-format --example summary -- /path/private-catalog.CTF /tmp/summary.json
 ```
 
 Tests use generated data, not the user's catalog. Private source catalogs, rebuilt copies and their per-disk names are not included in this source package.
 
 ## Independent SQLite roundtrip validation
 
-The full supplied catalog was imported into the application’s SQLite database and exported back to CTF. An independent audit using Python SHA-256 (separate from the exporter and its benchmark runner) confirmed equal byte lengths of 144,766,574 and matching SHA-256 `f9339112d0a2b3da114cb4f4efa026d4501da0933d294f01f02896fda08f33d5`. This establishes unchanged-catalog preservation through the database layer. See [independent export validation](QA_EXPORT.md) for the separate CSV/Parquet value checks. It does not establish original-application acceptance of arbitrary newly created CTF files.
+The full supplied catalog was imported into the application’s SQLite database and exported back to CTF. An independent audit using Python SHA-256 (separate from the exporter and its benchmark runner) confirmed equal byte lengths of 144,766,574 and matching SHA-256 `REDACTED_SHA256`. This establishes unchanged-catalog preservation through the database layer. See [independent export validation](QA_EXPORT.md) for the separate CSV/Parquet value checks. It does not establish original-application acceptance of arbitrary newly created CTF files.
