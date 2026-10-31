@@ -106,6 +106,34 @@ def verify_export_pair(csv_path: pathlib.Path, parquet_path: pathlib.Path,
             "checker": "independent_duckdb_row_and_field_comparison"}
 
 
+
+def check_search_page(fast: dict, full: dict, offset: int, limit: int,
+                      previous_total: int | None = None) -> tuple[int, int, str]:
+    """Fail closed on page IDs, coordinates, exact total and fast continuation.
+
+    The native search_fast API intentionally has no total. Its has_more flag
+    must agree with the independent counted search at the same page offset.
+    """
+    fast_count, fast_digest = ids_digest(fast)
+    full_count, full_digest = ids_digest(full)
+    total = full.get("total")
+    if (type(total) is not int or total < 0
+            or (previous_total is not None and total != previous_total)):
+        raise RuntimeError("search_total_mismatch")
+    for page in (fast, full):
+        if (type(page.get("offset")) is not int or page["offset"] != offset
+                or type(page.get("limit")) is not int or page["limit"] != limit):
+            raise RuntimeError("search_page_coordinates_mismatch")
+    expected_count = min(limit, max(0, total - offset))
+    if (fast_count != expected_count or full_count != expected_count
+            or fast_digest != full_digest):
+        raise RuntimeError("search_page_mismatch")
+    expected_more = offset + expected_count < total
+    if type(fast.get("has_more")) is not bool or fast["has_more"] != expected_more:
+        raise RuntimeError("search_has_more_mismatch")
+    return total, full_count, full_digest
+
+
 def inspect(source: pathlib.Path, cli: pathlib.Path, timeout: int,
             expected_sha: str | None, full_export: bool,
             verify_export_parity: bool, result: dict) -> dict:
@@ -173,25 +201,40 @@ def inspect(source: pathlib.Path, cli: pathlib.Path, timeout: int,
         ]
         results = []
         for n, expression in enumerate(queries, 1):
-            request = {"db": str(database), "query": expression, "limit": 100, "offset": 0}
-            fast, fast_metric = measured_cli(cli, {"op": "search_fast", **request}, timeout)
-            full, full_metric = measured_cli(cli, {"op": "search", **request}, timeout)
-            count_fast, digest_fast = ids_digest(fast)
-            count_full, digest_full = ids_digest(full)
-            if count_fast != count_full or digest_fast != digest_full:
-                raise RuntimeError("search_page_mismatch")
-            total = full.get("total")
-            if not isinstance(total, int) or total < count_full:
-                raise RuntimeError("invalid_search_total")
+            def query_page(offset: int) -> tuple[dict, dict, dict, dict]:
+                request = {"db": str(database), "query": expression,
+                           "limit": 100, "offset": offset}
+                # A same-size / same-mtime external edit cannot be treated as
+                # the same source generation between reuse of a derived DB.
+                ensure_source_generation()
+                fast, fast_metric = measured_cli(cli, {"op": "search_fast", **request}, timeout)
+                ensure_source_generation()
+                full, full_metric = measured_cli(cli, {"op": "search", **request}, timeout)
+                return fast, full, fast_metric, full_metric
+
+            fast, full, fast_metric, full_metric = query_page(0)
+            total, first_length, first_digest = check_search_page(fast, full, 0, 100)
+            pages_checked = 1
+            second_offset = None
+            if total > 100:
+                # Bounded second-page sampling; never claim full 3M-row
+                # enumeration or issue an unbounded multi-million OFFSET.
+                second_offset = 100
+                next_fast, next_full, _, _ = query_page(second_offset)
+                check_search_page(next_fast, next_full, second_offset, 100, total)
+                pages_checked = 2
             results.append({
                 "query_number": n,
                 "query_text_omitted": True,
                 "total_count": total,
-                "page_length": count_full,
-                "page_ids_sha256": digest_full,
+                "page_length": first_length,
+                "page_ids_sha256": first_digest,
                 "fast_ms": fast_metric["elapsed_ms"],
                 "full_count_ms": full_metric["elapsed_ms"],
                 "page_and_count_agree": True,
+                "pages_checked": pages_checked,
+                "second_page_offset": second_offset,
+                "bounded_pages_and_has_more_agree": True,
             })
         result["queries"] = results
 
