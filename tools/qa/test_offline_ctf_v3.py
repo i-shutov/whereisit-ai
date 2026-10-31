@@ -57,8 +57,8 @@ elif name in ("export_csv", "export_parquet"):
         if __FAULT__ == "parity_mismatch" and name == "export_parquet":
             connection.execute("UPDATE tbl SET name='different.pdf' WHERE id=2")
         output = str(request["path"]).replace("'", "''")
-        fmt = "PARQUET" if name == "export_parquet" else "CSV"
-        connection.execute(f"COPY tbl TO '{output}' (FORMAT {fmt}, HEADER)")
+        options = "(FORMAT PARQUET)" if name == "export_parquet" else "(FORMAT CSV, HEADER)"
+        connection.execute(f"COPY tbl TO '{output}' {options}")
         connection.close()
     result = {"ok": True, "data": {"exported": True}}
 else:
