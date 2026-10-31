@@ -27,6 +27,7 @@ jobs:
       - run: cargo test --workspace --locked
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: python3 -m unittest discover -s tools/qa -p 'test_redact_private_ctf_acceptance.py' -v
       - run: |
           if test -f tools/storage_audit.py; then python3 tools/storage_audit.py --self-test; fi
           if test -f tools/storage_layout_experiment.py; then python3 tools/storage_layout_experiment.py --self-test; fi
