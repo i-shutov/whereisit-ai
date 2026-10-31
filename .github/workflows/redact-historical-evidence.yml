@@ -1,0 +1,70 @@
+name: Redact historical owner evidence before RC3 publication
+on:
+  push:
+    branches: [release/finalization-20261031]
+    paths: [.github/workflows/redact-historical-evidence.yml]
+permissions:
+  contents: read
+jobs:
+  redact:
+    if: github.repository == 'i-shutov/whereisit-ai' && github.ref == 'refs/heads/release/finalization-20261031'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Replace legacy source identifiers without putting them in logs or code
+        run: |
+          python3 - <<'PY'
+          import json, re
+          from pathlib import Path
+          root=Path('.')
+          plan=(root/'docs/CTF_FIRST_EXECUTION_PLAN_2026-10-29.md').read_text()
+          line=next(x for x in plan.splitlines() if x.startswith('**Inputs:**'))
+          names=re.findall(r'`([^`]+\.CTF)`',line)
+          assert len(names)==2, 'Historical input heading precondition'
+          package_path=root/'docs/validation/database-package.json'
+          package=json.loads(package_path.read_text())
+          archive=Path(package['archive']).name
+          assert '-AtlasCatalog-' in archive, 'Historical archive naming precondition'
+          stem=archive.split('-AtlasCatalog-',1)[0]
+          replacements={names[0]:'source-A.CTF',names[1]:'source-B.CTF',stem:'private-catalog'}
+          assert all(len(k)>3 for k in replacements), 'Refuse broad substitutions'
+          paths=list((root/'docs').rglob('*.md'))+list((root/'docs').rglob('*.json'))+[root/'tools/block1/run_private_ctf.py']
+          changed=0
+          for path in paths:
+              before=path.read_text(encoding='utf-8');after=before
+              for old,new in sorted(replacements.items(),key=lambda kv:len(kv[0]),reverse=True):
+                  after=after.replace(old,new)
+              if after!=before:
+                  path.write_text(after,encoding='utf-8');changed+=1
+          reports=[root/'docs/QA_EXPORT.md',root/'docs/STATUS_2026-10-28.md',root/'docs/CTF_FORMAT.md',root/'docs/VALIDATION.md',*sorted((root/'docs/validation').glob('*.json'))]
+          for path in reports:
+              text=path.read_text(encoding='utf-8')
+              text=re.sub(r'(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])','REDACTED_SHA256',text,flags=re.I)
+              if path.suffix=='.json':json.loads(text)
+              path.write_text(text,encoding='utf-8')
+          package=json.loads(package_path.read_text());package['archive']='local-only-not-distributed'
+          package_path.write_text(json.dumps(package,indent=2,ensure_ascii=False)+'\n')
+          print('Historical source identifiers redacted; no private values printed; changed name-bearing files:',changed)
+          PY
+      - name: Validate redacted reports and unchanged executable behavior
+        run: |
+          set -euo pipefail
+          python3 tools/qa/check_public_evidence.py
+          python3 -m py_compile tools/block1/run_private_ctf.py
+          git diff --check
+      - name: Commit data-document cleanup only, with current-ref lease
+        run: |
+          set -euo pipefail
+          branch=release/finalization-20261031
+          remote="$(git ls-remote origin "refs/heads/$branch" | cut -f1)"
+          test "$remote" = "$GITHUB_SHA" || { echo 'Concurrent change; refusing overwrite'; exit 1; }
+          git config user.name 'whereisit-ci'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs tools/block1/run_private_ctf.py
+          git commit -m 'privacy: redact historical owner source identifiers from deliverable documentation'
+          git push origin "HEAD:refs/heads/$branch"
