@@ -32,7 +32,10 @@ def fixture(digest: str) -> dict:
         },
         "queries": [{"query_number": i, "query_text_omitted": True,
                      "page_and_count_agree": True, "total_count": 9,
-                     "page_length": 5, "private_names": "SECRET_FILE_NAME"}
+                     "page_length": 5, "pages_checked": 1,
+                     "second_page_offset": None,
+                     "bounded_pages_and_has_more_agree": True,
+                     "private_names": "SECRET_FILE_NAME"}
                     for i in range(1, 5)],
         "ctf_roundtrip": {"byte_identical": True,
                           "output_sha256": digest, "output_bytes": 1024},
@@ -77,6 +80,25 @@ class RedactedAcceptanceTests(unittest.TestCase):
         b["ctf_roundtrip"]["output_sha256"] = "b" * 64
         b["source_sha256_after"] = "e" * 64
         self.assertEqual(redact(a, b)["available_local_checks"], "FAIL")
+
+    def test_old_first_page_only_or_false_continuation_never_passes(self):
+        first, second = fixture("a" * 64), fixture("b" * 64)
+        summary = redact(first, second)
+        self.assertEqual(summary["inputs"][0]["checks"]["bounded_search_page_continuation"],
+                         "PASS")
+        del first["queries"][0]["bounded_pages_and_has_more_agree"]
+        summary = redact(first, second)
+        self.assertEqual(summary["available_local_checks"], "FAIL")
+        self.assertEqual(summary["inputs"][0]["checks"]["bounded_search_page_continuation"],
+                         "FAIL")
+        first["queries"][0]["bounded_pages_and_has_more_agree"] = True
+        first["queries"][0]["total_count"] = 205
+        summary = redact(first, second)
+        self.assertEqual(summary["available_local_checks"], "FAIL")
+        first["queries"][0]["pages_checked"] = 2
+        first["queries"][0]["second_page_offset"] = 100
+        summary = redact(first, second)
+        self.assertEqual(summary["available_local_checks"], "PASS")
 
     def test_independent_field_parity_is_optional_but_never_implicitly_passes(self):
         a, b = fixture("a" * 64), fixture("b" * 64)
