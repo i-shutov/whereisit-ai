@@ -1,0 +1,73 @@
+name: Prepare integrated RC3 candidate
+on:
+  push:
+    branches: [release/finalization-20261031]
+    paths:
+      - tools/dev/prepare_finalization.py
+      - .github/workflows/prepare-finalization.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: prepare-finalization-rc3
+  cancel-in-progress: false
+jobs:
+  prepare:
+    if: github.repository == 'i-shutov/whereisit-ai' && github.ref == 'refs/heads/release/finalization-20261031'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: finalization-linux-1.90-${{ hashFiles('Cargo.lock') }}
+          restore-keys: finalization-linux-1.90-
+      - run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
+      - name: Prepare consistent version, truthful gates and pinned predecessor tests
+        run: python3 tools/dev/prepare_finalization.py
+      - name: Validate complete transformed source without disabling gates
+        run: |
+          set -euo pipefail
+          git diff --check
+          python3 tools/dev/verify_release_identity.py
+          bash -n tools/qa/upgrade-rc3-macos.sh
+          cargo fmt --all -- --check
+          cargo test --workspace --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Preserve changes only on the owned finalization branch with lease
+        run: |
+          set -euo pipefail
+          branch=release/finalization-20261031
+          remote="$(git ls-remote origin "refs/heads/$branch" | cut -f1)"
+          test "$remote" = "$GITHUB_SHA" || { echo 'Concurrent branch change; refusing overwrite'; exit 1; }
+          git config user.name 'whereisit-ci'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add VERSION Cargo.toml Cargo.lock crates/*/Cargo.toml apps/windows/Cargo.toml apps/macos/Info.plist installers/windows/WhereIsItAI.iss THIRD_PARTY_NOTICES.md release/ACCEPTANCE.json docs/releases/v1.0.0-rc.3.md .github/workflows/build.yml .github/workflows/upgrade-rc2-rc3.yml tools/qa/upgrade-rc3-windows.ps1 tools/qa/upgrade-rc3-macos.sh
+          git commit -m 'release: consolidate complete feature stack as unsigned 1.0.0-rc.3'
+          git push origin "HEAD:refs/heads/$branch"
+          git rev-parse HEAD
+  offline-reader:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Download pinned binary-only independent Parquet reader
+        run: |
+          python -m pip download --only-binary=:all: --no-deps duckdb==1.4.1 --dest wheels
+          (cd wheels && sha256sum *.whl > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WhereIsItAI-offline-independent-reader-python313-linux-x64
+          path: wheels/
+          if-no-files-found: error
+          retention-days: 7
