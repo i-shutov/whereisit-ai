@@ -37,7 +37,29 @@ elif name == "export_ctf":
     pathlib.Path(request["path"]).write_bytes(data)
     result = {"ok": True, "data": {"exported": True}}
 elif name in ("export_csv", "export_parquet"):
-    pathlib.Path(request["path"]).write_bytes(b"synthetic only")
+    if __FAULT__ not in ("parity_ok", "parity_mismatch"):
+        pathlib.Path(request["path"]).write_bytes(b"synthetic only")
+    else:
+        # Entirely synthetic 15-field rows, including Unicode, NULLs and >4GiB.
+        import duckdb
+        connection = duckdb.connect()
+        connection.execute("CREATE TABLE tbl (id BIGINT, volume_id BIGINT, parent_id BIGINT, "
+                           "name VARCHAR, relative_path VARCHAR, kind VARCHAR, size BIGINT, "
+                           "modified_unix BIGINT, description VARCHAR, tags VARCHAR, "
+                           "volume_label VARCHAR, categories VARCHAR, duplicate_count BIGINT, "
+                           "duplicate_group VARCHAR, modified_local VARCHAR)")
+        connection.execute("INSERT INTO tbl VALUES "
+                           "(1, 7, NULL, 'Песня.mp3', 'Песня.mp3', 'file', 5368709121, "
+                           "NULL, 'Описание', '', 'Synthetic', '', 0, '', NULL), "
+                           "(2, 7, 1, 'guide.pdf', 'guide.pdf', 'file', 0, "
+                           "1600000000, '', 'x', 'Synthetic', '', 1, 'group', "
+                           "'2020-01-02 03:04:05')")
+        if __FAULT__ == "parity_mismatch" and name == "export_parquet":
+            connection.execute("UPDATE tbl SET name='different.pdf' WHERE id=2")
+        output = str(request["path"]).replace("'", "''")
+        fmt = "PARQUET" if name == "export_parquet" else "CSV"
+        connection.execute(f"COPY tbl TO '{output}' (FORMAT {fmt}, HEADER)")
+        connection.close()
     result = {"ok": True, "data": {"exported": True}}
 else:
     result = {"ok": False, "error": {"code": "invalid_operation"}}
@@ -122,6 +144,51 @@ class PrivateRunnerTest(unittest.TestCase):
             self.assertEqual(report["status"], "failed")
             self.assertEqual(report["error_code"], "source_changed")
             self.assertFalse(report["source_unchanged"])
+
+    def test_optional_independent_full_field_parity_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            cli, source = fixture(root, fault="parity_ok")
+            checkpoint = root / "checkpoint"
+            result = call(root, cli, source, checkpoint,
+                          ["--full-export", "--verify-export-parity"])
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads((checkpoint / "V3_ACCEPTANCE.json").read_text())
+            self.assertEqual(report["status"], "passed_available_checks")
+            self.assertEqual(report["derived_export_parity"], {
+                "status": "passed", "all_values_equal": True, "rows": 2,
+                "columns": 15,
+                "checker": "independent_duckdb_row_and_field_comparison",
+            })
+            # Private source names/paths and raw data are not written to the report.
+            encoded = (checkpoint / "V3_ACCEPTANCE.json").read_text()
+            self.assertNotIn(str(root), encoded)
+            self.assertNotIn("Песня.mp3", encoded)
+            self.assertTrue(report["source_unchanged"])
+
+    def test_independent_field_mismatch_must_fail_even_when_exports_exist(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            cli, source = fixture(root, fault="parity_mismatch")
+            checkpoint = root / "checkpoint"
+            result = call(root, cli, source, checkpoint,
+                          ["--full-export", "--verify-export-parity"])
+            self.assertEqual(result.returncode, 1, result.stderr)
+            report = json.loads((checkpoint / "V3_ACCEPTANCE.json").read_text())
+            self.assertEqual(report["status"], "failed")
+            self.assertEqual(report["error_code"], "csv_parquet_field_parity_failed")
+            self.assertEqual(report["derived_export_parity"], {"status": "failed"})
+            self.assertTrue(report["source_unchanged"])
+            self.assertEqual(len(report["derived_export_artifacts"]), 2)
+
+    def test_parity_must_be_explicitly_requested_with_both_exports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            cli, source = fixture(root)
+            checkpoint = root / "checkpoint"
+            result = call(root, cli, source, checkpoint, ["--verify-export-parity"])
+            self.assertEqual(result.returncode, 2)
+            self.assertFalse(checkpoint.exists())
 
     def test_full_exports_leave_only_aggregate_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
