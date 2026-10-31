@@ -6,8 +6,14 @@ import json
 import os
 import re
 import shutil
+import subprocess
+import sys
 
 root = Path(__file__).resolve().parents[1]
+# The main native CI and offline kit are not substitutes for a release-time gate.
+# The checker emits only filenames on failure, never private source identifiers.
+subprocess.run([sys.executable, str(root / 'tools/qa/check_public_evidence.py')],
+               cwd=root, check=True)
 version = (root / "VERSION").read_text().strip()
 if not re.fullmatch(r"\d+\.\d+\.\d+-rc\.\d+", version):
     raise SystemExit("This publisher is restricted to release candidates")
