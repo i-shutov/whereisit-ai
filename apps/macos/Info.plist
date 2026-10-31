@@ -17,7 +17,7 @@
 	<key>CFBundleShortVersionString</key>
 	<string>1.0.0</string>
 	<key>CFBundleVersion</key>
-	<string>10002</string>
+	<string>10003</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 	<key>NSHighResolutionCapable</key>
@@ -25,8 +25,8 @@
 	<key>NSHumanReadableCopyright</key>
 	<string>WhereIsIt AI contributors</string>
 	<key>WhereIsItReleaseVersion</key>
-	<string>1.0.0-rc.2</string>
+	<string>1.0.0-rc.3</string>
 	<key>CFBundleGetInfoString</key>
-	<string>WhereIsIt AI 1.0.0-rc.2</string>
+	<string>WhereIsIt AI 1.0.0-rc.3</string>
 </dict>
 </plist>

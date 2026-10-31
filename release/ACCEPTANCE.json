@@ -1,16 +1,16 @@
 {
   "format": "whereisit-release-acceptance-v1",
-  "version": "1.0.0-rc.2",
+  "version": "1.0.0-rc.3",
   "channel": "prerelease",
   "stable_ready": false,
   "known_open_gates": [
-    "modified_and_new_CTF_in_original_WhereIsIt_not_verified",
-    "legacy_CTF_description_extension_0x1c_not_decoded",
-    "linked_CTF_durable_native_annotation_overlay_not_implemented",
-    "manual_GUI_DPI_accessibility_and_upgrade_matrix_incomplete",
-    "Windows_Authenticode_and_macOS_Developer_ID_notarization_missing",
-    "two_historical_e_books_and_MP3_CTF_acceptance_samples_unavailable",
-    "interactive_search_p95_150ms_and_full_progress_cancel_not_accepted"
+    "modified_CTF_in_original_WhereIsIt_not_verified",
+    "opaque_extension_0x10_semantics_not_specified_not_evidence_of_lost_descriptions",
+    "manual_GUI_Win10_Win11_macOS_ARM_Intel_and_accessibility_not_accepted",
+    "Windows_Authenticode_and_Apple_Developer_ID_notarization_missing",
+    "two_historical_CTF_raw_byte_access_blocked_by_attachment_provider",
+    "real_search_p95_150ms_and_full_progress_cancel_not_accepted",
+    "current_candidate_installed_upgrade_matrix_requires_completed_evidence"
   ],
   "synthetic_data_is_not_real_data_acceptance": true,
   "real_ctf_44_volume_3046027_entry_readonly_roundtrip_verified": true,
@@ -25,5 +25,27 @@
     "windows": "unsigned",
     "macos": "ad-hoc, not notarized"
   },
-  "personal_catalogs_in_release": false
+  "personal_catalogs_in_release": false,
+  "integrated_feature_prs": [
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    52,
+    53
+  ],
+  "native_annotations_implemented": true,
+  "real_ctf_current_candidate_acceptance": "pending_exact_candidate_report",
+  "manual_acceptance_is_distinct_from_CI": true
 }
