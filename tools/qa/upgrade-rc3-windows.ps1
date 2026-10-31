@@ -50,13 +50,11 @@ try {
     if (Test-Path $installed) { throw 'Refusing to replace existing app directory.' }
     $dirArg = '/DIR="' + $installed + '"'
     $flags = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', $dirArg)
-    # This test owns the empty installation directory; cleaning may be attempted
-    # only after a successful first installation.
     Run-Installer $oldInstaller $flags
     $installedByTest = $true
     $cli = Join-Path $installed 'whereisit-ai-cli.exe'
     Verify-CliVersion $cli '1.0.0-rc.2'
-    & python $probe prepare --cli $cli --db $db --fixture-root $fixture --snapshot $snapshot
+    & python $probe prepare --cli $cli --db $db --fixture-root $fixture --snapshot $snapshot --source-release 1.0.0-rc.2 --target-release 1.0.0-rc.3
     if ($LASTEXITCODE -ne 0) { throw 'RC2 catalog creation failed.' }
     $originalDbSha = (Get-FileHash $db -Algorithm SHA256).Hash.ToLowerInvariant()
 
@@ -70,7 +68,7 @@ try {
     if ($unchangedDbSha -ne $originalDbSha) {
         throw 'In-place upgrade modified the existing external user catalog bytes.'
     }
-    & python $probe verify --cli $cli --db $db --fixture-root $fixture --snapshot $snapshot
+    & python $probe verify --cli $cli --db $db --fixture-root $fixture --snapshot $snapshot --source-release 1.0.0-rc.2 --target-release 1.0.0-rc.3
     if ($LASTEXITCODE -ne 0) { throw 'Existing RC2 catalog not readable in RC3.' }
 
     $uninstallers = @(Get-ChildItem $installed -Filter 'unins*.exe')
@@ -105,8 +103,6 @@ try {
     Write-Host 'PASS: Windows RC2 -> RC3 in-place upgrade, preserved catalog and external CTF.'
 }
 finally {
-    # Never delete arbitrary directories. Only invoke the uninstaller located
-    # in the CI-owned temporary install root. Preserve evidence on a failed run.
     if ($installedByTest -and (Test-Path $installed)) {
         $uninstaller = @(Get-ChildItem $installed -Filter 'unins*.exe' -ErrorAction SilentlyContinue)
         if ($uninstaller.Count -eq 1) {

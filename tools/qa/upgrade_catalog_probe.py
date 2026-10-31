@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Cross-platform RC.1 -> RC.2 catalog upgrade QA; GENERATED FIXTURES ONLY.
+"""Cross-platform installed-release catalog upgrade QA; GENERATED FIXTURES ONLY.
 
 Modes:
-  prepare: initialize catalog with the installed RC.1 binary, scan generated
-           files, create a Unicode category and save aggregate expectations.
-  verify:  test the same external SQLite with installed RC.2; ensure the new
-           installer did not alter existing database/catalog files.
+  prepare: initialize catalog with the installed source-release binary, scan
+           generated files, create a Unicode category and save expectations.
+  verify:  test the same external SQLite with the installed target release;
+           ensure the new installer did not alter existing catalog files.
 
 No real user CTF or personal paths are accepted or uploaded. Runs only inside
-a designated ephemeral CI root. Results are short nonprivate JSON.
+an ephemeral CI root. Results are short nonprivate JSON.
 """
 from __future__ import annotations
 
@@ -26,6 +26,21 @@ QUERY = "(ext:mp3 OR ext:mkv) AND size:>0B"
 CATEGORY = "QA-Upgrade-Ω-Категория"
 CTF_PLACEHOLDER = b"GENERATED INVALID CTF PLACEHOLDER; PROVE THAT INSTALLERS PRESERVE EXTERNAL FILES\n"
 FORMAT = "whereisit-native-upgrade-smoke-v1"
+SUPPORTED_PAIRS = {(RC1, RC2), (RC2, "1.0.0-rc.3")}
+
+
+def expected_cli_version(mode: str, source: str, target: str) -> str:
+    """Do not infer a predecessor from the working tree's current VERSION."""
+    if mode not in {"prepare", "verify"} or (source, target) not in SUPPORTED_PAIRS:
+        raise RuntimeError("unsupported_upgrade_version_pair")
+    return "WhereIsIt AI " + (source if mode == "prepare" else target)
+
+
+def validate_checkpoint_versions(checkpoint: dict, source: str, target: str) -> None:
+    if (checkpoint.get("format") != FORMAT
+            or checkpoint.get("source_release") != source
+            or checkpoint.get("target_release") != target):
+        raise RuntimeError("wrong_checkpoint")
 
 
 def sha256(path: Path) -> str:
@@ -51,7 +66,6 @@ def call_cli(cli: Path, payload: dict) -> object:
     except json.JSONDecodeError:
         raise RuntimeError("invalid_native_json") from None
     if not isinstance(envelope, dict) or envelope.get("ok") is not True:
-        # Do not propagate native error text; it can contain local paths.
         raise RuntimeError("native_request_not_ok")
     return envelope.get("data")
 
@@ -135,14 +149,16 @@ def main() -> int:
     parser.add_argument("--db", type=Path, required=True)
     parser.add_argument("--fixture-root", type=Path, required=True)
     parser.add_argument("--snapshot", type=Path, required=True)
+    parser.add_argument("--source-release", default=RC1)
+    parser.add_argument("--target-release", default=RC2)
     args = parser.parse_args()
     if os.environ.get("CI", "").lower() != "true":
         parser.error("This destructive installer QA is restricted to ephemeral CI")
     cli, db = args.cli.resolve(strict=True), args.db.absolute()
     root, snapshot = args.fixture_root.absolute(), args.snapshot.absolute()
-    expected_version = RC1 if args.mode == "prepare" else RC2
+    expected_version = expected_cli_version(args.mode, args.source_release, args.target_release)
     actual_version = cli_version(cli)
-    if actual_version != f"WhereIsIt AI {expected_version}":
+    if actual_version != expected_version:
         raise RuntimeError("unexpected_installed_cli_version")
     if args.mode == "prepare":
         if db.exists() or snapshot.exists():
@@ -162,8 +178,8 @@ def main() -> int:
         snapshot.write_text(
             json.dumps({
                 "format": FORMAT,
-                "source_release": RC1,
-                "target_release": RC2,
+                "source_release": args.source_release,
+                "target_release": args.target_release,
                 "fixture_signatures": signatures,
                 "baseline": baseline,
                 "db_sha256_after_prepare": sha256(db),
@@ -171,7 +187,7 @@ def main() -> int:
             encoding="utf-8",
         )
         print(json.dumps({
-            "phase": "rc1_prepare",
+            "phase": "source_prepare", "source_release": args.source_release,
             "status": "pass",
             "entry_count": baseline["entries"],
             "categories": len(baseline["category_names"]),
@@ -179,8 +195,7 @@ def main() -> int:
         }))
     else:
         checkpoint = json.loads(snapshot.read_text(encoding="utf-8"))
-        if checkpoint["format"] != FORMAT or checkpoint["source_release"] != RC1:
-            raise RuntimeError("wrong_checkpoint")
+        validate_checkpoint_versions(checkpoint, args.source_release, args.target_release)
         if not db.is_file():
             raise RuntimeError("catalog_missing_after_upgrade")
         verify_external(root, checkpoint["fixture_signatures"])
@@ -191,7 +206,7 @@ def main() -> int:
         if checkpoint["baseline"] != after:
             raise RuntimeError("catalog_category_or_search_data_changed")
         print(json.dumps({
-            "phase": "rc2_verify", "status": "pass",
+            "phase": "target_verify", "target_release": args.target_release, "status": "pass",
             "entry_count": after["entries"],
             "categories": len(after["category_names"]),
             "sqlite_quick_check": "ok",
@@ -205,7 +220,6 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except (AssertionError, OSError, RuntimeError, KeyError, ValueError, TimeoutError) as exc:
-        # Error value is a constant or type name, never arbitrary native stderr.
         msg = str(exc)
         safe = msg if msg.replace("_", "").isalnum() else type(exc).__name__
         print(json.dumps({"status": "fail", "error_code": safe, "synthetic_only": True}))

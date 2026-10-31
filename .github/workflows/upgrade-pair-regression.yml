@@ -1,0 +1,21 @@
+name: Installed upgrade version-pair regression
+on:
+  pull_request:
+    paths:
+      - tools/qa/upgrade_catalog_probe.py
+      - tools/qa/test_upgrade_catalog_probe.py
+      - .github/workflows/upgrade-pair-regression.yml
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  version-pair:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tools/qa -p 'test_upgrade_catalog_probe.py' -v
+      - run: bash -n tools/qa/upgrade-rc3-macos.sh
