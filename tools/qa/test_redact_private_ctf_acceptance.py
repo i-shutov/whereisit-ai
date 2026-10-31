@@ -78,6 +78,30 @@ class RedactedAcceptanceTests(unittest.TestCase):
         b["source_sha256_after"] = "e" * 64
         self.assertEqual(redact(a, b)["available_local_checks"], "FAIL")
 
+    def test_independent_field_parity_is_optional_but_never_implicitly_passes(self):
+        a, b = fixture("a" * 64), fixture("b" * 64)
+        initial = redact(a, b)
+        self.assertEqual(initial["inputs"][0]["checks"]["csv_parquet_all_15_fields_equal"],
+                         "NOT_RUN")
+        self.assertEqual(initial["available_local_checks"], "PASS")
+        a["derived_export_parity"] = {
+            "status": "passed", "all_values_equal": True, "rows": 16,
+            "columns": 15,
+            "checker": "independent_duckdb_row_and_field_comparison",
+            "untrusted_path": "PRIVATE_PATH_SHOULD_NOT_BE_COPIED",
+        }
+        actual = redact(a, b)
+        self.assertEqual(actual["inputs"][0]["checks"]["csv_parquet_all_15_fields_equal"],
+                         "PASS")
+        self.assertNotIn("PRIVATE_PATH_SHOULD_NOT_BE_COPIED", json.dumps(actual))
+        a["derived_export_parity"]["rows"] = 15
+        failed = redact(a, b)
+        self.assertEqual(failed["available_local_checks"], "FAIL")
+        self.assertEqual(failed["inputs"][0]["checks"]["csv_parquet_all_15_fields_equal"],
+                         "FAIL")
+        a["derived_export_parity"] = {"status": "failed"}
+        self.assertEqual(redact(a, b)["available_local_checks"], "FAIL")
+
     def test_different_source_and_same_cli_required(self):
         a, b = fixture("a" * 64), fixture("a" * 64)
         with self.assertRaises(Refused):
