@@ -79,6 +79,33 @@ class PublicEvidenceReleaseGate(unittest.TestCase):
         )
         self.assertNotEqual(self.run_checker().returncode, 0)
 
+    def test_release_preparer_refuses_private_historical_report_before_staging(self):
+        # This tests the real release asset preparer entry point, not only the checker.
+        # No source artifacts or legitimate credentials are created by this fixture.
+        source = Path(__file__).resolve().parents[1] / "prepare_release_assets.py"
+        builder = self.root / "tools" / "prepare_release_assets.py"
+        shutil.copyfile(source, builder)
+        token = "FE" * 32
+        (self.root / "docs" / "QA_EXPORT.md").write_text(token, encoding="utf-8")
+        p = subprocess.run(
+            [sys.executable, str(builder)], cwd=self.root,
+            capture_output=True, text=True, check=False,
+        )
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("Private historical evidence must be redacted", p.stdout + p.stderr)
+        self.assertNotIn(token, p.stdout + p.stderr)
+        self.assertFalse((self.root / "release-assets").exists())
+
+    def test_offline_packaging_checks_evidence_before_git_archive(self):
+        workflow = (Path(__file__).resolve().parents[2] /
+                    ".github/workflows/finalization.yml").read_text(encoding="utf-8")
+        self.assertIn("python3 tools/qa/check_public_evidence.py", workflow)
+        self.assertIn("git archive --format=zip", workflow)
+        self.assertLess(
+            workflow.index("python3 tools/qa/check_public_evidence.py"),
+            workflow.index("git archive --format=zip"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
