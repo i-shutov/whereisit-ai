@@ -73,12 +73,53 @@ def ids_digest(data: dict) -> tuple[int, str]:
     return len(items), h.hexdigest()
 
 
+def verify_export_pair(csv_path: pathlib.Path, parquet_path: pathlib.Path,
+                       expected_entries: int, timeout: int) -> dict:
+    """Independently compare every exported field, retaining only safe aggregate evidence.
+
+    The checker reads temporary files on the local machine. Its raw stdout,
+    stderr, exception text, paths and unexpected JSON fields are never copied
+    into the checkpoint.
+    """
+    verifier = pathlib.Path(__file__).resolve().parents[1] / "verify_exports.py"
+    completed = subprocess.run(
+        [sys.executable, str(verifier), str(csv_path), str(parquet_path)],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+        encoding="utf-8", errors="replace", timeout=timeout, check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError("csv_parquet_field_parity_failed")
+    try:
+        evidence = json.loads(completed.stdout)
+    except (ValueError, TypeError):
+        raise RuntimeError("invalid_export_verifier_report") from None
+    if (not isinstance(evidence, dict)
+            or evidence.get("status") != "passed"
+            or evidence.get("all_values_equal") is not True
+            or type(evidence.get("rows")) is not int
+            or evidence["rows"] != expected_entries
+            or type(evidence.get("columns")) is not int
+            or evidence["columns"] != 15):
+        raise RuntimeError("incomplete_export_parity_evidence")
+    return {"status": "passed", "all_values_equal": True,
+            "rows": evidence["rows"], "columns": 15,
+            "checker": "independent_duckdb_row_and_field_comparison"}
+
+
 def inspect(source: pathlib.Path, cli: pathlib.Path, timeout: int,
-            expected_sha: str | None, full_export: bool, result: dict) -> dict:
+            expected_sha: str | None, full_export: bool,
+            verify_export_parity: bool, result: dict) -> dict:
     size = source.stat().st_size
     original_sha = file_hash(source)
     if expected_sha is not None and original_sha != expected_sha:
         raise RuntimeError("unexpected_ctf_identity")
+
+    def ensure_source_generation() -> None:
+        # Rehash the authoritative external catalog before reusing any
+        # derived result. Do not trust source size or mtime alone.
+        if file_hash(source) != original_sha:
+            raise RuntimeError("source_changed")
+
     version = subprocess.run(
         [str(cli), "--sqlite-version"], stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL, text=True, timeout=15, check=True,
@@ -112,6 +153,7 @@ def inspect(source: pathlib.Path, cli: pathlib.Path, timeout: int,
             cli, {"op": "import_ctf", "db": str(database), "path": str(source)}, timeout,
         )
         result["phases"]["import_ctf"] = metric
+        ensure_source_generation()
         stats, metric = measured_cli(cli, {"op": "stats", "db": str(database)}, timeout)
         volumes, entries = stats.get("volumes"), stats.get("entries")
         if not isinstance(volumes, int) or not isinstance(entries, int) or volumes <= 0 or entries <= 0:
@@ -164,6 +206,7 @@ def inspect(source: pathlib.Path, cli: pathlib.Path, timeout: int,
         }
         if not exact:
             raise RuntimeError("ctf_roundtrip_mismatch")
+        ensure_source_generation()
 
         if full_export:
             artifacts = []
@@ -174,7 +217,17 @@ def inspect(source: pathlib.Path, cli: pathlib.Path, timeout: int,
                 )
                 artifacts.append({"format": ext, "bytes": output.stat().st_size,
                                   "sha256": file_hash(output), **metric})
+                ensure_source_generation()
             result["derived_export_artifacts"] = artifacts
+            if verify_export_parity:
+                # Set failure evidence BEFORE invoking an optional external
+                # reader; no interrupted/failed comparison may look NOT_RUN.
+                result["derived_export_parity"] = {"status": "failed"}
+                result["derived_export_parity"] = verify_export_pair(
+                    root / "derived.csv", root / "derived.parquet",
+                    entries, timeout,
+                )
+                ensure_source_generation()
         result["phases"]["total_import_to_roundtrip"] = {
             "elapsed_ms": round((time.perf_counter() - start) * 1000, 2)
         }
@@ -191,12 +244,16 @@ def main() -> int:
     ap.add_argument("--expected-sha256", help="Optional verified source SHA-256")
     ap.add_argument("--full-export", action="store_true",
                     help="Also test full temporary CSV/Parquet export (larger disk I/O)")
+    ap.add_argument("--verify-export-parity", action="store_true",
+                    help="Independently compare every CSV/Parquet field locally (requires --full-export and DuckDB 1.4.1)")
     ap.add_argument("--timeout-seconds", type=int, default=1500,
                     help="Per-phase timeout; large 3M-entry CTF imports can exceed 8 minutes")
     ap.add_argument("source", type=pathlib.Path)
     args = ap.parse_args()
     if args.timeout_seconds < 10:
         ap.error("Timeout must be >= 10 seconds")
+    if args.verify_export_parity and not args.full_export:
+        ap.error("--verify-export-parity requires --full-export")
     cli, source = args.cli.resolve(strict=True), args.source.resolve(strict=True)
     if not cli.is_file() or not source.is_file():
         ap.error("CLI and source must be regular files")
@@ -209,7 +266,7 @@ def main() -> int:
               "source": {"sha256": file_hash(source), "size_bytes": source.stat().st_size}}
     try:
         inspect(source, cli, args.timeout_seconds, args.expected_sha256,
-                args.full_export, report)
+                args.full_export, args.verify_export_parity, report)
         report["status"] = "passed_available_checks"
     except Exception as exc:
         # Exception text may include a private path; store only an error category
