@@ -72,7 +72,8 @@ def fixture(directory: pathlib.Path, fault: str = "", version: str = "3.51.3"):
     source.write_bytes(b"synthetic ctf fixture (not a real WhereIsIt catalog)")
     cli = directory / "fake_cli.py"
     cli.write_text(
-        FAKE.replace("__VERSION__", repr(version)).replace("__FAULT__", repr(fault)),
+        FAKE.replace("#!/usr/bin/env python3", "#!" + sys.executable, 1)
+            .replace("__VERSION__", repr(version)).replace("__FAULT__", repr(fault)),
         encoding="utf-8",
     )
     cli.chmod(0o700)
