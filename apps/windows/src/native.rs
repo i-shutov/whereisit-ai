@@ -44,6 +44,24 @@ const CATEGORY_ASSIGN: usize = 124;
 const CATEGORY_CREATE: usize = 125;
 const LIMIT: usize = 250;
 
+fn linked_export_allowed(index: isize) -> bool {
+    matches!(index, 0 | 1 | 3)
+}
+
+#[cfg(test)]
+mod linked_export_policy_tests {
+    use super::linked_export_allowed;
+    #[test]
+    fn csv_parquet_json_enabled_but_ctf_and_unknown_refused() {
+        for index in [0, 1, 3] {
+            assert!(linked_export_allowed(index));
+        }
+        for index in [-1, 2, 4, isize::MAX] {
+            assert!(!linked_export_allowed(index));
+        }
+    }
+}
+
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
@@ -1509,9 +1527,12 @@ impl App {
                         && (!self.linked_mode()
                             || [OPEN, NEW, LINK_CTF].contains(command)
                             || (*command == EXPORT
-                                && !self.duplicates
-                                && SendMessageW(self.export_format, CB_GETCURSEL, 0, 0) != 2)))
-                        as i32
+                                && linked_export_allowed(SendMessageW(
+                                    self.export_format,
+                                    CB_GETCURSEL,
+                                    0,
+                                    0,
+                                ))))) as i32
                 } else if [
                     CATEGORY_FILTER,
                     CATEGORY_ASSIGN,
@@ -1801,19 +1822,14 @@ impl App {
                     self.status("Linked CTF is read-only; open a writable SQLite catalog first.");
                     return;
                 }
-                if self.linked_mode() && command == EXPORT {
-                    if self.duplicates {
-                        self.status(
-                            "Linked duplicate candidates cannot be exported until a verified duplicate report is implemented.",
-                        );
-                        return;
-                    }
-                    if SendMessageW(self.export_format, CB_GETCURSEL, 0, 0) == 2 {
-                        self.status(
-                            "Linked CTF supports only CSV/Parquet export; original stays read-only.",
-                        );
-                        return;
-                    }
+                if self.linked_mode()
+                    && command == EXPORT
+                    && !linked_export_allowed(SendMessageW(self.export_format, CB_GETCURSEL, 0, 0))
+                {
+                    self.status(
+                        "Linked CTF supports CSV/Parquet/JSON export; original stays read-only.",
+                    );
+                    return;
                 }
                 if command == SCAN {
                     if let Some(root) = folder_dialog(self.hwnd) {
@@ -1844,6 +1860,7 @@ impl App {
                         match SendMessageW(self.export_format, CB_GETCURSEL, 0, 0) {
                             0 => "csv",
                             1 => "parquet",
+                            3 => "json",
                             _ => "ctf",
                         }
                     } else {
@@ -1881,6 +1898,7 @@ impl App {
                                 match SendMessageW(self.export_format, CB_GETCURSEL, 0, 0) {
                                     0 => "export_csv",
                                     1 => "export_parquet",
+                                    3 => "export_json",
                                     _ => "export_ctf",
                                 }
                             };
@@ -1892,10 +1910,11 @@ impl App {
                                     return;
                                 };
                                 linked["output"] = json!(path);
-                                linked["format"] = json!(if operation == "export_csv" {
-                                    "csv"
-                                } else {
-                                    "parquet"
+                                linked["format"] = json!(match operation {
+                                    "export_csv" => "csv",
+                                    "export_parquet" => "parquet",
+                                    "export_json" => "json",
+                                    _ => "ctf",
                                 });
                                 linked["mode"] = json!(if self.duplicates {
                                     "duplicates"
@@ -1999,7 +2018,7 @@ impl App {
 
 unsafe fn file_dialog(owner: HWND, save: bool, format: &str) -> Option<String> {
     let mut buffer = vec![0u16; 32768];
-    let filter=wide(match format {"annotation"=>"User notes (*.wia.sqlite)\0*.wia.sqlite\0","ctf"=>"CTF catalogs (*.ctf)\0*.ctf\0All files\0*.*\0","csv"=>"CSV table (*.csv)\0*.csv\0All files\0*.*\0","parquet"=>"Apache Parquet (*.parquet)\0*.parquet\0All files\0*.*\0",_=>"Atlas SQLite catalog (*.atlas.sqlite;*.sqlite)\0*.atlas.sqlite;*.sqlite\0All files\0*.*\0"});
+    let filter=wide(match format {"annotation"=>"User notes (*.wia.sqlite)\0*.wia.sqlite\0","ctf"=>"CTF catalogs (*.ctf)\0*.ctf\0All files\0*.*\0","csv"=>"CSV table (*.csv)\0*.csv\0All files\0*.*\0","parquet"=>"Apache Parquet (*.parquet)\0*.parquet\0All files\0*.*\0","json"=>"JSON table (*.json)\0*.json\0All files\0*.*\0",_=>"Atlas SQLite catalog (*.atlas.sqlite;*.sqlite)\0*.atlas.sqlite;*.sqlite\0All files\0*.*\0"});
     let ext = wide(if format == "sqlite" {
         "atlas.sqlite"
     } else if format == "annotation" {
@@ -2169,6 +2188,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 "CSV — current branch/query",
                 "Parquet — current branch/query",
                 "CTF — entire catalog",
+                "JSON — current branch/query",
             ] {
                 SendMessageW(
                     app.export_format,

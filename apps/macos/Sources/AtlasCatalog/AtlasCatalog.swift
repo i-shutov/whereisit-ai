@@ -714,16 +714,21 @@ enum Bridge {
     }
     func export() {
         guard mutationAllowed else { return }
-        guard !linkedMode || exportFormat != "ctf" else {
-            status = "Linked CTF supports CSV/Parquet only; the original is read-only."
+        guard !linkedMode || ["csv", "parquet", "json"].contains(exportFormat) else {
+            status = "Linked CTF supports CSV/Parquet/JSON; the original is read-only."
             return
         }
         let chosenFormat = exportFormat
+        let selectedMode = showingDuplicates ? "duplicates" : (appliedQuery.isEmpty && volumeID != nil ? "children" : "search")
+        let selectedQuery = appliedQuery
+        let selectedDuplicateMode = appliedDuplicateMode
+        let selectedVolume = volumeID
+        let selectedParent = stack.last.flatMap { $0.0 }
         let originalDatabase = database
         let originalLinkedPath = linkedCTFPath
         let originalGeneration = linkedGeneration
         let panel = NSSavePanel()
-        panel.title = chosenFormat == "ctf" ? "Export entire catalog as CTF" : (showingDuplicates ? "Export all matching duplicate candidates" : "Export current branch or query results")
+        panel.title = chosenFormat == "ctf" ? "Export entire catalog as CTF" : (selectedMode == "duplicates" ? "Export all matching duplicate candidates" : "Export current branch or query results")
         panel.nameFieldStringValue = "Catalog.\(chosenFormat)"
         panel.begin { [weak self] response in
             guard let self, response == .OK, let url = panel.url,
@@ -740,12 +745,12 @@ enum Bridge {
                 args = ["op": "export_\(chosenFormat)", "path": url.path, "overwrite": true]
             }
             if chosenFormat != "ctf" {
-                args["mode"] = self.showingDuplicates ? "duplicates" : (self.appliedQuery.isEmpty && self.volumeID != nil ? "children" : "search")
-                args["query"] = self.appliedQuery
-                args["duplicate_mode"] = self.appliedDuplicateMode
-                if let volumeID = self.volumeID { args["volume_id"] = volumeID }
-                if !self.showingDuplicates {
-                    args["parent_id"] = self.stack.last.flatMap { $0.0 }.map { $0 as Any } ?? NSNull()
+                args["mode"] = selectedMode
+                args["query"] = selectedQuery
+                args["duplicate_mode"] = selectedDuplicateMode
+                if let selectedVolume { args["volume_id"] = selectedVolume }
+                if selectedMode != "duplicates" {
+                    args["parent_id"] = selectedParent.map { $0 as Any } ?? NSNull()
                 }
                 args["recursive"] = true
             }
@@ -785,9 +790,9 @@ enum Bridge {
                     Button("Import CTF copy into SQLite…") { model.importCTF() }.disabled(!model.editableAllowed)
                 }.disabled(!model.mutationAllowed)
                 Picker("Export format", selection: $model.exportFormat) {
-                    Text("CSV • current scope").tag("csv"); Text("Parquet • current scope").tag("parquet"); Text("CTF • entire catalog").tag("ctf")
+                    Text("CSV • current scope").tag("csv"); Text("Parquet • current scope").tag("parquet"); Text("CTF • entire catalog").tag("ctf"); Text("JSON • current scope").tag("json")
                 }.labelsHidden().frame(width: 174).accessibilityLabel("Export format and scope")
-                Button("Export…") { model.export() }.disabled(!model.mutationAllowed || (model.linkedMode && (model.exportFormat == "ctf" || model.showingDuplicates)))
+                Button("Export…") { model.export() }.disabled(!model.mutationAllowed || (model.linkedMode && model.exportFormat == "ctf"))
                 Spacer(minLength: 4)
                 if model.pending > 0 { ProgressView().controlSize(.small) }
                 Button("Cancel scan") { model.cancel() }.disabled(!model.canCancel)
