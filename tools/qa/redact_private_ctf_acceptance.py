@@ -61,6 +61,22 @@ def checked_queries(report: dict) -> bool:
                     for i, q in enumerate(queries, 1)))
 
 
+
+def checked_search_continuation(report: dict) -> bool:
+    """A first-page-only checkpoint cannot claim bounded continuation parity."""
+    queries = report.get("queries")
+    return (isinstance(queries, list) and len(queries) == 4
+            and all(isinstance(q, dict)
+                    and type(q.get("total_count")) is int
+                    and q["total_count"] >= 0
+                    and type(q.get("pages_checked")) is int
+                    and q["pages_checked"] == (2 if q["total_count"] > 100 else 1)
+                    and q.get("second_page_offset") == (
+                        100 if q["total_count"] > 100 else None)
+                    and q.get("bounded_pages_and_has_more_agree") is True
+                    for q in queries))
+
+
 def checked_exports(report: dict) -> str:
     exports = report.get("derived_export_artifacts")
     if exports is None:
@@ -128,12 +144,15 @@ def summarize(report: dict, label: str) -> dict:
                                      and phase_complete(report, "validate_catalog"),
                                      import_present or validate_present),
         "four_first_page_search_parities": check(checked_queries(report), query_present),
+        "bounded_search_page_continuation": check(checked_search_continuation(report),
+                                                  query_present),
         "unchanged_ctf_roundtrip": check(roundtrip_valid, roundtrip_present),
         "csv_and_parquet_created_not_compared": checked_exports(report),
         "csv_parquet_all_15_fields_equal": checked_field_parity(report),
     }
     mandatory = ["source_stable", "sqlite_3_51_3", "import_and_validate",
-                 "four_first_page_search_parities", "unchanged_ctf_roundtrip"]
+                 "four_first_page_search_parities", "bounded_search_page_continuation",
+                 "unchanged_ctf_roundtrip"]
     # A failed native checkpoint can never turn green through a subset of booleans.
     available_pass = (report["status"] == "passed_available_checks"
                       and all(checks[k] == "PASS" for k in mandatory)
@@ -191,7 +210,7 @@ def redact(first: dict, second: dict) -> dict:
             "opaque_0x10_meaning_confirmed": "NOT_RUN",
         },
         "stable_1_0_acceptance": "BLOCKED",
-        "note": "Local inputs were not independently attested. Export field equality is PASS only when the separate independent DuckDB checker completed on both temporary exports. This does not prove original-app modified-CTF compatibility, physical GUI, signing or target SLO.",
+        "note": "Local inputs were not independently attested. Bounded search parity checks first and (if needed) second pages, fast has_more and counted totals, not every page. Export field equality is PASS only when the separate independent DuckDB checker completed on both temporary exports. This does not prove original-app modified-CTF compatibility, physical GUI, signing or target SLO.",
         "redaction": "strict static allowlist; private hashes, paths, file names, entry IDs, query text, raw errors, logs and source contents excluded",
     }
 
