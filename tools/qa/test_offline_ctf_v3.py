@@ -24,12 +24,28 @@ if name == "import_ctf":
     db.write_bytes(data)
     result = {"ok": True, "data": {"volumes": 1}}
 elif name == "stats":
-    result = {"ok": True, "data": {"volumes": 1, "entries": 2}}
+    entries = 205 if __FAULT__ in ("two_page_ok", "second_page_mismatch",
+                                   "fast_has_more_incorrect", "fast_coords_incorrect") else 2
+    result = {"ok": True, "data": {"volumes": 1, "entries": entries}}
 elif name == "validate_catalog":
     result = {"ok": True, "data": {"integrity": "ok"}}
 elif name in ("search_fast", "search"):
-    result = {"ok": True, "data": {"items": [{"id": 1}, {"id": 2}],
-              "total": 2}}
+    total = 205 if __FAULT__ in ("two_page_ok", "second_page_mismatch",
+                                 "fast_has_more_incorrect", "fast_coords_incorrect") else 2
+    offset, limit = request["offset"], request["limit"]
+    items = [{"id": i} for i in range(offset + 1, min(offset + limit, total) + 1)]
+    if __FAULT__ == "second_page_mismatch" and name == "search_fast" and offset == 100:
+        items[-1] = {"id": 999}
+    more = offset + len(items) < total
+    if __FAULT__ == "fast_has_more_incorrect" and name == "search_fast":
+        more = not more
+    reported_offset = offset + (1 if __FAULT__ == "fast_coords_incorrect" and name == "search_fast" else 0)
+    data = {"items": items, "offset": reported_offset, "limit": limit}
+    if name == "search_fast":
+        data["has_more"] = more
+    else:
+        data["total"] = total
+    result = {"ok": True, "data": data}
 elif name == "export_ctf":
     data = db.read_bytes()
     if __FAULT__ == "wrong_roundtrip":
@@ -190,6 +206,54 @@ class PrivateRunnerTest(unittest.TestCase):
             result = call(root, cli, source, checkpoint, ["--verify-export-parity"])
             self.assertEqual(result.returncode, 2)
             self.assertFalse(checkpoint.exists())
+
+    def test_bounded_second_page_and_continuations_are_actually_checked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            cli, source = fixture(root, fault="two_page_ok")
+            dest = root / "checkpoint"
+            done = call(root, cli, source, dest)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            report = json.loads((dest / "V3_ACCEPTANCE.json").read_text())
+            self.assertEqual(len(report["queries"]), 4)
+            for query in report["queries"]:
+                self.assertEqual(query["total_count"], 205)
+                self.assertEqual(query["pages_checked"], 2)
+                self.assertEqual(query["second_page_offset"], 100)
+                self.assertTrue(query["bounded_pages_and_has_more_agree"])
+            self.assertTrue(report["source_unchanged"])
+
+    def test_second_page_mismatch_must_fail_without_leaking_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            cli, source = fixture(root, fault="second_page_mismatch")
+            dest = root / "checkpoint"
+            done = call(root, cli, source, dest)
+            self.assertEqual(done.returncode, 1, done.stderr)
+            report = json.loads((dest / "V3_ACCEPTANCE.json").read_text())
+            self.assertEqual(report["error_code"], "search_page_mismatch")
+            self.assertTrue(report["source_unchanged"])
+            self.assertNotIn(str(root), (dest / "V3_ACCEPTANCE.json").read_text())
+
+    def test_fast_continuation_must_match_exact_counted_page(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            cli, source = fixture(root, fault="fast_has_more_incorrect")
+            dest = root / "checkpoint"
+            done = call(root, cli, source, dest)
+            self.assertEqual(done.returncode, 1, done.stderr)
+            report = json.loads((dest / "V3_ACCEPTANCE.json").read_text())
+            self.assertEqual(report["error_code"], "search_has_more_mismatch")
+
+    def test_page_offset_replay_must_fail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            cli, source = fixture(root, fault="fast_coords_incorrect")
+            dest = root / "checkpoint"
+            done = call(root, cli, source, dest)
+            self.assertEqual(done.returncode, 1, done.stderr)
+            report = json.loads((dest / "V3_ACCEPTANCE.json").read_text())
+            self.assertEqual(report["error_code"], "search_page_coordinates_mismatch")
 
     def test_full_exports_leave_only_aggregate_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
