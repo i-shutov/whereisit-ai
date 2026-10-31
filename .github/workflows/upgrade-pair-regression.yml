@@ -1,16 +1,20 @@
-name: Installed upgrade version-pair regression
+name: Native integration and installed upgrade regressions
 on:
   pull_request:
     paths:
       - tools/qa/upgrade_catalog_probe.py
       - tools/qa/test_upgrade_catalog_probe.py
+      - tools/qa/test_native_export_wiring.py
+      - tools/qa/linked_candidate_acceptance.py
+      - apps/windows/src/native.rs
+      - apps/macos/Sources/AtlasCatalog/AtlasCatalog.swift
       - .github/workflows/upgrade-pair-regression.yml
   push:
     branches: [main]
 permissions:
   contents: read
 jobs:
-  version-pair:
+  version-pair-and-native-wiring:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -18,4 +22,6 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - run: python3 -m unittest discover -s tools/qa -p 'test_upgrade_catalog_probe.py' -v
+      - run: python3 -m unittest discover -s tools/qa -p 'test_native_export_wiring.py' -v
+      - run: python3 -m py_compile tools/qa/linked_candidate_acceptance.py
       - run: bash -n tools/qa/upgrade-rc3-macos.sh
