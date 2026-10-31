@@ -62,6 +62,10 @@ jobs:
           "$RUNNER_TEMP/ctf-qa-offline/bin/python" -c "import duckdb; assert duckdb.__version__ == '1.4.1'"
           "$RUNNER_TEMP/ctf-qa-offline/bin/python" -m unittest discover -s tools/qa -p 'test_offline_ctf_v3.py' -v
           "$RUNNER_TEMP/ctf-qa-offline/bin/python" -m unittest discover -s tools/qa -p 'test_redact_private_ctf_acceptance.py' -v
+      - name: Fail-closed historical evidence privacy check before source archive
+        run: |
+          python3 tools/qa/check_public_evidence.py
+          python3 -m unittest discover -s tools/qa -p 'test_public_evidence_gate.py' -v
       - name: Package source and tools without runtime data
         run: |
           set -euo pipefail
