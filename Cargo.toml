@@ -4,7 +4,7 @@ members = ["crates/atlas-core", "crates/ctf-format", "crates/atlas-service", "cr
 default-members = ["crates/atlas-core", "crates/ctf-format", "crates/atlas-cli", "crates/atlas-ffi"]
 
 [workspace.package]
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 edition = "2021"
 rust-version = "1.90"
 license = "MIT"

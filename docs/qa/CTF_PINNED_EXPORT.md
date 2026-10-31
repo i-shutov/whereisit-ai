@@ -28,7 +28,11 @@ The native CLI/service can also export JSON. It has the same protection.
 ```
 
 Use `mode=children` with `volume_id` and optional `parent_id` for a
-recursive subtree, or `mode=all` for the whole catalog. Query syntax is the
+recursive subtree, `mode=all` for the whole catalog, or
+`mode=duplicates` with `duplicate_mode=name_size|name|size` for all
+query/volume-scoped metadata duplicate candidates (not content-verified
+duplicates). The duplicate report refuses `offset`/`limit`, non-null
+`parent_id`, and content-hash mode; it writes no persistent duplicate cache. Query syntax is the
 same tested Rust Boolean-query grammar used by the normal SQLite exporter.
 This exports the **full matching set**, not merely the GUI's 250-row page.
 The exporter streams rows in bounded groups (8192 for Parquet).

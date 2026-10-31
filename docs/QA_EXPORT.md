@@ -24,7 +24,7 @@ All integer columns, including `size`, are Parquet BIGINT (signed 64-bit). Pytho
 
 The CTF exported from the imported SQLite database was independently hashed and compared with the supplied original. Both contain **144,766,574 bytes** and have SHA-256:
 
-`f9339112d0a2b3da114cb4f4efa026d4501da0933d294f01f02896fda08f33d5`
+`REDACTED_SHA256`
 
 The independent length and SHA-256 checks matched. This validates the unchanged source catalog’s SQLite → CTF preservation, in addition to the reader/writer’s direct roundtrip tests.
 

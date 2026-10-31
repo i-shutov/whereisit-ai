@@ -42,7 +42,7 @@ privacy-safe GitHub Actions workflow, verify `SHA256SUMS.txt` and provenance,
 then run:
 
 ```sh
-./description_gap_probe '/path/to/private/USB-drives.CTF' > private-description-aggregates.json
+./description_gap_probe '/path/to/private/private-catalog.CTF' > private-description-aggregates.json
 ```
 
 Keep the resulting report local, especially if it includes a source digest

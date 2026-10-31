@@ -34,6 +34,8 @@ const DUPLICATES: usize = 111;
 const DUP_MODE: usize = 112;
 const EXPORT_FORMAT: usize = 113;
 const LINK_CTF: usize = 114;
+const ANNOTATION_PREVIEW: usize = 115;
+const ANNOTATION_PAGE_SIZE: usize = 20;
 const DISKS: usize = 120;
 const FILES: usize = 121;
 const CATEGORIES: usize = 122;
@@ -41,6 +43,24 @@ const CATEGORY_FILTER: usize = 123;
 const CATEGORY_ASSIGN: usize = 124;
 const CATEGORY_CREATE: usize = 125;
 const LIMIT: usize = 250;
+
+fn linked_export_allowed(index: isize) -> bool {
+    matches!(index, 0 | 1 | 3)
+}
+
+#[cfg(test)]
+mod linked_export_policy_tests {
+    use super::linked_export_allowed;
+    #[test]
+    fn csv_parquet_json_enabled_but_ctf_and_unknown_refused() {
+        for index in [0, 1, 3] {
+            assert!(linked_export_allowed(index));
+        }
+        for index in [-1, 2, 4, isize::MAX] {
+            assert!(!linked_export_allowed(index));
+        }
+    }
+}
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
@@ -109,10 +129,855 @@ fn default_db() -> String {
         })
 }
 
+// Pagination is purely navigational: a page never confirms an annotation.
+fn annotation_page_controls(data: &Value, offset: usize) -> (bool, bool) {
+    let preview = &data["result"];
+    if preview["state"] != "generation_conflict" {
+        return (false, false);
+    }
+    let total = preview["total"].as_u64().unwrap_or(0);
+    let count = preview["items"].as_array().map_or(0, Vec::len);
+    let previous = offset > 0;
+    let next = count > 0 && (offset as u64).saturating_add(count as u64) < total;
+    (previous, next)
+}
+
+// Render only a bounded local preview: opaque CTF and private notes never enter logs.
+fn annotation_preview_text(data: &Value, offset: usize) -> String {
+    let preview = &data["result"];
+    let state = preview["state"].as_str().unwrap_or("unavailable");
+    let total = preview["total"].as_u64().unwrap_or(0);
+    let mut message = format!(
+        "Linked CTF annotation review (page read-only)\nState: {state}\nSaved notes: {total}\n"
+    );
+    if state == "generation_conflict" {
+        if let Some(rows) = preview["items"].as_array() {
+            let start = if rows.is_empty() { 0 } else { offset + 1 };
+            let end = offset.saturating_add(rows.len());
+            message.push_str(&format!("Rows {start}–{end} of {total} (20 per page)\n"));
+            for row in rows.iter().take(ANNOTATION_PAGE_SIZE) {
+                let old_id = row["old_entry_id"].as_i64().unwrap_or(-1);
+                let candidate_state = row["candidate_state"].as_str().unwrap_or("unknown");
+                let count = row["candidate_count_lower_bound"].as_u64().unwrap_or(0);
+                let suffix = if row["candidates_truncated"] == true {
+                    "+"
+                } else {
+                    ""
+                };
+                let stale = if row["confirmation_revision_conflict"] == true
+                    || row["confirmation_payload_conflict"] == true
+                {
+                    " [stale confirmation]"
+                } else {
+                    ""
+                };
+                let audit = match row["activation_state"].as_str() {
+                    Some("active") => " [active audit; verify before displaying]",
+                    Some("revoked") => " [revoked; audit retained]",
+                    _ => "",
+                };
+                message.push_str(&format!(
+                    "\nOld ID {old_id}: {candidate_state}, candidates {count}{suffix}{stale}{audit}"
+                ));
+            }
+        }
+    } else if state == "current_generation" {
+        message.push_str("\nNo cross-generation reconciliation is required.");
+    } else if state == "uninitialized" {
+        message.push_str("\nNo user annotation database has been initialized.");
+    }
+    let (previous, next) = annotation_page_controls(data, offset);
+    if previous || next {
+        message.push_str(&format!(
+            "\n\nYES = {}  |  NO = {}  |  CANCEL = close.",
+            if next { "next page" } else { "not available" },
+            if previous {
+                "previous page"
+            } else {
+                "not available"
+            }
+        ));
+    }
+    message.push_str(
+        "\n\nPREVIEW ONLY: opening a page never writes. Mapping, activation and revocation \
+         each require separate consent. Every page re-verifies the external CTF generation.",
+    );
+    message
+}
+
+// Only independently verified fresh notes can be shown. Historical audit state
+// must NEVER be treated as a verified live overlay.
+fn verified_overlay_response_ok(data: &Value, expected_offset: usize) -> bool {
+    let view = &data["result"];
+    match view["state"].as_str() {
+        Some("partial_activation" | "activation_conflict") => {
+            view["offset"].as_u64() == Some(expected_offset as u64)
+                && view["limit"].as_u64() == Some(ANNOTATION_PAGE_SIZE as u64)
+                && view["read_only_source"] == true
+                && view["unresolved_unconfirmed_annotations_not_projected"] == true
+                && view["total"].as_u64().is_some()
+                && view["conflicts"].as_u64().is_some()
+                && view["items"].as_array().is_some_and(|rows| {
+                    rows.len() <= ANNOTATION_PAGE_SIZE
+                        && rows.iter().all(|row| {
+                            row["read_only"] == true
+                                && row["activation"] == "explicit_reviewed_projection"
+                                && row["entry_id"].as_i64().is_some_and(|id| id > 0)
+                                && row["old_entry_id"].as_i64().is_some_and(|id| id > 0)
+                                && row["revision"].as_i64().is_some_and(|id| id > 0)
+                                && row["note"].as_str().is_some()
+                                && row["tags"].as_str().is_some()
+                        })
+                })
+        }
+        Some("uninitialized" | "no_cross_generation_activations") => {
+            view["total"] == 0
+                && view["conflicts"] == 0
+                && view["items"].as_array().is_some_and(Vec::is_empty)
+        }
+        _ => false,
+    }
+}
+
+fn verified_overlay_page_controls(data: &Value, offset: usize) -> (bool, bool) {
+    if !verified_overlay_response_ok(data, offset) {
+        return (false, false);
+    }
+    let view = &data["result"];
+    if !matches!(
+        view["state"].as_str(),
+        Some("partial_activation" | "activation_conflict")
+    ) {
+        return (false, false);
+    }
+    let total = view["total"].as_u64().unwrap_or(0);
+    let shown = view["items"].as_array().map_or(0, Vec::len);
+    (
+        offset > 0,
+        shown > 0 && (offset as u64).saturating_add(shown as u64) < total,
+    )
+}
+
+fn verified_overlay_summary(data: &Value, offset: usize) -> String {
+    if !verified_overlay_response_ok(data, offset) {
+        return "Overlay response failed verification. No private notes are displayed.".into();
+    }
+    let view = &data["result"];
+    if matches!(
+        view["state"].as_str(),
+        Some("uninitialized" | "no_cross_generation_activations")
+    ) {
+        return "No verified cross-generation overlays. No notes were copied or modified.".into();
+    }
+    let total = view["total"].as_u64().unwrap_or(0);
+    let conflicts = view["conflicts"].as_u64().unwrap_or(0);
+    let rows = view["items"].as_array().expect("response checked");
+    let start = if rows.is_empty() { 0 } else { offset + 1 };
+    let end = offset.saturating_add(rows.len());
+    let mut summary = format!(
+        "VERIFIED READ-ONLY OVERLAYS\n\
+         Valid active: {total}\n\
+         Stale/conflicting active audits excluded: {conflicts}\n\
+         Unconfirmed mappings excluded (not counted).\n\
+         Rows {start}–{end} of {total}\n"
+    );
+    for row in rows {
+        let old = row["old_entry_id"].as_i64().unwrap_or(-1);
+        let target = row["entry_id"].as_i64().unwrap_or(-1);
+        let note = row["note"].as_str().unwrap_or("");
+        let excerpt: String = note
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .take(100)
+            .collect();
+        let suffix = if note.chars().count() > 100 {
+            "…"
+        } else {
+            ""
+        };
+        summary.push_str(&format!(
+            "\nOld #{old} → target #{target}: {excerpt}{suffix}"
+        ));
+    }
+    summary.push_str("\n\nEvery page freshly verifies the external CTF SHA and note revisions. Viewing never writes. An active audit is not proof of a valid overlay.");
+    summary
+}
+
+#[cfg(test)]
+mod annotation_preview_tests {
+    use super::{
+        annotation_overlay_request, annotation_page_controls, annotation_preview_text,
+        annotation_reply_current, annotation_selection_request, verified_overlay_page_controls,
+        verified_overlay_response_ok, verified_overlay_summary, AnnotationOverlayAction,
+    };
+    use serde_json::{json, Value};
+
+    #[test]
+    fn ambiguity_and_stale_confirmation_remain_visible() {
+        let result = json!({"result":{"state":"generation_conflict","total":21,
+            "items":[{"old_entry_id":4,"candidate_state":"ambiguous",
+                "candidate_count_lower_bound":6,"candidates_truncated":true,
+                "confirmation_revision_conflict":true}]}});
+        let text = annotation_preview_text(&result, 0);
+        assert!(text.contains("ambiguous, candidates 6+ [stale confirmation]"));
+        assert!(text.contains("Rows 1–1 of 21"));
+        assert!(text.contains("opening a page never writes"));
+        assert_eq!(annotation_page_controls(&result, 0), (false, true));
+    }
+
+    #[test]
+    fn matching_generation_never_implies_approval() {
+        let result = json!({"result":{"state":"current_generation","total":1,"items":[]}});
+        let text = annotation_preview_text(&result, 0);
+        assert!(text.contains("No cross-generation reconciliation"));
+        assert!(text.contains("PREVIEW ONLY"));
+        assert_eq!(annotation_page_controls(&result, 0), (false, false));
+    }
+
+    #[test]
+    fn no_default_or_stale_candidate_is_ever_implicitly_selected() {
+        let preview = json!({"result":{
+            "state":"generation_conflict","document_id":"synthetic-document",
+            "total":1,"items":[{"old_entry_id":7,"revision":2,
+                "candidates":[{"entry_id":19,"volume_id":3},{"entry_id":23,"volume_id":3}],
+                "confirmed_selection":null,"confirmation_revision_conflict":false,
+                "confirmation_payload_conflict":false}]
+        }});
+        let first = annotation_selection_request(&preview, 0, 0).unwrap();
+        let second = annotation_selection_request(&preview, 0, 1).unwrap();
+        assert_eq!(first["new_entry_id"], 19);
+        assert_eq!(second["new_entry_id"], 23);
+        assert_eq!(first["confirmation"], "user_selected_exact_candidate");
+        assert!(annotation_selection_request(&preview, 0, 2).is_none());
+        assert!(annotation_selection_request(&preview, 1, 0).is_none());
+        let mut stale = preview.clone();
+        stale["result"]["items"][0]["confirmation_revision_conflict"] = json!(true);
+        assert!(annotation_selection_request(&stale, 0, 0).is_none());
+        stale = preview.clone();
+        stale["result"]["items"][0]["revision"] = json!(0);
+        assert!(annotation_selection_request(&stale, 0, 0).is_none());
+        stale = preview.clone();
+        stale["result"]["items"][0]["confirmed_selection"] = json!({"new_entry_id":19});
+        assert!(annotation_selection_request(&stale, 0, 0).is_none());
+        stale = preview.clone();
+        stale["result"]["document_id"] = Value::Null;
+        assert!(annotation_selection_request(&stale, 0, 0).is_none());
+        stale = preview;
+        stale["result"]["state"] = json!("current_generation");
+        assert!(annotation_selection_request(&stale, 0, 0).is_none());
+    }
+
+    #[test]
+    fn overlay_requires_explicit_confirmed_pair_and_fresh_note() {
+        let preview = json!({"result":{
+            "state":"generation_conflict","document_id":"synthetic-document",
+            "items":[
+                {"old_entry_id":11,"revision":3,
+                 "candidates":[{"entry_id":37}],
+                 "confirmed_selection":{"new_entry_id":37},
+                 "confirmation_revision_conflict":false,
+                 "confirmation_payload_conflict":false,
+                 "activation_state":null,"activation_target_entry_id":null},
+                {"old_entry_id":12,"revision":4,
+                 "candidates":[{"entry_id":38}],
+                 "confirmed_selection":{"new_entry_id":38},
+                 "confirmation_revision_conflict":true,
+                 "confirmation_payload_conflict":false,
+                 "activation_state":"active","activation_target_entry_id":38}
+            ]
+        }});
+        let activate = annotation_overlay_request(&preview, 0, AnnotationOverlayAction::Activate)
+            .expect("explicit fresh confirmation");
+        assert_eq!(activate["op"], "ctf_annotations_activate_pinned");
+        assert_eq!(activate["new_entry_id"], 37);
+        assert_eq!(activate["expected_revision"], 3);
+        assert_eq!(activate["expected_document_id"], "synthetic-document");
+        assert_eq!(
+            activate["activation"],
+            "user_approved_reversible_projection"
+        );
+        assert!(annotation_overlay_request(&preview, 0, AnnotationOverlayAction::Revoke).is_none());
+        assert!(
+            annotation_overlay_request(&preview, 1, AnnotationOverlayAction::Activate).is_none()
+        );
+        // Stale notes must remain revocable; the backend checks the exact audit pair.
+        let revoke = annotation_overlay_request(&preview, 1, AnnotationOverlayAction::Revoke)
+            .expect("stale active audit is revocable");
+        assert_eq!(revoke["op"], "ctf_annotations_deactivate_pinned");
+        assert_eq!(revoke["new_entry_id"], 38);
+        assert_eq!(revoke["rollback"], "user_confirmed_revoke_projection");
+        assert!(revoke.get("expected_revision").is_none());
+        assert_eq!(revoke["expected_document_id"], "synthetic-document");
+
+        let mut changed = preview.clone();
+        changed["result"]["items"][0]["confirmation_payload_conflict"] = json!(true);
+        assert!(
+            annotation_overlay_request(&changed, 0, AnnotationOverlayAction::Activate).is_none()
+        );
+        changed = preview.clone();
+        changed["result"]["items"][0]["candidates"] = json!([{"entry_id":99}]);
+        assert!(
+            annotation_overlay_request(&changed, 0, AnnotationOverlayAction::Activate).is_none()
+        );
+        changed = preview.clone();
+        changed["result"]["items"][0]["confirmed_selection"] = Value::Null;
+        assert!(
+            annotation_overlay_request(&changed, 0, AnnotationOverlayAction::Activate).is_none()
+        );
+        changed = preview.clone();
+        changed["result"]["items"][1]["activation_state"] = json!("revoked");
+        assert!(annotation_overlay_request(&changed, 1, AnnotationOverlayAction::Revoke).is_none());
+        assert!(
+            annotation_overlay_request(&changed, 1, AnnotationOverlayAction::Activate).is_none()
+        );
+        changed = preview.clone();
+        changed["result"]["items"][1]["activation_target_entry_id"] = Value::Null;
+        assert!(annotation_overlay_request(&changed, 1, AnnotationOverlayAction::Revoke).is_none());
+        changed = preview.clone();
+        changed["result"]["document_id"] = json!("");
+        assert!(
+            annotation_overlay_request(&changed, 0, AnnotationOverlayAction::Activate).is_none()
+        );
+        changed = preview;
+        changed["result"]["state"] = json!("current_generation");
+        assert!(
+            annotation_overlay_request(&changed, 0, AnnotationOverlayAction::Activate).is_none()
+        );
+        assert!(annotation_overlay_request(&changed, 1, AnnotationOverlayAction::Revoke).is_none());
+    }
+
+    #[test]
+    fn middle_last_and_empty_pages_are_bounded() {
+        let middle = json!({"result":{"state":"generation_conflict","total":43,
+            "items": vec![json!({"old_entry_id":1}); 20]}});
+        assert_eq!(annotation_page_controls(&middle, 20), (true, true));
+        assert!(annotation_preview_text(&middle, 20).contains("Rows 21–40 of 43"));
+        let last = json!({"result":{"state":"generation_conflict","total":43,
+            "items": vec![json!({"old_entry_id":1}); 3]}});
+        assert_eq!(annotation_page_controls(&last, 40), (true, false));
+        let empty = json!({"result":{"state":"generation_conflict","total":43,"items":[]}});
+        assert_eq!(annotation_page_controls(&empty, 60), (true, false));
+    }
+    #[test]
+    fn verified_view_fail_closed_and_show_exact_conflict_count() {
+        let original = json!({"result":{"state":"activation_conflict","total":1,"conflicts":2,
+            "offset":0,"limit":20,
+            "read_only_source":true,"unresolved_unconfirmed_annotations_not_projected":true,
+            "items":[{"entry_id":9,"old_entry_id":3,"revision":1,"read_only":true,
+                "activation":"explicit_reviewed_projection",
+                "note":"synthetic private note","tags":"synthetic"}]}});
+        assert!(verified_overlay_response_ok(&original, 0));
+        let summary = verified_overlay_summary(&original, 0);
+        assert!(summary.contains("Valid active: 1"));
+        assert!(summary.contains("active audits excluded: 2"));
+        assert!(summary.contains("synthetic private note"));
+        for key in [
+            "read_only_source",
+            "unresolved_unconfirmed_annotations_not_projected",
+        ] {
+            let mut invalid = original.clone();
+            invalid["result"][key] = json!(false);
+            assert!(!verified_overlay_response_ok(&invalid, 0));
+            assert!(!verified_overlay_summary(&invalid, 0).contains("synthetic private note"));
+        }
+        let mut invalid = original.clone();
+        invalid["result"]["items"][0]["activation"] = json!("unverified_audit");
+        assert!(!verified_overlay_response_ok(&invalid, 0));
+        assert!(!verified_overlay_summary(&invalid, 0).contains("synthetic private note"));
+        let mut wrong_page = original.clone();
+        wrong_page["result"]["offset"] = json!(20);
+        assert!(!verified_overlay_response_ok(&wrong_page, 0));
+        assert!(!verified_overlay_summary(&wrong_page, 0).contains("synthetic private note"));
+        wrong_page["result"]["offset"] = json!(0);
+        wrong_page["result"]["limit"] = json!(250);
+        assert!(!verified_overlay_response_ok(&wrong_page, 0));
+    }
+
+    #[test]
+    fn closed_or_switched_annotation_session_drops_late_responses() {
+        for tag in [
+            "annotation_preview",
+            "annotation_confirm",
+            "annotation_overlay",
+            "overlay_verified",
+        ] {
+            assert!(annotation_reply_current(tag, 7, 7));
+            assert!(!annotation_reply_current(tag, 7, 8));
+        }
+        assert!(annotation_reply_current("rows", 7, 8));
+        assert!(annotation_reply_current("linked_sync", 7, 8));
+    }
+
+    #[test]
+    fn verified_view_pages_are_bounded_and_empty_is_read_only() {
+        let item = json!({"entry_id":9,"old_entry_id":3,"revision":1,"read_only":true,
+            "activation":"explicit_reviewed_projection","note":"synthetic","tags":""});
+        let mut page = json!({"result":{"state":"partial_activation","total":21,
+            "offset":0,"limit":20,"conflicts":0,"read_only_source":true,
+            "unresolved_unconfirmed_annotations_not_projected":true,
+            "items":vec![item.clone(); 20]}});
+        assert_eq!(verified_overlay_page_controls(&page, 0), (false, true));
+        page["result"]["items"] = json!([item]);
+        page["result"]["offset"] = json!(20);
+        assert_eq!(verified_overlay_page_controls(&page, 20), (true, false));
+        assert!(verified_overlay_summary(&page, 20).contains("Rows 21–21 of 21"));
+        let empty = json!({"result":{"state":"no_cross_generation_activations",
+            "items":[],"total":0,"conflicts":0}});
+        assert!(verified_overlay_response_ok(&empty, 0));
+        assert_eq!(verified_overlay_page_controls(&empty, 0), (false, false));
+    }
+}
+
+#[derive(Debug)]
+enum AnnotationReviewAction {
+    Close,
+    Previous,
+    Next,
+    Confirm(Value),
+    Overlay(Value),
+    Verified,
+}
+
+// Pure selection contract: a radio choice is mandatory at both stages.
+fn annotation_selection_request(
+    data: &Value,
+    row_index: usize,
+    candidate_index: usize,
+) -> Option<Value> {
+    let review = &data["result"];
+    if review["state"] != "generation_conflict" {
+        return None;
+    }
+    let document_id = review["document_id"].as_str()?;
+    let row = review["items"].as_array()?.get(row_index)?;
+    let revision = row["revision"].as_i64().filter(|revision| *revision > 0)?;
+    let old_entry_id = row["old_entry_id"].as_i64()?;
+    if row["confirmed_selection"].is_object()
+        || row["confirmation_revision_conflict"] == true
+        || row["confirmation_payload_conflict"] == true
+    {
+        return None;
+    }
+    let candidate = row["candidates"].as_array()?.get(candidate_index)?;
+    let new_entry_id = candidate["entry_id"].as_i64()?;
+    Some(json!({
+        "old_entry_id": old_entry_id,
+        "new_entry_id": new_entry_id,
+        "expected_revision": revision,
+        "expected_document_id": document_id,
+        "confirmation": "user_selected_exact_candidate"
+    }))
+}
+
+// A journal state is not proof of a valid live overlay. Activation requires
+// a fresh confirmed pair; revocation deliberately also permits a stale note.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AnnotationOverlayAction {
+    Activate,
+    Revoke,
+}
+
+fn annotation_overlay_request(
+    data: &Value,
+    row_index: usize,
+    action: AnnotationOverlayAction,
+) -> Option<Value> {
+    let review = &data["result"];
+    if review["state"] != "generation_conflict" {
+        return None;
+    }
+    let document_id = review["document_id"].as_str().filter(|id| !id.is_empty())?;
+    let row = review["items"].as_array()?.get(row_index)?;
+    let old_entry_id = row["old_entry_id"].as_i64().filter(|id| *id > 0)?;
+    match action {
+        AnnotationOverlayAction::Activate => {
+            let revision = row["revision"].as_i64().filter(|revision| *revision > 0)?;
+            if !row["activation_state"].is_null()
+                || row["confirmation_revision_conflict"] == true
+                || row["confirmation_payload_conflict"] == true
+            {
+                return None;
+            }
+            let new_entry_id = row["confirmed_selection"]["new_entry_id"]
+                .as_i64()
+                .filter(|id| *id > 0)?;
+            // A confirmation is only eligible if its exact candidate still
+            // appears in this SHA-verified read-only page.
+            if !row["candidates"]
+                .as_array()?
+                .iter()
+                .any(|candidate| candidate["entry_id"].as_i64() == Some(new_entry_id))
+            {
+                return None;
+            }
+            Some(json!({
+                "op":"ctf_annotations_activate_pinned",
+                "old_entry_id":old_entry_id,
+                "new_entry_id":new_entry_id,
+                "expected_revision":revision,
+                "expected_document_id":document_id,
+                "activation":"user_approved_reversible_projection"
+            }))
+        }
+        AnnotationOverlayAction::Revoke => {
+            if row["activation_state"] != "active" {
+                return None;
+            }
+            let new_entry_id = row["activation_target_entry_id"]
+                .as_i64()
+                .filter(|id| *id > 0)?;
+            Some(json!({
+                "op":"ctf_annotations_deactivate_pinned",
+                "old_entry_id":old_entry_id,
+                "new_entry_id":new_entry_id,
+                "expected_document_id":document_id,
+                "rollback":"user_confirmed_revoke_projection"
+            }))
+        }
+    }
+}
+
+// TaskDialogIndirect provides native Windows radio buttons and explicitly
+// disables the default radio choice; no candidate is approved by navigation.
+unsafe fn annotation_radio_dialog(
+    owner: HWND,
+    instruction: &str,
+    content: &str,
+    options: &[String],
+    actions: &[(i32, &str)],
+) -> Option<(i32, Option<usize>)> {
+    let title = wide("WhereIsIt AI — CTF annotation review");
+    let instruction = wide(instruction);
+    let content = wide(content);
+    let radio_labels: Vec<Vec<u16>> = options.iter().map(|label| wide(label)).collect();
+    let radio_buttons: Vec<TASKDIALOG_BUTTON> = radio_labels
+        .iter()
+        .enumerate()
+        .map(|(index, label)| TASKDIALOG_BUTTON {
+            nButtonID: 1000 + index as i32,
+            pszButtonText: label.as_ptr(),
+        })
+        .collect();
+    let button_labels: Vec<Vec<u16>> = actions.iter().map(|(_, label)| wide(label)).collect();
+    let buttons: Vec<TASKDIALOG_BUTTON> = actions
+        .iter()
+        .zip(button_labels.iter())
+        .map(|((id, _), label)| TASKDIALOG_BUTTON {
+            nButtonID: *id,
+            pszButtonText: label.as_ptr(),
+        })
+        .collect();
+    let mut config: TASKDIALOGCONFIG = std::mem::zeroed();
+    config.cbSize = std::mem::size_of::<TASKDIALOGCONFIG>() as u32;
+    config.hwndParent = owner;
+    config.dwFlags = TDF_NO_DEFAULT_RADIO_BUTTON | TDF_ALLOW_DIALOG_CANCELLATION;
+    config.dwCommonButtons = TDCBF_CANCEL_BUTTON;
+    config.pszWindowTitle = title.as_ptr();
+    config.pszMainInstruction = instruction.as_ptr();
+    config.pszContent = content.as_ptr();
+    config.cRadioButtons = radio_buttons.len() as u32;
+    config.pRadioButtons = radio_buttons.as_ptr();
+    config.nDefaultRadioButton = 0;
+    config.cButtons = buttons.len() as u32;
+    config.pButtons = buttons.as_ptr();
+    config.nDefaultButton = IDCANCEL;
+    config.cxWidth = 320;
+    let mut button = IDCANCEL;
+    let mut radio = 0;
+    if TaskDialogIndirect(&config, &mut button, &mut radio, null_mut()) < 0 {
+        return None;
+    }
+    let selected = usize::try_from(radio - 1000)
+        .ok()
+        .filter(|index| *index < options.len());
+    Some((button, selected))
+}
+
+unsafe fn annotation_review_action(
+    owner: HWND,
+    data: &Value,
+    offset: usize,
+) -> AnnotationReviewAction {
+    let preview = &data["result"];
+    if preview["state"] != "generation_conflict" {
+        MessageBoxW(
+            owner,
+            wide(&annotation_preview_text(data, offset)).as_ptr(),
+            wide("CTF annotation review — no changes").as_ptr(),
+            MB_OK | MB_ICONINFORMATION,
+        );
+        return AnnotationReviewAction::Close;
+    }
+    let Some(items) = preview["items"].as_array() else {
+        return AnnotationReviewAction::Close;
+    };
+    let (previous, next) = annotation_page_controls(data, offset);
+    let can_map = |index| annotation_selection_request(data, index, 0).is_some();
+    let can_activate = |index| {
+        annotation_overlay_request(data, index, AnnotationOverlayAction::Activate).is_some()
+    };
+    let can_revoke =
+        |index| annotation_overlay_request(data, index, AnnotationOverlayAction::Revoke).is_some();
+    let selectable: Vec<usize> = (0..items.len())
+        .filter(|index| can_map(*index) || can_activate(*index) || can_revoke(*index))
+        .collect();
+    let labels: Vec<String> = selectable
+        .iter()
+        .map(|index| {
+            let row = &items[*index];
+            let id = row["old_entry_id"].as_i64().unwrap_or(-1);
+            let state = row["candidate_state"].as_str().unwrap_or("unknown");
+            let count = row["candidate_count_lower_bound"].as_u64().unwrap_or(0);
+            let truncated = if row["candidates_truncated"] == true {
+                "+"
+            } else {
+                ""
+            };
+            let audit = if can_revoke(*index) {
+                "ACTIVE audit — eligible for explicit revocation"
+            } else if can_activate(*index) {
+                "confirmed, inactive — eligible for separate activation"
+            } else {
+                "unconfirmed — choose a structural candidate"
+            };
+            format!("Old #{id} — {state} ({count}{truncated} candidates) — {audit}")
+        })
+        .collect();
+    let total = preview["total"].as_u64().unwrap_or(0);
+    let start = if items.is_empty() { 0 } else { offset + 1 };
+    let end = offset.saturating_add(items.len());
+    let content = format!(
+        "Rows {start}–{end} of {total}. Select one old note and a separate action. \
+         {} rows have unresolved or stale conflicts; open All conflicts to inspect them. \
+         The CTF is read-only. Every action re-verifies source SHA and document CAS.",
+        items.len().saturating_sub(selectable.len())
+    );
+    loop {
+        let mut actions = vec![
+            (301, "Show all conflicts"),
+            (306, "Verified overlays (read-only)…"),
+        ];
+        if selectable.iter().any(|index| can_map(*index)) {
+            actions.insert(0, (300, "Choose target…"));
+        }
+        if selectable.iter().any(|index| can_activate(*index)) {
+            actions.push((304, "Activate confirmed mapping…"));
+        }
+        if selectable.iter().any(|index| can_revoke(*index)) {
+            actions.push((305, "Revoke active mapping…"));
+        }
+        if previous {
+            actions.push((302, "Previous page"));
+        }
+        if next {
+            actions.push((303, "Next page"));
+        }
+        let Some((button, selected)) = annotation_radio_dialog(
+            owner,
+            "Generation-pinned annotation review",
+            &content,
+            &labels,
+            &actions,
+        ) else {
+            return AnnotationReviewAction::Close;
+        };
+        match button {
+            302 if previous => return AnnotationReviewAction::Previous,
+            303 if next => return AnnotationReviewAction::Next,
+            306 => return AnnotationReviewAction::Verified,
+            301 => {
+                MessageBoxW(
+                    owner,
+                    wide(&annotation_preview_text(data, offset)).as_ptr(),
+                    wide("All annotation conflicts — read-only").as_ptr(),
+                    MB_OK | MB_ICONINFORMATION,
+                );
+            }
+            300 => {
+                let Some(row_index) = selected.and_then(|index| selectable.get(index).copied())
+                else {
+                    MessageBoxW(
+                        owner,
+                        wide("Select an old note first; nothing was written.").as_ptr(),
+                        wide("Explicit choice required").as_ptr(),
+                        MB_OK | MB_ICONWARNING,
+                    );
+                    continue;
+                };
+                if !can_map(row_index) {
+                    MessageBoxW(
+                        owner,
+                        wide("This note cannot be mapped from the current page. Open All conflicts and refresh the source.").as_ptr(),
+                        wide("Mapping ineligible").as_ptr(),
+                        MB_OK | MB_ICONWARNING,
+                    );
+                    continue;
+                }
+                let row = &items[row_index];
+                let Some(candidates) = row["candidates"].as_array() else {
+                    continue;
+                };
+                let choices: Vec<String> = candidates
+                    .iter()
+                    .take(8)
+                    .map(|candidate| {
+                        format!(
+                            "Target #{} • volume #{} • parent #{} • modified {}",
+                            candidate["entry_id"].as_i64().unwrap_or(-1),
+                            candidate["volume_id"].as_i64().unwrap_or(-1),
+                            candidate["parent_id"].as_i64().unwrap_or(-1),
+                            candidate["modified_unix"].as_i64().unwrap_or(-1)
+                        )
+                    })
+                    .collect();
+                let old_id = row["old_entry_id"].as_i64().unwrap_or(-1);
+                let Some((301, Some(candidate_index))) = annotation_radio_dialog(
+                    owner,
+                    &format!("Choose target for old entry #{old_id}"),
+                    "Select the exact structural candidate. No radio is preselected; source CTF remains read-only.",
+                    &choices,
+                    &[(301, "Review selected mapping")],
+                ) else {
+                    continue;
+                };
+                let Some(request) = annotation_selection_request(data, row_index, candidate_index)
+                else {
+                    continue;
+                };
+                let new_id = request["new_entry_id"].as_i64().unwrap_or(-1);
+                let message = format!(
+                    "Confirm old entry #{old_id} → target #{new_id}?\n\n\
+                     This records an INACTIVE user-owned audit mapping only. \
+                     It never migrates notes or changes source CTF/derived cache. \
+                     Source SHA, document, candidate and revision are rechecked."
+                );
+                if MessageBoxW(
+                    owner,
+                    wide(&message).as_ptr(),
+                    wide("Confirm exact annotation mapping").as_ptr(),
+                    MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2,
+                ) == IDYES
+                {
+                    return AnnotationReviewAction::Confirm(request);
+                }
+            }
+            304 | 305 => {
+                let Some(row_index) = selected.and_then(|index| selectable.get(index).copied())
+                else {
+                    MessageBoxW(
+                        owner,
+                        wide(
+                            "Select an old note first. No activation or revocation was performed.",
+                        )
+                        .as_ptr(),
+                        wide("Explicit choice required").as_ptr(),
+                        MB_OK | MB_ICONWARNING,
+                    );
+                    continue;
+                };
+                let action = if button == 304 {
+                    AnnotationOverlayAction::Activate
+                } else {
+                    AnnotationOverlayAction::Revoke
+                };
+                let Some(request) = annotation_overlay_request(data, row_index, action) else {
+                    MessageBoxW(
+                        owner,
+                        wide("Selected audit is not eligible for this action. Stale, ambiguous and revoked mappings are never activated automatically. Review conflicts again.").as_ptr(),
+                        wide("Action rejected — conflict").as_ptr(),
+                        MB_OK | MB_ICONWARNING,
+                    );
+                    continue;
+                };
+                let old_id = request["old_entry_id"].as_i64().unwrap_or(-1);
+                let new_id = request["new_entry_id"].as_i64().unwrap_or(-1);
+                let (title, message) = if action == AnnotationOverlayAction::Activate {
+                    (
+                        "Approve a read-only annotation overlay",
+                        format!(
+                            "ACTIVATE old note #{old_id} → target #{new_id}?\n\n\
+                             This is a SEPARATE approval from mapping confirmation. \
+                             Original notes remain unchanged. Source SHA, document, old revision/digest \
+                             and exact candidate are rechecked by the service."
+                        ),
+                    )
+                } else {
+                    (
+                        "Revoke an audited annotation overlay",
+                        format!(
+                            "REVOKE active mapping #{old_id} → #{new_id}?\n\n\
+                             The audit and full original note snapshot are retained. \
+                             This may revoke a stale audit, but a revoked mapping cannot be replayed. \
+                             Source SHA, document and exact active pair are checked."
+                        ),
+                    )
+                };
+                if MessageBoxW(
+                    owner,
+                    wide(&message).as_ptr(),
+                    wide(title).as_ptr(),
+                    MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2,
+                ) == IDYES
+                {
+                    return AnnotationReviewAction::Overlay(request);
+                }
+            }
+            _ => return AnnotationReviewAction::Close,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum VerifiedOverlayNavigation {
+    Close,
+    Previous,
+    Next,
+}
+
+// TaskDialog has no default choice; the modal has no write actions.
+unsafe fn verified_overlay_action(
+    owner: HWND,
+    data: &Value,
+    offset: usize,
+) -> VerifiedOverlayNavigation {
+    let (previous, next) = verified_overlay_page_controls(data, offset);
+    let mut actions = Vec::new();
+    if previous {
+        actions.push((302, "Previous verified page"));
+    }
+    if next {
+        actions.push((303, "Next verified page"));
+    }
+    let Some((button, _)) = annotation_radio_dialog(
+        owner,
+        "Verified active notes — read-only",
+        &verified_overlay_summary(data, offset),
+        &[],
+        &actions,
+    ) else {
+        return VerifiedOverlayNavigation::Close;
+    };
+    match button {
+        302 if previous => VerifiedOverlayNavigation::Previous,
+        303 if next => VerifiedOverlayNavigation::Next,
+        _ => VerifiedOverlayNavigation::Close,
+    }
+}
+
+// Late replies from a closed review or another selected user sidecar must not
+// populate the current review or trigger a CAS action on the wrong sidecar.
+fn annotation_reply_current(tag: &str, request_session: u64, active_session: u64) -> bool {
+    !matches!(
+        tag,
+        "annotation_preview" | "annotation_confirm" | "annotation_overlay" | "overlay_verified"
+    ) || request_session == active_session
+}
+
 struct Reply {
     database: String,
     tag: &'static str,
     generation: u64,
+    annotation_session: u64,
     result: Value,
 }
 struct App {
@@ -134,6 +999,10 @@ struct App {
     linked_ctf: Option<String>,
     linked_generation: Option<String>,
     pending_link_path: Option<String>,
+    annotation_db: Option<String>,
+    annotation_session: u64,
+    annotation_offset: usize,
+    verified_overlay_offset: usize,
     volumes: Vec<Value>,
     entries: Vec<Value>,
     volume: Option<i64>,
@@ -171,6 +1040,10 @@ impl App {
             linked_ctf: None,
             linked_generation: None,
             pending_link_path: None,
+            annotation_db: None,
+            annotation_session: 0,
+            annotation_offset: 0,
+            verified_overlay_offset: 0,
             volumes: vec![],
             entries: vec![],
             volume: None,
@@ -205,11 +1078,36 @@ impl App {
     fn linked_mode(&self) -> bool {
         self.linked_ctf.is_some() && self.linked_generation.is_some()
     }
+    fn request_annotation_page(&mut self) {
+        let Some(store) = self.annotation_db.as_ref().cloned() else {
+            return;
+        };
+        let Some(mut pinned) = self.linked_request("ctf_annotations_preview_pinned") else {
+            return;
+        };
+        pinned["annotation_db"] = json!(store);
+        pinned["offset"] = json!(self.annotation_offset);
+        pinned["limit"] = json!(ANNOTATION_PAGE_SIZE);
+        self.call("annotation_preview", pinned);
+    }
+    fn request_verified_overlay_page(&mut self) {
+        let Some(store) = self.annotation_db.as_ref().cloned() else {
+            return;
+        };
+        let Some(mut pinned) = self.linked_request("ctf_annotations_activated_list_pinned") else {
+            return;
+        };
+        pinned["annotation_db"] = json!(store);
+        pinned["offset"] = json!(self.verified_overlay_offset);
+        pinned["limit"] = json!(ANNOTATION_PAGE_SIZE);
+        self.call("overlay_verified", pinned);
+    }
     fn call(&mut self, tag: &'static str, mut request: Value) {
         request["db"] = json!(self.db);
         let database = self.db.clone();
         let tx = self.tx.clone();
         let generation = self.generation;
+        let annotation_session = self.annotation_session;
         self.pending += 1;
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(|| atlas_service::dispatch_json(&request.to_string()))
@@ -219,6 +1117,7 @@ impl App {
                 database,
                 tag,
                 generation,
+                annotation_session,
                 result,
             });
         });
@@ -227,6 +1126,10 @@ impl App {
         self.linked_ctf = None;
         self.linked_generation = None;
         self.pending_link_path = None;
+        self.annotation_db = None;
+        self.annotation_session = self.annotation_session.wrapping_add(1);
+        self.annotation_offset = 0;
+        self.verified_overlay_offset = 0;
         let _ = std::fs::create_dir_all(config_dir());
         self.generation += 1;
         self.volumes.clear();
@@ -342,7 +1245,61 @@ impl App {
             ) {
                 self.job = None;
             }
-            if reply.tag == "rows" && reply.generation != self.generation {
+            if matches!(
+                reply.tag,
+                "rows"
+                    | "annotation_preview"
+                    | "annotation_confirm"
+                    | "annotation_overlay"
+                    | "overlay_verified"
+            ) && reply.generation != self.generation
+            {
+                continue;
+            }
+            if !annotation_reply_current(
+                reply.tag,
+                reply.annotation_session,
+                self.annotation_session,
+            ) {
+                continue;
+            }
+            if reply.tag == "annotation_confirm" {
+                if reply.result["ok"] == true {
+                    self.status("Selected mapping saved in user notes audit; remains inactive.");
+                } else {
+                    let code = reply.result["error"]["code"]
+                        .as_str()
+                        .unwrap_or("verification_failed");
+                    self.status(&format!(
+                        "Mapping rejected ({code}); reread conflicts before choosing again."
+                    ));
+                }
+                self.request_annotation_page();
+                continue;
+            }
+            if reply.tag == "annotation_overlay" {
+                if reply.result["ok"] == true {
+                    let state = reply.result["data"]["result"]["state"]
+                        .as_str()
+                        .unwrap_or("unexpected");
+                    if state == "activated_read_only_overlay" {
+                        self.status("Activation recorded in private audit; valid overlays require independent read verification.");
+                    } else if state == "revoked_projection" {
+                        self.status("Projection revoked; private original notes and audit snapshot retained.");
+                    } else {
+                        self.status(
+                            "Unexpected activation response; review the audit state again.",
+                        );
+                    }
+                } else {
+                    let code = reply.result["error"]["code"]
+                        .as_str()
+                        .unwrap_or("verification_failed");
+                    self.status(&format!(
+                        "Overlay action rejected ({code}); reload conflicts before another decision."
+                    ));
+                }
+                self.request_annotation_page();
                 continue;
             }
             if reply.result["ok"] != true {
@@ -353,12 +1310,93 @@ impl App {
                 continue;
             }
             match reply.tag {
+                "overlay_verified" => {
+                    match verified_overlay_action(self.hwnd, data, self.verified_overlay_offset) {
+                        VerifiedOverlayNavigation::Next => {
+                            self.verified_overlay_offset += ANNOTATION_PAGE_SIZE;
+                            self.status("Freshly verifying next live overlay page…");
+                            self.request_verified_overlay_page();
+                        }
+                        VerifiedOverlayNavigation::Previous => {
+                            self.verified_overlay_offset = self
+                                .verified_overlay_offset
+                                .saturating_sub(ANNOTATION_PAGE_SIZE);
+                            self.status("Freshly verifying previous live overlay page…");
+                            self.request_verified_overlay_page();
+                        }
+                        VerifiedOverlayNavigation::Close => {
+                            self.annotation_session = self.annotation_session.wrapping_add(1);
+                            self.annotation_db = None;
+                            self.status("Verified view closed without changing private notes.");
+                        }
+                    }
+                }
+                "annotation_preview" => {
+                    match annotation_review_action(self.hwnd, data, self.annotation_offset) {
+                        AnnotationReviewAction::Next => {
+                            self.annotation_offset += ANNOTATION_PAGE_SIZE;
+                            self.status("Re-verifying next notes page…");
+                            self.request_annotation_page();
+                        }
+                        AnnotationReviewAction::Previous => {
+                            self.annotation_offset =
+                                self.annotation_offset.saturating_sub(ANNOTATION_PAGE_SIZE);
+                            self.status("Re-verifying previous notes page…");
+                            self.request_annotation_page();
+                        }
+                        AnnotationReviewAction::Confirm(selection) => {
+                            if let Some(mut pinned) =
+                                self.linked_request("ctf_annotations_confirm_pinned")
+                            {
+                                pinned["annotation_db"] = json!(self.annotation_db);
+                                if let Some(fields) = selection.as_object() {
+                                    for (key, value) in fields {
+                                        pinned[key] = value.clone();
+                                    }
+                                }
+                                self.status("Revalidating exact CTF generation and note revision…");
+                                self.call("annotation_confirm", pinned);
+                            }
+                        }
+                        AnnotationReviewAction::Overlay(request) => {
+                            if let Some(mut pinned) = request["op"]
+                                .as_str()
+                                .and_then(|op| self.linked_request(op))
+                            {
+                                pinned["annotation_db"] = json!(self.annotation_db);
+                                if let Some(fields) = request.as_object() {
+                                    for (key, value) in fields {
+                                        pinned[key] = value.clone();
+                                    }
+                                }
+                                self.status("Verifying source SHA and exact audit CAS before user-approved overlay action…");
+                                self.call("annotation_overlay", pinned);
+                            }
+                        }
+                        AnnotationReviewAction::Verified => {
+                            self.verified_overlay_offset = 0;
+                            self.status("Independently checking verified overlays and conflicts…");
+                            self.request_verified_overlay_page();
+                        }
+                        AnnotationReviewAction::Close => {
+                            self.annotation_session = self.annotation_session.wrapping_add(1);
+                            self.annotation_db = None;
+                            self.status(
+                                "Annotation review closed; no implicit mapping or migration.",
+                            );
+                        }
+                    }
+                }
                 "linked_sync" => {
                     let path = self.pending_link_path.take();
                     let generation = data["generation"].as_str().map(str::to_owned);
                     if let (Some(path), Some(generation)) = (path, generation) {
                         self.linked_ctf = Some(path);
                         self.linked_generation = Some(generation);
+                        self.annotation_db = None;
+                        self.annotation_session = self.annotation_session.wrapping_add(1);
+                        self.annotation_offset = 0;
+                        self.verified_overlay_offset = 0;
                         SendMessageW(self.export_format, CB_SETCURSEL, 0, 0);
                         self.volume = None;
                         self.stack = vec![(None, "/".into())];
@@ -481,15 +1519,20 @@ impl App {
                 *hwnd,
                 if *command == CANCEL {
                     self.job.as_ref().is_some_and(|j| j.starts_with("win-")) as i32
+                } else if *command == ANNOTATION_PREVIEW {
+                    (self.linked_mode() && self.job.is_none() && self.pending == 0) as i32
                 } else if [OPEN, NEW, SCAN, IMPORT, LINK_CTF, EXPORT].contains(command) {
                     (self.job.is_none()
                         && self.pending == 0
                         && (!self.linked_mode()
                             || [OPEN, NEW, LINK_CTF].contains(command)
                             || (*command == EXPORT
-                                && !self.duplicates
-                                && SendMessageW(self.export_format, CB_GETCURSEL, 0, 0) != 2)))
-                        as i32
+                                && linked_export_allowed(SendMessageW(
+                                    self.export_format,
+                                    CB_GETCURSEL,
+                                    0,
+                                    0,
+                                ))))) as i32
                 } else if [
                     CATEGORY_FILTER,
                     CATEGORY_ASSIGN,
@@ -762,6 +1805,16 @@ impl App {
                     self.call("cancel", json!({"op":"cancel","job_id":job}));
                 }
             }
+            ANNOTATION_PREVIEW if self.linked_mode() && self.job.is_none() && self.pending == 0 => {
+                if let Some(path) = file_dialog(self.hwnd, false, "annotation") {
+                    self.annotation_session = self.annotation_session.wrapping_add(1);
+                    self.annotation_db = Some(path);
+                    self.annotation_offset = 0;
+                    self.verified_overlay_offset = 0;
+                    self.status("Verifying CTF generation and annotation conflicts…");
+                    self.request_annotation_page();
+                }
+            }
             OPEN | NEW | SCAN | IMPORT | LINK_CTF | EXPORT
                 if self.job.is_none() && self.pending == 0 =>
             {
@@ -769,19 +1822,14 @@ impl App {
                     self.status("Linked CTF is read-only; open a writable SQLite catalog first.");
                     return;
                 }
-                if self.linked_mode() && command == EXPORT {
-                    if self.duplicates {
-                        self.status(
-                            "Linked duplicate candidates cannot be exported until a verified duplicate report is implemented.",
-                        );
-                        return;
-                    }
-                    if SendMessageW(self.export_format, CB_GETCURSEL, 0, 0) == 2 {
-                        self.status(
-                            "Linked CTF supports only CSV/Parquet export; original stays read-only.",
-                        );
-                        return;
-                    }
+                if self.linked_mode()
+                    && command == EXPORT
+                    && !linked_export_allowed(SendMessageW(self.export_format, CB_GETCURSEL, 0, 0))
+                {
+                    self.status(
+                        "Linked CTF supports CSV/Parquet/JSON export; original stays read-only.",
+                    );
+                    return;
                 }
                 if command == SCAN {
                     if let Some(root) = folder_dialog(self.hwnd) {
@@ -812,6 +1860,7 @@ impl App {
                         match SendMessageW(self.export_format, CB_GETCURSEL, 0, 0) {
                             0 => "csv",
                             1 => "parquet",
+                            3 => "json",
                             _ => "ctf",
                         }
                     } else {
@@ -849,6 +1898,7 @@ impl App {
                                 match SendMessageW(self.export_format, CB_GETCURSEL, 0, 0) {
                                     0 => "export_csv",
                                     1 => "export_parquet",
+                                    3 => "export_json",
                                     _ => "export_ctf",
                                 }
                             };
@@ -860,20 +1910,26 @@ impl App {
                                     return;
                                 };
                                 linked["output"] = json!(path);
-                                linked["format"] = json!(if operation == "export_csv" {
-                                    "csv"
-                                } else {
-                                    "parquet"
+                                linked["format"] = json!(match operation {
+                                    "export_csv" => "csv",
+                                    "export_parquet" => "parquet",
+                                    "export_json" => "json",
+                                    _ => "ctf",
                                 });
-                                linked["mode"] =
-                                    json!(if self.query.is_empty() && self.volume.is_some() {
-                                        "children"
-                                    } else {
-                                        "search"
-                                    });
+                                linked["mode"] = json!(if self.duplicates {
+                                    "duplicates"
+                                } else if self.query.is_empty() && self.volume.is_some() {
+                                    "children"
+                                } else {
+                                    "search"
+                                });
                                 linked["query"] = json!(self.query);
                                 linked["volume_id"] = json!(self.volume);
-                                linked["parent_id"] = json!(self.stack.last().and_then(|p| p.0));
+                                linked["duplicate_mode"] = json!(self.applied_duplicate_mode);
+                                if !self.duplicates {
+                                    linked["parent_id"] =
+                                        json!(self.stack.last().and_then(|p| p.0));
+                                }
                                 self.call("linked_export", linked);
                             } else {
                                 self.call("mutation", json!({"op":operation,"path":path,"overwrite":command==EXPORT,"mode":if self.duplicates {"duplicates"} else if self.query.is_empty()&&self.volume.is_some(){"children"}else{"search"},"query":self.query,"volume_id":self.volume,"parent_id":self.stack.last().and_then(|p|p.0),"duplicate_mode":self.applied_duplicate_mode,"recursive":true}));
@@ -936,6 +1992,9 @@ impl App {
                 CATEGORY_CREATE => {
                     MoveWindow(*control, 164, h - 92, 44, 24, 1);
                 }
+                ANNOTATION_PREVIEW => {
+                    MoveWindow(*control, w - 144, 62, 136, 23, 1);
+                }
                 CATEGORY_FILTER => {
                     MoveWindow(*control, 8, h - 64, 88, 24, 1);
                 }
@@ -959,9 +2018,11 @@ impl App {
 
 unsafe fn file_dialog(owner: HWND, save: bool, format: &str) -> Option<String> {
     let mut buffer = vec![0u16; 32768];
-    let filter=wide(match format {"ctf"=>"CTF catalogs (*.ctf)\0*.ctf\0All files\0*.*\0","csv"=>"CSV table (*.csv)\0*.csv\0All files\0*.*\0","parquet"=>"Apache Parquet (*.parquet)\0*.parquet\0All files\0*.*\0",_=>"Atlas SQLite catalog (*.atlas.sqlite;*.sqlite)\0*.atlas.sqlite;*.sqlite\0All files\0*.*\0"});
+    let filter=wide(match format {"annotation"=>"User notes (*.wia.sqlite)\0*.wia.sqlite\0","ctf"=>"CTF catalogs (*.ctf)\0*.ctf\0All files\0*.*\0","csv"=>"CSV table (*.csv)\0*.csv\0All files\0*.*\0","parquet"=>"Apache Parquet (*.parquet)\0*.parquet\0All files\0*.*\0","json"=>"JSON table (*.json)\0*.json\0All files\0*.*\0",_=>"Atlas SQLite catalog (*.atlas.sqlite;*.sqlite)\0*.atlas.sqlite;*.sqlite\0All files\0*.*\0"});
     let ext = wide(if format == "sqlite" {
         "atlas.sqlite"
+    } else if format == "annotation" {
+        "wia.sqlite"
     } else {
         format
     });
@@ -1056,6 +2117,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 (SCAN, "&Add disk"),
                 (IMPORT, "&Import CTF"),
                 (LINK_CTF, "&Link CTF"),
+                (ANNOTATION_PREVIEW, "Review &notes…"),
                 (EXPORT, "&Export…"),
                 (CANCEL, "&Cancel scan"),
                 (FIND, "&Search"),
@@ -1126,6 +2188,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 "CSV — current branch/query",
                 "Parquet — current branch/query",
                 "CTF — entire catalog",
+                "JSON — current branch/query",
             ] {
                 SendMessageW(
                     app.export_format,
@@ -1136,7 +2199,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             }
             SendMessageW(app.export_format, CB_SETCURSEL, 0, 0);
             let help=control(hwnd,"STATIC","AND  OR  NOT  ( )   name: path: ext: size: category:   Example: ext:mkv AND size:>1GB",0,142);
-            MoveWindow(help, 8, 62, 1000, 18, 1);
+            MoveWindow(help, 8, 62, 700, 18, 1);
             app.disks = control(
                 hwnd,
                 "LISTBOX",

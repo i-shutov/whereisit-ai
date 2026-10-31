@@ -24,12 +24,28 @@ if name == "import_ctf":
     db.write_bytes(data)
     result = {"ok": True, "data": {"volumes": 1}}
 elif name == "stats":
-    result = {"ok": True, "data": {"volumes": 1, "entries": 2}}
+    entries = 205 if __FAULT__ in ("two_page_ok", "second_page_mismatch",
+                                   "fast_has_more_incorrect", "fast_coords_incorrect") else 2
+    result = {"ok": True, "data": {"volumes": 1, "entries": entries}}
 elif name == "validate_catalog":
     result = {"ok": True, "data": {"integrity": "ok"}}
 elif name in ("search_fast", "search"):
-    result = {"ok": True, "data": {"items": [{"id": 1}, {"id": 2}],
-              "total": 2}}
+    total = 205 if __FAULT__ in ("two_page_ok", "second_page_mismatch",
+                                 "fast_has_more_incorrect", "fast_coords_incorrect") else 2
+    offset, limit = request["offset"], request["limit"]
+    items = [{"id": i} for i in range(offset + 1, min(offset + limit, total) + 1)]
+    if __FAULT__ == "second_page_mismatch" and name == "search_fast" and offset == 100:
+        items[-1] = {"id": 999}
+    more = offset + len(items) < total
+    if __FAULT__ == "fast_has_more_incorrect" and name == "search_fast":
+        more = not more
+    reported_offset = offset + (1 if __FAULT__ == "fast_coords_incorrect" and name == "search_fast" else 0)
+    data = {"items": items, "offset": reported_offset, "limit": limit}
+    if name == "search_fast":
+        data["has_more"] = more
+    else:
+        data["total"] = total
+    result = {"ok": True, "data": data}
 elif name == "export_ctf":
     data = db.read_bytes()
     if __FAULT__ == "wrong_roundtrip":
@@ -37,7 +53,29 @@ elif name == "export_ctf":
     pathlib.Path(request["path"]).write_bytes(data)
     result = {"ok": True, "data": {"exported": True}}
 elif name in ("export_csv", "export_parquet"):
-    pathlib.Path(request["path"]).write_bytes(b"synthetic only")
+    if __FAULT__ not in ("parity_ok", "parity_mismatch"):
+        pathlib.Path(request["path"]).write_bytes(b"synthetic only")
+    else:
+        # Entirely synthetic 15-field rows, including Unicode, NULLs and >4GiB.
+        import duckdb
+        connection = duckdb.connect()
+        connection.execute("CREATE TABLE tbl (id BIGINT, volume_id BIGINT, parent_id BIGINT, "
+                           "name VARCHAR, relative_path VARCHAR, kind VARCHAR, size BIGINT, "
+                           "modified_unix BIGINT, description VARCHAR, tags VARCHAR, "
+                           "volume_label VARCHAR, categories VARCHAR, duplicate_count BIGINT, "
+                           "duplicate_group VARCHAR, modified_local VARCHAR)")
+        connection.execute("INSERT INTO tbl VALUES "
+                           "(1, 7, NULL, 'Песня.mp3', 'Песня.mp3', 'file', 5368709121, "
+                           "NULL, 'Описание', '', 'Synthetic', '', 0, '', NULL), "
+                           "(2, 7, 1, 'guide.pdf', 'guide.pdf', 'file', 0, "
+                           "1600000000, '', 'x', 'Synthetic', '', 1, 'group', "
+                           "'2020-01-02 03:04:05')")
+        if __FAULT__ == "parity_mismatch" and name == "export_parquet":
+            connection.execute("UPDATE tbl SET name='different.pdf' WHERE id=2")
+        output = str(request["path"]).replace("'", "''")
+        options = "(FORMAT PARQUET)" if name == "export_parquet" else "(FORMAT CSV, HEADER)"
+        connection.execute(f"COPY tbl TO '{output}' {options}")
+        connection.close()
     result = {"ok": True, "data": {"exported": True}}
 else:
     result = {"ok": False, "error": {"code": "invalid_operation"}}
@@ -50,7 +88,8 @@ def fixture(directory: pathlib.Path, fault: str = "", version: str = "3.51.3"):
     source.write_bytes(b"synthetic ctf fixture (not a real WhereIsIt catalog)")
     cli = directory / "fake_cli.py"
     cli.write_text(
-        FAKE.replace("__VERSION__", repr(version)).replace("__FAULT__", repr(fault)),
+        FAKE.replace("#!/usr/bin/env python3", "#!" + sys.executable, 1)
+            .replace("__VERSION__", repr(version)).replace("__FAULT__", repr(fault)),
         encoding="utf-8",
     )
     cli.chmod(0o700)
@@ -122,6 +161,99 @@ class PrivateRunnerTest(unittest.TestCase):
             self.assertEqual(report["status"], "failed")
             self.assertEqual(report["error_code"], "source_changed")
             self.assertFalse(report["source_unchanged"])
+
+    def test_optional_independent_full_field_parity_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            cli, source = fixture(root, fault="parity_ok")
+            checkpoint = root / "checkpoint"
+            result = call(root, cli, source, checkpoint,
+                          ["--full-export", "--verify-export-parity"])
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads((checkpoint / "V3_ACCEPTANCE.json").read_text())
+            self.assertEqual(report["status"], "passed_available_checks")
+            self.assertEqual(report["derived_export_parity"], {
+                "status": "passed", "all_values_equal": True, "rows": 2,
+                "columns": 15,
+                "checker": "independent_duckdb_row_and_field_comparison",
+            })
+            # Private source names/paths and raw data are not written to the report.
+            encoded = (checkpoint / "V3_ACCEPTANCE.json").read_text()
+            self.assertNotIn(str(root), encoded)
+            self.assertNotIn("Песня.mp3", encoded)
+            self.assertTrue(report["source_unchanged"])
+
+    def test_independent_field_mismatch_must_fail_even_when_exports_exist(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            cli, source = fixture(root, fault="parity_mismatch")
+            checkpoint = root / "checkpoint"
+            result = call(root, cli, source, checkpoint,
+                          ["--full-export", "--verify-export-parity"])
+            self.assertEqual(result.returncode, 1, result.stderr)
+            report = json.loads((checkpoint / "V3_ACCEPTANCE.json").read_text())
+            self.assertEqual(report["status"], "failed")
+            self.assertEqual(report["error_code"], "csv_parquet_field_parity_failed")
+            self.assertEqual(report["derived_export_parity"], {"status": "failed"})
+            self.assertTrue(report["source_unchanged"])
+            self.assertEqual(len(report["derived_export_artifacts"]), 2)
+
+    def test_parity_must_be_explicitly_requested_with_both_exports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            cli, source = fixture(root)
+            checkpoint = root / "checkpoint"
+            result = call(root, cli, source, checkpoint, ["--verify-export-parity"])
+            self.assertEqual(result.returncode, 2)
+            self.assertFalse(checkpoint.exists())
+
+    def test_bounded_second_page_and_continuations_are_actually_checked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            cli, source = fixture(root, fault="two_page_ok")
+            dest = root / "checkpoint"
+            done = call(root, cli, source, dest)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            report = json.loads((dest / "V3_ACCEPTANCE.json").read_text())
+            self.assertEqual(len(report["queries"]), 4)
+            for query in report["queries"]:
+                self.assertEqual(query["total_count"], 205)
+                self.assertEqual(query["pages_checked"], 2)
+                self.assertEqual(query["second_page_offset"], 100)
+                self.assertTrue(query["bounded_pages_and_has_more_agree"])
+            self.assertTrue(report["source_unchanged"])
+
+    def test_second_page_mismatch_must_fail_without_leaking_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            cli, source = fixture(root, fault="second_page_mismatch")
+            dest = root / "checkpoint"
+            done = call(root, cli, source, dest)
+            self.assertEqual(done.returncode, 1, done.stderr)
+            report = json.loads((dest / "V3_ACCEPTANCE.json").read_text())
+            self.assertEqual(report["error_code"], "search_page_mismatch")
+            self.assertTrue(report["source_unchanged"])
+            self.assertNotIn(str(root), (dest / "V3_ACCEPTANCE.json").read_text())
+
+    def test_fast_continuation_must_match_exact_counted_page(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            cli, source = fixture(root, fault="fast_has_more_incorrect")
+            dest = root / "checkpoint"
+            done = call(root, cli, source, dest)
+            self.assertEqual(done.returncode, 1, done.stderr)
+            report = json.loads((dest / "V3_ACCEPTANCE.json").read_text())
+            self.assertEqual(report["error_code"], "search_has_more_mismatch")
+
+    def test_page_offset_replay_must_fail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            cli, source = fixture(root, fault="fast_coords_incorrect")
+            dest = root / "checkpoint"
+            done = call(root, cli, source, dest)
+            self.assertEqual(done.returncode, 1, done.stderr)
+            report = json.loads((dest / "V3_ACCEPTANCE.json").read_text())
+            self.assertEqual(report["error_code"], "search_page_coordinates_mismatch")
 
     def test_full_exports_leave_only_aggregate_evidence(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -1,0 +1,82 @@
+name: WhereIsIt AI - integrated offline acceptance kit
+on:
+  push:
+    branches: [release/finalization-20261031]
+  pull_request:
+    paths:
+      - .github/workflows/finalization.yml
+      - tools/qa/**
+      - crates/**
+      - Cargo.lock
+      - Cargo.toml
+      - VERSION
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: finalization-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  offline-kit:
+    # glibc 2.35 output also runs on Debian 12 isolated acceptance machines.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: finalization-linux-1.90-${{ hashFiles('Cargo.lock') }}
+      - run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
+      - name: Check integrated Rust contracts
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo test --workspace --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Build exact-source offline executables
+        run: |
+          set -euo pipefail
+          cargo build --release --locked -p atlas-cli
+          cargo build --release --locked -p atlas-service --example ctf_real_probe --example ctf_real_acceptance --example ctf_real_ram_index --example ctf_b1_fixture
+          target/release/examples/ctf_real_probe --self-test
+          target/release/examples/ctf_real_acceptance --self-test
+          target/release/examples/ctf_real_ram_index --self-test
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install pinned offline Parquet verifier and run generated-only regression
+        run: |
+          set -euo pipefail
+          mkdir -p dist/finalization/wheels
+          python -m pip download --disable-pip-version-check --only-binary=:all: --no-deps --dest dist/finalization/wheels duckdb==1.4.1
+          test "$(find dist/finalization/wheels -name 'duckdb-*.whl' -type f | wc -l)" -eq 1
+          python -m venv "$RUNNER_TEMP/ctf-qa-offline"
+          "$RUNNER_TEMP/ctf-qa-offline/bin/python" -m pip install --no-index --find-links dist/finalization/wheels duckdb==1.4.1
+          "$RUNNER_TEMP/ctf-qa-offline/bin/python" -c "import duckdb; assert duckdb.__version__ == '1.4.1'"
+          "$RUNNER_TEMP/ctf-qa-offline/bin/python" -m unittest discover -s tools/qa -p 'test_offline_ctf_v3.py' -v
+          "$RUNNER_TEMP/ctf-qa-offline/bin/python" -m unittest discover -s tools/qa -p 'test_redact_private_ctf_acceptance.py' -v
+      - name: Package source and tools without runtime data
+        run: |
+          set -euo pipefail
+          mkdir -p dist/finalization/bin
+          cp target/release/atlas dist/finalization/bin/
+          cp target/release/examples/ctf_real_probe target/release/examples/ctf_real_acceptance target/release/examples/ctf_real_ram_index target/release/examples/ctf_b1_fixture dist/finalization/bin/
+          git archive --format=zip --output=dist/finalization/source.zip HEAD
+          git rev-parse HEAD > dist/finalization/SOURCE_COMMIT.txt
+          git rev-parse HEAD^{tree} > dist/finalization/SOURCE_TREE.txt
+          cp LICENSE THIRD_PARTY_NOTICES.md dist/finalization/
+          printf 'channel=unsigned-integration-candidate\nreal_user_data_included=false\nstable_1_0_accepted=false\nrun_id=%s\n' "$GITHUB_RUN_ID" > dist/finalization/PROVENANCE.txt
+          (cd dist/finalization && sha256sum source.zip bin/* wheels/*.whl > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WhereIsItAI-offline-acceptance-kit-linux-x64
+          path: dist/finalization/
+          if-no-files-found: error
+          retention-days: 30

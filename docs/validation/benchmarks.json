@@ -502,8 +502,8 @@
   "ctf_from_sqlite": {
     "elapsed_ms": 11265.089,
     "bytes": 144766574,
-    "source_sha256": "f9339112d0a2b3da114cb4f4efa026d4501da0933d294f01f02896fda08f33d5",
-    "output_sha256": "f9339112d0a2b3da114cb4f4efa026d4501da0933d294f01f02896fda08f33d5",
+    "source_sha256": "REDACTED_SHA256",
+    "output_sha256": "REDACTED_SHA256",
     "byte_identical": true,
     "result": {
       "bytes": 144766574,
@@ -514,7 +514,7 @@
       "new_categories_omitted": false,
       "new_tags_omitted": false,
       "path": "/tmp/atlas-realdata-final/roundtrip-from-sqlite.CTF",
-      "sha256": "f9339112d0a2b3da114cb4f4efa026d4501da0933d294f01f02896fda08f33d5"
+      "sha256": "REDACTED_SHA256"
     }
   }
 }

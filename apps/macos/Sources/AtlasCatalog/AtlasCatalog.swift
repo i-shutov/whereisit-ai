@@ -36,6 +36,115 @@ struct LinkedCTFSync: Decodable { let generation: String; let entries: Int64; le
 struct LinkedExportReceipt: Decodable { let result: LinkedExportSummary }
 struct LinkedExportSummary: Decodable { let rows: Int64 }
 struct LinkedCTFResult<T: Decodable>: Decodable { let generation: String; let result: T }
+struct AnnotationCandidate: Decodable, Identifiable {
+    let entry_id: Int64
+    let volume_id: Int64
+    let parent_id: Int64?
+    let modified_unix: Int64?
+    var id: Int64 { entry_id }
+}
+struct AnnotationConfirmedSelection: Decodable {
+    let new_entry_id: Int64
+}
+struct AnnotationReviewRow: Decodable, Identifiable {
+    let old_entry_id: Int64
+    let revision: Int64
+    let candidate_state: String
+    let candidate_count_lower_bound: Int
+    let candidates_truncated: Bool
+    let candidates: [AnnotationCandidate]
+    let confirmed_selection: AnnotationConfirmedSelection?
+    let confirmation_revision_conflict: Bool
+    let confirmation_payload_conflict: Bool
+    // Audit status alone is NOT proof of a verified active projection.
+    let activation_state: String?
+    let activation_target_entry_id: Int64?
+    var id: Int64 { old_entry_id }
+    var canActivate: Bool {
+        guard activation_state == nil, revision > 0,
+              !confirmation_revision_conflict, !confirmation_payload_conflict,
+              let target = confirmed_selection?.new_entry_id else { return false }
+        return candidates.contains { $0.entry_id == target }
+    }
+    var canRevoke: Bool {
+        activation_state == "active" && activation_target_entry_id != nil
+    }
+    var canSelect: Bool {
+        revision > 0 && confirmed_selection == nil && !candidates.isEmpty
+    }
+    var conflictText: String {
+        if activation_state == "active" {
+            return confirmation_revision_conflict || confirmation_payload_conflict
+                ? "Active audit is stale — revoke to clear"
+                : "Active audit recorded — independently verified on read"
+        }
+        if activation_state == "revoked" {
+            return "Revoked — audit retained; cannot replay"
+        }
+        if confirmation_revision_conflict || confirmation_payload_conflict {
+            return "Stale confirmation — resolve separately"
+        }
+        if let confirmed_selection {
+            return "Confirmed #\(confirmed_selection.new_entry_id); inactive"
+        }
+        return "Unconfirmed — explicit approval required"
+    }
+}
+struct AnnotationReview: Decodable {
+    let state: String
+    let document_id: String?
+    let total: Int64
+    let items: [AnnotationReviewRow]
+}
+// Only freshly verified results from ctf_annotations_activated_list_pinned
+// may appear here. Historical 'active' audit status is not an overlay.
+struct VerifiedAnnotation: Decodable, Identifiable {
+    let entry_id: Int64
+    let old_entry_id: Int64
+    let revision: Int64
+    let note: String
+    let tags: String
+    let read_only: Bool
+    let activation: String
+    var id: Int64 { old_entry_id }
+}
+struct VerifiedOverlayPage: Decodable {
+    let state: String
+    let total: Int64
+    let conflicts: Int64
+    let items: [VerifiedAnnotation]
+    let offset: Int64?
+    let limit: Int64?
+    let read_only_source: Bool?
+    let unresolved_unconfirmed_annotations_not_projected: Bool?
+    func isDisplaySafe(expectedOffset: Int) -> Bool {
+        guard expectedOffset >= 0 else { return false }
+        if state == "uninitialized" || state == "no_cross_generation_activations" {
+            return total == 0 && conflicts == 0 && items.isEmpty
+        }
+        return (state == "partial_activation" || state == "activation_conflict")
+            && offset == Int64(expectedOffset) && limit == 20
+            && read_only_source == true
+            && unresolved_unconfirmed_annotations_not_projected == true
+            && total >= 0 && conflicts >= 0 && items.count <= 20
+            && items.allSatisfy {
+                $0.read_only && $0.activation == "explicit_reviewed_projection"
+                && $0.entry_id > 0 && $0.old_entry_id > 0 && $0.revision > 0
+            }
+    }
+}
+struct AnnotationConfirmReceipt: Decodable {
+    let state: String
+    let old_entry_id: Int64
+    let new_entry_id: Int64
+}
+
+// Each state requires a separate native consent. Mapping never activates.
+enum AnnotationConsent: Equatable {
+    case mapping
+    case activation(oldID: Int64, newID: Int64)
+    case revocation(oldID: Int64, newID: Int64)
+}
 
 enum Bridge {
     static func invoke(_ input: Data) -> Data {
@@ -68,6 +177,36 @@ enum Bridge {
     @Published var categoryName = ""
     @Published var exportFormat = "csv"
     @Published var linkedCTFPath: String?
+    @Published var annotationReview: AnnotationReview?
+    @Published var showingAnnotationReview = false
+    @Published var annotationReviewOffset = 0
+    @Published var annotationReviewLoading = false
+    @Published var annotationSelectedOldID: Int64?
+    @Published var annotationSelectedCandidateID: Int64?
+    @Published var annotationConsent: AnnotationConsent?
+    @Published var annotationConfirmationBusy = false
+    @Published var showingVerifiedOverlay = false
+    @Published var verifiedOverlay: VerifiedOverlayPage?
+    @Published var verifiedOverlayOffset = 0
+    @Published var verifiedOverlayLoading = false
+    private var annotationReviewStore: String?
+    private var annotationReviewSession = 0
+    let annotationPageSize = 20
+    var annotationReviewHasPrevious: Bool {
+        annotationReview?.state == "generation_conflict" && annotationReviewOffset > 0
+    }
+    var annotationReviewHasNext: Bool {
+        guard let review = annotationReview, review.state == "generation_conflict",
+              !review.items.isEmpty else { return false }
+        return Int64(annotationReviewOffset + review.items.count) < review.total
+    }
+    var verifiedOverlayHasPrevious: Bool {
+        verifiedOverlay?.isDisplaySafe(expectedOffset: verifiedOverlayOffset) == true && verifiedOverlayOffset > 0
+    }
+    var verifiedOverlayHasNext: Bool {
+        guard let page = verifiedOverlay, page.isDisplaySafe(expectedOffset: verifiedOverlayOffset), !page.items.isEmpty else { return false }
+        return Int64(verifiedOverlayOffset + page.items.count) < page.total
+    }
     var linkedGeneration: String?
     var linkedMode: Bool { linkedCTFPath != nil && linkedGeneration != nil }
     var editableAllowed: Bool { mutationAllowed && !linkedMode }
@@ -120,6 +259,7 @@ enum Bridge {
     }
     func initialize() {
         linkedCTFPath = nil; linkedGeneration = nil
+        resetAnnotationReview()
         generation += 1; volumeID = nil; stack = [(nil, "/")]; entries = []; query = ""; appliedQuery = ""; showingDuplicates = false; offset = 0
         volumes = []; categories = []; categoryID = nil; selection = nil; total = 0; hasMore = false
         status = "Opening catalog…"
@@ -250,6 +390,7 @@ enum Bridge {
     }
     func synchronizeLinkedCTF(_ source: String) {
         guard mutationAllowed else { return }
+        resetAnnotationReview()
         job = "linked-sync"
         status = "Verifying external CTF and its derived index…"
         request(["op": "ctf_sync", "path": source, "cache_root": linkedCacheRoot],
@@ -270,6 +411,241 @@ enum Bridge {
     func refreshLinkedCTF() {
         guard let source = linkedCTFPath, mutationAllowed else { return }
         synchronizeLinkedCTF(source)
+    }
+    func resetAnnotationReview() {
+        annotationReviewSession += 1
+        annotationReviewStore = nil
+        annotationReview = nil
+        annotationReviewOffset = 0
+        annotationReviewLoading = false
+        annotationSelectedOldID = nil
+        annotationSelectedCandidateID = nil
+        annotationConsent = nil
+        annotationConfirmationBusy = false
+        verifiedOverlay = nil
+        verifiedOverlayOffset = 0
+        verifiedOverlayLoading = false
+        showingVerifiedOverlay = false
+        showingAnnotationReview = false
+    }
+    func reviewAnnotations() {
+        guard linkedMode, mutationAllowed else { return }
+        let linkedAtOpen = linkedGeneration
+        let panel = NSOpenPanel()
+        panel.title = "Choose your existing .wia.sqlite notes file (review and explicit actions)"
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.begin { [weak self] response in
+            guard let self, response == .OK, let url = panel.url else { return }
+            guard url.lastPathComponent.hasSuffix(".wia.sqlite") else {
+                self.error = "Choose an existing .wia.sqlite user annotation file."
+                return
+            }
+            guard self.linkedGeneration == linkedAtOpen, self.mutationAllowed else { return }
+            self.resetAnnotationReview()
+            self.annotationReviewStore = url.path
+            self.showingAnnotationReview = true
+            self.loadAnnotationReviewPage(offset: 0)
+        }
+    }
+    func loadAnnotationReviewPage(offset: Int) {
+        guard linkedMode, let fields = linkedFields(), let store = annotationReviewStore,
+              !annotationReviewLoading, pending == 0, offset >= 0 else { return }
+        if let review = annotationReview, review.state == "generation_conflict",
+           offset > 0 && Int64(offset) >= review.total { return }
+        let session = annotationReviewSession
+        let token = generation
+        annotationReviewOffset = offset
+        annotationReview = nil
+        annotationSelectedOldID = nil
+        annotationSelectedCandidateID = nil
+        annotationConsent = nil
+        annotationReviewLoading = true
+        var args = fields
+        args["op"] = "ctf_annotations_preview_pinned"
+        args["annotation_db"] = store
+        args["offset"] = offset
+        args["limit"] = annotationPageSize
+        status = "Verifying source generation and notes page (read-only)…"
+        request(args, as: LinkedCTFResult<AnnotationReview>.self,
+                generationToken: token) { [weak self] response in
+            guard let self, self.annotationReviewSession == session,
+                  self.annotationReviewStore == store, self.showingAnnotationReview else { return }
+            self.annotationReviewLoading = false
+            self.annotationReview = response?.result
+            if response != nil {
+                self.status = "Read-only notes page checked; nothing was changed."
+            }
+        }
+    }
+    func loadVerifiedOverlayPage(offset: Int) {
+        guard showingAnnotationReview, linkedMode, mutationAllowed,
+              let fields = linkedFields(), let store = annotationReviewStore,
+              offset >= 0, !annotationConfirmationBusy, !annotationReviewLoading,
+              !verifiedOverlayLoading else { return }
+        if let prior = verifiedOverlay, prior.isDisplaySafe(expectedOffset: verifiedOverlayOffset),
+           offset > 0 && Int64(offset) >= prior.total { return }
+        let session = annotationReviewSession
+        let token = generation
+        verifiedOverlayOffset = offset
+        verifiedOverlay = nil
+        verifiedOverlayLoading = true
+        showingVerifiedOverlay = true
+        annotationConsent = nil
+        annotationSelectedOldID = nil
+        annotationSelectedCandidateID = nil
+        var args = fields
+        args["op"] = "ctf_annotations_activated_list_pinned"
+        args["annotation_db"] = store
+        args["offset"] = offset
+        args["limit"] = annotationPageSize
+        status = "Independently verifying active notes and stale audit counts…"
+        request(args, as: LinkedCTFResult<VerifiedOverlayPage>.self,
+                generationToken: token) { [weak self] response in
+            guard let self, self.annotationReviewSession == session,
+                  self.annotationReviewStore == store, self.verifiedOverlayOffset == offset,
+                  self.showingAnnotationReview, self.showingVerifiedOverlay else { return }
+            self.verifiedOverlayLoading = false
+            if let page = response?.result, page.isDisplaySafe(expectedOffset: offset) {
+                self.verifiedOverlay = page
+                self.status = "\(page.total) verified active notes; \(page.conflicts) stale/conflicting audits excluded."
+            } else {
+                self.verifiedOverlay = nil
+                self.status = "Overlay read failed validation; no private notes displayed."
+            }
+        }
+    }
+    func backToAnnotationConflicts() {
+        guard showingAnnotationReview, !verifiedOverlayLoading else { return }
+        showingVerifiedOverlay = false
+        verifiedOverlay = nil
+        // The old review page could now be stale: reload it through pinned SHA.
+        loadAnnotationReviewPage(offset: annotationReviewOffset)
+    }
+    var selectedAnnotationRow: AnnotationReviewRow? {
+        guard let oldID = annotationSelectedOldID else { return nil }
+        return annotationReview?.items.first { $0.old_entry_id == oldID }
+    }
+    var canConfirmAnnotation: Bool {
+        guard showingAnnotationReview, linkedMode, mutationAllowed,
+              !annotationReviewLoading, !annotationConfirmationBusy,
+              annotationReview?.state == "generation_conflict",
+              annotationReview?.document_id != nil,
+              let row = selectedAnnotationRow, row.canSelect,
+              let selectedID = annotationSelectedCandidateID else { return false }
+        return row.candidates.contains { $0.entry_id == selectedID }
+    }
+    func selectAnnotation(_ row: AnnotationReviewRow) {
+        guard row.canSelect, !annotationReviewLoading, !annotationConfirmationBusy else { return }
+        annotationSelectedOldID = row.old_entry_id
+        // Never preselect a candidate, even when the preview found exactly one.
+        annotationSelectedCandidateID = nil
+    }
+    func confirmAnnotationSelection() {
+        guard canConfirmAnnotation, let fields = linkedFields(),
+              let store = annotationReviewStore,
+              let documentID = annotationReview?.document_id,
+              let row = selectedAnnotationRow,
+              let targetID = annotationSelectedCandidateID else { return }
+        let session = annotationReviewSession
+        let token = generation
+        let page = annotationReviewOffset
+        var args = fields
+        args["op"] = "ctf_annotations_confirm_pinned"
+        args["annotation_db"] = store
+        args["expected_document_id"] = documentID
+        args["old_entry_id"] = row.old_entry_id
+        args["new_entry_id"] = targetID
+        args["expected_revision"] = row.revision
+        args["confirmation"] = "user_selected_exact_candidate"
+        annotationConfirmationBusy = true
+        status = "Verifying current CTF generation and explicit mapping…"
+        request(args, as: LinkedCTFResult<AnnotationConfirmReceipt>.self,
+                generationToken: token) { [weak self] response in
+            guard let self, self.annotationReviewSession == session,
+                  self.annotationReviewStore == store, self.showingAnnotationReview else { return }
+            self.annotationConfirmationBusy = false
+            if let receipt = response?.result, receipt.state == "confirmed_not_activated" {
+                self.status = "Mapping #\(receipt.old_entry_id) → #\(receipt.new_entry_id) confirmed; annotation remains inactive."
+            } else {
+                self.status = "Mapping not confirmed. Review the refreshed conflict and choose again."
+            }
+            // Successful or failed CAS must always discard stale page selection.
+            self.loadAnnotationReviewPage(offset: page)
+        }
+    }
+    func proposeAnnotationOverlay(_ consent: AnnotationConsent) {
+        guard showingAnnotationReview, linkedMode, mutationAllowed,
+              !annotationReviewLoading, !annotationConfirmationBusy,
+              let review = annotationReview, review.state == "generation_conflict",
+              review.document_id != nil else { return }
+        switch consent {
+        case .mapping: return
+        case .activation(let oldID, let newID):
+            guard review.items.contains(where: {
+                $0.old_entry_id == oldID && $0.canActivate &&
+                $0.confirmed_selection?.new_entry_id == newID
+            }) else { return }
+        case .revocation(let oldID, let newID):
+            guard review.items.contains(where: {
+                $0.old_entry_id == oldID && $0.canRevoke &&
+                $0.activation_target_entry_id == newID
+            }) else { return }
+        }
+        annotationConsent = consent
+    }
+    func applyAnnotationOverlay(_ consent: AnnotationConsent) {
+        guard showingAnnotationReview, linkedMode, mutationAllowed,
+              !annotationReviewLoading, !annotationConfirmationBusy,
+              let fields = linkedFields(), let store = annotationReviewStore,
+              let review = annotationReview, review.state == "generation_conflict",
+              let documentID = review.document_id else { return }
+        var args = fields
+        args["annotation_db"] = store
+        args["expected_document_id"] = documentID
+        let verb: String
+        switch consent {
+        case .mapping: return
+        case .activation(let oldID, let newID):
+            guard let row = review.items.first(where: { $0.old_entry_id == oldID }),
+                  row.canActivate, row.confirmed_selection?.new_entry_id == newID else { return }
+            args["op"] = "ctf_annotations_activate_pinned"
+            args["old_entry_id"] = oldID
+            args["new_entry_id"] = newID
+            args["expected_revision"] = row.revision
+            args["activation"] = "user_approved_reversible_projection"
+            verb = "Activation"
+        case .revocation(let oldID, let newID):
+            // Revocation must work even when an activation has become stale.
+            // The journal's active pair is the revocation CAS.
+            guard let row = review.items.first(where: { $0.old_entry_id == oldID }),
+                  row.canRevoke, row.activation_target_entry_id == newID else { return }
+            args["op"] = "ctf_annotations_deactivate_pinned"
+            args["old_entry_id"] = oldID
+            args["new_entry_id"] = newID
+            args["rollback"] = "user_confirmed_revoke_projection"
+            verb = "Revocation"
+        }
+        let session = annotationReviewSession
+        let token = generation
+        let page = annotationReviewOffset
+        annotationConsent = nil
+        annotationConfirmationBusy = true
+        status = "\(verb): rechecking source SHA, document and audit state…"
+        request(args, as: LinkedCTFResult<AnnotationConfirmReceipt>.self,
+                generationToken: token) { [weak self] response in
+            guard let self, self.annotationReviewSession == session,
+                  self.annotationReviewStore == store, self.showingAnnotationReview else { return }
+            self.annotationConfirmationBusy = false
+            if let result = response?.result,
+               result.state == "activated_read_only_overlay" || result.state == "revoked_projection" {
+                self.status = "\(verb) verified for old #\(result.old_entry_id) → target #\(result.new_entry_id); old notes retained."
+            } else {
+                self.status = "\(verb) rejected; reread the conflict before another decision."
+            }
+            // A previous preview and its consent must never be reused.
+            self.loadAnnotationReviewPage(offset: page)
+        }
     }
     func chooseCatalog(create: Bool) {
         if create {
@@ -338,20 +714,21 @@ enum Bridge {
     }
     func export() {
         guard mutationAllowed else { return }
-        guard !(linkedMode && showingDuplicates) else {
-            status = "Export of linked duplicate candidates is not yet supported; return to Search or a folder."
-            return
-        }
-        guard !linkedMode || exportFormat != "ctf" else {
-            status = "Linked CTF supports CSV/Parquet only; the original is read-only."
+        guard !linkedMode || ["csv", "parquet", "json"].contains(exportFormat) else {
+            status = "Linked CTF supports CSV/Parquet/JSON; the original is read-only."
             return
         }
         let chosenFormat = exportFormat
+        let selectedMode = showingDuplicates ? "duplicates" : (appliedQuery.isEmpty && volumeID != nil ? "children" : "search")
+        let selectedQuery = appliedQuery
+        let selectedDuplicateMode = appliedDuplicateMode
+        let selectedVolume = volumeID
+        let selectedParent = stack.last.flatMap { $0.0 }
         let originalDatabase = database
         let originalLinkedPath = linkedCTFPath
         let originalGeneration = linkedGeneration
         let panel = NSSavePanel()
-        panel.title = chosenFormat == "ctf" ? "Export entire catalog as CTF" : "Export current branch or query results"
+        panel.title = chosenFormat == "ctf" ? "Export entire catalog as CTF" : (selectedMode == "duplicates" ? "Export all matching duplicate candidates" : "Export current branch or query results")
         panel.nameFieldStringValue = "Catalog.\(chosenFormat)"
         panel.begin { [weak self] response in
             guard let self, response == .OK, let url = panel.url,
@@ -368,11 +745,13 @@ enum Bridge {
                 args = ["op": "export_\(chosenFormat)", "path": url.path, "overwrite": true]
             }
             if chosenFormat != "ctf" {
-                args["mode"] = self.showingDuplicates ? "duplicates" : (self.appliedQuery.isEmpty && self.volumeID != nil ? "children" : "search")
-                args["query"] = self.appliedQuery
-                args["duplicate_mode"] = self.appliedDuplicateMode
-                if let volumeID = self.volumeID { args["volume_id"] = volumeID }
-                args["parent_id"] = self.stack.last.flatMap { $0.0 }.map { $0 as Any } ?? NSNull()
+                args["mode"] = selectedMode
+                args["query"] = selectedQuery
+                args["duplicate_mode"] = selectedDuplicateMode
+                if let selectedVolume { args["volume_id"] = selectedVolume }
+                if selectedMode != "duplicates" {
+                    args["parent_id"] = selectedParent.map { $0 as Any } ?? NSNull()
+                }
                 args["recursive"] = true
             }
             self.job = "export"
@@ -406,13 +785,14 @@ enum Bridge {
                 Menu("CTF") {
                     Button("Link read-only CTF…") { model.linkCTF() }
                     Button("Refresh linked CTF") { model.refreshLinkedCTF() }.disabled(!model.linkedMode)
+                    Button("Review notes and overlays…") { model.reviewAnnotations() }.disabled(!model.linkedMode)
                     Divider()
                     Button("Import CTF copy into SQLite…") { model.importCTF() }.disabled(!model.editableAllowed)
                 }.disabled(!model.mutationAllowed)
                 Picker("Export format", selection: $model.exportFormat) {
-                    Text("CSV • current scope").tag("csv"); Text("Parquet • current scope").tag("parquet"); Text("CTF • entire catalog").tag("ctf")
+                    Text("CSV • current scope").tag("csv"); Text("Parquet • current scope").tag("parquet"); Text("CTF • entire catalog").tag("ctf"); Text("JSON • current scope").tag("json")
                 }.labelsHidden().frame(width: 174).accessibilityLabel("Export format and scope")
-                Button("Export…") { model.export() }.disabled(!model.mutationAllowed || (model.linkedMode && (model.exportFormat == "ctf" || model.showingDuplicates)))
+                Button("Export…") { model.export() }.disabled(!model.mutationAllowed || (model.linkedMode && model.exportFormat == "ctf"))
                 Spacer(minLength: 4)
                 if model.pending > 0 { ProgressView().controlSize(.small) }
                 Button("Cancel scan") { model.cancel() }.disabled(!model.canCancel)
@@ -473,6 +853,171 @@ enum Bridge {
             Text(model.linkedMode ? "LINKED CTF (read-only) • " + (model.linkedCTFPath ?? "") : model.database).font(.caption2).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).lineLimit(1).truncationMode(.middle)
         }
         .padding(7).controlSize(.small).frame(minWidth: 960, minHeight: 500)
+        .sheet(isPresented: $model.showingAnnotationReview) {
+            if model.showingVerifiedOverlay {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Verified active annotations").font(.headline)
+                    Text("Independent SHA-pinned read • no writes • not the historical activation audit")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if model.verifiedOverlayLoading {
+                        ProgressView("Rechecking source generation and old-note revisions…")
+                    } else if let page = model.verifiedOverlay, page.isDisplaySafe(expectedOffset: model.verifiedOverlayOffset) {
+                        Text("Valid live overlays: \(page.total) • stale/conflicting active audits excluded: \(page.conflicts)")
+                            .font(.subheadline).monospacedDigit()
+                        Text("Unconfirmed or unresolved mappings are excluded; this API does not count them.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        if page.state == "uninitialized" || page.state == "no_cross_generation_activations" {
+                            Text("No approved cross-generation notes are active.")
+                        } else {
+                            Text("Rows \(page.items.isEmpty ? 0 : model.verifiedOverlayOffset + 1)–\(model.verifiedOverlayOffset + page.items.count) of \(page.total)")
+                                .font(.caption).monospacedDigit()
+                            List(page.items) { item in
+                                HStack(alignment: .top, spacing: 12) {
+                                    Text("Old #\(item.old_entry_id) → #\(item.entry_id)")
+                                        .monospacedDigit().frame(width: 180, alignment: .leading)
+                                    Text(String(item.note.prefix(160)))
+                                        .lineLimit(2)
+                                    Spacer(minLength: 4)
+                                    Text("rev \(item.revision)").foregroundStyle(.secondary)
+                                }.font(.caption)
+                            }
+                        }
+                    } else {
+                        Text("Verified view unavailable or invalid; no private notes displayed.")
+                    }
+                    Spacer(minLength: 2)
+                    HStack {
+                        Button("Previous") {
+                            model.loadVerifiedOverlayPage(offset: max(0, model.verifiedOverlayOffset - model.annotationPageSize))
+                        }.disabled(!model.verifiedOverlayHasPrevious || model.verifiedOverlayLoading)
+                        Button("Next") {
+                            model.loadVerifiedOverlayPage(offset: model.verifiedOverlayOffset + model.annotationPageSize)
+                        }.disabled(!model.verifiedOverlayHasNext || model.verifiedOverlayLoading)
+                        Spacer()
+                        Button("Back to conflicts") { model.backToAnnotationConflicts() }
+                            .disabled(model.verifiedOverlayLoading)
+                        Button("Close") { model.resetAnnotationReview() }
+                            .keyboardShortcut(.cancelAction)
+                            .disabled(model.verifiedOverlayLoading)
+                    }
+                }.padding(14).frame(width: 820, height: 520)
+            } else if let preview = model.annotationReview {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("CTF annotation conflicts").font(.headline)
+                    Text("Read-only preview • \(preview.state) • \(preview.total) saved notes")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if preview.state == "generation_conflict" {
+                        Text("Rows \(preview.items.isEmpty ? 0 : model.annotationReviewOffset + 1)–\(model.annotationReviewOffset + preview.items.count) of \(preview.total)")
+                            .font(.caption).monospacedDigit()
+                        List(preview.items) { item in
+                            HStack(spacing: 10) {
+                                Text("Old #\(item.old_entry_id)").monospacedDigit().frame(width: 90, alignment: .leading)
+                                Text(item.candidate_state).frame(width: 136, alignment: .leading)
+                                Text("Candidates: \(item.candidate_count_lower_bound)\(item.candidates_truncated ? "+" : "")")
+                                    .frame(width: 112, alignment: .leading)
+                                Text(item.conflictText).foregroundStyle(.secondary)
+                                Spacer(minLength: 2)
+                                if item.canSelect {
+                                    Button(model.annotationSelectedOldID == item.old_entry_id ? "Selected" : "Choose…") {
+                                        model.selectAnnotation(item)
+                                    }.disabled(model.annotationReviewLoading || model.annotationConfirmationBusy)
+                                }
+                                if item.canActivate, let target = item.confirmed_selection?.new_entry_id {
+                                    Button("Activate…") {
+                                        model.proposeAnnotationOverlay(.activation(oldID: item.old_entry_id, newID: target))
+                                    }.disabled(model.annotationReviewLoading || model.annotationConfirmationBusy)
+                                }
+                                if item.canRevoke, let target = item.activation_target_entry_id {
+                                    Button("Revoke…") {
+                                        model.proposeAnnotationOverlay(.revocation(oldID: item.old_entry_id, newID: target))
+                                    }.disabled(model.annotationReviewLoading || model.annotationConfirmationBusy)
+                                }
+                            }.font(.caption)
+                        }
+                        if let selected = model.selectedAnnotationRow {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text("Review old #\(selected.old_entry_id) • \(selected.candidate_state)")
+                                    .font(.subheadline).bold()
+                                HStack {
+                                    Picker("Target entry", selection: $model.annotationSelectedCandidateID) {
+                                        Text("Choose a destination explicitly").tag(nil as Int64?)
+                                        ForEach(selected.candidates) { candidate in
+                                            Text("Entry #\(candidate.entry_id) • disk #\(candidate.volume_id)")
+                                                .tag(candidate.entry_id as Int64?)
+                                        }
+                                    }.pickerStyle(.menu)
+                                    Button("Confirm mapping…") {
+                                        model.annotationConsent = .mapping
+                                    }.disabled(!model.canConfirmAnnotation)
+                                }
+                                Text("Structural metadata is not file-content identity. Confirmation records a choice only, without activating notes.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        Text("20 records per freshly SHA-verified page. Mapping, activation and revocation require separate consent; journal state does not prove a stale note is valid.")
+                            .font(.caption)
+                    } else {
+                        Text(preview.state == "current_generation"
+                             ? "Notes already match this generation; no reconciliation required."
+                             : "No initialized user annotation store was found.")
+                    }
+                    Text("The CTF and derived cache remain read-only. Approved mapping, activation and revocation actions write only to the separate user-owned notes database.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    HStack {
+                        Button("Previous") {
+                            model.loadAnnotationReviewPage(offset: max(0, model.annotationReviewOffset - model.annotationPageSize))
+                        }.disabled(!model.annotationReviewHasPrevious || model.annotationReviewLoading || model.annotationConfirmationBusy)
+                        Button("Next") {
+                            model.loadAnnotationReviewPage(offset: model.annotationReviewOffset + model.annotationPageSize)
+                        }.disabled(!model.annotationReviewHasNext || model.annotationReviewLoading || model.annotationConfirmationBusy)
+                        Spacer()
+                        Button("Verified live notes…") { model.loadVerifiedOverlayPage(offset: 0) }
+                            .disabled(model.annotationReviewLoading || model.annotationConfirmationBusy)
+                        Button("Close") { model.resetAnnotationReview() }
+                            .keyboardShortcut(.cancelAction)
+                            .disabled(model.annotationConfirmationBusy)
+                    }
+                }
+                .padding(14).frame(width: 820, height: 520)
+                .confirmationDialog("Approve this annotation action?",
+                                    isPresented: Binding(
+                                        get: { model.annotationConsent != nil },
+                                        set: { if !$0 { model.annotationConsent = nil } }),
+                                    titleVisibility: .visible) {
+                    if model.annotationConsent == .mapping {
+                        Button("Confirm mapping (leave inactive)") {
+                            model.confirmAnnotationSelection()
+                        }.disabled(!model.canConfirmAnnotation)
+                    }
+                    if case .some(.activation(let oldID, let newID)) = model.annotationConsent {
+                        Button("Activate read-only overlay") {
+                            model.applyAnnotationOverlay(.activation(oldID: oldID, newID: newID))
+                        }
+                    }
+                    if case .some(.revocation(let oldID, let newID)) = model.annotationConsent {
+                        Button("Revoke active overlay", role: .destructive) {
+                            model.applyAnnotationOverlay(.revocation(oldID: oldID, newID: newID))
+                        }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    if model.annotationConsent == .mapping {
+                        Text("Save the chosen structural mapping only. Notes remain inactive. No CTF or cache writes.")
+                    } else if case .some(.activation) = model.annotationConsent {
+                        Text("Independently approve a read-only projection. Source SHA, note revision and document are rechecked; original notes remain.")
+                    } else {
+                        Text("Revoke only the chosen active projection. The original notes and private audit remain; revoked mappings cannot be replayed.")
+                    }
+                }
+            } else {
+                VStack(spacing: 12) {
+                    if model.annotationReviewLoading { ProgressView("Verifying read-only page…") }
+                    else { Text("Preview could not be loaded. No notes were changed.") }
+                    Button("Close") { model.resetAnnotationReview() }
+                        .keyboardShortcut(.cancelAction)
+                }.padding(20).frame(width: 500, height: 160)
+            }
+        }
         .alert("WhereIsIt AI", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) { Button("OK") { model.error = nil } } message: { Text(model.error ?? "") }
     }
 }

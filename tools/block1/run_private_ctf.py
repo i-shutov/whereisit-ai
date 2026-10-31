@@ -4,7 +4,7 @@
 Run:
  python tools/block1/run_private_ctf.py --probe /path/to/ctf_real_probe \
    --acceptance /path/to/ctf_real_acceptance --ram-index /path/to/ctf_real_ram_index --output /private/new/checkpoint \
-   /path/to/e-books.CTF /path/to/Mp3-60Gb.CTF
+   /path/to/source-A.CTF /path/to/source-B.CTF
 
 Produces aggregate-only JSON and Markdown. Never uploads any raw catalog bytes.
 """

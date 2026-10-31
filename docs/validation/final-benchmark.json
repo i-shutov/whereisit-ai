@@ -4,7 +4,7 @@
     "platform": "Linux-6.18.55-x86_64-with-glibc2.39",
     "python": "3.12.14",
     "cpu_count_visible": 9,
-    "cli_sha256": "8a90ab98404f511bd526cdbb7b8e9cd7c47636c84a0df51f887d6200d6fa8992"
+    "cli_sha256": "REDACTED_SHA256"
   },
   "method": "One persistent CLI serve process; page size 250; first request followed by five repeated requests. No cache flush, cold-start guarantee or concurrent-load isolation.",
   "privacy": "Aggregate results only; no result names, paths, disk labels or entry IDs are written.",

@@ -73,12 +73,81 @@ def ids_digest(data: dict) -> tuple[int, str]:
     return len(items), h.hexdigest()
 
 
+def verify_export_pair(csv_path: pathlib.Path, parquet_path: pathlib.Path,
+                       expected_entries: int, timeout: int) -> dict:
+    """Independently compare every exported field, retaining only safe aggregate evidence.
+
+    The checker reads temporary files on the local machine. Its raw stdout,
+    stderr, exception text, paths and unexpected JSON fields are never copied
+    into the checkpoint.
+    """
+    verifier = pathlib.Path(__file__).resolve().parents[1] / "verify_exports.py"
+    completed = subprocess.run(
+        [sys.executable, str(verifier), str(csv_path), str(parquet_path)],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+        encoding="utf-8", errors="replace", timeout=timeout, check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError("csv_parquet_field_parity_failed")
+    try:
+        evidence = json.loads(completed.stdout)
+    except (ValueError, TypeError):
+        raise RuntimeError("invalid_export_verifier_report") from None
+    if (not isinstance(evidence, dict)
+            or evidence.get("status") != "passed"
+            or evidence.get("all_values_equal") is not True
+            or type(evidence.get("rows")) is not int
+            or evidence["rows"] != expected_entries
+            or type(evidence.get("columns")) is not int
+            or evidence["columns"] != 15):
+        raise RuntimeError("incomplete_export_parity_evidence")
+    return {"status": "passed", "all_values_equal": True,
+            "rows": evidence["rows"], "columns": 15,
+            "checker": "independent_duckdb_row_and_field_comparison"}
+
+
+
+def check_search_page(fast: dict, full: dict, offset: int, limit: int,
+                      previous_total: int | None = None) -> tuple[int, int, str]:
+    """Fail closed on page IDs, coordinates, exact total and fast continuation.
+
+    The native search_fast API intentionally has no total. Its has_more flag
+    must agree with the independent counted search at the same page offset.
+    """
+    fast_count, fast_digest = ids_digest(fast)
+    full_count, full_digest = ids_digest(full)
+    total = full.get("total")
+    if (type(total) is not int or total < 0
+            or (previous_total is not None and total != previous_total)):
+        raise RuntimeError("search_total_mismatch")
+    for page in (fast, full):
+        if (type(page.get("offset")) is not int or page["offset"] != offset
+                or type(page.get("limit")) is not int or page["limit"] != limit):
+            raise RuntimeError("search_page_coordinates_mismatch")
+    expected_count = min(limit, max(0, total - offset))
+    if (fast_count != expected_count or full_count != expected_count
+            or fast_digest != full_digest):
+        raise RuntimeError("search_page_mismatch")
+    expected_more = offset + expected_count < total
+    if type(fast.get("has_more")) is not bool or fast["has_more"] != expected_more:
+        raise RuntimeError("search_has_more_mismatch")
+    return total, full_count, full_digest
+
+
 def inspect(source: pathlib.Path, cli: pathlib.Path, timeout: int,
-            expected_sha: str | None, full_export: bool, result: dict) -> dict:
+            expected_sha: str | None, full_export: bool,
+            verify_export_parity: bool, result: dict) -> dict:
     size = source.stat().st_size
     original_sha = file_hash(source)
     if expected_sha is not None and original_sha != expected_sha:
         raise RuntimeError("unexpected_ctf_identity")
+
+    def ensure_source_generation() -> None:
+        # Rehash the authoritative external catalog before reusing any
+        # derived result. Do not trust source size or mtime alone.
+        if file_hash(source) != original_sha:
+            raise RuntimeError("source_changed")
+
     version = subprocess.run(
         [str(cli), "--sqlite-version"], stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL, text=True, timeout=15, check=True,
@@ -112,6 +181,7 @@ def inspect(source: pathlib.Path, cli: pathlib.Path, timeout: int,
             cli, {"op": "import_ctf", "db": str(database), "path": str(source)}, timeout,
         )
         result["phases"]["import_ctf"] = metric
+        ensure_source_generation()
         stats, metric = measured_cli(cli, {"op": "stats", "db": str(database)}, timeout)
         volumes, entries = stats.get("volumes"), stats.get("entries")
         if not isinstance(volumes, int) or not isinstance(entries, int) or volumes <= 0 or entries <= 0:
@@ -131,25 +201,40 @@ def inspect(source: pathlib.Path, cli: pathlib.Path, timeout: int,
         ]
         results = []
         for n, expression in enumerate(queries, 1):
-            request = {"db": str(database), "query": expression, "limit": 100, "offset": 0}
-            fast, fast_metric = measured_cli(cli, {"op": "search_fast", **request}, timeout)
-            full, full_metric = measured_cli(cli, {"op": "search", **request}, timeout)
-            count_fast, digest_fast = ids_digest(fast)
-            count_full, digest_full = ids_digest(full)
-            if count_fast != count_full or digest_fast != digest_full:
-                raise RuntimeError("search_page_mismatch")
-            total = full.get("total")
-            if not isinstance(total, int) or total < count_full:
-                raise RuntimeError("invalid_search_total")
+            def query_page(offset: int) -> tuple[dict, dict, dict, dict]:
+                request = {"db": str(database), "query": expression,
+                           "limit": 100, "offset": offset}
+                # A same-size / same-mtime external edit cannot be treated as
+                # the same source generation between reuse of a derived DB.
+                ensure_source_generation()
+                fast, fast_metric = measured_cli(cli, {"op": "search_fast", **request}, timeout)
+                ensure_source_generation()
+                full, full_metric = measured_cli(cli, {"op": "search", **request}, timeout)
+                return fast, full, fast_metric, full_metric
+
+            fast, full, fast_metric, full_metric = query_page(0)
+            total, first_length, first_digest = check_search_page(fast, full, 0, 100)
+            pages_checked = 1
+            second_offset = None
+            if total > 100:
+                # Bounded second-page sampling; never claim full 3M-row
+                # enumeration or issue an unbounded multi-million OFFSET.
+                second_offset = 100
+                next_fast, next_full, _, _ = query_page(second_offset)
+                check_search_page(next_fast, next_full, second_offset, 100, total)
+                pages_checked = 2
             results.append({
                 "query_number": n,
                 "query_text_omitted": True,
                 "total_count": total,
-                "page_length": count_full,
-                "page_ids_sha256": digest_full,
+                "page_length": first_length,
+                "page_ids_sha256": first_digest,
                 "fast_ms": fast_metric["elapsed_ms"],
                 "full_count_ms": full_metric["elapsed_ms"],
                 "page_and_count_agree": True,
+                "pages_checked": pages_checked,
+                "second_page_offset": second_offset,
+                "bounded_pages_and_has_more_agree": True,
             })
         result["queries"] = results
 
@@ -164,6 +249,7 @@ def inspect(source: pathlib.Path, cli: pathlib.Path, timeout: int,
         }
         if not exact:
             raise RuntimeError("ctf_roundtrip_mismatch")
+        ensure_source_generation()
 
         if full_export:
             artifacts = []
@@ -174,7 +260,17 @@ def inspect(source: pathlib.Path, cli: pathlib.Path, timeout: int,
                 )
                 artifacts.append({"format": ext, "bytes": output.stat().st_size,
                                   "sha256": file_hash(output), **metric})
+                ensure_source_generation()
             result["derived_export_artifacts"] = artifacts
+            if verify_export_parity:
+                # Set failure evidence BEFORE invoking an optional external
+                # reader; no interrupted/failed comparison may look NOT_RUN.
+                result["derived_export_parity"] = {"status": "failed"}
+                result["derived_export_parity"] = verify_export_pair(
+                    root / "derived.csv", root / "derived.parquet",
+                    entries, timeout,
+                )
+                ensure_source_generation()
         result["phases"]["total_import_to_roundtrip"] = {
             "elapsed_ms": round((time.perf_counter() - start) * 1000, 2)
         }
@@ -191,12 +287,16 @@ def main() -> int:
     ap.add_argument("--expected-sha256", help="Optional verified source SHA-256")
     ap.add_argument("--full-export", action="store_true",
                     help="Also test full temporary CSV/Parquet export (larger disk I/O)")
+    ap.add_argument("--verify-export-parity", action="store_true",
+                    help="Independently compare every CSV/Parquet field locally (requires --full-export and DuckDB 1.4.1)")
     ap.add_argument("--timeout-seconds", type=int, default=1500,
                     help="Per-phase timeout; large 3M-entry CTF imports can exceed 8 minutes")
     ap.add_argument("source", type=pathlib.Path)
     args = ap.parse_args()
     if args.timeout_seconds < 10:
         ap.error("Timeout must be >= 10 seconds")
+    if args.verify_export_parity and not args.full_export:
+        ap.error("--verify-export-parity requires --full-export")
     cli, source = args.cli.resolve(strict=True), args.source.resolve(strict=True)
     if not cli.is_file() or not source.is_file():
         ap.error("CLI and source must be regular files")
@@ -209,7 +309,7 @@ def main() -> int:
               "source": {"sha256": file_hash(source), "size_bytes": source.stat().st_size}}
     try:
         inspect(source, cli, args.timeout_seconds, args.expected_sha256,
-                args.full_export, report)
+                args.full_export, args.verify_export_parity, report)
         report["status"] = "passed_available_checks"
     except Exception as exc:
         # Exception text may include a private path; store only an error category

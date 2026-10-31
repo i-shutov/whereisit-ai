@@ -2,7 +2,7 @@
 
 **Status: testing harness hardened; real-file tests not executed.** ChatGPT's local Python/container executor currently returns ClientError even on trivial commands. This is an executor failure, not a CTF parser verdict. No actual disk counts, names, private SHA-256, or real timings are claimed until a genuine run is verified.
 
-**Private inputs:** e-books.CTF (4,488,883 bytes), Mp3-60Gb.CTF (2,420,847 bytes). The originals are never written or committed to public GitHub/Actions. Production release v1.0.0-rc.1 is unchanged.
+**Private inputs:** source-A.CTF (4,488,883 bytes), source-B.CTF (2,420,847 bytes). The originals are never written or committed to public GitHub/Actions. Production release v1.0.0-rc.1 is unchanged.
 
 ## Tools implemented
 
@@ -24,8 +24,8 @@ cargo +1.90.0 build --release --locked -p atlas-cli
 Run from the project directory, changing source paths. The `--assert-real-inputs` flag is an **explicit operator statement**, not automatic verification of the origin or authenticity of a file:
 
 ```powershell
-$book = 'D:\Catalogs\e-books.CTF'
-$mp3 = 'D:\Catalogs\Mp3-60Gb.CTF'
+$book = 'D:\Catalogs\source-A.CTF'
+$mp3 = 'D:\Catalogs\source-B.CTF'
 py -3 tools/block1/run_private_ctf.py --assert-real-inputs --probe target\release\examples\ctf_real_probe.exe --acceptance target\release\examples\ctf_real_acceptance.exe --ram-index target\release\examples\ctf_real_ram_index.exe --output "$env:USERPROFILE\Documents\WhereIsIt-B1-001" $book $mp3
 uv run --with duckdb==1.5.5 --with polars==1.43.2 python tools/block1/benchmark_columnar.py --assert-real-inputs --cli target\release\atlas.exe --output "$env:USERPROFILE\Documents\WhereIsIt-B1-columnar-001" $book $mp3
 ```
@@ -35,8 +35,8 @@ uv run --with duckdb==1.5.5 --with polars==1.43.2 python tools/block1/benchmark_
 ```bash
 cargo +1.90.0 build --release --locked -p atlas-service --example ctf_real_probe --example ctf_real_acceptance --example ctf_real_ram_index
 cargo +1.90.0 build --release --locked -p atlas-cli
-python3 tools/block1/run_private_ctf.py --assert-real-inputs --probe target/release/examples/ctf_real_probe --acceptance target/release/examples/ctf_real_acceptance --ram-index target/release/examples/ctf_real_ram_index --output "$HOME/WhereIsIt-B1-001" "/path/to/e-books.CTF" "/path/to/Mp3-60Gb.CTF"
-uv run --with duckdb==1.5.5 --with polars==1.43.2 python tools/block1/benchmark_columnar.py --assert-real-inputs --cli target/release/atlas --output "$HOME/WhereIsIt-B1-columnar-001" "/path/to/e-books.CTF" "/path/to/Mp3-60Gb.CTF"
+python3 tools/block1/run_private_ctf.py --assert-real-inputs --probe target/release/examples/ctf_real_probe --acceptance target/release/examples/ctf_real_acceptance --ram-index target/release/examples/ctf_real_ram_index --output "$HOME/WhereIsIt-B1-001" "/path/to/source-A.CTF" "/path/to/source-B.CTF"
+uv run --with duckdb==1.5.5 --with polars==1.43.2 python tools/block1/benchmark_columnar.py --assert-real-inputs --cli target/release/atlas --output "$HOME/WhereIsIt-B1-columnar-001" "/path/to/source-A.CTF" "/path/to/source-B.CTF"
 ```
 
 All output directories must **not already exist**. The native tools can also be downloaded as unsigned, architecture-specific GitHub Actions artifacts. Private source paths and filenames are not emitted in the checkpoint; inputs are identified as `CTF-1`, `CTF-2`. If `--assert-real-inputs` is omitted, the checkpoint records provenance as unverified, even when all synthetic/technical tests pass. The same flag applies to the separate SQLite/DuckDB/Polars experiment; synthetic CI reports retain `unverified_local_ctf` provenance.

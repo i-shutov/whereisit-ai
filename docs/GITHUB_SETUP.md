@@ -25,7 +25,7 @@ git push origin --tags
 
 `.github/workflows/build.yml` выполняет Rust-тесты, Clippy/fmt, сборку Windows и macOS и прикладывает ZIP к успешным workflow runs. Первый прогон требуется реально наблюдать; наличие YAML **не** подтверждает успешную сборку на GitHub. Mac runners и Windows runners могут иметь разные платформенные ограничения.
 
-Windows ZIP `AtlasCatalog-0.1.0-Windows-x64.zip` предлагается хранить как prerelease asset, а не коммитить. Приватная пользовательская база (`USB-drives-AtlasCatalog-v0.1.sqlite.zip`, около 420 MB) и исходный CTF **не должны** попадать в GitHub даже как release asset. `.gitignore` не гарантирует защиту, если файлы добавляются с `-f`.
+Windows ZIP `AtlasCatalog-0.1.0-Windows-x64.zip` предлагается хранить как prerelease asset, а не коммитить. Приватная пользовательская база (`private-catalog-AtlasCatalog-v0.1.sqlite.zip`, около 420 MB) и исходный CTF **не должны** попадать в GitHub даже как release asset. `.gitignore` не гарантирует защиту, если файлы добавляются с `-f`.
 
 ## Первые задачи (issues)
 

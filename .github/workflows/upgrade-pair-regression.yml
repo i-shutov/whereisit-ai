@@ -1,0 +1,27 @@
+name: Native integration and installed upgrade regressions
+on:
+  pull_request:
+    paths:
+      - tools/qa/**
+      - tools/dev/verify_release_identity.py
+      - docs/**
+      - apps/windows/src/native.rs
+      - apps/macos/Sources/AtlasCatalog/AtlasCatalog.swift
+      - .github/workflows/upgrade-pair-regression.yml
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  version-pair-and-native-wiring:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tools/qa -p 'test_upgrade_catalog_probe.py' -v
+      - run: python3 -m unittest discover -s tools/qa -p 'test_native_export_wiring.py' -v
+      - run: python3 tools/qa/check_public_evidence.py
+      - run: python3 -m py_compile tools/qa/linked_candidate_acceptance.py
+      - run: bash -n tools/qa/upgrade-rc3-macos.sh

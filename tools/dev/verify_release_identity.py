@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import plistlib
 import re
+import runpy
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -58,6 +59,9 @@ if rc is not None:
     assert acceptance["stable_ready"] is False, "RC cannot masquerade as stable"
 expected_jobs = {"test", "windows", "macos (macos-15)", "macos (macos-15-intel)"}
 assert set(acceptance["publication_requires_successful_jobs"]) == expected_jobs, "Incomplete native matrix"
+# Mandatory native CI gate: historic owner-data digests must not enter a release.
+# This is separate from public executable/lockfile provenance digests.
+runpy.run_path(str(ROOT / "tools/qa/check_public_evidence.py"), run_name="__main__")
 print(json.dumps({
     "version": version,
     "macos_bundle_build": expected_build,
