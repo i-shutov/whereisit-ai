@@ -19,7 +19,9 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("app.update_disk_locator();", WIN)
         self.assertIn("self.entries.get(index as usize)", WIN)
         self.assertIn("ES_READONLY as u32", WIN)
-        self.assertIn("if w >= 1120", WIN)
+        self.assertIn("if window_width >= 1176", WIN)
+        self.assertIn("LVM_SETCOLUMNWIDTH", WIN)
+        self.assertIn("explorer_geometry_tests", WIN)
         self.assertIn("SW_HIDE", WIN)
         self.assertIn("disk_locator_tests", WIN)
 
@@ -31,6 +33,15 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("NSPasteboard.general.setString", MAC)
         self.assertIn("model.volumeLabel(entry.volume_id)", MAC)
         self.assertIn("Text(entry.relative_path)", MAC)
+
+    def test_search_keyboard_and_all_disk_shortcuts_are_explicit(self):
+        self.assertIn("GetKeyState(VK_CONTROL as i32) < 0", WIN)
+        self.assertIn("SetFocus((*app).search);", WIN)
+        self.assertIn("SendMessageW((*app).search, EM_SETSEL, 0, -1)", WIN)
+        self.assertIn("@FocusState private var searchFieldFocused: Bool", MAC)
+        self.assertIn(".focused($searchFieldFocused)", MAC)
+        self.assertIn('Button("All disks") { model.searchAcrossAllDisks() }', MAC)
+        self.assertIn('.keyboardShortcut("f", modifiers: [.command])', MAC)
 
     def test_no_unverified_physical_drive_claims_in_locator(self):
         self.assertIn("Physical connection: NOT VERIFIED", WIN)
