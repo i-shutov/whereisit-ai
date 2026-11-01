@@ -352,14 +352,15 @@ pub fn set_shelf_label(request: &Value) -> Result<Value> {
     let path = store_path(request)?;
     let volume = volume_id(request)?;
     if request.get("confirmed") != Some(&Value::Bool(true)) {
-        return Err(invalid("Explicit operator confirmation required for shelf labels"));
+        return Err(invalid(
+            "Explicit operator confirmation required for shelf labels",
+        ));
     }
     let label = text(request, "shelf_label")?.trim();
-    if label.len() > 320
-        || label.chars().count() > 80
-        || label.chars().any(|ch| ch.is_control())
-    {
-        return Err(invalid("Shelf label must be one line of at most 80 characters"));
+    if label.len() > 320 || label.chars().count() > 80 || label.chars().any(|ch| ch.is_control()) {
+        return Err(invalid(
+            "Shelf label must be one line of at most 80 characters",
+        ));
     }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -395,7 +396,11 @@ mod tests {
     #[test]
     fn shelf_tags_are_private_explicit_generation_scoped_and_not_mount_evidence() {
         let temp = tempfile::tempdir().unwrap();
-        let sidecar = temp.path().join("user-tags.sqlite").to_string_lossy().into_owned();
+        let sidecar = temp
+            .path()
+            .join("user-tags.sqlite")
+            .to_string_lossy()
+            .into_owned();
         let base = json!({"user_store":sidecar,"catalog_key":"ctf:synthetic-a",
             "platform":"windows","volume_ids":[1,2],"observed_ids":[],"probe_ok":true});
         let mut list = base.clone();
@@ -408,7 +413,10 @@ mod tests {
         assert_eq!(request(save.clone())["ok"], false);
         save["confirmed"] = json!(true);
         assert_eq!(request(save.clone())["data"]["saved"], true);
-        assert_eq!(request(list.clone())["data"]["items"][0]["shelf_label"], "Стеллаж Б / USB-02");
+        assert_eq!(
+            request(list.clone())["data"]["items"][0]["shelf_label"],
+            "Стеллаж Б / USB-02"
+        );
 
         let mut state = base.clone();
         state["op"] = json!("physical_status");
@@ -428,7 +436,7 @@ mod tests {
         assert_eq!(request(save.clone())["ok"], false);
         save["shelf_label"] = json!("");
         assert_eq!(request(save)["data"]["saved"], true);
-        list["volume_ids"] = json!([1,2]);
+        list["volume_ids"] = json!([1, 2]);
         assert_eq!(request(list)["data"]["items"], json!([]));
     }
 

@@ -2343,7 +2343,8 @@ impl App {
 
     // A user sticker tag is an offline retrieval hint, never proof of USB presence.
     unsafe fn shelf_edit_target(&self) -> Option<i64> {
-        self.volume.or_else(|| self.selected_physical_catalog_disk())
+        self.volume
+            .or_else(|| self.selected_physical_catalog_disk())
     }
 
     unsafe fn sync_shelf_editor(&mut self) {
@@ -2396,9 +2397,8 @@ impl App {
         let mut buffer = vec![0u16; len as usize + 1];
         GetWindowTextW(self.shelf_edit, buffer.as_mut_ptr(), len + 1);
         let label = String::from_utf16_lossy(&buffer[..len as usize]);
-        let reply = self.physical_request(
-            "physical_shelf_label_set", Some(target), None, Some(&label),
-        );
+        let reply =
+            self.physical_request("physical_shelf_label_set", Some(target), None, Some(&label));
         if reply["ok"] == true && reply["data"]["saved"] == true {
             self.refresh_shelf_labels();
             self.status("Private sticker/shelf tag saved; not proof of USB presence.");
@@ -3674,10 +3674,16 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 wide("Filter disk labels / IDs • Ctrl+L").as_ptr() as isize,
             );
             app.shelf_edit = control(
-                hwnd, "EDIT", "", WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL as u32, 134,
+                hwnd,
+                "EDIT",
+                "",
+                WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL as u32,
+                134,
             );
             SendMessageW(
-                app.shelf_edit, EM_SETCUEBANNER, 0,
+                app.shelf_edit,
+                EM_SETCUEBANNER,
+                0,
                 wide("Sticker / shelf • selected disk").as_ptr() as isize,
             );
             SendMessageW(app.shelf_edit, EM_LIMITTEXT, 80, 0);
