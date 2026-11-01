@@ -101,7 +101,6 @@ fn display_size(value: Option<u64>) -> String {
     }
 }
 
-
 #[derive(Clone)]
 struct MountedPhysicalVolume {
     id: String,
@@ -171,7 +170,11 @@ unsafe fn windows_mounted_volumes() -> Option<Vec<MountedPhysicalVolume>> {
             id: format!("win:{}:{serial:08x}", &guid_name[start..=end]).to_ascii_lowercase(),
             description: format!(
                 "{} • current OS mount {}",
-                if label.is_empty() { "(unnamed)" } else { &label },
+                if label.is_empty() {
+                    "(unnamed)"
+                } else {
+                    &label
+                },
                 root_path
             ),
         });
@@ -1847,7 +1850,11 @@ impl App {
             wide("All disks / global search").as_ptr() as isize,
         );
         for disk in &self.volumes {
-            let badge = match self.physical_states.get(&id(disk).unwrap_or_default()).map(String::as_str) {
+            let badge = match self
+                .physical_states
+                .get(&id(disk).unwrap_or_default())
+                .map(String::as_str)
+            {
                 Some("connected") => "✓ OS verified",
                 Some("offline") => "○ offline",
                 Some("conflict") => "! conflict",
@@ -1948,7 +1955,9 @@ impl App {
                 self.physical_request("physical_pair", Some(volume_id), Some(&candidate.id));
             if response["ok"] == true {
                 self.refresh_physical_presence();
-                self.status("Physical disk paired to live OS identity. Automatic reconnect checks enabled.");
+                self.status(
+                    "Physical disk paired to live OS identity. Automatic reconnect checks enabled.",
+                );
             } else {
                 self.status("Pairing refused: disk is already bound, ambiguous, or OS identity changed. Unpair explicitly to replace.");
             }
@@ -2006,7 +2015,11 @@ impl App {
                 &disk,
                 self.linked_mode(),
                 self.physical_states
-                    .get(&selected.and_then(|row| row["volume_id"].as_i64()).unwrap_or_default())
+                    .get(
+                        &selected
+                            .and_then(|row| row["volume_id"].as_i64())
+                            .unwrap_or_default(),
+                    )
                     .map(String::as_str)
                     .unwrap_or("unverified"),
             ),
@@ -2924,10 +2937,30 @@ pub fn run() {
             );
             let physical = CreatePopupMenu();
             if !physical.is_null() {
-                AppendMenuW(physical, MF_STRING, PHYSICAL_CHECK, wide("Recheck connected disks").as_ptr());
-                AppendMenuW(physical, MF_STRING, PHYSICAL_PAIR, wide("Pair selected catalog disk with OS volume...").as_ptr());
-                AppendMenuW(physical, MF_STRING, PHYSICAL_UNPAIR, wide("Clear physical pairing...").as_ptr());
-                AppendMenuW(menu, MF_POPUP, physical as usize, wide("Physical disks").as_ptr());
+                AppendMenuW(
+                    physical,
+                    MF_STRING,
+                    PHYSICAL_CHECK,
+                    wide("Recheck connected disks").as_ptr(),
+                );
+                AppendMenuW(
+                    physical,
+                    MF_STRING,
+                    PHYSICAL_PAIR,
+                    wide("Pair selected catalog disk with OS volume...").as_ptr(),
+                );
+                AppendMenuW(
+                    physical,
+                    MF_STRING,
+                    PHYSICAL_UNPAIR,
+                    wide("Clear physical pairing...").as_ptr(),
+                );
+                AppendMenuW(
+                    menu,
+                    MF_POPUP,
+                    physical as usize,
+                    wide("Physical disks").as_ptr(),
+                );
             }
             SetMenu(hwnd, menu);
             DrawMenuBar(hwnd);
