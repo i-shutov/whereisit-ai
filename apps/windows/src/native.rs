@@ -122,9 +122,11 @@ fn unique_pairable_mounts(volumes: &[MountedPhysicalVolume]) -> Vec<MountedPhysi
     for mount in volumes {
         *counts.entry(mount.id.as_str()).or_insert(0) += 1;
     }
-    volumes.iter()
+    volumes
+        .iter()
         .filter(|mount| counts.get(mount.id.as_str()) == Some(&1))
-        .cloned().collect()
+        .cloned()
+        .collect()
 }
 
 #[cfg(test)]
@@ -134,9 +136,18 @@ mod physical_mount_picker_tests {
     #[test]
     fn cloned_and_multi_mounted_identity_is_not_a_pairing_choice() {
         let mounts = vec![
-            MountedPhysicalVolume { id: "win:{aaaa}:11111111".into(), description: "first".into() },
-            MountedPhysicalVolume { id: "win:{aaaa}:11111111".into(), description: "clone".into() },
-            MountedPhysicalVolume { id: "win:{bbbb}:22222222".into(), description: "unique".into() },
+            MountedPhysicalVolume {
+                id: "win:{aaaa}:11111111".into(),
+                description: "first".into(),
+            },
+            MountedPhysicalVolume {
+                id: "win:{aaaa}:11111111".into(),
+                description: "clone".into(),
+            },
+            MountedPhysicalVolume {
+                id: "win:{bbbb}:22222222".into(),
+                description: "unique".into(),
+            },
         ];
         let offered = unique_pairable_mounts(&mounts);
         assert_eq!(offered.len(), 1);
