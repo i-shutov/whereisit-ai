@@ -1,3 +1,27 @@
+## UX9 — native offline USB pickup checklist (2026-11-02)
+
+In the SAME draft PR #57, a selected file's cross-disk name+size candidates now
+produce a locally copied **all-disks pickup checklist** on Win32 (button, View
+menu, Ctrl+Shift+P) and SwiftUI (button, Command-Shift-P). It lists the recorded
+file name and all per-disk candidate counts (not just the visible 250-row page),
+exact catalog IDs, owner-only sticker/shelf hints, historical labels and last
+OS-checked pairing states. Candidate pickers are now ordered by last verified
+connected, paired offline, unverified, identity conflict; within each category
+by metadata count descending and exact ID. Win32 maps sorted combo rows back
+to exact IDs even after live OS refresh; Mac uses the same order in accessible
+scrollable candidate buttons. No USB mount is inferred from a historical path
+or personal sticker. No actual file bytes or hashes have been compared; no
+automatic deletion; clipboard-only with no catalog or sidecar writes.
+Rust unit tests exercise duplicate labels, Cyrillic tags, failed/conflicted
+states, stable ID ordering and newline-resistant clipboard text; native source
+wiring regressions and [UX9 QA](docs/qa/UX9_PHYSICAL_PICKUP_LIST_20261102.md)
+cover keyboard and hardware checks. **Verify new exact-HEAD CI before claiming
+green.** The earlier real 44-disk CTF acceptance has not been re-run for this
+feature. Manual USB hardware, GUI, p95 and signing remain open. PR stays draft,
+no merge or stable release.
+
+---
+
 
 
 ## UX8 — candidate disk shelf/sticker retrieval + stale-response guard (2026-11-02)

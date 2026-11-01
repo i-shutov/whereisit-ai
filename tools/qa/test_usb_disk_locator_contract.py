@@ -185,7 +185,7 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn('linked["candidate_volume_id"]', WIN)
         self.assertIn('COPIES BY CATALOG DISK (metadata only)', WIN)
         self.assertIn('ShowWindow(self.help, help_visibility);', WIN)
-        self.assertIn('MoveWindow(self.copy_disk_filter, 8, 62, (w - 310).max(100), 240, 1);', WIN)
+        self.assertIn('MoveWindow(self.copy_disk_filter, 8, 62, (w - 466).max(100), 240, 1);', WIN)
         self.assertIn('struct CandidateDiskGroup: Decodable, Identifiable', MAC)
         self.assertIn('func focusCopyCandidates(on volume: Int64?)', MAC)
         self.assertIn('args["candidate_volume_id"] = copyFocusVolumeID', MAC)
@@ -287,6 +287,25 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("catalogIDs.contains(row.volume_id)", refresh_mac)
         self.assertIn("shelfLabelRequestGeneration += 1", MAC.split("func saveShelfLabel(", 1)[1].split("func physicalState(", 1)[0])
         self.assertIn("Content identity not verified.", MAC)
+
+    def test_ux9_physical_pickup_list_is_local_sorted_and_keyboard_accessible(self):
+        self.assertIn("const COPY_PICKUP_PLAN: usize = 137", WIN)
+        self.assertIn("fn ordered_candidate_disks<'a>(", WIN)
+        self.assertIn("fn candidate_disk_pickup_list(", WIN)
+        self.assertIn("pickup_list_prioritizes_confirmed_mounts_and_keeps_conflicts_explicit", WIN)
+        self.assertIn("COPY_PICKUP_PLAN => {", WIN)
+        self.assertIn("(*app).command(COPY_PICKUP_PLAN, 0)", WIN)
+        self.assertIn("SendMessageW(self.locator, WM_COPY, 0, 0)", WIN)
+        copy_action = WIN.split("COPY_PICKUP_PLAN => {", 1)[1].split("COPY_LOCATOR => {", 1)[0]
+        self.assertIn("self.update_disk_locator();", copy_action)
+        self.assertIn("ordered_candidate_disks(&self.copy_disk_groups, &self.physical_states)", WIN)
+        self.assertIn("var orderedCopyDiskGroups: [CandidateDiskGroup]", MAC)
+        self.assertIn("func copyPickupPlan()", MAC)
+        self.assertIn('Button("Copy pickup list") { model.copyPickupPlan() }', MAC)
+        self.assertIn('.keyboardShortcut("p", modifiers: [.command, .shift])', MAC)
+        self.assertIn("ForEach(model.orderedCopyDiskGroups)", MAC)
+        self.assertIn("Matching name+size never verifies file bytes or hashes; do NOT auto-delete.", WIN)
+        self.assertIn("Matching name+size never verifies file bytes or hashes; do NOT auto-delete.", MAC)
 
     def test_no_unverified_physical_drive_claims_in_locator(self):
         self.assertIn("Physical connection: NOT VERIFIED", WIN)

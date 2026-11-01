@@ -44,6 +44,7 @@ const PHYSICAL_UNPAIR: usize = 119;
 const SHELF_SAVE: usize = 133;
 const COPY_LOCATOR: usize = 135;
 const REVEAL_DISK: usize = 136;
+const COPY_PICKUP_PLAN: usize = 137;
 // Win32 GetDriveTypeW standard result codes; windows-sys 0.61 does not export these here.
 // Unknown/missing roots mean a potentially incomplete OS snapshot, never "offline".
 const DRIVE_UNKNOWN: u32 = 0;
@@ -487,6 +488,67 @@ fn candidate_disk_choice_caption(
     )
 }
 
+// Order the physical shortlist by last explicit OS pairing state, metadata
+// candidate count and exact disk ID. Neither shelf tags nor drive letters
+// are USB identity or proof of file contents.
+fn candidate_disk_priority(
+    group: &Value,
+    states: &HashMap<i64, String>,
+) -> (u8, std::cmp::Reverse<u64>, i64) {
+    let disk = group["volume_id"].as_i64().unwrap_or_default();
+    let rank = match states.get(&disk).map(String::as_str) {
+        Some("connected") => 0,
+        Some("offline") => 1,
+        Some("conflict") => 3,
+        _ => 2,
+    };
+    (rank, std::cmp::Reverse(group["count"].as_u64().unwrap_or(0)), disk)
+}
+
+fn ordered_candidate_disks<'a>(
+    groups: &'a [Value],
+    states: &HashMap<i64, String>,
+) -> Vec<&'a Value> {
+    let mut sorted: Vec<&Value> = groups.iter().collect();
+    sorted.sort_by_key(|group| candidate_disk_priority(group, states));
+    sorted
+}
+
+// Local clipboard-only retrieval list. Status is from the last complete
+// independent OS check, not a claim that any candidate bytes still exist.
+fn candidate_disk_pickup_list(
+    file_name: &str,
+    groups: &[Value],
+    shelves: &HashMap<i64, String>,
+    states: &HashMap<i64, String>,
+) -> Option<String> {
+    if groups.is_empty() {
+        return None;
+    }
+    let clean = |text: &str| text.replace(['\r', '\n'], " ");
+    let total: u64 = groups.iter().filter_map(|g| g["count"].as_u64()).sum();
+    let mut lines = vec![
+        "WhereIsIt AI — offline USB pickup list".to_owned(),
+        format!("File (recorded catalog name): {}", clean(file_name)),
+        format!(
+            "{total} name+size metadata candidates on {} catalog disks; selected file included.",
+            groups.len()
+        ),
+        "Order: last OS pairing check, then candidate count; exact disk IDs are authoritative.".to_owned(),
+    ];
+    for (index, group) in ordered_candidate_disks(groups, states).iter().enumerate() {
+        lines.push(format!(
+            "{}. {}",
+            index + 1,
+            clean(&candidate_disk_choice_caption(group, shelves, states))
+        ));
+    }
+    lines.push("Last OS probe may be stale; recheck the actual physical disk before connecting.".to_owned());
+    lines.push("Sticker/shelf is an owner note, NOT USB identity. Recorded paths are historical.".to_owned());
+    lines.push("Matching name+size never verifies file bytes or hashes; do NOT auto-delete.".to_owned());
+    Some(lines.join("\r\n"))
+}
+
 // Multiple observed candidate volumes require explicit human selection.
 // Repeated/corrupt group IDs are conservatively treated as ambiguous.
 fn sole_connected_candidate_disk(groups: &[Value], states: &HashMap<i64, String>) -> Option<i64> {
@@ -570,6 +632,35 @@ mod verified_copy_focus_tests {
         let missing = candidate_disk_choice_caption(&other, &tags, &HashMap::new());
         assert!(missing.starts_with("#142 • no sticker tag • Archive A"));
         assert!(!missing.contains("Полка Д"));
+    }
+
+    #[test]
+    fn pickup_list_prioritizes_confirmed_mounts_and_keeps_conflicts_explicit() {
+        let groups = vec![
+            json!({"volume_id":142,"label":"Same title","count":5}),
+            json!({"volume_id":42,"label":"Same title","count":1}),
+            json!({"volume_id":7,"label":"Other","count":3}),
+            json!({"volume_id":44,"label":"Conflicted","count":20}),
+        ];
+        let tags = HashMap::from([(42, "Полка Д".to_owned())]);
+        let states = HashMap::from([
+            (42, "connected".to_owned()),
+            (7, "offline".to_owned()),
+            (44, "conflict".to_owned()),
+        ]);
+        let plan = super::candidate_disk_pickup_list(
+            "Movie\r\nspoof.mkv", &groups, &tags, &states
+        ).unwrap();
+        let positions = [42, 7, 142, 44]
+            .map(|disk| plan.find(&format!("#{disk} •")).unwrap());
+        assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(plan.contains("#42 • sticker: Полка Д • Same title"));
+        assert!(plan.contains("#142 • no sticker tag • Same title"));
+        assert!(plan.contains("#44 • no sticker tag • Conflicted • 20 metadata candidates • identity conflict"));
+        assert!(plan.contains("Movie  spoof.mkv"));
+        assert!(!plan.contains("Movie\r\nspoof.mkv"));
+        assert!(plan.contains("do NOT auto-delete"));
+        assert!(super::candidate_disk_pickup_list("x", &[], &tags, &states).is_none());
     }
 
     #[test]
@@ -1822,6 +1913,7 @@ struct App {
     categories: Vec<Value>,
     duplicates: bool,
     copy_source: Option<i64>,
+    copy_source_name: Option<String>,
     copy_focus_volume_id: Option<i64>,
     copy_disk_groups: Vec<Value>,
     copy_return: Option<CopyReturn>,
@@ -1885,6 +1977,7 @@ impl App {
             categories: vec![],
             duplicates: false,
             copy_source: None,
+            copy_source_name: None,
             copy_focus_volume_id: None,
             copy_disk_groups: vec![],
             copy_return: None,
@@ -2008,6 +2101,7 @@ impl App {
         self.offset = 0;
         self.duplicates = false;
         self.copy_source = None;
+        self.copy_source_name = None;
         self.copy_return = None;
         self.text(self.search, "");
         self.status("Opening catalog…");
@@ -2801,7 +2895,7 @@ impl App {
             0,
             wide(&caption).as_ptr() as isize,
         );
-        for group in &self.copy_disk_groups {
+        for group in ordered_candidate_disks(&self.copy_disk_groups, &self.physical_states) {
             let caption =
                 candidate_disk_choice_caption(group, &self.shelf_labels, &self.physical_states);
             SendMessageW(
@@ -2814,7 +2908,7 @@ impl App {
         let selection = self
             .copy_focus_volume_id
             .and_then(|focused| {
-                self.copy_disk_groups
+                ordered_candidate_disks(&self.copy_disk_groups, &self.physical_states)
                     .iter()
                     .position(|group| group["volume_id"].as_i64() == Some(focused))
             })
@@ -2863,21 +2957,15 @@ impl App {
 
         if self.copy_source.is_some() && !self.copy_disk_groups.is_empty() {
             inspector.push_str("\r\n\r\nCOPIES BY CATALOG DISK (metadata only)");
-            for group in &self.copy_disk_groups {
-                let label = string(group, "label").replace(['\r', '\n'], " ");
-                let count = group["count"].as_u64().unwrap_or(0);
+            for group in ordered_candidate_disks(&self.copy_disk_groups, &self.physical_states) {
                 let mark = if group["volume_id"].as_i64() == self.copy_focus_volume_id {
                     " [FILTERED]"
                 } else {
                     ""
                 };
-                let badge = candidate_mount_badge(
-                    group["volume_id"]
-                        .as_i64()
-                        .and_then(|volume| self.physical_states.get(&volume))
-                        .map(String::as_str),
-                );
-                inspector.push_str(&format!("\r\n{label}: {count} • {badge}{mark}"));
+                let caption =
+                    candidate_disk_choice_caption(group, &self.shelf_labels, &self.physical_states);
+                inspector.push_str(&format!("\r\n{caption}{mark}"));
             }
         }
         if self.copy_source.is_some() {
@@ -3067,6 +3155,7 @@ impl App {
             });
         }
         self.copy_source = Some(source);
+        self.copy_source_name = Some(string(entry, "name"));
         self.copy_focus_volume_id = None;
         self.copy_disk_groups.clear();
         self.populate_candidate_disk_picker();
@@ -3208,7 +3297,7 @@ impl App {
                 self.copy_focus_volume_id = if selected == 0 {
                     None
                 } else {
-                    self.copy_disk_groups
+                    ordered_candidate_disks(&self.copy_disk_groups, &self.physical_states)
                         .get(selected as usize - 1)
                         .and_then(|group| group["volume_id"].as_i64())
                 };
@@ -3217,6 +3306,7 @@ impl App {
             }
             DISKS if notification == LBN_SELCHANGE as usize => {
                 self.copy_source = None;
+                self.copy_source_name = None;
                 self.copy_return = None;
                 let index = SendMessageW(self.disks, LB_GETCURSEL, 0, 0);
                 if index < 0 {
@@ -3243,6 +3333,7 @@ impl App {
                     return;
                 }
                 self.copy_source = None;
+                self.copy_source_name = None;
                 self.copy_return = None;
                 let len = GetWindowTextLengthW(self.search);
                 let mut text = vec![0u16; len as usize + 1];
@@ -3267,6 +3358,7 @@ impl App {
             BACK => {
                 if let Some(context) = self.copy_return.take() {
                     self.copy_source = None;
+                    self.copy_source_name = None;
                     self.volume = context.volume;
                     self.stack = context.stack;
                     self.query = context.query;
@@ -3310,6 +3402,27 @@ impl App {
                 self.status("Showing selected file's exact disk in register. Search scope and OS pairing unchanged; click disk to browse.");
             }
             COPY_CONNECTED => self.focus_sole_connected_copy(),
+            COPY_PICKUP_PLAN => {
+                let Some(plan) = self.copy_source_name.as_deref().and_then(|name| {
+                    candidate_disk_pickup_list(
+                        name,
+                        &self.copy_disk_groups,
+                        &self.shelf_labels,
+                        &self.physical_states,
+                    )
+                }) else {
+                    self.status("Find copies and wait for catalogued candidate disks first.");
+                    return;
+                };
+                // Existing native EDIT is a transient clipboard source; restore
+                // the live inspector immediately, without disk/catalog writes.
+                self.text(self.locator, &plan);
+                SendMessageW(self.locator, EM_SETSEL, 0, -1);
+                SendMessageW(self.locator, WM_COPY, 0, 0);
+                SendMessageW(self.locator, EM_SETSEL, 0, 0);
+                self.update_disk_locator();
+                self.status("Disk pickup checklist copied locally. OS badges are last observations; file bytes unverified.");
+            }
             COPY_LOCATOR => {
                 let row = SendMessageW(
                     self.files,
@@ -3534,7 +3647,7 @@ impl App {
         MoveWindow(self.duplicate_mode, w - 312, 34, 136, 200, 1);
         // Candidate focus occupies the query-help row only in copy mode.
         // Search syntax help is hidden then; Notes stays on the right.
-        MoveWindow(self.copy_disk_filter, 8, 62, (w - 310).max(100), 240, 1);
+        MoveWindow(self.copy_disk_filter, 8, 62, (w - 466).max(100), 240, 1);
         for (i, hwnd) in &self.buttons {
             if *i == FIND {
                 MoveWindow(*hwnd, w - 604, 34, 104, 24, 1);
@@ -3580,6 +3693,13 @@ impl App {
                 }
                 ANNOTATION_PREVIEW => {
                     MoveWindow(*control, w - 144, 62, 136, 23, 1);
+                }
+                COPY_PICKUP_PLAN => {
+                    MoveWindow(*control, w - 452, 62, 148, 23, 1);
+                    ShowWindow(
+                        *control,
+                        if self.copy_source.is_some() { SW_SHOW } else { SW_HIDE },
+                    );
                 }
                 COPY_CONNECTED => {
                     MoveWindow(*control, w - 296, 62, 140, 23, 1);
@@ -3767,6 +3887,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 (REVEAL_DISK, "&Show disk"),
                 (COPY_LOCATOR, "Copy &locator text"),
                 (COPY_CONNECTED, "&Verified copy"),
+                (COPY_PICKUP_PLAN, "Copy &pickup list"),
                 (PHYSICAL_CHECK, "Refresh &USB state"),
                 (PHYSICAL_PAIR, "&Pair physical disk…"),
                 (PHYSICAL_UNPAIR, "Unpair disk"),
@@ -4193,6 +4314,12 @@ pub fn run() {
                     COPY_CONNECTED,
                     wide("Focus sole OS-verified copy disk (Ctrl+G)").as_ptr(),
                 );
+                AppendMenuW(
+                    view,
+                    MF_STRING,
+                    COPY_PICKUP_PLAN,
+                    wide("Copy all candidate disks pickup list\tCtrl+Shift+P").as_ptr(),
+                );
                 AppendMenuW(menu, MF_POPUP, view as usize, wide("View").as_ptr());
             }
             SetMenu(hwnd, menu);
@@ -4235,6 +4362,16 @@ pub fn run() {
                 && message.wParam == b'C' as usize
             {
                 (*app).command(COPY_LOCATOR, 0);
+                continue;
+            }
+            // Ctrl+Shift+P copies only local catalog metadata, never live
+            // file bytes, and never proposes duplicate auto-deletion.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && GetKeyState(VK_SHIFT as i32) < 0
+                && message.wParam == b'P' as usize
+            {
+                (*app).command(COPY_PICKUP_PLAN, 0);
                 continue;
             }
             // Ctrl+L filters the disk register, including private shelf tags,

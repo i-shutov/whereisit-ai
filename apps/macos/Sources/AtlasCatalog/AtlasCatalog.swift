@@ -497,6 +497,54 @@ private struct CopyReturnContext {
         let tag = shelfLabel(group.volume_id)
         return "Show \(group.count) name and size metadata candidates on catalog disk number \(group.volume_id), \(group.label). Owner sticker or shelf: \(tag.isEmpty ? "not assigned" : tag). \(candidateCopyOSCaption(group.volume_id)). Content identity not verified."
     }
+    // Sort copies by independently checked OS pairing state. The private
+    // shelf label is a retrieval hint, never evidence of mounted file bytes.
+    var orderedCopyDiskGroups: [CandidateDiskGroup] {
+        func rank(_ disk: Int64) -> Int {
+            switch physicalState(disk) {
+            case "connected": return 0
+            case "offline": return 1
+            case "conflict": return 3
+            default: return 2
+            }
+        }
+        return copyDiskGroups.sorted {
+            let left = rank($0.volume_id)
+            let right = rank($1.volume_id)
+            if left != right { return left < right }
+            if $0.count != $1.count { return $0.count > $1.count }
+            return $0.volume_id < $1.volume_id
+        }
+    }
+    func copyPickupPlan() {
+        guard copySourceID != nil, let file = copySourceName,
+              !copyDiskGroups.isEmpty else {
+            status = "Find copies and wait for catalogued candidate disks first."
+            return
+        }
+        let clean: (String) -> String = {
+            $0.replacingOccurrences(of: "\r", with: " ").replacingOccurrences(of: "\n", with: " ")
+        }
+        let total = copyDiskGroups.reduce(0) { $0 + $1.count }
+        let header = [
+            "WhereIsIt AI — offline USB pickup list",
+            "File (recorded catalog name): \(clean(file))",
+            "\(total) name+size metadata candidates on \(copyDiskGroups.count) catalog disks; selected file included.",
+            "Order: last OS pairing check, then candidate count; exact disk IDs are authoritative.",
+        ]
+        let rows = orderedCopyDiskGroups.enumerated().map { index, group in
+            "\(index + 1). \(clean(candidateCopyDiskCaption(group)))"
+        }
+        let caution = [
+            "Last OS probe may be stale; recheck the actual physical disk before connecting.",
+            "Sticker/shelf is an owner note, NOT USB identity. Recorded paths are historical.",
+            "Matching name+size never verifies file bytes or hashes; do NOT auto-delete.",
+        ]
+        let text = (header + rows + caution).joined(separator: "\n")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        status = "Disk pickup checklist copied locally. OS badges are last observations; file bytes unverified."
+    }
     var soleConnectedCandidateDisk: Int64? {
         let matches = copyDiskGroups.filter { $0.count > 0 && physicalState($0.volume_id) == "connected" }
         return matches.count == 1 ? matches.first?.volume_id : nil
@@ -1537,6 +1585,10 @@ private struct CopyReturnContext {
                         .font(.caption.weight(.semibold)).lineLimit(1)
                     Text("Name + size only; contents not compared").font(.caption).foregroundStyle(.secondary)
                     Spacer(minLength: 6)
+                    Button("Copy pickup list") { model.copyPickupPlan() }
+                        .keyboardShortcut("p", modifiers: [.command, .shift])
+                        .accessibilityLabel("Copy catalogued candidate disk IDs, shelf tags, counts and last OS states")
+                        .help("Local checklist; OS status does not verify file bytes (Command-Shift-P)")
                     Button("Use verified mounted disk") { model.focusSoleConnectedCopy() }
                         .keyboardShortcut("g", modifiers: [.command])
                         .help("Fresh OS check, then focus the sole explicitly paired and observed candidate disk (Command-G)")
@@ -1549,7 +1601,7 @@ private struct CopyReturnContext {
                             model.focusCopyCandidates(on: nil)
                         }
                         .accessibilityLabel("Show all name and size candidate copies across catalogued disks")
-                        ForEach(model.copyDiskGroups) { group in
+                        ForEach(model.orderedCopyDiskGroups) { group in
                             Button(model.candidateCopyDiskCaption(group)) {
                                 model.focusCopyCandidates(on: group.volume_id)
                             }

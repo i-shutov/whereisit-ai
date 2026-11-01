@@ -227,3 +227,7 @@ Manual hardware and visual acceptance remains outstanding; instructions:
 [UX8 QA](qa/UX8_CANDIDATE_DISK_SHELF_LOCATOR_20261102.md).
 The **new exact-HEAD CI results must be checked** before declaring this block
 green. PR stays draft/unmerged; no stable 1.0, no private data in git.
+
+## UX9 — offline physical disk pickup checklist (2026-11-02)
+
+Native Windows and macOS can locally copy a physical retrieval shortlist after **Find copies**. This uses complete per-catalog-disk name+size metadata candidate counts, not the loaded page, and prints exact disk IDs plus private user shelf tags and explicitly last-checked OS pairing states. Windows Ctrl+Shift+P and macOS Command-Shift-P accompany visible actions. Connected candidates appear first only after independent OS pairing/status verification; offline, unverified and conflicting identity states are distinct. Order among equal states is by descending count and exact numeric ID. The text cannot establish current file presence, byte/hash equality or permission to delete; recorded paths and tags are not OS hardware evidence. Recheck external CTF generation on each actual service page read. No CTF, cache, private notes or source bytes are written by copying. See [UX9 QA](qa/UX9_PHYSICAL_PICKUP_LIST_20261102.md); CI-only evidence does not close real hardware/GUI/release gates.
