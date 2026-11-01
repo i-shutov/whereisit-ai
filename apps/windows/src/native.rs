@@ -31,6 +31,7 @@ const PREV: usize = 108;
 const NEXT: usize = 109;
 const CANCEL: usize = 110;
 const DUPLICATES: usize = 111;
+const FILE_COPIES: usize = 116;
 const DUP_MODE: usize = 112;
 const EXPORT_FORMAT: usize = 113;
 const LINK_CTF: usize = 114;
@@ -161,7 +162,7 @@ fn disk_locator_text(entry: Option<&Value>, disk_label: &str, linked_ctf: bool) 
         "SQLite catalog snapshot"
     };
     format!(
-        "DISK TO LOCATE\r\n\r\n{disk_label}\r\nCatalog disk ID: {disk_id}\r\n\r\nPhysical connection: NOT VERIFIED\r\nThe catalog does not prove this USB disk is currently mounted.\r\n\r\nFILE\r\n{file_name}\r\n\r\nRECORDED LOCATION\r\n{recorded_path}\r\n\r\nSize: {size}\r\nKind: {kind}\r\nCopies: {candidates}\r\nSource: {mode}\r\n{description_details}\r\nSelect this text and press Ctrl+C to copy a disk label or path."
+        "DISK TO LOCATE\r\n\r\n{disk_label}\r\nCatalog disk ID: {disk_id}\r\n\r\nPhysical connection: NOT VERIFIED\r\nThe catalog does not prove this USB disk is currently mounted.\r\n\r\nFILE\r\n{file_name}\r\n\r\nRECORDED LOCATION\r\n{recorded_path}\r\n\r\nSize: {size}\r\nKind: {kind}\r\nCopies: {candidates}\r\nSource: {mode}\r\n{description_details}\r\nSelect text and press Ctrl+C to copy. Ctrl+D finds catalogued name+size copies."
     )
 }
 
@@ -1083,6 +1084,13 @@ struct Reply {
     annotation_session: u64,
     result: Value,
 }
+struct CopyReturn {
+    volume: Option<i64>,
+    stack: Vec<(Option<i64>, String)>,
+    query: String,
+    duplicates: bool,
+    offset: usize,
+}
 struct App {
     hwnd: HWND,
     disks: HWND,
@@ -1098,6 +1106,8 @@ struct App {
     category_name: HWND,
     categories: Vec<Value>,
     duplicates: bool,
+    copy_source: Option<i64>,
+    copy_return: Option<CopyReturn>,
     applied_duplicate_mode: &'static str,
     db: String,
     linked_ctf: Option<String>,
@@ -1140,6 +1150,8 @@ impl App {
             category_name: null_mut(),
             categories: vec![],
             duplicates: false,
+            copy_source: None,
+            copy_return: None,
             applied_duplicate_mode: "name_size",
             db: std::env::args().nth(1).unwrap_or_else(default_db),
             linked_ctf: None,
@@ -1250,6 +1262,8 @@ impl App {
         self.query.clear();
         self.offset = 0;
         self.duplicates = false;
+        self.copy_source = None;
+        self.copy_return = None;
         self.text(self.search, "");
         self.status("Opening catalog…");
         self.call("init", json!({"op":"init"}));
@@ -1269,7 +1283,9 @@ impl App {
     }
     unsafe fn load(&mut self) {
         self.generation += 1;
-        self.status(if self.duplicates {
+        self.status(if self.copy_source.is_some() {
+            "Comparing exact name + size metadata across all catalogued disks…"
+        } else if self.duplicates {
             "Finding metadata duplicate candidates…"
         } else {
             "Loading…"
@@ -1279,13 +1295,27 @@ impl App {
             &format!(
                 "{}  —  {}",
                 self.linked_ctf.as_deref().unwrap_or(&self.db),
-                if self.query.is_empty() {
+                if self.copy_source.is_some() {
+                    "Cross-disk metadata candidates (not content-verified)"
+                } else if self.query.is_empty() {
                     self.stack.last().map(|p| p.1.as_str()).unwrap_or("/")
                 } else {
                     "Search results"
                 }
             ),
         );
+        if let Some(source) = self.copy_source {
+            if let Some(mut linked) = self.linked_request("ctf_copy_candidates_pinned") {
+                linked["entry_id"] = json!(source);
+                linked["offset"] = json!(self.offset);
+                linked["limit"] = json!(LIMIT);
+                self.call("rows", linked);
+            } else {
+                self.call("rows", json!({"op":"copy_candidates","entry_id":source,
+                    "offset":self.offset,"limit":LIMIT}));
+            }
+            return;
+        }
         if let Some(mut linked) = self.linked_request(if self.duplicates {
             "ctf_duplicates_pinned"
         } else if !self.query.is_empty() {
@@ -1746,7 +1776,9 @@ impl App {
             } else {
                 " items".into()
             },
-            if self.duplicates {
+            if self.copy_source.is_some() {
+                " • name+size metadata only; no contents compared"
+            } else if self.duplicates {
                 " • metadata candidates; content not verified"
             } else {
                 ""
@@ -1757,6 +1789,31 @@ impl App {
                 ""
             }
         ));
+    }
+    unsafe fn show_copies_of_selected(&mut self) {
+        let index = SendMessageW(self.files, LVM_GETNEXTITEM, usize::MAX, LVNI_SELECTED as isize);
+        let selected = if index >= 0 { self.entries.get(index as usize) } else { None };
+        let Some(entry) = selected else {
+            self.status("Select a file to compare its catalogued metadata across disks.");
+            return;
+        };
+        if string(entry, "kind") != "file" || entry["size"].as_u64().is_none() {
+            self.status("Only file entries with recorded byte size can be compared.");
+            return;
+        }
+        let Some(source) = id(entry) else { return; };
+        if self.copy_source.is_none() {
+            self.copy_return = Some(CopyReturn {
+                volume: self.volume, stack: self.stack.clone(), query: self.query.clone(),
+                duplicates: self.duplicates, offset: self.offset,
+            });
+        }
+        self.copy_source = Some(source);
+        self.volume = None;
+        self.offset = 0;
+        self.stack = vec![(None, "/".into())];
+        SendMessageW(self.disks, LB_SETCURSEL, 0, 0);
+        self.load();
     }
     unsafe fn activate(&mut self) {
         let selected = SendMessageW(
@@ -1873,6 +1930,8 @@ impl App {
                 }
             }
             DISKS if notification == LBN_SELCHANGE as usize => {
+                self.copy_source = None;
+                self.copy_return = None;
                 let index = SendMessageW(self.disks, LB_GETCURSEL, 0, 0);
                 if index < 0 {
                     return;
@@ -1890,6 +1949,8 @@ impl App {
                 self.load();
             }
             FIND | DUPLICATES => {
+                self.copy_source = None;
+                self.copy_return = None;
                 let len = GetWindowTextLengthW(self.search);
                 let mut text = vec![0u16; len as usize + 1];
                 GetWindowTextW(self.search, text.as_mut_ptr(), len + 1);
@@ -1904,6 +1965,21 @@ impl App {
                 self.load();
             }
             BACK => {
+                if let Some(context) = self.copy_return.take() {
+                    self.copy_source = None;
+                    self.volume = context.volume;
+                    self.stack = context.stack;
+                    self.query = context.query;
+                    self.duplicates = context.duplicates;
+                    self.offset = context.offset;
+                    self.text(self.search, &self.query);
+                    let index = self.volumes.iter()
+                        .position(|v| id(v) == self.volume)
+                        .map(|i| i + 1).unwrap_or(0);
+                    SendMessageW(self.disks, LB_SETCURSEL, index, 0);
+                    self.load();
+                    return;
+                }
                 if !self.query.is_empty() || self.duplicates {
                     self.query.clear();
                     self.duplicates = false;
@@ -1914,6 +1990,7 @@ impl App {
                 self.offset = 0;
                 self.load();
             }
+            FILE_COPIES => self.show_copies_of_selected(),
             PREV => {
                 self.offset = self.offset.saturating_sub(LIMIT);
                 self.load();
@@ -2139,12 +2216,20 @@ impl App {
                 214 + file_width + 8,
                 106,
                 locator_width,
-                (h - 146).max(60),
+                (h - 194).max(60),
                 1,
             );
             ShowWindow(self.locator, SW_SHOW);
         } else {
             ShowWindow(self.locator, SW_HIDE);
+        }
+        if let Some((_, button)) = self.buttons.iter().find(|(id, _)| *id == FILE_COPIES) {
+            if locator_width > 0 {
+                MoveWindow(*button, 214 + file_width + 8, h - 78, locator_width, 26, 1);
+                ShowWindow(*button, SW_SHOW);
+            } else {
+                ShowWindow(*button, SW_HIDE);
+            }
         }
         MoveWindow(self.status, 8, h - 32, (w - 216).max(50), 24, 1);
     }
@@ -2259,6 +2344,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 (PREV, "&Previous"),
                 (NEXT, "Ne&xt"),
                 (DUPLICATES, "&Duplicates"),
+                (FILE_COPIES, "&Find copies on disks"),
                 (CATEGORY_FILTER, "Filter category"),
                 (CATEGORY_ASSIGN, "Assign category"),
                 (CATEGORY_CREATE, "+"),
@@ -2522,6 +2608,14 @@ pub fn run() {
             {
                 SetFocus((*app).search);
                 SendMessageW((*app).search, EM_SETSEL, 0, -1);
+                continue;
+            }
+            // Ctrl+D compares selected file metadata across catalogued disks.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && message.wParam == b'D' as usize
+            {
+                (*app).command(FILE_COPIES, 0);
                 continue;
             }
             if message.message == WM_KEYDOWN
