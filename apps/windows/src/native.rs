@@ -104,7 +104,8 @@ fn disk_locator_text(entry: Option<&Value>, disk_label: &str, linked_ctf: bool) 
     let file_name = string(entry, "name");
     let recorded_path = string(entry, "relative_path");
     let size = display_size(entry["size"].as_u64());
-    let candidates = entry["duplicate_count"].as_u64()
+    let candidates = entry["duplicate_count"]
+        .as_u64()
         .map(|n| format!("{n} metadata candidates (not content-verified)"))
         .unwrap_or_else(|| "Not calculated".into());
     let mode = if linked_ctf {
@@ -1631,7 +1632,12 @@ impl App {
             .unwrap_or_else(|| format!("Disk #{volume_id}"))
     }
     unsafe fn update_disk_locator(&self) {
-        let index = SendMessageW(self.files, LVM_GETNEXTITEM, usize::MAX, LVNI_SELECTED as isize);
+        let index = SendMessageW(
+            self.files,
+            LVM_GETNEXTITEM,
+            usize::MAX,
+            LVNI_SELECTED as isize,
+        );
         let selected = if index >= 0 {
             self.entries.get(index as usize)
         } else {
@@ -1640,7 +1646,10 @@ impl App {
         let disk = selected
             .map(|row| self.volume_label(row["volume_id"].as_i64()))
             .unwrap_or_default();
-        self.text(self.locator, &disk_locator_text(selected, &disk, self.linked_mode()));
+        self.text(
+            self.locator,
+            &disk_locator_text(selected, &disk, self.linked_mode()),
+        );
     }
     unsafe fn render_rows(&self) {
         SendMessageW(self.files, LVM_DELETEALLITEMS, 0, 0);
@@ -2077,7 +2086,14 @@ impl App {
         // Keep the legacy full-width table on narrow screens; the locator
         // becomes a third pane only when it does not obscure the file list.
         let locator_width = if w >= 1120 { 282 } else { 0 };
-        let file_width = (w - 222 - if locator_width > 0 { locator_width + 8 } else { 0 }).max(100);
+        let file_width = (w
+            - 222
+            - if locator_width > 0 {
+                locator_width + 8
+            } else {
+                0
+            })
+        .max(100);
         MoveWindow(self.files, 214, 106, file_width, (h - 146).max(60), 1);
         if locator_width > 0 {
             MoveWindow(
@@ -2326,8 +2342,12 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 hwnd,
                 "EDIT",
                 "",
-                WS_TABSTOP | WS_BORDER | WS_VSCROLL
-                    | ES_MULTILINE as u32 | ES_AUTOVSCROLL as u32 | ES_READONLY as u32,
+                WS_TABSTOP
+                    | WS_BORDER
+                    | WS_VSCROLL
+                    | ES_MULTILINE as u32
+                    | ES_AUTOVSCROLL as u32
+                    | ES_READONLY as u32,
                 143,
             );
             SetTimer(hwnd, 1, 80, None);
