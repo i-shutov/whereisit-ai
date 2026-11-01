@@ -96,6 +96,46 @@ fn display_size(value: Option<u64>) -> String {
 // A catalog entry is not proof that the original USB disk is connected.
 // This pure formatter is deliberately shared by the selection change path
 // and unit tests; it never accesses the filesystem or exposes private data.
+
+// Preserve readable columns while displaying the USB disk locator at standard
+// laptop resolutions. The full recorded path remains in the inspector when its
+// redundant table column is collapsed.
+fn explorer_geometry(window_width: i32) -> (i32, i32, i32) {
+    let locator_width = if window_width >= 1176 { 282 } else { 0 };
+    let locator_gap = if locator_width > 0 {
+        locator_width + 8
+    } else {
+        0
+    };
+    let file_width = (window_width - 222 - locator_gap).max(100);
+    let path_column_width = if locator_width == 0 || file_width >= 840 {
+        185
+    } else {
+        0
+    };
+    (locator_width, file_width, path_column_width)
+}
+
+#[cfg(test)]
+mod explorer_geometry_tests {
+    use super::explorer_geometry;
+
+    #[test]
+    fn two_column_window_keeps_browsing_path_in_table() {
+        assert_eq!(explorer_geometry(1100), (0, 878, 185));
+    }
+
+    #[test]
+    fn standard_laptop_window_prioritizes_name_disk_and_locator() {
+        assert_eq!(explorer_geometry(1180), (282, 668, 0));
+    }
+
+    #[test]
+    fn 1366px_window_shows_selected_disk_and_recorded_path() {
+        assert_eq!(explorer_geometry(1366), (282, 854, 185));
+    }
+}
+
 fn disk_locator_text(entry: Option<&Value>, disk_label: &str, linked_ctf: bool) -> String {
     let Some(entry) = entry else {
         return "DISK LOCATOR\r\n\r\nSelect a file in the result list to locate its catalogued USB disk.\r\n\r\nSearch spans all catalogued disks when \"All disks\" is selected.".into();
@@ -2090,16 +2130,9 @@ impl App {
         }
         // Keep the legacy full-width table on narrow screens; the locator
         // becomes a third pane only when it does not obscure the file list.
-        let locator_width = if w >= 1120 { 282 } else { 0 };
-        let file_width = (w
-            - 222
-            - if locator_width > 0 {
-                locator_width + 8
-            } else {
-                0
-            })
-        .max(100);
+        let (locator_width, file_width, path_width) = explorer_geometry(w);
         MoveWindow(self.files, 214, 106, file_width, (h - 146).max(60), 1);
+        SendMessageW(self.files, LVM_SETCOLUMNWIDTH, 5, path_width as isize);
         if locator_width > 0 {
             MoveWindow(
                 self.locator,
@@ -2322,12 +2355,12 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 (LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP) as isize,
             );
             for (i, (name, width)) in [
-                ("Name", 235),
-                ("Disk", 130),
-                ("Size", 95),
-                ("Modified", 130),
-                ("Candidates", 65),
-                ("Path", 250),
+                ("Name", 230),
+                ("Disk", 120),
+                ("Size", 90),
+                ("Modified", 120),
+                ("Candidates", 70),
+                ("Path", 185),
             ]
             .iter()
             .enumerate()
@@ -2479,8 +2512,18 @@ pub fn run() {
             SetMenu(hwnd, menu);
             DrawMenuBar(hwnd);
         }
+        SetFocus((*app).search);
         let mut message: MSG = std::mem::zeroed();
         while GetMessageW(&mut message, null_mut(), 0, 0) > 0 {
+            // Ctrl+F focuses global search from disk list, file results and inspector.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && message.wParam == b'F' as usize
+            {
+                SetFocus((*app).search);
+                SendMessageW((*app).search, EM_SETSEL, 0, -1);
+                continue;
+            }
             if message.message == WM_KEYDOWN
                 && message.wParam == VK_RETURN as usize
                 && GetFocus() == (*app).search
