@@ -583,7 +583,8 @@ fn candidate_page_manifest(
         "WhereIsIt AI — recorded candidate paths, CURRENT PAGE ONLY".to_owned(),
         format!("File (recorded catalog name): {}", clean(file_name)),
         format!("Scope: {scope}; loaded rows {first}–{last} of {total}."),
-        "The clipboard contains only this loaded page (maximum 250 records), not all copies.".to_owned(),
+        "The clipboard contains only this loaded page (maximum 250 records), not all copies."
+            .to_owned(),
     ];
     for (index, entry) in entries.iter().take(LIMIT).enumerate() {
         let disk = entry["volume_id"]
@@ -603,9 +604,14 @@ fn candidate_page_manifest(
             size
         ));
     }
-    lines.push("Paths are HISTORICAL catalog metadata, not current mounted file locations.".to_owned());
+    lines.push(
+        "Paths are HISTORICAL catalog metadata, not current mounted file locations.".to_owned(),
+    );
     lines.push("Linked CTF SHA was checked when the page loaded; copying does not recheck source generation.".to_owned());
-    lines.push("Matching filename+size does NOT verify file contents or hashes; never auto-delete.".to_owned());
+    lines.push(
+        "Matching filename+size does NOT verify file contents or hashes; never auto-delete."
+            .to_owned(),
+    );
     lines.join("\r\n")
 }
 
@@ -2226,6 +2232,7 @@ impl App {
         self.total_known = false;
         self.has_more = false;
         SendMessageW(self.files, LVM_DELETEALLITEMS, 0, 0);
+        self.update_disk_locator();
         let (copy_visibility, help_visibility) = if self.copy_source.is_some() {
             (SW_SHOW, SW_HIDE)
         } else {
@@ -3840,7 +3847,11 @@ impl App {
                     MoveWindow(*control, w - 616, 62, 146, 23, 1);
                     ShowWindow(
                         *control,
-                        if self.copy_source.is_some() { SW_SHOW } else { SW_HIDE },
+                        if self.copy_source.is_some() {
+                            SW_SHOW
+                        } else {
+                            SW_HIDE
+                        },
                     );
                 }
                 COPY_PICKUP_PLAN => {
