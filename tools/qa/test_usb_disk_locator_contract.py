@@ -10,6 +10,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 WIN = (ROOT / "apps/windows/src/native.rs").read_text(encoding="utf-8")
 MAC = (ROOT / "apps/macos/Sources/AtlasCatalog/AtlasCatalog.swift").read_text(encoding="utf-8")
+SERVICE = (ROOT / "crates/atlas-service/src/lib.rs").read_text(encoding="utf-8")
+COPIES = (ROOT / "crates/atlas-service/src/copy_candidates.rs").read_text(encoding="utf-8")
 
 
 class DiskLocatorWiringTests(unittest.TestCase):
@@ -42,6 +44,21 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn(".focused($searchFieldFocused)", MAC)
         self.assertIn('Button("All disks") { model.searchAcrossAllDisks() }', MAC)
         self.assertIn('.keyboardShortcut("f", modifiers: [.command])', MAC)
+
+    def test_selected_file_copy_navigation_is_native_and_source_pinned(self):
+        self.assertIn("FILE_COPIES => self.show_copies_of_selected()", WIN)
+        self.assertIn('self.linked_request("ctf_copy_candidates_pinned")', WIN)
+        self.assertIn('"op":"copy_candidates"', WIN)
+        self.assertIn("message.wParam == b'D' as usize", WIN)
+        self.assertIn('Button("Find copies on other disks") { model.copiesOfSelected() }', MAC)
+        self.assertIn('args["op"] = "ctf_copy_candidates_pinned"', MAC)
+        self.assertIn('args["op"] = "copy_candidates"', MAC)
+        self.assertIn('copySourceID = nil; copySourceName = nil; copyReturn = nil', MAC)
+        self.assertIn('"ctf_copy_candidates_pinned" => copy_candidates::linked(&v)?', SERVICE)
+        self.assertIn('"copy_candidates" => copy_candidates::page(', SERVICE)
+        self.assertIn('ctf_mirror::read_pinned(request,', COPIES)
+        self.assertIn('name_norm=?1 AND size=?2', COPIES)
+        self.assertIn('"verified": false', COPIES)
 
     def test_no_unverified_physical_drive_claims_in_locator(self):
         self.assertIn("Physical connection: NOT VERIFIED", WIN)
