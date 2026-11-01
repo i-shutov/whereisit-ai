@@ -862,6 +862,7 @@ enum Bridge {
 
 @MainActor struct CatalogView: View {
     @StateObject private var model = Catalog()
+    @FocusState private var searchFieldFocused: Bool
     var body: some View {
         VStack(spacing: 4) {
             HStack(spacing: 6) {
@@ -889,8 +890,17 @@ enum Bridge {
             HStack(spacing: 6) {
                 Button { model.back() } label: { Image(systemName: "chevron.left") }.help("Back to parent folder or leave results")
                 Button { model.openSelected() } label: { Image(systemName: "folder") }.disabled(model.selected?.isFolder != true).keyboardShortcut(.downArrow, modifiers: [.command]).help("Open selected folder (Command-Down)")
-                TextField("Search: name:film AND (ext:mkv OR ext:mp4) AND size:>1GB", text: $model.query).onSubmit { model.search() }.accessibilityLabel("Catalog search expression")
-                Button("Search") { model.search() }.keyboardShortcut("f", modifiers: [.command])
+                TextField("Find file or film • name:… ext:mkv AND/OR…", text: $model.query)
+                    .focused($searchFieldFocused)
+                    .onSubmit { model.search() }
+                    .accessibilityLabel("Search catalogued files")
+                Button { searchFieldFocused = true } label: { Image(systemName: "magnifyingglass") }
+                    .keyboardShortcut("f", modifiers: [.command])
+                    .help("Focus file search (Command-F)")
+                Button("Search") { model.search() }
+                Button("All disks") { model.searchAcrossAllDisks() }
+                    .disabled(model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .help("Search current expression across all 40 catalogued USB disks")
                 Picker("Duplicate matching", selection: $model.duplicateMode) {
                     Text("Name + size").tag("name_size"); Text("Size").tag("size"); Text("Name").tag("name")
                 }.labelsHidden().frame(width: 120).accessibilityLabel("Duplicate matching mode")
@@ -941,6 +951,7 @@ enum Bridge {
             Text(model.linkedMode ? "LINKED CTF (read-only) • " + (model.linkedCTFPath ?? "") : model.database).font(.caption2).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).lineLimit(1).truncationMode(.middle)
         }
         .padding(7).controlSize(.small).frame(minWidth: 1100, minHeight: 550)
+        .onAppear { searchFieldFocused = true }
         .sheet(isPresented: $model.showingAnnotationReview) {
             if model.showingVerifiedOverlay {
                 VStack(alignment: .leading, spacing: 8) {
