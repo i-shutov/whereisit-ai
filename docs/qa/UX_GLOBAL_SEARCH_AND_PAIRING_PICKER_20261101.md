@@ -55,3 +55,26 @@ second filtered row and verify the actual original catalog ID in the locator;
 filter out an active disk, run global search, clear filter and check scope;
 use Ctrl/Command+F then Ctrl/Command+L, screen reader/Tab at 1100/1366 px.
 This does not establish hardware USB identity or manual GUI acceptance.
+
+## UX3 — per-disk metadata candidate focus (2026-11-01)
+
+1. Search globally for a **file**, select it and use **Find copies on disks**
+   (Win32 Ctrl+D, macOS Command+D). All-disk copy candidates use exactly the
+   selected entry ID, normalized name and recorded size, never a path guess.
+2. The candidate-disk selector above the result table reports counts for the
+   **entire** metadata equivalence class (not just the current page). On Win32
+   navigate the native combo using Tab/arrow keys; on macOS activate the
+   scrollable accessible disk buttons with keyboard/VoiceOver. Select the first
+   disk, another disk, then All disks. Each switch resets page offset while
+   keeping the source file. Verify per-disk counts and all-disk total on
+   synthetic two-disk inputs including two same-size files on one disk.
+3. Page through a focused disk and use Back to restore original search.
+   Unplugged/missing physical disks remain discoverable from catalogue data;
+   choosing a disk **does not** imply it is currently OS-connected.
+4. In the linked CTF mode change the source generation between pages (including
+   when focused): service must reject stale generation before returning data.
+   The original source and derived mirror must not be changed. No content
+   hashes, verified-equality or deletion assertions may appear.
+5. Test Windows at 880 and 1366 px, Mac ARM64/Intel with native accessibility,
+   physical locator collapsed and visible, keyboard focus and HiDPI. Source
+   wiring/unit/installer CI is not human GUI or actual-device acceptance.

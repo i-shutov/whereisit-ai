@@ -157,3 +157,16 @@ network-share and screen-reader scenarios are detailed in
 [UX2 QA](qa/PHYSICAL_USB_IDENTITY_WP_20261101.md). This is source integration,
 not validated actual USB hardware or manual GUI acceptance. An OS volume UUID
 is not a globally unique USB hardware identifier; clones require manual review.
+
+## UX3 disk-level candidate navigation — 2026-11-01
+
+The same draft PR #57 now implements **complete name+recorded-size candidate
+counts per catalogued disk**, independently of the current result page. Both
+Win32 and SwiftUI can focus candidates to one catalog disk and switch to all
+registered disks, with bounded pages, unchanged original selected entry ID and
+Back navigation. The service returns `disk_groups`, `all_total` and a
+filtered `total`; linked CTF validates generation SHA for every focused page.
+These are catalogue metadata candidates, never proof of byte equality, an
+attached physical USB disk or permission to delete a file. Manual UX,
+accessibility, device and 1366x768/HiDPI acceptance remain outstanding.
+See [UX3 QA](qa/UX_GLOBAL_SEARCH_AND_PAIRING_PICKER_20261101.md).

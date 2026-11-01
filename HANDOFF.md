@@ -1,3 +1,30 @@
+## UX3 integrated disk-level copy focus — 2026-11-01 (new CI pending)
+
+Existing draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57) now
+implements an all-matches, per-disk candidate rollup plus an optional
+catalog-volume focus (one selected file -> copies by source catalog disk).
+Win32 has a native keyboard-operable per-disk combobox; macOS SwiftUI has
+horizontally scrollable, VoiceOver-labelled disk buttons. Counts are global
+across exact normalized name+recorded size, independent of the current 250-row
+page. Focused pages report filtered `total` separately from `all_total`;
+Back navigation and source entry ID are preserved. The service takes an
+optional strictly positive `candidate_volume_id`, returns `disk_groups`
+and `source_volume_id`, and checks linked CTF generation SHA anew for every
+page. Synthetic Rust SQLite and pinned two-disk CTF tests cover rollup,
+focus, freshness rejection and source/mirror byte invariance; native source
+wiring tests and [UX3 manual runbook](docs/qa/UX_GLOBAL_SEARCH_AND_PAIRING_PICKER_20261101.md)
+are updated. No content hashes or file equality claims: **candidates are
+metadata-only; disk labels do not prove USB is currently connected**.
+
+After final documentation commit, inspect exact-HEAD native Linux/Windows
+10/11 installer candidate and macOS ARM64/Intel CI, offline kit, native
+integration and installed RC2->RC3 upgrade. Fix failed jobs in this draft PR;
+no merge or stable release until all existing hardware/manual GUI, original
+modified/historical CTF access, real p95 150ms and signing/notarization gates.
+User data and CTF remain private/read-only with SHA pinning. No other repo.
+
+---
+
 ## UX2 integrated OS snapshot completeness — 2026-11-01 (exact-HEAD CI pending)
 
 Draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57) adds a
