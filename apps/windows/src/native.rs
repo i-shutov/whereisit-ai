@@ -1311,8 +1311,11 @@ impl App {
                 linked["limit"] = json!(LIMIT);
                 self.call("rows", linked);
             } else {
-                self.call("rows", json!({"op":"copy_candidates","entry_id":source,
-                    "offset":self.offset,"limit":LIMIT}));
+                self.call(
+                    "rows",
+                    json!({"op":"copy_candidates","entry_id":source,
+                    "offset":self.offset,"limit":LIMIT}),
+                );
             }
             return;
         }
@@ -1791,8 +1794,17 @@ impl App {
         ));
     }
     unsafe fn show_copies_of_selected(&mut self) {
-        let index = SendMessageW(self.files, LVM_GETNEXTITEM, usize::MAX, LVNI_SELECTED as isize);
-        let selected = if index >= 0 { self.entries.get(index as usize) } else { None };
+        let index = SendMessageW(
+            self.files,
+            LVM_GETNEXTITEM,
+            usize::MAX,
+            LVNI_SELECTED as isize,
+        );
+        let selected = if index >= 0 {
+            self.entries.get(index as usize)
+        } else {
+            None
+        };
         let Some(entry) = selected else {
             self.status("Select a file to compare its catalogued metadata across disks.");
             return;
@@ -1801,11 +1813,16 @@ impl App {
             self.status("Only file entries with recorded byte size can be compared.");
             return;
         }
-        let Some(source) = id(entry) else { return; };
+        let Some(source) = id(entry) else {
+            return;
+        };
         if self.copy_source.is_none() {
             self.copy_return = Some(CopyReturn {
-                volume: self.volume, stack: self.stack.clone(), query: self.query.clone(),
-                duplicates: self.duplicates, offset: self.offset,
+                volume: self.volume,
+                stack: self.stack.clone(),
+                query: self.query.clone(),
+                duplicates: self.duplicates,
+                offset: self.offset,
             });
         }
         self.copy_source = Some(source);
@@ -1973,9 +1990,12 @@ impl App {
                     self.duplicates = context.duplicates;
                     self.offset = context.offset;
                     self.text(self.search, &self.query);
-                    let index = self.volumes.iter()
+                    let index = self
+                        .volumes
+                        .iter()
                         .position(|v| id(v) == self.volume)
-                        .map(|i| i + 1).unwrap_or(0);
+                        .map(|i| i + 1)
+                        .unwrap_or(0);
                     SendMessageW(self.disks, LB_SETCURSEL, index, 0);
                     self.load();
                     return;
