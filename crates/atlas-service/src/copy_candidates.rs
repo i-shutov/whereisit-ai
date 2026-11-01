@@ -23,7 +23,10 @@ pub(crate) fn page(catalog: &Catalog, request: &Value) -> Result<Value> {
         )
         .optional()?;
     let (name_key, size) = selected.ok_or_else(|| {
-        Error::new("not_found", "Selected file is unavailable in this catalog snapshot")
+        Error::new(
+            "not_found",
+            "Selected file is unavailable in this catalog snapshot",
+        )
     })?;
     let (total, distinct_disks): (i64, i64) = catalog.conn().query_row(
         &format!(
@@ -40,13 +43,16 @@ pub(crate) fn page(catalog: &Catalog, request: &Value) -> Result<Value> {
          ORDER BY volume_id,relative_path,id LIMIT ?3 OFFSET ?4",
     )?;
     let items = stmt
-        .query_map(params![name_key, size, limit as i64, offset as i64], |row| {
-            let entry = atlas_core::entry_row(row)?;
-            let mut value = serde_json::to_value(entry).expect("Entry serializes");
-            // Count includes the selected file; never imply content identity.
-            value["duplicate_count"] = json!(total);
-            Ok(value)
-        })?
+        .query_map(
+            params![name_key, size, limit as i64, offset as i64],
+            |row| {
+                let entry = atlas_core::entry_row(row)?;
+                let mut value = serde_json::to_value(entry).expect("Entry serializes");
+                // Count includes the selected file; never imply content identity.
+                value["duplicate_count"] = json!(total);
+                Ok(value)
+            },
+        )?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(json!({
         "items": items, "total": total, "offset": offset, "limit": limit,
@@ -69,9 +75,14 @@ mod tests {
 
     fn file(name: &str, size: u64, kind: &str) -> NewEntry {
         NewEntry {
-            parent_id: None, name: name.into(), relative_path: name.into(),
-            kind: kind.into(), size, modified_unix: None,
-            description: String::new(), tags: String::new(),
+            parent_id: None,
+            name: name.into(),
+            relative_path: name.into(),
+            kind: kind.into(),
+            size,
+            modified_unix: None,
+            description: String::new(),
+            tags: String::new(),
         }
     }
 
@@ -81,18 +92,22 @@ mod tests {
         let mut catalog = Catalog::open(tmp.path().join("catalog.sqlite")).unwrap();
         let mut selected = 0;
         let mut folder = 0;
-        catalog.bulk_import("Shelf A", "disk-A", |writer| {
-            selected = writer.insert(&file("Film.MKV", 512, "file"))?;
-            writer.insert(&file("film.mkv", 512, "file"))?;
-            writer.insert(&file("Film.MKV-other", 512, "file"))?;
-            folder = writer.insert(&file("Films", 0, "directory"))?;
-            Ok(())
-        }).unwrap();
-        catalog.bulk_import("Shelf B", "disk-B", |writer| {
-            writer.insert(&file("film.mkv", 512, "file"))?;
-            writer.insert(&file("film.mkv", 513, "file"))?;
-            Ok(())
-        }).unwrap();
+        catalog
+            .bulk_import("Shelf A", "disk-A", |writer| {
+                selected = writer.insert(&file("Film.MKV", 512, "file"))?;
+                writer.insert(&file("film.mkv", 512, "file"))?;
+                writer.insert(&file("Film.MKV-other", 512, "file"))?;
+                folder = writer.insert(&file("Films", 0, "directory"))?;
+                Ok(())
+            })
+            .unwrap();
+        catalog
+            .bulk_import("Shelf B", "disk-B", |writer| {
+                writer.insert(&file("film.mkv", 512, "file"))?;
+                writer.insert(&file("film.mkv", 513, "file"))?;
+                Ok(())
+            })
+            .unwrap();
         let first = page(&catalog, &json!({"entry_id":selected,"offset":0,"limit":2})).unwrap();
         assert_eq!(first["total"], 3);
         assert_eq!(first["distinct_disks"], 2);
@@ -104,9 +119,13 @@ mod tests {
         let second = page(&catalog, &json!({"entry_id":selected,"offset":2,"limit":2})).unwrap();
         assert_eq!(second["items"].as_array().unwrap().len(), 1);
         assert_eq!(second["has_more"], false);
-        let ids = first["items"].as_array().unwrap().iter()
+        let ids = first["items"]
+            .as_array()
+            .unwrap()
+            .iter()
             .chain(second["items"].as_array().unwrap().iter())
-            .map(|r| r["id"].as_i64().unwrap()).collect::<Vec<_>>();
+            .map(|r| r["id"].as_i64().unwrap())
+            .collect::<Vec<_>>();
         assert!(ids.contains(&selected));
         assert_eq!(ids.len(), 3);
         assert!(page(&catalog, &json!({"entry_id":folder})).is_err());
