@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 use std::{
+    collections::HashMap,
     path::PathBuf,
     ptr::{null, null_mut},
     sync::mpsc::{self, Receiver, Sender},
@@ -8,7 +9,10 @@ use std::{
 use windows_sys::Win32::{
     Foundation::*,
     Graphics::Gdi::*,
-    Storage::FileSystem::FileTimeToLocalFileTime,
+    Storage::FileSystem::{
+        FileTimeToLocalFileTime, GetDriveTypeW, GetLogicalDriveStringsW, GetVolumeInformationW,
+        GetVolumeNameForVolumeMountPointW, DRIVE_FIXED, DRIVE_REMOVABLE,
+    },
     System::{
         Com::*, LibraryLoader::*, SystemServices::SS_PATHELLIPSIS, Time::FileTimeToSystemTime,
     },
@@ -32,6 +36,9 @@ const NEXT: usize = 109;
 const CANCEL: usize = 110;
 const DUPLICATES: usize = 111;
 const FILE_COPIES: usize = 116;
+const PHYSICAL_CHECK: usize = 117;
+const PHYSICAL_PAIR: usize = 118;
+const PHYSICAL_UNPAIR: usize = 119;
 const DUP_MODE: usize = 112;
 const EXPORT_FORMAT: usize = 113;
 const LINK_CTF: usize = 114;
@@ -94,6 +101,93 @@ fn display_size(value: Option<u64>) -> String {
     }
 }
 
+
+#[derive(Clone)]
+struct MountedPhysicalVolume {
+    id: String,
+    description: String,
+}
+
+/// A successful live Windows Mount Manager probe provides a host-scoped
+/// volume GUID and serial; no historic drive letter is used as identity.
+/// USB HDDs can report DRIVE_FIXED, so show every accessible local volume
+/// to the operator and require explicit physical-label confirmation.
+unsafe fn windows_mounted_volumes() -> Option<Vec<MountedPhysicalVolume>> {
+    let required = GetLogicalDriveStringsW(0, null_mut());
+    if required == 0 || required > 32_768 {
+        return None;
+    }
+    let mut roots = vec![0u16; required as usize + 2];
+    let written = GetLogicalDriveStringsW(roots.len() as u32, roots.as_mut_ptr());
+    if written == 0 || written >= roots.len() as u32 {
+        return None;
+    }
+    let mut result = Vec::new();
+    for root in roots[..written as usize].split(|unit| *unit == 0) {
+        if root.is_empty() {
+            continue;
+        }
+        let mut terminated = root.to_vec();
+        terminated.push(0);
+        let drive_type = GetDriveTypeW(terminated.as_ptr());
+        if drive_type != DRIVE_FIXED && drive_type != DRIVE_REMOVABLE {
+            continue;
+        }
+        let mut guid = [0u16; 128];
+        if GetVolumeNameForVolumeMountPointW(
+            terminated.as_ptr(),
+            guid.as_mut_ptr(),
+            guid.len() as u32,
+        ) == 0
+        {
+            return None;
+        }
+        let guid_end = guid.iter().position(|unit| *unit == 0)?;
+        let guid_name = String::from_utf16_lossy(&guid[..guid_end]);
+        let start = guid_name.find('{')?;
+        let end = guid_name.find('}')?;
+        if end <= start {
+            return None;
+        }
+        let mut volume_label = [0u16; 128];
+        let mut serial = 0u32;
+        if GetVolumeInformationW(
+            terminated.as_ptr(),
+            volume_label.as_mut_ptr(),
+            volume_label.len() as u32,
+            &mut serial,
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            0,
+        ) == 0
+        {
+            return None;
+        }
+        let label_end = volume_label.iter().position(|unit| *unit == 0)?;
+        let label = String::from_utf16_lossy(&volume_label[..label_end]);
+        let root_path = String::from_utf16_lossy(root);
+        result.push(MountedPhysicalVolume {
+            id: format!("win:{}:{serial:08x}", &guid_name[start..=end]).to_ascii_lowercase(),
+            description: format!(
+                "{} • current OS mount {}",
+                if label.is_empty() { "(unnamed)" } else { &label },
+                root_path
+            ),
+        });
+    }
+    Some(result)
+}
+
+fn physical_state_label(state: &str) -> &'static str {
+    match state {
+        "connected" => "Physical connection: CONNECTED — live OS identity matched",
+        "offline" => "Physical connection: OFFLINE — bound OS identity absent",
+        "conflict" => "Physical connection: CONFLICT — identity ambiguous",
+        _ => "Physical connection: NOT VERIFIED",
+    }
+}
+
 // A catalog entry is not proof that the original USB disk is connected.
 // This pure formatter is deliberately shared by the selection change path
 // and unit tests; it never accesses the filesystem or exposes private data.
@@ -137,7 +231,12 @@ mod explorer_geometry_tests {
     }
 }
 
-fn disk_locator_text(entry: Option<&Value>, disk_label: &str, linked_ctf: bool) -> String {
+fn disk_locator_text(
+    entry: Option<&Value>,
+    disk_label: &str,
+    linked_ctf: bool,
+    physical_state: &str,
+) -> String {
     let Some(entry) = entry else {
         return "DISK LOCATOR\r\n\r\nSelect a file in the result list to locate its catalogued USB disk.\r\n\r\nSearch spans all catalogued disks when \"All disks\" is selected.".into();
     };
@@ -161,8 +260,9 @@ fn disk_locator_text(entry: Option<&Value>, disk_label: &str, linked_ctf: bool) 
     } else {
         "SQLite catalog snapshot"
     };
+    let presence = physical_state_label(physical_state);
     format!(
-        "DISK TO LOCATE\r\n\r\n{disk_label}\r\nCatalog disk ID: {disk_id}\r\n\r\nPhysical connection: NOT VERIFIED\r\nThe catalog does not prove this USB disk is currently mounted.\r\n\r\nFILE\r\n{file_name}\r\n\r\nRECORDED LOCATION\r\n{recorded_path}\r\n\r\nSize: {size}\r\nKind: {kind}\r\nCopies: {candidates}\r\nSource: {mode}\r\n{description_details}\r\nSelect text and press Ctrl+C to copy. Ctrl+D finds catalogued name+size copies."
+        "DISK TO LOCATE\r\n\r\n{disk_label}\r\nCatalog disk ID: {disk_id}\r\n\r\n{presence}\r\nCurrent mount state depends on explicit OS-volume pairing; historical drive letters are not evidence.\r\n\r\nFILE\r\n{file_name}\r\n\r\nRECORDED LOCATION\r\n{recorded_path}\r\n\r\nSize: {size}\r\nKind: {kind}\r\nCopies: {candidates}\r\nSource: {mode}\r\n{description_details}\r\nSelect text and press Ctrl+C to copy. Ctrl+D finds catalogued name+size copies."
     )
 }
 
@@ -175,7 +275,7 @@ mod disk_locator_tests {
     fn locator_uses_exact_catalog_label_without_claiming_usb_presence() {
         let row = json!({"name":"Example.mkv","relative_path":"Films/Example.mkv",
             "volume_id":42,"size":1024,"duplicate_count":3});
-        let text = disk_locator_text(Some(&row), "Shelf B • USB-42", true);
+        let text = disk_locator_text(Some(&row), "Shelf B • USB-42", true, "unverified");
         assert!(text.contains("Shelf B • USB-42"));
         assert!(text.contains("Catalog disk ID: 42"));
         assert!(text.contains("Films/Example.mkv"));
@@ -186,10 +286,17 @@ mod disk_locator_tests {
     }
 
     #[test]
+    fn only_verified_os_match_can_use_connected_wording() {
+        assert!(super::physical_state_label("connected").contains("CONNECTED"));
+        assert!(!super::physical_state_label("unverified").contains("CONNECTED"));
+        assert!(!super::physical_state_label("conflict").contains("CONNECTED"));
+    }
+
+    #[test]
     fn locator_placeholder_and_unknown_duplicates_are_honest() {
-        assert!(disk_locator_text(None, "", false).contains("Select a file"));
+        assert!(disk_locator_text(None, "", false, "unverified").contains("Select a file"));
         let row = json!({"name":"Folder","relative_path":"Videos/","volume_id":1});
-        let text = disk_locator_text(Some(&row), "Backup disk", false);
+        let text = disk_locator_text(Some(&row), "Backup disk", false, "unverified");
         assert!(text.contains("Not calculated"));
         assert!(text.contains("SQLite catalog snapshot"));
         assert!(text.contains("NOT VERIFIED"));
@@ -1100,6 +1207,9 @@ struct App {
     location: HWND,
     locator: HWND,
     buttons: Vec<(usize, HWND)>,
+    physical_states: HashMap<i64, String>,
+    mounted_volumes: Vec<MountedPhysicalVolume>,
+    physical_probe_ok: bool,
     duplicate_mode: HWND,
     export_format: HWND,
     category_list: HWND,
@@ -1144,6 +1254,9 @@ impl App {
             location: null_mut(),
             locator: null_mut(),
             buttons: vec![],
+            physical_states: HashMap::new(),
+            mounted_volumes: Vec::new(),
+            physical_probe_ok: false,
             duplicate_mode: null_mut(),
             export_format: null_mut(),
             category_list: null_mut(),
@@ -1250,6 +1363,9 @@ impl App {
         let _ = std::fs::create_dir_all(config_dir());
         self.generation += 1;
         self.volumes.clear();
+        self.physical_states.clear();
+        self.mounted_volumes.clear();
+        self.physical_probe_ok = false;
         self.entries.clear();
         self.categories.clear();
         self.total = 0;
@@ -1531,6 +1647,7 @@ impl App {
                     if let (Some(path), Some(generation)) = (path, generation) {
                         self.linked_ctf = Some(path);
                         self.linked_generation = Some(generation);
+                        self.physical_states.clear();
                         self.annotation_db = None;
                         self.annotation_session = self.annotation_session.wrapping_add(1);
                         self.annotation_offset = 0;
@@ -1583,21 +1700,7 @@ impl App {
                         data
                     };
                     self.volumes = values.as_array().cloned().unwrap_or_default();
-                    SendMessageW(self.disks, LB_RESETCONTENT, 0, 0);
-                    SendMessageW(
-                        self.disks,
-                        LB_ADDSTRING,
-                        0,
-                        wide("All disks / global search").as_ptr() as isize,
-                    );
-                    for disk in &self.volumes {
-                        let label = format!(
-                            "{}  ({} items)",
-                            string(disk, "label"),
-                            disk["entry_count"].as_u64().unwrap_or(0)
-                        );
-                        SendMessageW(self.disks, LB_ADDSTRING, 0, wide(&label).as_ptr() as isize);
-                    }
+                    self.refresh_physical_presence();
                     let index = self
                         .volumes
                         .iter()
@@ -1711,6 +1814,176 @@ impl App {
             .filter(|label| !label.is_empty())
             .unwrap_or_else(|| format!("Disk #{volume_id}"))
     }
+
+    fn physical_request(&self, op: &str, volume: Option<i64>, identity: Option<&str>) -> Value {
+        let key = if let Some(generation) = self.linked_generation.as_deref() {
+            format!("ctf:{generation}")
+        } else {
+            format!("sqlite:{}", self.db)
+        };
+        let request = json!({
+            "op":op,
+            "user_store":config_dir().join("physical-volume-bindings.sqlite").to_string_lossy(),
+            "catalog_key":key,
+            "platform":"windows",
+            "volume_ids":self.volumes.iter().filter_map(id).collect::<Vec<_>>(),
+            "observed_ids":self.mounted_volumes.iter().map(|v| &v.id).collect::<Vec<_>>(),
+            "probe_ok":self.physical_probe_ok,
+            "volume_id":volume,
+            "physical_id":identity,
+            "confirmed":true
+        });
+        serde_json::from_str(&atlas_service::dispatch_json(&request.to_string()))
+            .unwrap_or_else(|_| json!({"ok":false}))
+    }
+
+    unsafe fn populate_physical_disk_list(&self) {
+        let previous = SendMessageW(self.disks, LB_GETCURSEL, 0, 0).max(0);
+        SendMessageW(self.disks, LB_RESETCONTENT, 0, 0);
+        SendMessageW(
+            self.disks,
+            LB_ADDSTRING,
+            0,
+            wide("All disks / global search").as_ptr() as isize,
+        );
+        for disk in &self.volumes {
+            let badge = match self.physical_states.get(&id(disk).unwrap_or_default()).map(String::as_str) {
+                Some("connected") => "✓ OS verified",
+                Some("offline") => "○ offline",
+                Some("conflict") => "! conflict",
+                _ => "? not verified",
+            };
+            let label = format!(
+                "{}  ({} items)  {badge}",
+                string(disk, "label"),
+                disk["entry_count"].as_u64().unwrap_or(0)
+            );
+            SendMessageW(self.disks, LB_ADDSTRING, 0, wide(&label).as_ptr() as isize);
+        }
+        let selected = if self.volume.is_some() {
+            self.volumes
+                .iter()
+                .position(|disk| id(disk) == self.volume)
+                .map(|i| i + 1)
+                .unwrap_or(0) as isize
+        } else if previous as usize <= self.volumes.len() {
+            previous
+        } else {
+            0
+        };
+        SendMessageW(self.disks, LB_SETCURSEL, selected as usize, 0);
+    }
+
+    unsafe fn refresh_physical_presence(&mut self) {
+        let probe = windows_mounted_volumes();
+        self.physical_probe_ok = probe.is_some();
+        self.mounted_volumes = probe.unwrap_or_default();
+        // Fail closed until the service has checked scope, mappings and collisions.
+        let reply = self.physical_request("physical_status", None, None);
+        let old_states = self.physical_states.clone();
+        self.physical_states.clear();
+        if reply["ok"] == true {
+            if let Some(items) = reply["data"]["items"].as_array() {
+                for item in items {
+                    if let (Some(volume_id), Some(state)) =
+                        (item["volume_id"].as_i64(), item["state"].as_str())
+                    {
+                        self.physical_states.insert(volume_id, state.to_owned());
+                    }
+                }
+            }
+        }
+        if old_states != self.physical_states {
+            self.populate_physical_disk_list();
+            self.update_disk_locator();
+        }
+    }
+
+    unsafe fn selected_physical_catalog_disk(&self) -> Option<i64> {
+        let index = SendMessageW(
+            self.files,
+            LVM_GETNEXTITEM,
+            usize::MAX,
+            LVNI_SELECTED as isize,
+        );
+        if index >= 0 {
+            self.entries
+                .get(index as usize)
+                .and_then(|row| row["volume_id"].as_i64())
+        } else {
+            self.volume
+        }
+    }
+
+    unsafe fn pair_selected_physical_disk(&mut self) {
+        let Some(volume_id) = self.selected_physical_catalog_disk() else {
+            self.status("Select a result or catalog disk before pairing a real USB volume.");
+            return;
+        };
+        self.refresh_physical_presence();
+        if !self.physical_probe_ok || self.mounted_volumes.is_empty() {
+            self.status("No reliable OS-mounted volume identities available; pairing refused.");
+            return;
+        }
+        let name = self.volume_label(Some(volume_id));
+        // Only a conscious operator can associate a catalog record with a live device.
+        for candidate in self.mounted_volumes.clone() {
+            let question = format!(
+                "CATALOG DISK: {name}\r\n\r\nLIVE OS VOLUME: {}\r\n\r\nPhysically check the USB disk label. Pair this catalog record to this OS volume UUID?\r\n\r\nYES: pair this disk   NO: inspect next mount   CANCEL: stop",
+                candidate.description
+            );
+            let answer = MessageBoxW(
+                self.hwnd,
+                wide(&question).as_ptr(),
+                wide("Explicit physical disk pairing").as_ptr(),
+                MB_YESNOCANCEL | MB_ICONQUESTION,
+            );
+            if answer == IDCANCEL {
+                return;
+            }
+            if answer != IDYES {
+                continue;
+            }
+            let response =
+                self.physical_request("physical_pair", Some(volume_id), Some(&candidate.id));
+            if response["ok"] == true {
+                self.refresh_physical_presence();
+                self.status("Physical disk paired to live OS identity. Automatic reconnect checks enabled.");
+            } else {
+                self.status("Pairing refused: disk is already bound, ambiguous, or OS identity changed. Unpair explicitly to replace.");
+            }
+            return;
+        }
+        self.status("No physical volume pairing made.");
+    }
+
+    unsafe fn unpair_selected_physical_disk(&mut self) {
+        let Some(volume_id) = self.selected_physical_catalog_disk() else {
+            self.status("Select a catalog disk to clear its stored physical pairing.");
+            return;
+        };
+        let question = format!(
+            "Remove the explicit OS-volume pairing for catalog disk {}?\r\nNo catalog entries, CTF bytes, or files will be changed.",
+            self.volume_label(Some(volume_id))
+        );
+        if MessageBoxW(
+            self.hwnd,
+            wide(&question).as_ptr(),
+            wide("Remove physical disk pairing").as_ptr(),
+            MB_YESNO | MB_ICONQUESTION,
+        ) != IDYES
+        {
+            return;
+        }
+        let response = self.physical_request("physical_unpair", Some(volume_id), None);
+        self.refresh_physical_presence();
+        self.status(if response["ok"] == true {
+            "Physical identity pairing cleared; disk returns to NOT VERIFIED."
+        } else {
+            "Pairing could not be cleared; check user-side identity store."
+        });
+    }
+
     unsafe fn update_disk_locator(&self) {
         let index = SendMessageW(
             self.files,
@@ -1728,7 +2001,15 @@ impl App {
             .unwrap_or_default();
         self.text(
             self.locator,
-            &disk_locator_text(selected, &disk, self.linked_mode()),
+            &disk_locator_text(
+                selected,
+                &disk,
+                self.linked_mode(),
+                self.physical_states
+                    .get(&selected.and_then(|row| row["volume_id"].as_i64()).unwrap_or_default())
+                    .map(String::as_str)
+                    .unwrap_or("unverified"),
+            ),
         );
     }
     unsafe fn render_rows(&self) {
@@ -2011,6 +2292,16 @@ impl App {
                 self.load();
             }
             FILE_COPIES => self.show_copies_of_selected(),
+            PHYSICAL_CHECK => {
+                self.refresh_physical_presence();
+                self.status(if self.physical_probe_ok {
+                    "Live OS mount scan complete; only explicitly paired UUIDs can show connected."
+                } else {
+                    "OS mount probe failed; all physical disk statuses are NOT VERIFIED."
+                });
+            }
+            PHYSICAL_PAIR => self.pair_selected_physical_disk(),
+            PHYSICAL_UNPAIR => self.unpair_selected_physical_disk(),
             PREV => {
                 self.offset = self.offset.saturating_sub(LIMIT);
                 self.load();
@@ -2236,19 +2527,26 @@ impl App {
                 214 + file_width + 8,
                 106,
                 locator_width,
-                (h - 194).max(60),
+                (h - 306).max(60),
                 1,
             );
             ShowWindow(self.locator, SW_SHOW);
         } else {
             ShowWindow(self.locator, SW_HIDE);
         }
-        if let Some((_, button)) = self.buttons.iter().find(|(id, _)| *id == FILE_COPIES) {
-            if locator_width > 0 {
-                MoveWindow(*button, 214 + file_width + 8, h - 78, locator_width, 26, 1);
-                ShowWindow(*button, SW_SHOW);
-            } else {
-                ShowWindow(*button, SW_HIDE);
+        for (command, y) in [
+            (PHYSICAL_CHECK, h - 185),
+            (PHYSICAL_PAIR, h - 155),
+            (PHYSICAL_UNPAIR, h - 125),
+            (FILE_COPIES, h - 78),
+        ] {
+            if let Some((_, button)) = self.buttons.iter().find(|(id, _)| *id == command) {
+                if locator_width > 0 {
+                    MoveWindow(*button, 214 + file_width + 8, y, locator_width, 26, 1);
+                    ShowWindow(*button, SW_SHOW);
+                } else {
+                    ShowWindow(*button, SW_HIDE);
+                }
             }
         }
         MoveWindow(self.status, 8, h - 32, (w - 216).max(50), 24, 1);
@@ -2365,6 +2663,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 (NEXT, "Ne&xt"),
                 (DUPLICATES, "&Duplicates"),
                 (FILE_COPIES, "&Find copies on disks"),
+                (PHYSICAL_CHECK, "Refresh &USB state"),
+                (PHYSICAL_PAIR, "&Pair physical disk…"),
+                (PHYSICAL_UNPAIR, "Unpair disk"),
                 (CATEGORY_FILTER, "Filter category"),
                 (CATEGORY_ASSIGN, "Assign category"),
                 (CATEGORY_CREATE, "+"),
@@ -2493,6 +2794,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 143,
             );
             SetTimer(hwnd, 1, 80, None);
+            SetTimer(hwnd, 2, 6_000, None);
             app.init();
             0
         }
@@ -2519,7 +2821,11 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             0
         }
         WM_TIMER => {
-            app.poll();
+            if wp == 2 {
+                app.refresh_physical_presence();
+            } else {
+                app.poll();
+            }
             0
         }
         WM_GETMINMAXINFO => {
@@ -2546,6 +2852,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
         }
         WM_DESTROY => {
             KillTimer(hwnd, 1);
+            KillTimer(hwnd, 2);
             PostQuitMessage(0);
             0
         }
@@ -2615,6 +2922,13 @@ pub fn run() {
                 maintenance as usize,
                 wide("Catalog").as_ptr(),
             );
+            let physical = CreatePopupMenu();
+            if !physical.is_null() {
+                AppendMenuW(physical, MF_STRING, PHYSICAL_CHECK, wide("Recheck connected disks").as_ptr());
+                AppendMenuW(physical, MF_STRING, PHYSICAL_PAIR, wide("Pair selected catalog disk with OS volume...").as_ptr());
+                AppendMenuW(physical, MF_STRING, PHYSICAL_UNPAIR, wide("Clear physical pairing...").as_ptr());
+                AppendMenuW(menu, MF_POPUP, physical as usize, wide("Physical disks").as_ptr());
+            }
             SetMenu(hwnd, menu);
             DrawMenuBar(hwnd);
         }
