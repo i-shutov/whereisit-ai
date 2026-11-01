@@ -502,7 +502,11 @@ fn candidate_disk_priority(
         Some("conflict") => 3,
         _ => 2,
     };
-    (rank, std::cmp::Reverse(group["count"].as_u64().unwrap_or(0)), disk)
+    (
+        rank,
+        std::cmp::Reverse(group["count"].as_u64().unwrap_or(0)),
+        disk,
+    )
 }
 
 fn ordered_candidate_disks<'a>(
@@ -534,7 +538,8 @@ fn candidate_disk_pickup_list(
             "{total} name+size metadata candidates on {} catalog disks; selected file included.",
             groups.len()
         ),
-        "Order: last OS pairing check, then candidate count; exact disk IDs are authoritative.".to_owned(),
+        "Order: last OS pairing check, then candidate count; exact disk IDs are authoritative."
+            .to_owned(),
     ];
     for (index, group) in ordered_candidate_disks(groups, states).iter().enumerate() {
         lines.push(format!(
@@ -543,9 +548,17 @@ fn candidate_disk_pickup_list(
             clean(&candidate_disk_choice_caption(group, shelves, states))
         ));
     }
-    lines.push("Last OS probe may be stale; recheck the actual physical disk before connecting.".to_owned());
-    lines.push("Sticker/shelf is an owner note, NOT USB identity. Recorded paths are historical.".to_owned());
-    lines.push("Matching name+size never verifies file bytes or hashes; do NOT auto-delete.".to_owned());
+    lines.push(
+        "Last OS probe may be stale; recheck the actual physical disk before connecting."
+            .to_owned(),
+    );
+    lines.push(
+        "Sticker/shelf is an owner note, NOT USB identity. Recorded paths are historical."
+            .to_owned(),
+    );
+    lines.push(
+        "Matching name+size never verifies file bytes or hashes; do NOT auto-delete.".to_owned(),
+    );
     Some(lines.join("\r\n"))
 }
 
@@ -648,15 +661,15 @@ mod verified_copy_focus_tests {
             (7, "offline".to_owned()),
             (44, "conflict".to_owned()),
         ]);
-        let plan = super::candidate_disk_pickup_list(
-            "Movie\r\nspoof.mkv", &groups, &tags, &states
-        ).unwrap();
-        let positions = [42, 7, 142, 44]
-            .map(|disk| plan.find(&format!("#{disk} •")).unwrap());
+        let plan = super::candidate_disk_pickup_list("Movie\r\nspoof.mkv", &groups, &tags, &states)
+            .unwrap();
+        let positions = [42, 7, 142, 44].map(|disk| plan.find(&format!("#{disk} •")).unwrap());
         assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
         assert!(plan.contains("#42 • sticker: Полка Д • Same title"));
         assert!(plan.contains("#142 • no sticker tag • Same title"));
-        assert!(plan.contains("#44 • no sticker tag • Conflicted • 20 metadata candidates • identity conflict"));
+        assert!(plan.contains(
+            "#44 • no sticker tag • Conflicted • 20 metadata candidates • identity conflict"
+        ));
         assert!(plan.contains("Movie  spoof.mkv"));
         assert!(!plan.contains("Movie\r\nspoof.mkv"));
         assert!(plan.contains("do NOT auto-delete"));
@@ -3698,7 +3711,11 @@ impl App {
                     MoveWindow(*control, w - 452, 62, 148, 23, 1);
                     ShowWindow(
                         *control,
-                        if self.copy_source.is_some() { SW_SHOW } else { SW_HIDE },
+                        if self.copy_source.is_some() {
+                            SW_SHOW
+                        } else {
+                            SW_HIDE
+                        },
                     );
                 }
                 COPY_CONNECTED => {

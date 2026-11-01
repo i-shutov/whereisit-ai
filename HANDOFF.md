@@ -1,3 +1,9 @@
+## UX9 exact-HEAD CI repair (2026-11-02)
+
+Initial UX9 [SHA 6649bb3](https://github.com/i-shutov/whereisit-ai/commit/6649bb33db9cb4ec19da86232735bdafa9647207) failed [offline acceptance](https://github.com/i-shutov/whereisit-ai/actions/runs/41361019201) at **Check integrated Rust contracts → cargo fmt --all -- --check** (Rustfmt-only formatting of the new Windows shortlist helper, test and button layout). Fixed the reported diff **in the same draft PR #57**, no tests disabled. Recheck all new exact-HEAD jobs before green status; earlier pending workflow results cannot certify a later SHA.
+
+---
+
 ## UX9 — native offline USB pickup checklist (2026-11-02)
 
 In the SAME draft PR #57, a selected file's cross-disk name+size candidates now
