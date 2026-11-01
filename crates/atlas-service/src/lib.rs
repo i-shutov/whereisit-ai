@@ -15,6 +15,7 @@ mod duplicates;
 mod exports;
 mod legacy;
 mod maintenance;
+mod physical_disks;
 mod selection;
 
 /// The actual SQLite library linked into each installed native executable.
@@ -88,6 +89,9 @@ fn dispatch(input: &str) -> Result<Value> {
         "ctf_info" => legacy::info(&v)?,
         "duplicates" => duplicates::duplicates(&Catalog::open(text(&v, "db")?)?, &v)?,
         "copy_candidates" => copy_candidates::page(&Catalog::open(text(&v, "db")?)?, &v)?,
+        "physical_status" => physical_disks::status(&v)?,
+        "physical_pair" => physical_disks::pair(&v)?,
+        "physical_unpair" => physical_disks::unpair(&v)?,
         "export_csv" | "export_parquet" | "export_json" => {
             exports::export(&Catalog::open(text(&v, "db")?)?, &v, op)?
         }
