@@ -23,7 +23,10 @@ pub(crate) fn page(catalog: &Catalog, request: &Value) -> Result<Value> {
         )
         .optional()?;
     let (name_key, size, source_volume_id) = selected.ok_or_else(|| {
-        Error::new("not_found", "Selected file is unavailable in this catalog snapshot")
+        Error::new(
+            "not_found",
+            "Selected file is unavailable in this catalog snapshot",
+        )
     })?;
     let candidate_volume_id = optional_id(request, "candidate_volume_id")?;
     // All-match disk counts are independent of page focus; catalog labels are
@@ -47,12 +50,17 @@ pub(crate) fn page(catalog: &Catalog, request: &Value) -> Result<Value> {
     let all_total: i64 = disk_groups.iter().filter_map(|v| v["count"].as_i64()).sum();
     let distinct_disks = disk_groups.len();
     let total = candidate_volume_id.map_or(all_total, |focused| {
-        disk_groups.iter().find(|group| group["volume_id"] == focused)
-            .and_then(|group| group["count"].as_i64()).unwrap_or(0)
+        disk_groups
+            .iter()
+            .find(|group| group["volume_id"] == focused)
+            .and_then(|group| group["count"].as_i64())
+            .unwrap_or(0)
     });
     let focus_clause = if candidate_volume_id.is_some() {
         " AND volume_id=?3"
-    } else { "" };
+    } else {
+        ""
+    };
     let limit_param = if candidate_volume_id.is_some() { 4 } else { 3 };
     let offset_param = limit_param + 1;
     let sql = format!(
@@ -162,16 +170,24 @@ mod tests {
             .map(|r| r["id"].as_i64().unwrap())
             .collect::<Vec<_>>();
         let disk_b = first["disk_groups"][1]["volume_id"].as_i64().unwrap();
-        let focused = page(&catalog, &json!({"entry_id":selected,
-            "candidate_volume_id":disk_b,"offset":0,"limit":2})).unwrap();
+        let focused = page(
+            &catalog,
+            &json!({"entry_id":selected,
+            "candidate_volume_id":disk_b,"offset":0,"limit":2}),
+        )
+        .unwrap();
         assert_eq!(focused["total"], 1);
         assert_eq!(focused["all_total"], 3);
         assert_eq!(focused["distinct_disks"], 2);
         assert_eq!(focused["has_more"], false);
         assert_eq!(focused["items"][0]["volume_id"], disk_b);
         assert_eq!(focused["items"][0]["duplicate_count"], 3);
-        assert!(page(&catalog, &json!({"entry_id":selected,
-            "candidate_volume_id":0})).is_err());
+        assert!(page(
+            &catalog,
+            &json!({"entry_id":selected,
+            "candidate_volume_id":0})
+        )
+        .is_err());
         assert!(ids.contains(&selected));
         assert_eq!(ids.len(), 3);
         assert!(page(&catalog, &json!({"entry_id":folder})).is_err());

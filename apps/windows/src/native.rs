@@ -1793,7 +1793,14 @@ impl App {
     }
     unsafe fn load(&mut self) {
         self.generation += 1;
-        ShowWindow(self.copy_disk_filter, if self.copy_source.is_some() { SW_SHOW } else { SW_HIDE });
+        ShowWindow(
+            self.copy_disk_filter,
+            if self.copy_source.is_some() {
+                SW_SHOW
+            } else {
+                SW_HIDE
+            },
+        );
         self.status(if self.copy_source.is_some() {
             "Comparing exact name + size metadata across all catalogued disks…"
         } else if self.duplicates {
@@ -2116,7 +2123,9 @@ impl App {
                     self.entries = page["items"].as_array().cloned().unwrap_or_default();
                     self.copy_disk_groups = if self.copy_source.is_some() {
                         page["disk_groups"].as_array().cloned().unwrap_or_default()
-                    } else { vec![] };
+                    } else {
+                        vec![]
+                    };
                     self.populate_candidate_disk_picker();
                     self.sort_loaded_page();
                     self.total_known = page["total"].is_u64();
@@ -2421,20 +2430,43 @@ impl App {
             ShowWindow(self.copy_disk_filter, SW_HIDE);
             return;
         }
-        let all: u64 = self.copy_disk_groups.iter()
-            .filter_map(|group| group["count"].as_u64()).sum();
-        let caption = format!("All candidate disks • {all} files / {} disks",
-            self.copy_disk_groups.len());
-        SendMessageW(self.copy_disk_filter, CB_ADDSTRING, 0, wide(&caption).as_ptr() as isize);
+        let all: u64 = self
+            .copy_disk_groups
+            .iter()
+            .filter_map(|group| group["count"].as_u64())
+            .sum();
+        let caption = format!(
+            "All candidate disks • {all} files / {} disks",
+            self.copy_disk_groups.len()
+        );
+        SendMessageW(
+            self.copy_disk_filter,
+            CB_ADDSTRING,
+            0,
+            wide(&caption).as_ptr() as isize,
+        );
         for group in &self.copy_disk_groups {
             let label = string(group, "label").replace(['\r', '\n'], " ");
-            let caption = format!("{label} • {} candidates", group["count"].as_u64().unwrap_or(0));
-            SendMessageW(self.copy_disk_filter, CB_ADDSTRING, 0, wide(&caption).as_ptr() as isize);
+            let caption = format!(
+                "{label} • {} candidates",
+                group["count"].as_u64().unwrap_or(0)
+            );
+            SendMessageW(
+                self.copy_disk_filter,
+                CB_ADDSTRING,
+                0,
+                wide(&caption).as_ptr() as isize,
+            );
         }
-        let selection = self.copy_focus_volume_id
-            .and_then(|focused| self.copy_disk_groups.iter().position(
-                |group| group["volume_id"].as_i64() == Some(focused)))
-            .map(|index| index + 1).unwrap_or(0);
+        let selection = self
+            .copy_focus_volume_id
+            .and_then(|focused| {
+                self.copy_disk_groups
+                    .iter()
+                    .position(|group| group["volume_id"].as_i64() == Some(focused))
+            })
+            .map(|index| index + 1)
+            .unwrap_or(0);
         SendMessageW(self.copy_disk_filter, CB_SETCURSEL, selection, 0);
         ShowWindow(self.copy_disk_filter, SW_SHOW);
     }
@@ -2455,18 +2487,18 @@ impl App {
             .map(|row| self.volume_label(row["volume_id"].as_i64()))
             .unwrap_or_default();
         let mut inspector = disk_locator_text(
-                selected,
-                &disk,
-                self.linked_mode(),
-                self.physical_states
-                    .get(
-                        &selected
-                            .and_then(|row| row["volume_id"].as_i64())
-                            .unwrap_or_default(),
-                    )
-                    .map(String::as_str)
-                    .unwrap_or("unverified"),
-            );
+            selected,
+            &disk,
+            self.linked_mode(),
+            self.physical_states
+                .get(
+                    &selected
+                        .and_then(|row| row["volume_id"].as_i64())
+                        .unwrap_or_default(),
+                )
+                .map(String::as_str)
+                .unwrap_or("unverified"),
+        );
         if self.copy_source.is_some() && !self.copy_disk_groups.is_empty() {
             inspector.push_str("\r\n\r\nCOPIES BY CATALOG DISK (metadata only)");
             for group in &self.copy_disk_groups {
@@ -2474,7 +2506,9 @@ impl App {
                 let count = group["count"].as_u64().unwrap_or(0);
                 let mark = if group["volume_id"].as_i64() == self.copy_focus_volume_id {
                     " [FILTERED]"
-                } else { "" };
+                } else {
+                    ""
+                };
                 inspector.push_str(&format!("\r\n{label}: {count}{mark}"));
             }
         }
@@ -2792,12 +2826,18 @@ impl App {
                 self.disk_filter_query = String::from_utf16_lossy(&buffer[..len as usize]);
                 self.populate_physical_disk_list();
             }
-            COPY_DISK_FILTER if notification == CBN_SELCHANGE as usize
-                && self.copy_source.is_some() => {
+            COPY_DISK_FILTER
+                if notification == CBN_SELCHANGE as usize && self.copy_source.is_some() =>
+            {
                 let selected = SendMessageW(self.copy_disk_filter, CB_GETCURSEL, 0, 0);
-                if selected < 0 { return; }
-                self.copy_focus_volume_id = if selected == 0 { None } else {
-                    self.copy_disk_groups.get(selected as usize - 1)
+                if selected < 0 {
+                    return;
+                }
+                self.copy_focus_volume_id = if selected == 0 {
+                    None
+                } else {
+                    self.copy_disk_groups
+                        .get(selected as usize - 1)
                         .and_then(|group| group["volume_id"].as_i64())
                 };
                 self.offset = 0;
@@ -3361,7 +3401,10 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             }
             SendMessageW(app.export_format, CB_SETCURSEL, 0, 0);
             app.copy_disk_filter = control(
-                hwnd, "COMBOBOX", "", WS_TABSTOP | CBS_DROPDOWNLIST as u32,
+                hwnd,
+                "COMBOBOX",
+                "",
+                WS_TABSTOP | CBS_DROPDOWNLIST as u32,
                 COPY_DISK_FILTER,
             );
             ShowWindow(app.copy_disk_filter, SW_HIDE);
