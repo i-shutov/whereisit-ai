@@ -117,3 +117,25 @@ index map to avoid confusing a filtered row with a catalog volume, with Rust
 unit tests for Cyrillic, numeric IDs and missing rows. SwiftUI uses localized
 case-insensitive label filtering while preserving selection and keyboard focus.
 This remains a source implementation checkpoint, not physical-device/GUI QA.
+
+
+## Native layout integration: resizable/collapsible disk locator (2026-11-01)
+
+The Win32 shell now uses an **actual mouse-resizable** 8px vertical grip between its
+results table and selected-file inspector. The inspector is clamped to 220–420px,
+while the results retain at least 600px whenever the third pane is visible; it
+auto-collapses below 1176px. **View → Show / hide disk locator** and **Ctrl+I**
+provide an explicit, reversible collapse without discarding selection or search.
+At 880px the table uses adaptive columns and keeps the recorded Path readable
+because no inspector is shown. No CTF, user pairing or search-scope state is
+modified by these view operations.
+
+SwiftUI already permits native pane dragging through `HSplitView`; it now has
+a visible **Show/Hide locator** action with Command-Shift-I and an accessibility
+label, allowing an 880px two-pane window when the inspector is hidden. Both UI
+implementations remain native. The action is per-window/session for now, not
+persisted across relaunch. This block includes pure Rust splitter geometry and
+hit-area tests and dual-client source-wiring regressions. Manual 880/1100/1180/
+1366px and HiDPI usability is **not** established by CI; see
+[UX pane runbook](qa/UX_NATIVE_PANE_REVIEW_20261101.md). Exact-HEAD CI is
+required before describing these changes as validated builds.

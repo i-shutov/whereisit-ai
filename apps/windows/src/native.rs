@@ -50,6 +50,7 @@ const ANNOTATION_PREVIEW: usize = 115;
 const ANNOTATION_PAGE_SIZE: usize = 20;
 const DISKS: usize = 120;
 const DISK_FILTER: usize = 128;
+const TOGGLE_LOCATOR: usize = 129;
 const FILES: usize = 121;
 const CATEGORIES: usize = 122;
 const CATEGORY_FILTER: usize = 123;
@@ -300,19 +301,97 @@ fn physical_state_label(state: &str) -> &'static str {
 // laptop resolutions. The full recorded path remains in the inspector when its
 // redundant table column is collapsed.
 fn explorer_geometry(window_width: i32) -> (i32, i32, i32) {
-    let locator_width = if window_width >= 1176 { 282 } else { 0 };
-    let locator_gap = if locator_width > 0 {
-        locator_width + 8
+    explorer_geometry_for_width(window_width, 282, true)
+}
+
+// A real Win32 three-pane splitter; the disk register stays 200px wide.
+// Retain at least 600px for results, and collapse the inspector below 1176px.
+fn explorer_geometry_for_width(
+    window_width: i32,
+    requested_locator: i32,
+    visible: bool,
+) -> (i32, i32, i32) {
+    let maximum = (window_width - 222 - 8 - 600).min(420);
+    let locator_width = if visible && window_width >= 1176 && maximum >= 220 {
+        requested_locator.clamp(220, maximum)
     } else {
         0
     };
-    let file_width = (window_width - 222 - locator_gap).max(100);
+    let file_width = (window_width - 222 - if locator_width > 0 {
+        locator_width + 8
+    } else {
+        0
+    })
+    .max(100);
     let path_column_width = if locator_width == 0 || file_width >= 840 {
         185
     } else {
         0
     };
     (locator_width, file_width, path_column_width)
+}
+
+// Keep the historical path visible when the locator cannot fit, even at
+// 880px, instead of leaving an unscrollable fixed-width results table.
+fn result_column_widths(file_width: i32, locator_visible: bool) -> [i32; 6] {
+    if locator_visible && file_width >= 630 {
+        [230, 120, 90, 120, 70, if file_width >= 840 { 185 } else { 0 }]
+    } else if locator_visible {
+        [205, 100, 75, 95, 65, 0]
+    } else if file_width >= 815 {
+        [230, 120, 90, 120, 70, 185]
+    } else {
+        [190, 106, 78, 98, 65, (file_width - 537).max(104)]
+    }
+}
+
+fn locator_splitter_hit_test(
+    window_width: i32,
+    window_height: i32,
+    requested_locator: i32,
+    visible: bool,
+    x: i32,
+    y: i32,
+) -> bool {
+    let (locator_width, _, _) =
+        explorer_geometry_for_width(window_width, requested_locator, visible);
+    locator_width > 0
+        && x >= window_width - locator_width - 8
+        && x <= window_width - locator_width
+        && y >= 106
+        && y < window_height - 146
+}
+
+#[cfg(test)]
+mod locator_splitter_tests {
+    use super::{
+        explorer_geometry_for_width, locator_splitter_hit_test, result_column_widths,
+    };
+
+    #[test]
+    fn pane_resizing_respects_minimum_result_space_and_can_hide() {
+        assert_eq!(explorer_geometry_for_width(1180, 500, true), (350, 600, 0));
+        assert_eq!(explorer_geometry_for_width(1366, 220, true), (220, 916, 185));
+        assert_eq!(explorer_geometry_for_width(1366, 282, false), (0, 1144, 185));
+        assert_eq!(explorer_geometry_for_width(880, 282, true), (0, 658, 185));
+    }
+
+    #[test]
+    fn splitter_only_captures_its_actual_visible_gap() {
+        assert!(locator_splitter_hit_test(1180, 740, 282, true, 894, 300));
+        assert!(!locator_splitter_hit_test(1180, 740, 282, true, 800, 300));
+        assert!(!locator_splitter_hit_test(1180, 740, 282, false, 894, 300));
+        assert!(!locator_splitter_hit_test(1100, 740, 282, true, 814, 300));
+    }
+
+    #[test]
+    fn narrow_result_columns_keep_recorded_path_legible() {
+        let narrow = result_column_widths(658, false);
+        assert_eq!(narrow, [190, 106, 78, 98, 65, 121]);
+        assert_eq!(narrow.iter().sum::<i32>(), 658);
+        assert_eq!(result_column_widths(600, true)[5], 0);
+        assert_eq!(result_column_widths(854, true)[5], 185);
+    }
 }
 
 #[cfg(test)]
@@ -1313,6 +1392,9 @@ struct App {
     status: HWND,
     location: HWND,
     locator: HWND,
+    locator_requested_width: i32,
+    locator_visible: bool,
+    dragging_locator: bool,
     buttons: Vec<(usize, HWND)>,
     physical_states: HashMap<i64, String>,
     mounted_volumes: Vec<MountedPhysicalVolume>,
@@ -1363,6 +1445,9 @@ impl App {
             status: null_mut(),
             location: null_mut(),
             locator: null_mut(),
+            locator_requested_width: 282,
+            locator_visible: true,
+            dragging_locator: false,
             buttons: vec![],
             physical_states: HashMap::new(),
             mounted_volumes: Vec::new(),
@@ -2452,6 +2537,16 @@ impl App {
                 self.load();
             }
             FILE_COPIES => self.show_copies_of_selected(),
+            TOGGLE_LOCATOR => {
+                self.locator_visible = !self.locator_visible;
+                self.layout();
+                InvalidateRect(self.hwnd, null(), 0);
+                self.status(if self.locator_visible {
+                    "Disk locator enabled. Drag the vertical grip to resize it (Ctrl+I toggles)."
+                } else {
+                    "Disk locator hidden; recorded paths remain in the results table (Ctrl+I)."
+                });
+            }
             PHYSICAL_CHECK => {
                 self.refresh_physical_presence();
                 self.status(if self.physical_probe_ok {
@@ -2614,6 +2709,19 @@ impl App {
             _ => {}
         }
     }
+    unsafe fn locator_splitter_hit(&self, x: i32, y: i32) -> bool {
+        let mut rect: RECT = std::mem::zeroed();
+        GetClientRect(self.hwnd, &mut rect);
+        locator_splitter_hit_test(
+            rect.right,
+            rect.bottom,
+            self.locator_requested_width,
+            self.locator_visible,
+            x,
+            y,
+        )
+    }
+
     unsafe fn layout(&self) {
         let mut rect: RECT = std::mem::zeroed();
         GetClientRect(self.hwnd, &mut rect);
@@ -2683,9 +2791,15 @@ impl App {
         }
         // Keep the legacy full-width table on narrow screens; the locator
         // becomes a third pane only when it does not obscure the file list.
-        let (locator_width, file_width, path_width) = explorer_geometry(w);
+        let (locator_width, file_width, _) =
+            explorer_geometry_for_width(w, self.locator_requested_width, self.locator_visible);
         MoveWindow(self.files, 214, 106, file_width, (h - 146).max(60), 1);
-        SendMessageW(self.files, LVM_SETCOLUMNWIDTH, 5, path_width as isize);
+        for (index, width) in result_column_widths(file_width, locator_width > 0)
+            .iter()
+            .enumerate()
+        {
+            SendMessageW(self.files, LVM_SETCOLUMNWIDTH, index, *width as isize);
+        }
         if locator_width > 0 {
             MoveWindow(
                 self.locator,
@@ -2979,6 +3093,72 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
         }
         WM_SIZE => {
             app.layout();
+            InvalidateRect(hwnd, null(), 0);
+            0
+        }
+        WM_LBUTTONDOWN => {
+            let x = (lp as u16 as i16) as i32;
+            let y = ((lp >> 16) as u16 as i16) as i32;
+            if app.locator_splitter_hit(x, y) {
+                app.dragging_locator = true;
+                SetCapture(hwnd);
+                return 0;
+            }
+            DefWindowProcW(hwnd, msg, wp, lp)
+        }
+        WM_MOUSEMOVE if app.dragging_locator => {
+            let x = (lp as u16 as i16) as i32;
+            let mut rect: RECT = std::mem::zeroed();
+            GetClientRect(hwnd, &mut rect);
+            app.locator_requested_width = rect.right - x - 4;
+            app.layout();
+            InvalidateRect(hwnd, null(), 0);
+            0
+        }
+        WM_LBUTTONUP if app.dragging_locator => {
+            app.dragging_locator = false;
+            ReleaseCapture();
+            0
+        }
+        WM_CAPTURECHANGED => {
+            app.dragging_locator = false;
+            0
+        }
+        WM_SETCURSOR => {
+            let mut cursor: POINT = std::mem::zeroed();
+            if GetCursorPos(&mut cursor) != 0 {
+                ScreenToClient(hwnd, &mut cursor);
+                if app.dragging_locator || app.locator_splitter_hit(cursor.x, cursor.y) {
+                    SetCursor(LoadCursorW(null_mut(), IDC_SIZEWE));
+                    return 1;
+                }
+            }
+            DefWindowProcW(hwnd, msg, wp, lp)
+        }
+        WM_PAINT => {
+            let mut paint: PAINTSTRUCT = std::mem::zeroed();
+            let dc = BeginPaint(hwnd, &mut paint);
+            let mut rect: RECT = std::mem::zeroed();
+            GetClientRect(hwnd, &mut rect);
+            let (locator_width, _, _) = explorer_geometry_for_width(
+                rect.right,
+                app.locator_requested_width,
+                app.locator_visible,
+            );
+            if locator_width > 0 {
+                let left = rect.right - locator_width - 8;
+                let middle = (rect.bottom - 40) / 2;
+                for offset in [2, 5] {
+                    let grip = RECT {
+                        left: left + offset,
+                        top: middle - 20,
+                        right: left + offset + 1,
+                        bottom: middle + 20,
+                    };
+                    FillRect(dc, &grip, GetSysColorBrush(COLOR_3DSHADOW));
+                }
+            }
+            EndPaint(hwnd, &paint);
             0
         }
         WM_COMMAND => {
@@ -3128,6 +3308,16 @@ pub fn run() {
                     wide("Physical disks").as_ptr(),
                 );
             }
+            let view = CreatePopupMenu();
+            if !view.is_null() {
+                AppendMenuW(
+                    view,
+                    MF_STRING,
+                    TOGGLE_LOCATOR,
+                    wide("Show / hide disk locator\tCtrl+I").as_ptr(),
+                );
+                AppendMenuW(menu, MF_POPUP, view as usize, wide("View").as_ptr());
+            }
             SetMenu(hwnd, menu);
             DrawMenuBar(hwnd);
         }
@@ -3141,6 +3331,14 @@ pub fn run() {
             {
                 SetFocus((*app).search);
                 SendMessageW((*app).search, EM_SETSEL, 0, -1);
+                continue;
+            }
+            // Ctrl+I collapses or restores the native disk locator.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && message.wParam == b'I' as usize
+            {
+                (*app).command(TOGGLE_LOCATOR, 0);
                 continue;
             }
             // Ctrl+L filters the disk register, without changing the catalog search.

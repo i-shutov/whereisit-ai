@@ -1176,6 +1176,7 @@ private struct CopyReturnContext {
     @StateObject private var model = Catalog()
     @FocusState private var searchFieldFocused: Bool
     @FocusState private var diskFilterFocused: Bool
+    @State private var locatorVisible = true
     var body: some View {
         VStack(spacing: 4) {
             HStack(spacing: 6) {
@@ -1220,7 +1221,19 @@ private struct CopyReturnContext {
                 }.labelsHidden().frame(width: 120).accessibilityLabel("Duplicate matching mode")
                 Button("Duplicates") { model.duplicates() }
             }
-            HStack { Text("AND  OR  NOT  ( )   name:  path:  ext:  size:  category:").foregroundStyle(.secondary); Spacer(); Text(model.resultScopeCaption).lineLimit(1).truncationMode(.middle).accessibilityLabel("Current search scope") }.font(.caption)
+            HStack(spacing: 8) {
+                Text("AND  OR  NOT  ( )   name:  path:  ext:  size:  category:")
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                Text(model.resultScopeCaption).lineLimit(1).truncationMode(.middle)
+                    .accessibilityLabel("Current search scope")
+                Button(locatorVisible ? "Hide locator" : "Show locator") {
+                    locatorVisible.toggle()
+                }
+                .keyboardShortcut("i", modifiers: [.command, .shift])
+                .accessibilityLabel("Toggle selected file disk locator")
+                .help("Show or hide the native disk locator (Command-Shift-I); current search scope is unchanged")
+            }.font(.caption)
             if let copyName = model.copySourceName {
                 HStack(spacing: 6) {
                     Label("COPY CANDIDATES • \(copyName)", systemImage: "doc.on.doc")
@@ -1297,7 +1310,9 @@ private struct CopyReturnContext {
                     TableColumn("Path", value: \.relative_path).width(min: 140, ideal: 210)
                 }.onTapGesture(count: 2) { model.openSelected() }
                 .contextMenu { Button("Open folder") { model.openSelected() }.disabled(model.selected?.isFolder != true) }
-                DiskLocatorInspector(model: model)
+                if locatorVisible {
+                    DiskLocatorInspector(model: model)
+                }
             }
             HStack(spacing: 8) {
                 Text(model.status).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
@@ -1307,7 +1322,7 @@ private struct CopyReturnContext {
             }.font(.caption)
             Text(model.linkedMode ? "LINKED CTF (read-only) • " + (model.linkedCTFPath ?? "") : model.database).font(.caption2).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).lineLimit(1).truncationMode(.middle)
         }
-        .padding(7).controlSize(.small).frame(minWidth: 1100, minHeight: 550)
+        .padding(7).controlSize(.small).frame(minWidth: locatorVisible ? 1100 : 880, minHeight: 550)
         .onAppear { searchFieldFocused = true; model.refreshPhysicalPresence() }
         .onReceive(Timer.publish(every: 6, on: .main, in: .common).autoconnect()) { _ in
             model.refreshPhysicalPresence()

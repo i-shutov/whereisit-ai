@@ -119,6 +119,25 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn('.keyboardShortcut("l", modifiers: [.command])', MAC)
         self.assertIn("View-only filtering: never change volumeID", MAC)
 
+    def test_native_locator_panels_can_resize_or_collapse_without_changing_scope(self):
+        self.assertIn("fn explorer_geometry_for_width(", WIN)
+        self.assertIn("fn result_column_widths(", WIN)
+        self.assertIn("fn locator_splitter_hit_test(", WIN)
+        self.assertIn("WM_LBUTTONDOWN =>", WIN)
+        self.assertIn("WM_MOUSEMOVE if app.dragging_locator =>", WIN)
+        self.assertIn("WM_CAPTURECHANGED =>", WIN)
+        self.assertIn("TOGGLE_LOCATOR =>", WIN)
+        self.assertIn("GetSysColorBrush(COLOR_3DSHADOW)", WIN)
+        self.assertIn("locator_splitter_tests", WIN)
+        self.assertIn("message.wParam == b'I' as usize", WIN)
+        self.assertIn("@State private var locatorVisible = true", MAC)
+        self.assertIn('Button(locatorVisible ? "Hide locator" : "Show locator")', MAC)
+        self.assertIn('if locatorVisible {\n                    DiskLocatorInspector(model: model)', MAC)
+        self.assertIn('.keyboardShortcut("i", modifiers: [.command, .shift])', MAC)
+        self.assertIn("minWidth: locatorVisible ? 1100 : 880", MAC)
+        self.assertNotIn("self.volume = None;", WIN.split("TOGGLE_LOCATOR =>", 1)[1].split("PHYSICAL_CHECK =>", 1)[0])
+        self.assertNotIn("model.volumeID =", MAC.split('Button(locatorVisible ? "Hide locator" : "Show locator")', 1)[1].split(".font(.caption)", 1)[0])
+
     def test_no_unverified_physical_drive_claims_in_locator(self):
         self.assertIn("Physical connection: NOT VERIFIED", WIN)
         self.assertIn("Physical connection not verified", MAC)

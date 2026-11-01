@@ -1,3 +1,11 @@
+## UX dense native layout and collapsible disk locator — 2026-11-01
+
+Draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57) continues on branch `ux/search-first-disk-locator-20261101` from the previously exact-HEAD green `7b78af89f88df64dc4bbd79eb01eed0b2ba2e760`. This integrated iteration adds an actual Win32 mouse-resizable disk locator with min-width/file-table guards, a visible native splitter grip and Ctrl+I/View collapse; macOS SwiftUI adds an accessible Command-Shift-I inspector toggle to its already-resizable HSplitView. The compact Windows result columns now preserve the recorded Path when the inspector is hidden even on 880px windows. Neither toggle changes search scope, physical verification, catalogue selection or CTF bytes. See [manual layout runbook](docs/qa/UX_NATIVE_PANE_REVIEW_20261101.md).
+
+**Validation state at commit preparation:** new pure Win32 geometry/hit tests, native UI source-wiring regression, Linux/Windows/macOS native builds and upgrade gates must all be confirmed on the resulting exact commit SHA before marking this block green. No owner screenshots or physical USB acceptance claimed. PR remains draft/unmerged. Stable remains blocked by the known modified/historical CTF, device, platform GUI, signing/notarization and real p95 requirements.
+
+---
+
 ## UX1 integrated disk-register filtering — 2026-11-01 (exact-HEAD CI pending)
 
 Continued the same draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57)
