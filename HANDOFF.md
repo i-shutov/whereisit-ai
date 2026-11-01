@@ -1,3 +1,21 @@
+# WhereIsIt AI — UX implementation handoff (2026-11-01)
+
+**OWNER DECISION:** Replace legacy 2000s-style UI with a search-first, dense and ergonomic native tool for approximately 40 mostly offline USB disks. Main jobs: find a movie/file, identify exactly which labelled physical disk to retrieve, and compare metadata duplicate candidates across disks. [Current UX plan](docs/UX_OFFLINE_USB_SEARCH_2026-11-01.md) is authoritative for the upcoming UI work. The concept screenshots are **design references, not deployed functionality**.
+
+**Live baseline:** at branch creation `main=cabdb3d2b139a67729a795ba9c34e4d3144c9c9f` (after PR #54 and #56); always recheck main/PRs/CI, do not use the old e8a16... base. One integrated UX branch `ux/search-first-disk-locator-20261101`, [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57). Do not create a competing micro-PR stack or modify frozen release/finalization branches.
+
+**Implemented in PR #57:** selected-result disk locator in Win32 (native read-only/copyable inspector, redraw on selection, collapse below 1120px; unit tests) and SwiftUI (resizable inspector, copy label/path, browse disk root, search all disks); both clearly state **physical connection not verified**. Disc identity, copied paths and candidate counts are catalog evidence, not physical mount verification/content hashes. Search table made compact by moving secondary fields into inspector. New Python source-wiring regression is included in existing native CI. Plan + native UI docs updated. **No user CTF/SQLite uploaded.**
+
+**Exact-HEAD validation:** inspect current GitHub Actions on PR #57, especially Linux fmt/test/Clippy, Windows installer, macOS ARM64 and Intel native builds, installed upgrade and offline kit. First native CI run #41298743486 failed ONLY `cargo fmt --check`; corrected formatting in same PR, then advanced work on the compact file table. Report only actual final exact-HEAD run results; do not call queued/cancelled jobs PASS. Manual visual/keyboard 1366×768/HiDPI GUI QA remains pending.
+
+**Next integrated development:** make global search the primary focus; verify stable physical media identity (not historical drive letter), explicitly report verified online/offline/unknown states; integrate cross-disk duplicate navigation and safe metadata-only copy comparison, followed by native accessibility/keyboard QA and SLO performance improvements. Preserve the 44-disk real CTF acceptance evidence already in the RC3 handoff below; do not mislabel it synthetic. Public CI stays synthetic. No faux poster thumbnails, media decoding, hash-verified matches or deletion features merely because they appear in a visual mockup.
+
+**Watchdogs:** existing WhereIsIt engineering task re-enabled for UX implementation; separate hourly CI QA task is **read-only** to avoid concurrent branch writes. Both MUST only touch/check `i-shutov/whereisit-ai`, not FlowBridge. Keep PR regression/handoff current and avoid changing stable release without full acceptance.
+
+**Stable 1.0 remains blocked** by original-WhereIsIt reading a genuinely modified CTF, two historical CTFs raw-byte availability, hands-on Windows 10/11 and macOS ARM64/Intel GUI+upgrade, Authenticode/Apple notarization and measured p95 150ms (last real p95 209.82–252.83ms). RC3 is an unsigned prerelease. Linked CTF read-only, per-use generation SHA, caches derived, independent user annotation DB, ambiguous matches conflicts, opaque 0x10 not presumed lost descriptions.
+
+---
+
 # WhereIsIt AI — integrated RC3 handoff (2026-10-31)
 
 ## Continue the integrated product, not the old micro-PR plan
