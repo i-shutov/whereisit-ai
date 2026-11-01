@@ -2142,6 +2142,9 @@ impl App {
                         self.linked_ctf = Some(path);
                         self.linked_generation = Some(generation);
                         self.physical_states.clear();
+                        self.shelf_labels.clear();
+                        self.shelf_edit_disk = None;
+                        self.text(self.shelf_edit, "");
                         self.annotation_db = None;
                         self.annotation_session = self.annotation_session.wrapping_add(1);
                         self.annotation_offset = 0;

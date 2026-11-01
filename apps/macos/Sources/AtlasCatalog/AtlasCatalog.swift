@@ -852,7 +852,7 @@ private struct CopyReturnContext {
             self.job = nil
             guard let result else { return }
             self.linkedCTFPath = source; self.linkedGeneration = result.generation
-            self.physicalStates = [:]; self.selectedPhysicalID = ""
+            self.physicalStates = [:]; self.shelfLabels = [:]; self.selectedPhysicalID = ""
             if self.exportFormat == "ctf" { self.exportFormat = "csv" }
             self.volumeID = nil; self.stack = [(nil, "/")]; self.entries = []
             self.query = ""; self.appliedQuery = ""; self.showingDuplicates = false
@@ -1238,30 +1238,35 @@ private struct CopyReturnContext {
         NSPasteboard.general.setString(text, forType: .string)
     }
 
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("FIND THE DISK").font(.caption.bold()).foregroundStyle(.secondary)
+    // Kept separate from the large file inspector to bound SwiftUI type-checking
+    // and allow tagging a selected register disk even without a file result.
+    @ViewBuilder private var shelfTagEditor: some View {
+        if let diskID = model.selectedDiskForPairing {
+            Text("OWNER STICKER / SHELF TAG (manual, not OS identity)")
+                .font(.caption.bold()).foregroundStyle(.secondary)
+            HStack(spacing: 4) {
+                TextField("Sticker number / shelf", text: $shelfDraft)
+                    .accessibilityLabel("Private sticker or shelf tag for selected catalog disk")
+                    .help("Your retrieval hint, never evidence of a mounted USB disk")
+                Button("Save") {
+                    guard shelfDraftDiskID == diskID else { return }
+                    model.saveShelfLabel(on: diskID, text: shelfDraft)
+                }
+                .accessibilityLabel("Save private shelf tag for selected catalog disk")
+            }.font(.caption)
+            Text("Saved to your private user database, scoped to this catalog generation.")
+                .font(.caption2).foregroundStyle(.secondary)
+            Divider()
+        }
+    }
+
+    @ViewBuilder private var selectedFileDetails: some View {
                 if let entry = model.selected {
                     Label(model.volumeLabel(entry.volume_id), systemImage: "externaldrive")
                         .font(.headline)
                         .textSelection(.enabled)
                     Text("Catalog disk ID: \(entry.volume_id)")
                         .font(.caption).foregroundStyle(.secondary)
-                    Text("OWNER STICKER / SHELF TAG (manual, not OS identity)")
-                        .font(.caption.bold()).foregroundStyle(.secondary)
-                    HStack(spacing: 4) {
-                        TextField("Sticker number / shelf", text: $shelfDraft)
-                            .accessibilityLabel("Private sticker or shelf tag for selected catalog disk")
-                            .help("Your own retrieval hint, never proof of USB presence")
-                        Button("Save") {
-                            guard shelfDraftDiskID == entry.volume_id else { return }
-                            model.saveShelfLabel(on: entry.volume_id, text: shelfDraft)
-                        }
-                        .accessibilityLabel("Save private shelf tag for selected catalog disk")
-                    }.font(.caption)
-                    Text("Private user database only; scoped to this catalog generation.")
-                        .font(.caption2).foregroundStyle(.secondary)
                     Label(model.physicalCaption(entry.volume_id), systemImage: model.physicalSymbol(entry.volume_id))
                         .foregroundStyle(model.physicalState(entry.volume_id) == "connected" ? Color.green : Color.orange)
                         .font(.callout)
@@ -1305,10 +1310,9 @@ private struct CopyReturnContext {
                     Text("Select a file to identify its catalogued USB disk.")
                         .font(.callout).foregroundStyle(.secondary)
                 }
-                Button("Search all catalogued disks") { model.searchAcrossAllDisks() }
-                    .disabled(model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .help("Run the current expression without a disk filter")
-                Divider()
+    }
+
+    @ViewBuilder private var liveMountControls: some View {
                 Text("LIVE OS MOUNT IDENTITIES").font(.caption.bold()).foregroundStyle(.secondary)
                 Picker("Mounted OS volume", selection: $model.selectedPhysicalID) {
                     Text("Choose a current mount").tag("")
@@ -1339,6 +1343,19 @@ private struct CopyReturnContext {
                 Text("Only a freshly OS-verified, explicitly paired UUID may show connected. A clone may share a filesystem UUID. Historical drive letters are never used.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("FIND THE DISK").font(.caption.bold()).foregroundStyle(.secondary)
+                selectedFileDetails
+                shelfTagEditor
+                Button("Search all catalogued disks") { model.searchAcrossAllDisks() }
+                    .disabled(model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .help("Run the current expression without a disk filter")
+                Divider()
+                liveMountControls
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1346,18 +1363,19 @@ private struct CopyReturnContext {
         }
         .frame(minWidth: 230, idealWidth: 270, maxWidth: 330)
         .onAppear {
-            shelfDraftDiskID = model.selected?.volume_id
+            shelfDraftDiskID = model.selectedDiskForPairing
             shelfDraft = shelfDraftDiskID.map { model.shelfLabel($0) } ?? ""
         }
-        .onChange(of: model.selected?.volume_id) { _, id in
+        // The one-argument onChange overload supports our macOS 13 deployment.
+        .onChange(of: model.selectedDiskForPairing) { id in
             shelfDraftDiskID = id
             shelfDraft = id.map { model.shelfLabel($0) } ?? ""
         }
-        .onChange(of: model.physicalScope) { _, _ in
-            shelfDraftDiskID = model.selected?.volume_id
+        .onChange(of: model.physicalScope) { _ in
+            shelfDraftDiskID = model.selectedDiskForPairing
             shelfDraft = shelfDraftDiskID.map { model.shelfLabel($0) } ?? ""
         }
-        .onChange(of: model.shelfLabels) { _, _ in
+        .onChange(of: model.shelfLabels) { _ in
             if shelfDraft.isEmpty, let id = shelfDraftDiskID {
                 shelfDraft = model.shelfLabel(id)
             }

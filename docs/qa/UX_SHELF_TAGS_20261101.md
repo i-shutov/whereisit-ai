@@ -18,3 +18,7 @@ The shared Rust service uses physical_shelf_labels (private read) and physical_s
 
 ## Unchanged stable gate
 Real owner CTF evidence (44 disks / 3,046,027 records) remains previously validated, not synthetic. The historical raw inputs remain provider-blocked. Original modified CTF, human hardware/GUI checks, live p95 150ms, Authenticode and Apple notarization remain blockers. RC3 unsigned prerelease only, PR #57 draft/unmerged.
+
+### Mac register-only tagging and compatibility repair
+
+Selecting a disk in the left register (without selecting a file) exposes the sticker editor in the right inspector, even if no file row is highlighted. Switching catalog generations clears old in-memory stickers immediately. The selected-file inspector was split into smaller SwiftUI computed subviews for reliable release compilation, and change handlers use the macOS 13-compatible overload. This repairs the concrete failing macOS ARM64 SwiftUI type-check step on SHA 4b463810... in the same PR, without turning off compiler/tests.

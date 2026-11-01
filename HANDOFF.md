@@ -1,3 +1,9 @@
+## UX5 SwiftUI release compiler repair and register-only tagging (2026-11-01; exact new HEAD CI required)
+
+The exact-head macOS ARM64 native build on [run 41343297951](https://github.com/i-shutov/whereisit-ai/actions/runs/41343297951) failed at SwiftUI compiler type-checking DiskLocatorInspector.body (not a Rust/CTF regression); Linux Rust/Clippy/rustfmt and Windows native jobs passed. In this same draft PR #57, split the complex SwiftUI body into selected-file, shelf editor and OS-mount subviews; use macOS 13-compatible onChange overloads; let operators tag a disk selected in the left register without requiring file selection; clear stale shelf labels eagerly upon CTF scope switches on both native clients. Native source-wiring tests, manual QA and this handoff updated. All new exact-head Linux/Windows/Mac ARM/Intel, offline, integration and RC2→RC3 upgrade CI must run again; no PASS claim on pending runs. CTF remains read-only/generation-pinned, all shelf tags are private and never prove USB presence. No merge or stable.
+
+---
+
 ## UX5 — private offline USB sticker/shelf tags (2026-11-01, exact-head CI pending)
 
 In the SAME draft PR #57, a new integrated native retrieval feature allows explicitly saving/clearing a case/sticker/shelf label for one catalog disk (Win32 sidebar, SwiftUI selected-file inspector). Both native disk registers and locator show it; the Mac register filter also matches it. User-owned physical sidecar only, independently keyed to exact source generation/platform/catalog ID; no CTF, original catalog, mirror, pairing, candidate or annotation writes. Rust service rejects unconfirmed/invalid labels, tests Unicode and generation isolation, and shows that manually entered labels never make USB presence verified. New source-wiring regressions and [UX5 QA](docs/qa/UX_SHELF_TAGS_20261101.md).
