@@ -314,3 +314,9 @@ and publishes an explicitly **prerelease** RC tag; it must not publish stable.
 Record actual merge, main CI and release URLs in PR54 after they exist. Do not
 claim a planned release already exists or equate CI installer smoke with human
 GUI acceptance. Do not touch FlowBridge.
+
+
+## 2026-11-02 — UX10 native async page freshness / page-path clipboard candidate
+
+Branch: draft PR #57, current exact parent 3f31060a96375e3f1f50491c05d1c87a5f15a981; no main merge or stable release.
+Native Win32 and SwiftUI clear old table rows and invalidate selection at each new async search/candidate-page request; latest-page-only readiness gates copy/verified-focus actions. Copy page paths (Ctrl+Shift+M / Command-Shift-M) produces only a bounded current-page manifest with exact catalog disk IDs, historical paths, total/page range and source-verification disclaimers. Matching metadata never means byte equality or permission to delete. Original CTF is read-only, per-page linked SHA pinning preserved. Tests and UX10 runbook added. Final SHA and verified Actions URLs must be recorded in PR #57 after exact-HEAD CI; this commit is not a claim of hardware GUI acceptance. PR stays draft; RC3 remains unsigned prerelease and stable 1.0 is BLOCKED by original modified/historic CTFs, manual GUI/hardware/signing and real p95 target.

@@ -233,6 +233,7 @@ private struct CopyReturnContext {
     @Published var copySourceID: Int64?
     @Published var copySourceName: String?
     @Published var copyDiskGroups: [CandidateDiskGroup] = []
+    @Published var pageReady = false
     @Published var copyFocusVolumeID: Int64?
     private var copyReturn: CopyReturnContext?
     // Both entry ID and catalog generation must remain unchanged during the OS probe.
@@ -517,7 +518,7 @@ private struct CopyReturnContext {
         }
     }
     func copyPickupPlan() {
-        guard copySourceID != nil, let file = copySourceName,
+        guard pageReady, copySourceID != nil, let file = copySourceName,
               !copyDiskGroups.isEmpty else {
             status = "Find copies and wait for catalogued candidate disks first."
             return
@@ -545,12 +546,47 @@ private struct CopyReturnContext {
         NSPasteboard.general.setString(text, forType: .string)
         status = "Disk pickup checklist copied locally. OS badges are last observations; file bytes unverified."
     }
+    // No disk I/O: this is a clipboard manifest from exactly one completed
+    // generation-pinned candidate page, NOT an export of every catalog copy.
+    func copyCandidatePagePaths() {
+        guard pageReady, copySourceID != nil, let file = copySourceName else {
+            status = "Candidate page is loading or source verification failed; paths not copied."
+            return
+        }
+        let clean: (String) -> String = {
+            $0.replacingOccurrences(of: "\r", with: " ")
+                .replacingOccurrences(of: "\n", with: " ")
+                .replacingOccurrences(of: "\t", with: " ")
+        }
+        let scope = copyFocusVolumeID.map { "Catalog disk #\($0)" } ?? "All catalogued disks"
+        let first = entries.isEmpty ? 0 : offset + 1
+        let last = offset + entries.count
+        let header = [
+            "WhereIsIt AI — recorded candidate paths, CURRENT PAGE ONLY",
+            "File (recorded catalog name): \(clean(file))",
+            "Scope: \(scope); loaded rows \(first)–\(last) of \(total).",
+            "The clipboard contains only this loaded page (maximum 250 records), not all copies."
+        ]
+        let rows = entries.prefix(limit).enumerated().map { index, entry in
+            let bytes = entry.size.map { "\($0) bytes" } ?? "size not recorded"
+            return "\(index + 1). Disk #\(entry.volume_id) • \(clean(entry.name)) • \(clean(entry.relative_path)) • \(bytes)"
+        }
+        let caution = [
+            "Paths are HISTORICAL catalog metadata, not current mounted file locations.",
+            "Linked CTF SHA was checked when the page loaded; copying does not recheck source generation.",
+            "Matching filename+size does NOT verify file contents or hashes; never auto-delete."
+        ]
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString((header + rows + caution).joined(separator: "\n"), forType: .string)
+        status = "Current candidate PAGE paths copied locally. Other pages, physical presence and bytes remain unverified."
+    }
+
     var soleConnectedCandidateDisk: Int64? {
         let matches = copyDiskGroups.filter { $0.count > 0 && physicalState($0.volume_id) == "connected" }
         return matches.count == 1 ? matches.first?.volume_id : nil
     }
     func focusSoleConnectedCopy() {
-        guard let source = copySourceID, !copyDiskGroups.isEmpty else {
+        guard pageReady, let source = copySourceID, !copyDiskGroups.isEmpty else {
             status = "Find metadata copy candidates first."
             return
         }
@@ -811,7 +847,9 @@ private struct CopyReturnContext {
             ?? "SEARCH ACROSS ALL DISKS"
     }
     func load() {
-        generation += 1; let token = generation; selection = nil
+        generation += 1; let token = generation
+        // Clear previous-scope rows immediately; an old page must not be actionable.
+        selection = nil; entries = []; total = 0; hasMore = false; pageReady = false
         var args: [String: Any] = ["offset": offset, "limit": limit]
         if let volumeID { args["volume_id"] = volumeID }
         if let copySourceID {
@@ -873,6 +911,7 @@ private struct CopyReturnContext {
     }
     func applyPage(_ page: EntryPage, token: Int) {
         guard generation == token else { return }
+        pageReady = true
         entries = page.items; total = page.total ?? (offset + page.items.count)
         copyDiskGroups = copySourceID == nil ? [] : (page.disk_groups ?? [])
         hasMore = page.has_more ?? (offset + page.items.count < total)
@@ -1587,9 +1626,16 @@ private struct CopyReturnContext {
                     Spacer(minLength: 6)
                     Button("Copy pickup list") { model.copyPickupPlan() }
                         .keyboardShortcut("p", modifiers: [.command, .shift])
+                        .disabled(!model.pageReady || model.copyDiskGroups.isEmpty)
                         .accessibilityLabel("Copy catalogued candidate disk IDs, shelf tags, counts and last OS states")
                         .help("Local checklist; OS status does not verify file bytes (Command-Shift-P)")
+                    Button("Copy page paths") { model.copyCandidatePagePaths() }
+                        .keyboardShortcut("m", modifiers: [.command, .shift])
+                        .disabled(!model.pageReady)
+                        .accessibilityLabel("Copy recorded paths from this loaded metadata candidate page only")
+                        .help("Copy at most 250 recorded paths, NOT all matches; no physical or content verification (Command-Shift-M)")
                     Button("Use verified mounted disk") { model.focusSoleConnectedCopy() }
+                        .disabled(!model.pageReady || model.copyDiskGroups.isEmpty)
                         .keyboardShortcut("g", modifiers: [.command])
                         .help("Fresh OS check, then focus the sole explicitly paired and observed candidate disk (Command-G)")
                         .accessibilityLabel("Focus sole OS-verified copy disk after refreshing live mounts")

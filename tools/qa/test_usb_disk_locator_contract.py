@@ -307,6 +307,34 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("Matching name+size never verifies file bytes or hashes; do NOT auto-delete.", WIN)
         self.assertIn("Matching name+size never verifies file bytes or hashes; do NOT auto-delete.", MAC)
 
+    def test_ux10_stale_pages_are_hidden_and_only_current_copy_paths_exported(self):
+        self.assertIn("const COPY_PAGE_MANIFEST: usize = 138", WIN)
+        self.assertIn("fn candidate_page_manifest(", WIN)
+        self.assertIn("page_manifest_uses_current_slice_and_scrubs_untrusted_line_breaks", WIN)
+        win_load = WIN.split("unsafe fn load(&mut self) {", 1)[1].split("unsafe fn poll(&mut self) {", 1)[0]
+        self.assertIn("self.page_ready = false;", win_load)
+        self.assertIn("self.entries.clear();", win_load)
+        self.assertIn("LVM_DELETEALLITEMS", win_load)
+        self.assertIn("self.page_ready = true;", WIN.split('"rows" => {', 1)[1])
+        self.assertIn("COPY_PAGE_MANIFEST => {", WIN)
+        self.assertIn("if !self.page_ready || self.copy_source.is_none()", WIN)
+        self.assertIn("(*app).command(COPY_PAGE_MANIFEST, 0)", WIN)
+        self.assertIn("MoveWindow(*control, w - 616, 62, 146, 23, 1)", WIN)
+        self.assertIn("self.update_disk_locator();", WIN.split("COPY_PAGE_MANIFEST => {", 1)[1].split("COPY_PICKUP_PLAN => {", 1)[0])
+        self.assertIn("@Published var pageReady = false", MAC)
+        mac_load = MAC.split("func load() {", 1)[1].split("func applyPage(", 1)[0]
+        self.assertIn("entries = []; total = 0; hasMore = false; pageReady = false", mac_load)
+        self.assertIn("pageReady = true", MAC.split("func applyPage(", 1)[1])
+        self.assertIn("guard pageReady, copySourceID != nil", MAC)
+        self.assertIn("func copyCandidatePagePaths()", MAC)
+        self.assertIn('Button("Copy page paths") { model.copyCandidatePagePaths() }', MAC)
+        self.assertIn('.keyboardShortcut("m", modifiers: [.command, .shift])', MAC)
+        self.assertIn(".disabled(!model.pageReady)", MAC)
+        self.assertIn("CURRENT PAGE ONLY", WIN)
+        self.assertIn("CURRENT PAGE ONLY", MAC)
+        self.assertIn("copying does not recheck source generation", WIN)
+        self.assertIn("copying does not recheck source generation", MAC)
+
     def test_no_unverified_physical_drive_claims_in_locator(self):
         self.assertIn("Physical connection: NOT VERIFIED", WIN)
         self.assertIn("Physical connection not verified", MAC)

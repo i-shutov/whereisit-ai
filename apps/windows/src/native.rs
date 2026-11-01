@@ -45,6 +45,7 @@ const SHELF_SAVE: usize = 133;
 const COPY_LOCATOR: usize = 135;
 const REVEAL_DISK: usize = 136;
 const COPY_PICKUP_PLAN: usize = 137;
+const COPY_PAGE_MANIFEST: usize = 138;
 // Win32 GetDriveTypeW standard result codes; windows-sys 0.61 does not export these here.
 // Unknown/missing roots mean a potentially incomplete OS snapshot, never "offline".
 const DRIVE_UNKNOWN: u32 = 0;
@@ -560,6 +561,85 @@ fn candidate_disk_pickup_list(
         "Matching name+size never verifies file bytes or hashes; do NOT auto-delete.".to_owned(),
     );
     Some(lines.join("\r\n"))
+}
+
+// Clipboard-only manifest for the CURRENT, already-loaded page. Never claim
+// this is the complete set across the catalogue, or that any bytes were read.
+// Linked CTF generation is checked by the page request, not by clipboard copy.
+fn candidate_page_manifest(
+    file_name: &str,
+    entries: &[Value],
+    offset: usize,
+    total: usize,
+    focused_disk: Option<i64>,
+) -> String {
+    let clean = |value: &str| value.replace(['\r', '\n', '\t'], " ");
+    let first = if entries.is_empty() { 0 } else { offset + 1 };
+    let last = offset.saturating_add(entries.len());
+    let scope = focused_disk
+        .map(|disk| format!("Catalog disk #{disk}"))
+        .unwrap_or_else(|| "All catalogued disks".to_owned());
+    let mut lines = vec![
+        "WhereIsIt AI — recorded candidate paths, CURRENT PAGE ONLY".to_owned(),
+        format!("File (recorded catalog name): {}", clean(file_name)),
+        format!("Scope: {scope}; loaded rows {first}–{last} of {total}."),
+        "The clipboard contains only this loaded page (maximum 250 records), not all copies.".to_owned(),
+    ];
+    for (index, entry) in entries.iter().take(LIMIT).enumerate() {
+        let disk = entry["volume_id"]
+            .as_i64()
+            .map(|id| format!("#{id}"))
+            .unwrap_or_else(|| "unknown".to_owned());
+        let size = entry["size"]
+            .as_u64()
+            .map(|bytes| format!("{bytes} bytes"))
+            .unwrap_or_else(|| "size not recorded".to_owned());
+        lines.push(format!(
+            "{}. Disk {} • {} • {} • {}",
+            index + 1,
+            disk,
+            clean(&string(entry, "name")),
+            clean(&string(entry, "relative_path")),
+            size
+        ));
+    }
+    lines.push("Paths are HISTORICAL catalog metadata, not current mounted file locations.".to_owned());
+    lines.push("Linked CTF SHA was checked when the page loaded; copying does not recheck source generation.".to_owned());
+    lines.push("Matching filename+size does NOT verify file contents or hashes; never auto-delete.".to_owned());
+    lines.join("\r\n")
+}
+
+#[cfg(test)]
+mod candidate_page_manifest_tests {
+    use super::candidate_page_manifest;
+    use serde_json::json;
+
+    #[test]
+    fn page_manifest_uses_current_slice_and_scrubs_untrusted_line_breaks() {
+        let rows = vec![
+            json!({"id":1,"volume_id":42,"name":"Film\nFake row","relative_path":"/Movies/\r\nScene.mkv","size":1024}),
+            json!({"id":2,"volume_id":142,"name":"Film.mkv","relative_path":"/Other/Film.mkv","size":1024}),
+        ];
+        let text = candidate_page_manifest("Film\nFake header", &rows, 250, 1000, Some(42));
+        assert!(text.contains("CURRENT PAGE ONLY"));
+        assert!(text.contains("Scope: Catalog disk #42; loaded rows 251–252 of 1000."));
+        assert!(text.contains("Film Fake header"));
+        assert!(text.contains("1. Disk #42"));
+        assert!(text.contains("2. Disk #142"));
+        assert!(text.contains("/Movies/  Scene.mkv"));
+        assert!(!text.contains("\r\nFake row"));
+        assert!(!text.contains("\r\nFake header"));
+        assert!(text.contains("not all copies"));
+        assert!(text.contains("does not recheck source generation"));
+        assert!(text.contains("never auto-delete"));
+    }
+
+    #[test]
+    fn empty_loaded_page_never_implies_complete_catalog() {
+        let text = candidate_page_manifest("Missing", &[], 0, 0, None);
+        assert!(text.contains("All catalogued disks; loaded rows 0–0 of 0"));
+        assert!(text.contains("CURRENT PAGE ONLY"));
+    }
 }
 
 // Multiple observed candidate volumes require explicit human selection.
@@ -1948,6 +2028,7 @@ struct App {
     total: usize,
     total_known: bool,
     has_more: bool,
+    page_ready: bool,
     generation: u64,
     pending: usize,
     job: Option<String>,
@@ -2012,6 +2093,7 @@ impl App {
             total: 0,
             total_known: true,
             has_more: false,
+            page_ready: false,
             generation: 0,
             pending: 0,
             job: None,
@@ -2102,6 +2184,7 @@ impl App {
         self.mounted_volumes.clear();
         self.physical_probe_ok = false;
         self.entries.clear();
+        self.page_ready = false;
         self.categories.clear();
         self.total = 0;
         self.has_more = false;
@@ -2135,6 +2218,14 @@ impl App {
     }
     unsafe fn load(&mut self) {
         self.generation += 1;
+        // Hide all rows from the preceding scope/page before the async reply.
+        // Never permit an old selection to masquerade as the new catalog page.
+        self.page_ready = false;
+        self.entries.clear();
+        self.total = 0;
+        self.total_known = false;
+        self.has_more = false;
+        SendMessageW(self.files, LVM_DELETEALLITEMS, 0, 0);
         let (copy_visibility, help_visibility) = if self.copy_source.is_some() {
             (SW_SHOW, SW_HIDE)
         } else {
@@ -2465,6 +2556,7 @@ impl App {
                         data
                     };
                     self.entries = page["items"].as_array().cloned().unwrap_or_default();
+                    self.page_ready = true;
                     self.copy_disk_groups = if self.copy_source.is_some() {
                         page["disk_groups"].as_array().cloned().unwrap_or_default()
                     } else {
@@ -2525,6 +2617,10 @@ impl App {
                                     0,
                                     0,
                                 ))))) as i32
+                } else if [COPY_PICKUP_PLAN, COPY_PAGE_MANIFEST, COPY_CONNECTED].contains(command) {
+                    (self.copy_source.is_some()
+                        && self.page_ready
+                        && !self.copy_disk_groups.is_empty()) as i32
                 } else if *command == SHELF_SAVE {
                     self.shelf_edit_disk.is_some() as i32
                 } else if [
@@ -2854,7 +2950,7 @@ impl App {
     }
 
     unsafe fn focus_sole_connected_copy(&mut self) {
-        if self.copy_source.is_none() || self.copy_disk_groups.is_empty() {
+        if !self.page_ready || self.copy_source.is_none() || self.copy_disk_groups.is_empty() {
             self.status("Find copies of a file first (Ctrl+D).");
             return;
         }
@@ -3415,7 +3511,34 @@ impl App {
                 self.status("Showing selected file's exact disk in register. Search scope and OS pairing unchanged; click disk to browse.");
             }
             COPY_CONNECTED => self.focus_sole_connected_copy(),
+            COPY_PAGE_MANIFEST => {
+                if !self.page_ready || self.copy_source.is_none() {
+                    self.status("Wait for the current candidate page to finish verifying before copying paths.");
+                    return;
+                }
+                let Some(name) = self.copy_source_name.as_deref() else {
+                    self.status("No current catalogued file for the page manifest.");
+                    return;
+                };
+                let manifest = candidate_page_manifest(
+                    name,
+                    &self.entries,
+                    self.offset,
+                    self.total,
+                    self.copy_focus_volume_id,
+                );
+                self.text(self.locator, &manifest);
+                SendMessageW(self.locator, EM_SETSEL, 0, -1);
+                SendMessageW(self.locator, WM_COPY, 0, 0);
+                SendMessageW(self.locator, EM_SETSEL, 0, 0);
+                self.update_disk_locator();
+                self.status("Current candidate PAGE paths copied locally. Other pages, physical presence and file bytes remain unverified.");
+            }
             COPY_PICKUP_PLAN => {
+                if !self.page_ready {
+                    self.status("Candidate page still loading or source verification failed; nothing copied.");
+                    return;
+                }
                 let Some(plan) = self.copy_source_name.as_deref().and_then(|name| {
                     candidate_disk_pickup_list(
                         name,
@@ -3660,7 +3783,13 @@ impl App {
         MoveWindow(self.duplicate_mode, w - 312, 34, 136, 200, 1);
         // Candidate focus occupies the query-help row only in copy mode.
         // Search syntax help is hidden then; Notes stays on the right.
-        MoveWindow(self.copy_disk_filter, 8, 62, (w - 466).max(100), 240, 1);
+        // Leave room for three explicit copy actions without covering the disk selector.
+        let copy_filter_width = if self.copy_source.is_some() {
+            (w - 634).max(100)
+        } else {
+            (w - 466).max(100)
+        };
+        MoveWindow(self.copy_disk_filter, 8, 62, copy_filter_width, 240, 1);
         for (i, hwnd) in &self.buttons {
             if *i == FIND {
                 MoveWindow(*hwnd, w - 604, 34, 104, 24, 1);
@@ -3707,8 +3836,15 @@ impl App {
                 ANNOTATION_PREVIEW => {
                     MoveWindow(*control, w - 144, 62, 136, 23, 1);
                 }
+                COPY_PAGE_MANIFEST => {
+                    MoveWindow(*control, w - 616, 62, 146, 23, 1);
+                    ShowWindow(
+                        *control,
+                        if self.copy_source.is_some() { SW_SHOW } else { SW_HIDE },
+                    );
+                }
                 COPY_PICKUP_PLAN => {
-                    MoveWindow(*control, w - 452, 62, 148, 23, 1);
+                    MoveWindow(*control, w - 460, 62, 146, 23, 1);
                     ShowWindow(
                         *control,
                         if self.copy_source.is_some() {
@@ -3719,7 +3855,7 @@ impl App {
                     );
                 }
                 COPY_CONNECTED => {
-                    MoveWindow(*control, w - 296, 62, 140, 23, 1);
+                    MoveWindow(*control, w - 304, 62, 142, 23, 1);
                     ShowWindow(
                         *control,
                         if self.copy_source.is_some() {
@@ -3905,6 +4041,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 (COPY_LOCATOR, "Copy &locator text"),
                 (COPY_CONNECTED, "&Verified copy"),
                 (COPY_PICKUP_PLAN, "Copy &pickup list"),
+                (COPY_PAGE_MANIFEST, "Copy page &paths"),
                 (PHYSICAL_CHECK, "Refresh &USB state"),
                 (PHYSICAL_PAIR, "&Pair physical disk…"),
                 (PHYSICAL_UNPAIR, "Unpair disk"),
@@ -4337,6 +4474,12 @@ pub fn run() {
                     COPY_PICKUP_PLAN,
                     wide("Copy all candidate disks pickup list\tCtrl+Shift+P").as_ptr(),
                 );
+                AppendMenuW(
+                    view,
+                    MF_STRING,
+                    COPY_PAGE_MANIFEST,
+                    wide("Copy CURRENT candidate page paths\tCtrl+Shift+M").as_ptr(),
+                );
                 AppendMenuW(menu, MF_POPUP, view as usize, wide("View").as_ptr());
             }
             SetMenu(hwnd, menu);
@@ -4389,6 +4532,16 @@ pub fn run() {
                 && message.wParam == b'P' as usize
             {
                 (*app).command(COPY_PICKUP_PLAN, 0);
+                continue;
+            }
+            // Ctrl+Shift+M copies only the verified loaded candidate page,
+            // never paths from a prior async search scope.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && GetKeyState(VK_SHIFT as i32) < 0
+                && message.wParam == b'M' as usize
+            {
+                (*app).command(COPY_PAGE_MANIFEST, 0);
                 continue;
             }
             // Ctrl+L filters the disk register, including private shelf tags,
