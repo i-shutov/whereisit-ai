@@ -190,7 +190,7 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn('func focusCopyCandidates(on volume: Int64?)', MAC)
         self.assertIn('args["candidate_volume_id"] = copyFocusVolumeID', MAC)
         self.assertIn('ScrollView(.horizontal)', MAC)
-        self.assertIn('Filter these metadata candidates to this catalogue disk', MAC)
+        self.assertIn('Choose by exact catalog ID and your sticker/shelf tag; metadata candidates only.', MAC)
 
     def test_copy_disk_picker_rechecks_real_os_pairing_before_auto_focus(self):
         self.assertIn("fn sole_connected_candidate_disk(", WIN)
@@ -205,7 +205,8 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("self.physical_probe_ok", focus)
         self.assertIn("self.populate_candidate_disk_picker();", WIN.split("if old_states != self.physical_states", 1)[1].split("unsafe fn selected_physical_catalog_disk", 1)[0])
         self.assertIn("message.wParam == b'G' as usize", WIN)
-        self.assertIn("model.candidateCopyOSCaption(group.volume_id)", MAC)
+        candidate_caption = MAC.split("func candidateCopyDiskCaption(_ group: CandidateDiskGroup)", 1)[1].split("func candidateCopyDiskAccessibility", 1)[0]
+        self.assertIn("candidateCopyOSCaption(group.volume_id)", candidate_caption)
         self.assertIn("model.focusSoleConnectedCopy()", MAC)
         self.assertIn("pendingConnectedCopyFocus = (source: source, scope: physicalScope)", MAC)
         self.assertIn("pending.scope == scope", MAC)
