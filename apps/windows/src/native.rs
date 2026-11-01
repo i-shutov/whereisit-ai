@@ -317,11 +317,13 @@ fn explorer_geometry_for_width(
     } else {
         0
     };
-    let file_width = (window_width - 222 - if locator_width > 0 {
-        locator_width + 8
-    } else {
-        0
-    })
+    let file_width = (window_width
+        - 222
+        - if locator_width > 0 {
+            locator_width + 8
+        } else {
+            0
+        })
     .max(100);
     let path_column_width = if locator_width == 0 || file_width >= 840 {
         185
@@ -335,7 +337,14 @@ fn explorer_geometry_for_width(
 // 880px, instead of leaving an unscrollable fixed-width results table.
 fn result_column_widths(file_width: i32, locator_visible: bool) -> [i32; 6] {
     if locator_visible && file_width >= 630 {
-        [230, 120, 90, 120, 70, if file_width >= 840 { 185 } else { 0 }]
+        [
+            230,
+            120,
+            90,
+            120,
+            70,
+            if file_width >= 840 { 185 } else { 0 },
+        ]
     } else if locator_visible {
         [205, 100, 75, 95, 65, 0]
     } else if file_width >= 815 {
@@ -364,15 +373,19 @@ fn locator_splitter_hit_test(
 
 #[cfg(test)]
 mod locator_splitter_tests {
-    use super::{
-        explorer_geometry_for_width, locator_splitter_hit_test, result_column_widths,
-    };
+    use super::{explorer_geometry_for_width, locator_splitter_hit_test, result_column_widths};
 
     #[test]
     fn pane_resizing_respects_minimum_result_space_and_can_hide() {
         assert_eq!(explorer_geometry_for_width(1180, 500, true), (350, 600, 0));
-        assert_eq!(explorer_geometry_for_width(1366, 220, true), (220, 916, 185));
-        assert_eq!(explorer_geometry_for_width(1366, 282, false), (0, 1144, 185));
+        assert_eq!(
+            explorer_geometry_for_width(1366, 220, true),
+            (220, 916, 185)
+        );
+        assert_eq!(
+            explorer_geometry_for_width(1366, 282, false),
+            (0, 1144, 185)
+        );
         assert_eq!(explorer_geometry_for_width(880, 282, true), (0, 658, 185));
     }
 

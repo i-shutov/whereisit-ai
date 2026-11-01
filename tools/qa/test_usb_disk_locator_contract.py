@@ -22,7 +22,7 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("app.update_disk_locator();", WIN)
         self.assertIn("self.entries.get(index as usize)", WIN)
         self.assertIn("ES_READONLY as u32", WIN)
-        self.assertIn("if window_width >= 1176", WIN)
+        self.assertIn("visible && window_width >= 1176 && maximum >= 220", WIN)
         self.assertIn("LVM_SETCOLUMNWIDTH", WIN)
         self.assertIn("explorer_geometry_tests", WIN)
         self.assertIn("SW_HIDE", WIN)
