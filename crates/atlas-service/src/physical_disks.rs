@@ -213,7 +213,9 @@ pub fn pair(request: &Value) -> Result<Value> {
         return Err(invalid("Explicit operator confirmation is required"));
     }
     if request.get("probe_ok") != Some(&Value::Bool(true)) {
-        return Err(invalid("A successful live OS probe is required for pairing"));
+        return Err(invalid(
+            "A successful live OS probe is required for pairing",
+        ));
     }
     let physical_id = normalized_id(text(request, "physical_id")?, os)?;
     if observed(request, os)?.get(&physical_id) != Some(&1) {
