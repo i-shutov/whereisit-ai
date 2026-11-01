@@ -374,7 +374,10 @@ mod tests {
         assert_eq!(classify(11, &bindings, &seen, true), "connected");
         assert_eq!(classify(11, &bindings, &seen, false), "unverified");
         assert_eq!(classify(11, &bindings, &HashMap::new(), true), "offline");
-        assert_eq!(classify(11, &bindings, &HashMap::new(), false), "unverified");
+        assert_eq!(
+            classify(11, &bindings, &HashMap::new(), false),
+            "unverified"
+        );
     }
 
     #[test]
