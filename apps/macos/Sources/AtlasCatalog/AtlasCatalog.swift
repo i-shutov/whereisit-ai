@@ -230,7 +230,8 @@ private struct CopyReturnContext {
     @Published var copyDiskGroups: [CandidateDiskGroup] = []
     @Published var copyFocusVolumeID: Int64?
     private var copyReturn: CopyReturnContext?
-    private var pendingConnectedCopySourceID: Int64?
+    // Both entry ID and catalog generation must remain unchanged during the OS probe.
+    private var pendingConnectedCopyFocus: (source: Int64, scope: String)?
     @Published var categories: [Category] = []
     @Published var categoryID: Int64?
     @Published var categoryName = ""
@@ -418,7 +419,7 @@ private struct CopyReturnContext {
             status = "Find metadata copy candidates first."
             return
         }
-        pendingConnectedCopySourceID = source
+        pendingConnectedCopyFocus = (source: source, scope: physicalScope)
         refreshPhysicalPresence()  // Fresh, complete OS probe before focus.
     }
     func physicalCaption(_ id: Int64) -> String {
@@ -496,9 +497,9 @@ private struct CopyReturnContext {
                     uniqueKeysWithValues: result.items.map { ($0.volume_id, $0.state) }
                 )
             }
-            if let source = self.pendingConnectedCopySourceID {
-                self.pendingConnectedCopySourceID = nil
-                guard source == self.copySourceID else { return }
+            if let pending = self.pendingConnectedCopyFocus {
+                self.pendingConnectedCopyFocus = nil
+                guard pending.source == self.copySourceID, pending.scope == scope else { return }
                 if self.physicalProbeOK, result?.probe_ok == true,
                    let disk = self.soleConnectedCandidateDisk {
                     self.focusCopyCandidates(on: disk)
