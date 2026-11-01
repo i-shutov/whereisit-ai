@@ -26,7 +26,7 @@ Search is the dominant action; Browse catalog and Duplicates are first-class con
 |---|---|---|---|
 | UX0 — Disk locator | One selected-search-result -> reliable catalog disk label / recorded location panel on **both native OS clients**, with copy/navigation and explicit unverified connection state | Exact-HEAD Windows Rust tests, macOS compiled app, 4-platform native CI, human screenshots/keyboard walkthrough still pending | **In progress** |
 | UX1 — Search-first shell | Prominent global search on app launch, persisted filter/sort and resizable/collapsible panes; keyboard-first, single-screen layout at 1366×768 and high DPI | Pure Windows 880/1100/1180/1366px geometry tests; Ctrl+F, Command+F and all-disk search wiring; platform builds/installer smoke; manual visual/hardware QA still pending | **In progress (keyboard + adaptive first slice)** |
-| UX2 — Physical drive identity | Registered user labels, optional physical sticker ID, mount detection by stable verified volume identity and reconciliation if IDs conflict. **Never equate historical drive letters to current USB disks** | Synthetic cross-disk collisions + real plug/unplug on target hardware | Planned |
+| UX2 — Physical drive identity | Native Windows GUID/serial and macOS filesystem UUID probes; explicit pairing and unpairing in an independent user SQLite; scoped by CTF generation or SQLite path; fail-closed states and six-second refresh. No historical-letter inference or auto-clone validation | Synthetic binding/collision tests and native CI pending; real unplug/replug + hardware and visual QA still required | **Implementation candidate in PR #57, not accepted** |
 | UX3 — Film copies | Selected result → exact normalized name + recorded size candidates across catalogued volumes, paginated, with back navigation; metadata only, never verified file equality or deletion. | Synthetic SQLite + pinned CTF fixture with generation-change rejection, native wiring checks; real-device acceptance pending. | **Implementation candidate in PR #57; not accepted** |
 | UX4 — Polish and acceptance | Native accessibility, keyboard traversal, reliable cancellation/progress, contrast/light-dark themes, window geometry, upgrades and observed SLO | Owner acceptance on Win10/11, Mac Intel/ARM; RC-to-RC upgrade; measured real 3M-row latency | Planned |
 
@@ -89,3 +89,15 @@ Stable 1.0 is blocked until original WhereIsIt reads a genuinely modified CTF, t
 ## Handoff on every iteration
 
 Before a change: re-read live `main`, open PRs, `HANDOFF.md`, last CI and release. Work on only this repository. Make a coherent vertical change, add specific tests, run exact-HEAD CI and name any missing physical checks. Update this plan and the PR handoff with evidence and next integrated slice. Don't merge unverified PRs or publish stable releases. Never touch other projects.
+
+## UX2 physical UUID integration checkpoint — 2026-11-01
+
+Both native frontends now enumerate current OS volume identities and require
+explicit operator pairing to the catalog disk ID before showing a connected
+state. Windows checks Mount Manager volume GUID and serial; macOS uses mounted
+filesystem volume UUID. Collision, missing pairing, unsuccessful probe or source
+generation mismatch fail closed. Pairings belong to a private separate
+user-owned SQLite, not to linked CTF/mirror or annotations. **OS volume IDs are
+not globally unique hardware serials**; clones and human-identification errors
+remain an acceptance risk. See [UX2 runbook](qa/PHYSICAL_USB_IDENTITY_WP_20261101.md).
+Native builds and real plug/unplug testing are not implied by the source change.

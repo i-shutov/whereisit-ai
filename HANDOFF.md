@@ -1,3 +1,17 @@
+## UX2 physical OS-volume pairing candidate — 2026-11-01 (CI pending)
+
+PR #57 implements a shared fail-closed user SQLite binding service plus real
+Win32 Mount Manager GUID/serial enumeration and macOS mounted filesystem UUID
+lookup, opt-in per-catalog-disk pairing/unpairing, six-second live reprobes and
+registered-disk/locator states. Explicit user pairing is required; old drive
+letters cannot verify presence. Absent ID after successful scan = offline;
+unsuccessful scan, missing binding, generation change or collision never show
+connected. USB cloning/host-specific ID caveats are documented at
+[UX2 runbook](docs/qa/PHYSICAL_USB_IDENTITY_WP_20261101.md). This is source
+integration, NOT manual hardware/GUI acceptance. Inspect **final exact-HEAD**
+Windows, macOS ARM/Intel and Linux CI, upgrade and offline kit before asserting
+success. No stable release or PR merge is authorized.
+
 # WhereIsIt AI — UX implementation handoff (2026-11-01)
 
 **UX3 implementation checkpoint — 2026-11-01 (exact-head CI required):** On [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57), the native Win32 locator offers **Find copies**/Ctrl+D, and SwiftUI offers **Find copies**/Command+D. Both navigate from the current selected file to paginated candidate locations across **all catalogued disks**, with back-to-results. Service operations `copy_candidates` and SHA-pinned `ctf_copy_candidates_pinned` derive normalized name + exact byte size from selected **entry ID**, count catalog entries and distinct volumes, and explicitly return `verified:false`. Linked CTF SHA is verified afresh on every page, without writing source/mirror. Synthetic SQLite unit and two-disk pinned CTF source-change regression + native Python wiring regression were added. Results are **metadata candidates, not content verification or physical connection evidence**. Stable physical USB presence remains NOT VERIFIED and is the next gate. First exact-HEAD CI at `6cdf57c97d56c8396b57f6fe2ef29f07fbfcb625` failed ONLY Rustfmt step in [native run 41305803121](https://github.com/i-shutov/whereisit-ai/actions/runs/41305803121) and [offline run 41305803164](https://github.com/i-shutov/whereisit-ai/actions/runs/41305803164); their exact rustfmt patch was applied in the same PR, not tests disabled. Recheck the latest branch HEAD before reporting green, and keep PR draft/unmerged until full acceptance. Prior real 44-volume CTF acceptance is not synthetic and is not re-claimed for this new view. No private raw inputs were uploaded.

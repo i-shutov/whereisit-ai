@@ -16,7 +16,8 @@ COPIES = (ROOT / "crates/atlas-service/src/copy_candidates.rs").read_text(encodi
 
 class DiskLocatorWiringTests(unittest.TestCase):
     def test_windows_selection_is_driven_by_current_page(self):
-        self.assertIn("fn disk_locator_text(entry: Option<&Value>", WIN)
+        self.assertIn("fn disk_locator_text(", WIN)
+        self.assertIn("entry: Option<&Value>", WIN)
         self.assertIn("header.code == LVN_ITEMCHANGED", WIN)
         self.assertIn("app.update_disk_locator();", WIN)
         self.assertIn("self.entries.get(index as usize)", WIN)
@@ -59,6 +60,28 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn('ctf_mirror::read_pinned(request,', COPIES)
         self.assertIn('name_norm=?1 AND size=?2', COPIES)
         self.assertIn('"verified": false', COPIES)
+
+    def test_live_os_physical_pairing_is_explicit_and_independent(self):
+        identity = (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encoding="utf-8")
+        self.assertIn('"physical_status" => physical_disks::status(&v)?', SERVICE)
+        self.assertIn('"physical_pair" => physical_disks::pair(&v)?', SERVICE)
+        self.assertIn('"physical_unpair" => physical_disks::unpair(&v)?', SERVICE)
+        self.assertIn("CREATE TABLE IF NOT EXISTS physical_bindings", identity)
+        self.assertIn("UNIQUE (catalog_key, platform, physical_id)", identity)
+        self.assertIn('return "unverified"', identity)
+        self.assertIn('"identity_conflict"', identity)
+        self.assertIn("GetLogicalDriveStringsW", WIN)
+        self.assertIn("GetVolumeNameForVolumeMountPointW", WIN)
+        self.assertIn("GetVolumeInformationW", WIN)
+        self.assertIn("self.refresh_physical_presence();", WIN)
+        self.assertIn("PHYSICAL_PAIR => self.pair_selected_physical_disk()", WIN)
+        self.assertIn("volumeUUIDStringKey", MAC)
+        self.assertIn("mountedVolumeURLs", MAC)
+        self.assertIn("warning.runModal()", MAC)
+        self.assertIn("physicalStates = [:]", MAC)
+        self.assertIn("physicalArguments(freshProbe, probeOK: true)", MAC)
+        self.assertIn('Button("Refresh OS mounts")', MAC)
+        self.assertIn('Button("Pair selected catalog disk…")', MAC)
 
     def test_no_unverified_physical_drive_claims_in_locator(self):
         self.assertIn("Physical connection: NOT VERIFIED", WIN)
