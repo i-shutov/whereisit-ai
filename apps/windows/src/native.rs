@@ -92,6 +92,61 @@ fn display_size(value: Option<u64>) -> String {
         format!("{value:.1} {}", units[unit])
     }
 }
+
+// A catalog entry is not proof that the original USB disk is connected.
+// This pure formatter is deliberately shared by the selection change path
+// and unit tests; it never accesses the filesystem or exposes private data.
+fn disk_locator_text(entry: Option<&Value>, disk_label: &str, linked_ctf: bool) -> String {
+    let Some(entry) = entry else {
+        return "DISK LOCATOR\r\n\r\nSelect a file in the result list to locate its catalogued USB disk.\r\n\r\nSearch spans all catalogued disks when \"All disks\" is selected.".into();
+    };
+    let disk_id = entry["volume_id"].as_i64().unwrap_or(0);
+    let file_name = string(entry, "name");
+    let recorded_path = string(entry, "relative_path");
+    let size = display_size(entry["size"].as_u64());
+    let candidates = entry["duplicate_count"].as_u64()
+        .map(|n| format!("{n} metadata candidates (not content-verified)"))
+        .unwrap_or_else(|| "Not calculated".into());
+    let mode = if linked_ctf {
+        "Linked CTF • source read-only; SHA generation pinned"
+    } else {
+        "SQLite catalog snapshot"
+    };
+    format!(
+        "DISK TO LOCATE\r\n\r\n{disk_label}\r\nCatalog disk ID: {disk_id}\r\n\r\nPhysical connection: NOT VERIFIED\r\nThe catalog does not prove this USB disk is currently mounted.\r\n\r\nFILE\r\n{file_name}\r\n\r\nRECORDED LOCATION\r\n{recorded_path}\r\n\r\nSize: {size}\r\nCopies: {candidates}\r\nSource: {mode}\r\n\r\nSelect this text and press Ctrl+C to copy a disk label or path."
+    )
+}
+
+#[cfg(test)]
+mod disk_locator_tests {
+    use super::disk_locator_text;
+    use serde_json::json;
+
+    #[test]
+    fn locator_uses_exact_catalog_label_without_claiming_usb_presence() {
+        let row = json!({"name":"Example.mkv","relative_path":"Films/Example.mkv",
+            "volume_id":42,"size":1024,"duplicate_count":3});
+        let text = disk_locator_text(Some(&row), "Shelf B • USB-42", true);
+        assert!(text.contains("Shelf B • USB-42"));
+        assert!(text.contains("Catalog disk ID: 42"));
+        assert!(text.contains("Films/Example.mkv"));
+        assert!(text.contains("3 metadata candidates (not content-verified)"));
+        assert!(text.contains("NOT VERIFIED"));
+        assert!(text.contains("source read-only"));
+        assert!(!text.contains("Connected"));
+    }
+
+    #[test]
+    fn locator_placeholder_and_unknown_duplicates_are_honest() {
+        assert!(disk_locator_text(None, "", false).contains("Select a file"));
+        let row = json!({"name":"Folder","relative_path":"Videos/","volume_id":1});
+        let text = disk_locator_text(Some(&row), "Backup disk", false);
+        assert!(text.contains("Not calculated"));
+        assert!(text.contains("SQLite catalog snapshot"));
+        assert!(text.contains("NOT VERIFIED"));
+    }
+}
+
 unsafe fn display_date(value: Option<i64>) -> String {
     let Some(ticks) = value
         .and_then(|v| v.checked_add(11_644_473_600))
@@ -987,6 +1042,7 @@ struct App {
     search: HWND,
     status: HWND,
     location: HWND,
+    locator: HWND,
     buttons: Vec<(usize, HWND)>,
     duplicate_mode: HWND,
     export_format: HWND,
@@ -1028,6 +1084,7 @@ impl App {
             search: null_mut(),
             status: null_mut(),
             location: null_mut(),
+            locator: null_mut(),
             buttons: vec![],
             duplicate_mode: null_mut(),
             export_format: null_mut(),
@@ -1573,6 +1630,18 @@ impl App {
             .filter(|label| !label.is_empty())
             .unwrap_or_else(|| format!("Disk #{volume_id}"))
     }
+    unsafe fn update_disk_locator(&self) {
+        let index = SendMessageW(self.files, LVM_GETNEXTITEM, usize::MAX, LVNI_SELECTED as isize);
+        let selected = if index >= 0 {
+            self.entries.get(index as usize)
+        } else {
+            None
+        };
+        let disk = selected
+            .map(|row| self.volume_label(row["volume_id"].as_i64()))
+            .unwrap_or_default();
+        self.text(self.locator, &disk_locator_text(selected, &disk, self.linked_mode()));
+    }
     unsafe fn render_rows(&self) {
         SendMessageW(self.files, LVM_DELETEALLITEMS, 0, 0);
         for (row, e) in self.entries.iter().enumerate() {
@@ -1611,6 +1680,7 @@ impl App {
                 );
             }
         }
+        self.update_disk_locator();
         self.status(&format!(
             "{}–{}{}{}{}",
             if self.total == 0 { 0 } else { self.offset + 1 },
@@ -2004,14 +2074,24 @@ impl App {
                 _ => {}
             }
         }
-        MoveWindow(
-            self.files,
-            214,
-            106,
-            (w - 222).max(100),
-            (h - 146).max(60),
-            1,
-        );
+        // Keep the legacy full-width table on narrow screens; the locator
+        // becomes a third pane only when it does not obscure the file list.
+        let locator_width = if w >= 1120 { 282 } else { 0 };
+        let file_width = (w - 222 - if locator_width > 0 { locator_width + 8 } else { 0 }).max(100);
+        MoveWindow(self.files, 214, 106, file_width, (h - 146).max(60), 1);
+        if locator_width > 0 {
+            MoveWindow(
+                self.locator,
+                214 + file_width + 8,
+                106,
+                locator_width,
+                (h - 146).max(60),
+                1,
+            );
+            ShowWindow(self.locator, SW_SHOW);
+        } else {
+            ShowWindow(self.locator, SW_HIDE);
+        }
         MoveWindow(self.status, 8, h - 32, (w - 216).max(50), 24, 1);
     }
 }
@@ -2242,6 +2322,14 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             }
             app.status = control(hwnd, "STATIC", "", 0, 140);
             app.location = control(hwnd, "STATIC", "", SS_PATHELLIPSIS, 141);
+            app.locator = control(
+                hwnd,
+                "EDIT",
+                "",
+                WS_TABSTOP | WS_BORDER | WS_VSCROLL
+                    | ES_MULTILINE as u32 | ES_AUTOVSCROLL as u32 | ES_READONLY as u32,
+                143,
+            );
             SetTimer(hwnd, 1, 80, None);
             app.init();
             0
@@ -2258,6 +2346,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             let header = &*(lp as *const NMHDR);
             if header.idFrom == FILES && header.code == NM_DBLCLK {
                 app.activate();
+            } else if header.idFrom == FILES && header.code == LVN_ITEMCHANGED {
+                app.update_disk_locator();
             } else if header.idFrom == FILES && header.code == LVN_KEYDOWN {
                 let key = &*(lp as *const NMLVKEYDOWN);
                 if key.wVKey == VK_RETURN {
