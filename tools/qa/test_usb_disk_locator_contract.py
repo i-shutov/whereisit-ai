@@ -213,6 +213,20 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("source == self.copySourceID", MAC)
         self.assertIn('Button("Use verified mounted disk")', MAC)
 
+    def test_user_shelf_tags_are_native_but_never_mount_evidence(self):
+        physical = (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encoding="utf-8")
+        self.assertIn('physical_shelf_labels', SERVICE)
+        self.assertIn('physical_shelf_label_set', SERVICE)
+        self.assertIn("shelf_tags_are_private_explicit_generation_scoped_and_not_mount_evidence", physical)
+        self.assertIn("ON CONFLICT(catalog_key,platform,volume_id)", physical)
+        self.assertIn("SHELF_SAVE => self.save_shelf_label()", WIN)
+        self.assertIn("OWNER-ENTERED SHELF/STICKER TAG (not USB identity)", WIN)
+        self.assertIn("self.refresh_shelf_labels();", WIN)
+        self.assertIn("func saveShelfLabel(on volume: Int64, text: String)", MAC)
+        self.assertIn("model.saveShelfLabel(on: entry.volume_id, text: shelfDraft)", MAC)
+        self.assertIn("OWNER STICKER / SHELF TAG (manual, not OS identity)", MAC)
+        self.assertIn("(shelfLabels[$0.id] ?? \"\").localizedStandardContains(needle)", MAC)
+
     def test_no_unverified_physical_drive_claims_in_locator(self):
         self.assertIn("Physical connection: NOT VERIFIED", WIN)
         self.assertIn("Physical connection not verified", MAC)

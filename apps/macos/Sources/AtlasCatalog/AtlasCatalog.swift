@@ -67,6 +67,9 @@ struct PhysicalStateReply: Decodable {
 }
 struct PhysicalPairReply: Decodable { let paired: Bool }
 struct PhysicalUnpairReply: Decodable { let removed: Bool }
+struct ShelfLabelRow: Decodable { let volume_id: Int64; let shelf_label: String }
+struct ShelfLabelReply: Decodable { let items: [ShelfLabelRow] }
+struct ShelfLabelSaved: Decodable { let saved: Bool; let volume_id: Int64; let shelf_label: String }
 
 struct LinkedExportReceipt: Decodable { let result: LinkedExportSummary }
 struct LinkedExportSummary: Decodable { let rows: Int64 }
@@ -208,6 +211,7 @@ private struct CopyReturnContext {
     @Published var diskFilter = ""
     @Published var volumeID: Int64?
     @Published var physicalStates: [Int64: String] = [:]
+    @Published var shelfLabels: [Int64: String] = [:]
     @Published var mountedPhysicalVolumes: [LivePhysicalVolume] = []
     @Published var selectedPhysicalID = ""
     @Published var physicalProbeOK = false
@@ -360,7 +364,7 @@ private struct CopyReturnContext {
         generation += 1; volumeID = nil; stack = [(nil, "/")]; entries = []; query = ""; appliedQuery = ""; showingDuplicates = false; offset = 0
         copySourceID = nil; copySourceName = nil; copyReturn = nil
         volumes = []; diskFilter = ""; categories = []; categoryID = nil; selection = nil; total = 0; hasMore = false
-        physicalStates = [:]; mountedPhysicalVolumes = []; selectedPhysicalID = ""; physicalProbeOK = false
+        physicalStates = [:]; shelfLabels = [:]; mountedPhysicalVolumes = []; selectedPhysicalID = ""; physicalProbeOK = false
         physicalCheckGeneration += 1
         status = "Opening catalog…"
         request(["op": "init"], as: EmptyReply.self) { [weak self] result in
@@ -380,6 +384,7 @@ private struct CopyReturnContext {
         guard !needle.isEmpty else { return volumes }
         return volumes.filter {
             $0.label.localizedStandardContains(needle) || String($0.id).contains(needle)
+                || (shelfLabels[$0.id] ?? "").localizedStandardContains(needle)
         }
     }
     var selectedDiskForPairing: Int64? { selected?.volume_id ?? volumeID }
@@ -401,6 +406,49 @@ private struct CopyReturnContext {
                 return order == .orderedSame ? $0.currentMount < $1.currentMount : order == .orderedAscending
             }
     }
+    func shelfLabel(_ disk: Int64) -> String { shelfLabels[disk] ?? "" }
+
+    func refreshShelfLabels() {
+        let scope = physicalScope
+        var args = physicalArguments([], probeOK: false)
+        args["op"] = "physical_shelf_labels"
+        request(args, as: ShelfLabelReply.self) { [weak self] result in
+            guard let self, self.physicalScope == scope else { return }
+            self.shelfLabels = Dictionary(uniqueKeysWithValues:
+                (result?.items ?? []).filter { row in
+                    self.volumes.contains(where: { $0.id == row.volume_id })
+                }.map { ($0.volume_id, $0.shelf_label) })
+        }
+    }
+
+    func saveShelfLabel(on volume: Int64, text: String) {
+        guard volumes.contains(where: { $0.id == volume }) else {
+            status = "Selected catalog disk changed; private shelf tag not saved."
+            return
+        }
+        let label = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard label.count <= 80 && !label.unicodeScalars.contains(where: {
+            CharacterSet.controlCharacters.contains($0)
+        }) else {
+            status = "Shelf tag must be one line, at most 80 characters."
+            return
+        }
+        let scope = physicalScope
+        var args = physicalArguments([], probeOK: false)
+        args["op"] = "physical_shelf_label_set"
+        args["volume_id"] = volume
+        args["shelf_label"] = label
+        args["confirmed"] = true
+        request(args, as: ShelfLabelSaved.self) { [weak self] saved in
+            guard let self, self.physicalScope == scope else { return }
+            if let saved, saved.saved, saved.volume_id == volume {
+                if saved.shelf_label.isEmpty { self.shelfLabels.removeValue(forKey: volume) }
+                else { self.shelfLabels[volume] = saved.shelf_label }
+                self.status = "Private shelf tag saved; NOT evidence of USB presence."
+            } else { self.status = "Private shelf tag not saved." }
+        }
+    }
+
     func physicalState(_ id: Int64) -> String { physicalStates[id] ?? "unverified" }
     func candidateCopyOSCaption(_ id: Int64) -> String {
         switch physicalState(id) {
@@ -585,6 +633,7 @@ private struct CopyReturnContext {
                 guard let self, let response else { return }
                 self.volumes = response.result
                 self.refreshPhysicalPresence()
+                self.refreshShelfLabels()
                 self.status = "\(response.result.count) linked CTF disks • read-only; search or select a disk"
             }
             return
@@ -593,6 +642,7 @@ private struct CopyReturnContext {
             guard let self, let values else { return }
             self.volumes = values
             self.refreshPhysicalPresence()
+            self.refreshShelfLabels()
             self.status = "\(values.count) disks • choose a disk or search all disks"
         }
     }
@@ -1180,6 +1230,8 @@ private struct CopyReturnContext {
 // current USB mount status. Never infer "connected" from a historical path.
 @MainActor struct DiskLocatorInspector: View {
     @ObservedObject var model: Catalog
+    @State private var shelfDraft = ""
+    @State private var shelfDraftDiskID: Int64?
 
     private func copy(_ text: String) {
         NSPasteboard.general.clearContents()
@@ -1196,6 +1248,20 @@ private struct CopyReturnContext {
                         .textSelection(.enabled)
                     Text("Catalog disk ID: \(entry.volume_id)")
                         .font(.caption).foregroundStyle(.secondary)
+                    Text("OWNER STICKER / SHELF TAG (manual, not OS identity)")
+                        .font(.caption.bold()).foregroundStyle(.secondary)
+                    HStack(spacing: 4) {
+                        TextField("Sticker number / shelf", text: $shelfDraft)
+                            .accessibilityLabel("Private sticker or shelf tag for selected catalog disk")
+                            .help("Your own retrieval hint, never proof of USB presence")
+                        Button("Save") {
+                            guard shelfDraftDiskID == entry.volume_id else { return }
+                            model.saveShelfLabel(on: entry.volume_id, text: shelfDraft)
+                        }
+                        .accessibilityLabel("Save private shelf tag for selected catalog disk")
+                    }.font(.caption)
+                    Text("Private user database only; scoped to this catalog generation.")
+                        .font(.caption2).foregroundStyle(.secondary)
                     Label(model.physicalCaption(entry.volume_id), systemImage: model.physicalSymbol(entry.volume_id))
                         .foregroundStyle(model.physicalState(entry.volume_id) == "connected" ? Color.green : Color.orange)
                         .font(.callout)
@@ -1279,6 +1345,23 @@ private struct CopyReturnContext {
             .padding(10)
         }
         .frame(minWidth: 230, idealWidth: 270, maxWidth: 330)
+        .onAppear {
+            shelfDraftDiskID = model.selected?.volume_id
+            shelfDraft = shelfDraftDiskID.map { model.shelfLabel($0) } ?? ""
+        }
+        .onChange(of: model.selected?.volume_id) { _, id in
+            shelfDraftDiskID = id
+            shelfDraft = id.map { model.shelfLabel($0) } ?? ""
+        }
+        .onChange(of: model.physicalScope) { _, _ in
+            shelfDraftDiskID = model.selected?.volume_id
+            shelfDraft = shelfDraftDiskID.map { model.shelfLabel($0) } ?? ""
+        }
+        .onChange(of: model.shelfLabels) { _, _ in
+            if shelfDraft.isEmpty, let id = shelfDraftDiskID {
+                shelfDraft = model.shelfLabel(id)
+            }
+        }
         .accessibilityLabel("Selected file disk locator")
     }
 }
@@ -1435,7 +1518,8 @@ private struct CopyReturnContext {
                         ForEach(model.visibleVolumes) { disk in
                             VStack(alignment: .leading, spacing: 1) {
                                 Label(disk.label, systemImage: "externaldrive")
-                                Text("\(disk.entry_count ?? 0) items • \(model.physicalCaption(disk.id))").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                Text("\(model.shelfLabel(disk.id).isEmpty ? "" : "Shelf: " + model.shelfLabel(disk.id) + " • ")\(disk.entry_count ?? 0) items • \(model.physicalCaption(disk.id))")
+                                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             }.tag(Optional(disk.id)).help(disk.root_path ?? disk.label)
                         }
                     }.listStyle(.sidebar)

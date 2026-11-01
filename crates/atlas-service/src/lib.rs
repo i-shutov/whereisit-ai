@@ -92,6 +92,8 @@ fn dispatch(input: &str) -> Result<Value> {
         "physical_status" => physical_disks::status(&v)?,
         "physical_pair" => physical_disks::pair(&v)?,
         "physical_unpair" => physical_disks::unpair(&v)?,
+        "physical_shelf_labels" => physical_disks::shelf_labels(&v)?,
+        "physical_shelf_label_set" => physical_disks::set_shelf_label(&v)?,
         "export_csv" | "export_parquet" | "export_json" => {
             exports::export(&Catalog::open(text(&v, "db")?)?, &v, op)?
         }

@@ -41,6 +41,7 @@ const FILE_COPIES: usize = 116;
 const PHYSICAL_CHECK: usize = 117;
 const PHYSICAL_PAIR: usize = 118;
 const PHYSICAL_UNPAIR: usize = 119;
+const SHELF_SAVE: usize = 133;
 // Win32 GetDriveTypeW standard result codes; windows-sys 0.61 does not export these here.
 // Unknown/missing roots mean a potentially incomplete OS snapshot, never "offline".
 const DRIVE_UNKNOWN: u32 = 0;
@@ -1647,6 +1648,9 @@ struct App {
     hwnd: HWND,
     disks: HWND,
     disk_filter: HWND,
+    shelf_edit: HWND,
+    shelf_edit_disk: Option<i64>,
+    shelf_labels: HashMap<i64, String>,
     disk_filter_query: String,
     visible_disk_indices: Vec<usize>,
     files: HWND,
@@ -1707,6 +1711,9 @@ impl App {
             hwnd: null_mut(),
             disks: null_mut(),
             disk_filter: null_mut(),
+            shelf_edit: null_mut(),
+            shelf_edit_disk: None,
+            shelf_labels: HashMap::new(),
             disk_filter_query: String::new(),
             visible_disk_indices: Vec::new(),
             files: null_mut(),
@@ -1834,6 +1841,9 @@ impl App {
         self.generation += 1;
         self.volumes.clear();
         self.disk_filter_query.clear();
+        self.shelf_labels.clear();
+        self.shelf_edit_disk = None;
+        self.text(self.shelf_edit, "");
         self.visible_disk_indices.clear();
         self.text(self.disk_filter, "");
         self.physical_states.clear();
@@ -2185,7 +2195,7 @@ impl App {
                     };
                     self.volumes = values.as_array().cloned().unwrap_or_default();
                     self.refresh_physical_presence();
-                    self.populate_physical_disk_list();
+                    self.refresh_shelf_labels();
                     if self.entries.is_empty() {
                         self.status(&format!("{} disks in catalog", self.volumes.len()));
                     } else {
@@ -2259,6 +2269,8 @@ impl App {
                                     0,
                                     0,
                                 ))))) as i32
+                } else if *command == SHELF_SAVE {
+                    self.shelf_edit_disk.is_some() as i32
                 } else if [
                     CATEGORY_FILTER,
                     CATEGORY_ASSIGN,
@@ -2300,7 +2312,13 @@ impl App {
             .unwrap_or_else(|| format!("Disk #{volume_id}"))
     }
 
-    fn physical_request(&self, op: &str, volume: Option<i64>, identity: Option<&str>) -> Value {
+    fn physical_request(
+        &self,
+        op: &str,
+        volume: Option<i64>,
+        identity: Option<&str>,
+        shelf_label: Option<&str>,
+    ) -> Value {
         let key = if let Some(generation) = self.linked_generation.as_deref() {
             format!("ctf:{generation}")
         } else {
@@ -2316,10 +2334,77 @@ impl App {
             "probe_ok":self.physical_probe_ok,
             "volume_id":volume,
             "physical_id":identity,
+            "shelf_label":shelf_label,
             "confirmed":true
         });
         serde_json::from_str(&atlas_service::dispatch_json(&request.to_string()))
             .unwrap_or_else(|_| json!({"ok":false}))
+    }
+
+    // A user sticker tag is an offline retrieval hint, never proof of USB presence.
+    unsafe fn shelf_edit_target(&self) -> Option<i64> {
+        self.volume.or_else(|| self.selected_physical_catalog_disk())
+    }
+
+    unsafe fn sync_shelf_editor(&mut self) {
+        let target = self.shelf_edit_target();
+        if self.shelf_edit_disk != target {
+            self.shelf_edit_disk = target;
+            let label = target
+                .and_then(|disk| self.shelf_labels.get(&disk))
+                .cloned()
+                .unwrap_or_default();
+            self.text(self.shelf_edit, &label);
+        }
+        EnableWindow(self.shelf_edit, target.is_some() as i32);
+        if let Some((_, save)) = self.buttons.iter().find(|(id, _)| *id == SHELF_SAVE) {
+            EnableWindow(*save, target.is_some() as i32);
+        }
+    }
+
+    unsafe fn refresh_shelf_labels(&mut self) {
+        let reply = self.physical_request("physical_shelf_labels", None, None, None);
+        self.shelf_labels.clear();
+        if reply["ok"] == true {
+            if let Some(items) = reply["data"]["items"].as_array() {
+                for item in items {
+                    if let (Some(disk), Some(label)) =
+                        (item["volume_id"].as_i64(), item["shelf_label"].as_str())
+                    {
+                        self.shelf_labels.insert(disk, label.to_owned());
+                    }
+                }
+            }
+        }
+        self.shelf_edit_disk = None;
+        self.populate_physical_disk_list();
+        self.sync_shelf_editor();
+        self.update_disk_locator();
+    }
+
+    unsafe fn save_shelf_label(&mut self) {
+        let Some(target) = self.shelf_edit_disk else {
+            self.status("Select a catalog disk or file before saving a shelf tag.");
+            return;
+        };
+        if self.shelf_edit_target() != Some(target) {
+            self.sync_shelf_editor();
+            self.status("Disk selection changed; sticker tag was not saved.");
+            return;
+        }
+        let len = GetWindowTextLengthW(self.shelf_edit);
+        let mut buffer = vec![0u16; len as usize + 1];
+        GetWindowTextW(self.shelf_edit, buffer.as_mut_ptr(), len + 1);
+        let label = String::from_utf16_lossy(&buffer[..len as usize]);
+        let reply = self.physical_request(
+            "physical_shelf_label_set", Some(target), None, Some(&label),
+        );
+        if reply["ok"] == true && reply["data"]["saved"] == true {
+            self.refresh_shelf_labels();
+            self.status("Private sticker/shelf tag saved; not proof of USB presence.");
+        } else {
+            self.status("Sticker/shelf tag not saved (one line, max 80 characters).");
+        }
     }
 
     unsafe fn populate_physical_disk_list(&mut self) {
@@ -2348,8 +2433,12 @@ impl App {
                 Some("conflict") => "! conflict",
                 _ => "? not verified",
             };
+            let shelf = id(disk)
+                .and_then(|disk| self.shelf_labels.get(&disk))
+                .map(|label| format!(" • shelf: {label}"))
+                .unwrap_or_default();
             let label = format!(
-                "{}  ({} items)  {badge}",
+                "{}{shelf}  ({} items)  {badge}",
                 string(disk, "label"),
                 disk["entry_count"].as_u64().unwrap_or(0)
             );
@@ -2375,7 +2464,7 @@ impl App {
         self.physical_probe_ok = probe.is_some();
         self.mounted_volumes = probe.unwrap_or_default();
         // Fail closed until the service has checked scope, mappings and collisions.
-        let reply = self.physical_request("physical_status", None, None);
+        let reply = self.physical_request("physical_status", None, None, None);
         let old_states = self.physical_states.clone();
         self.physical_states.clear();
         if reply["ok"] == true {
@@ -2465,7 +2554,7 @@ impl App {
                 return;
             }
             let response =
-                self.physical_request("physical_pair", Some(volume_id), Some(&candidate.id));
+                self.physical_request("physical_pair", Some(volume_id), Some(&candidate.id), None);
             if response["ok"] == true {
                 self.refresh_physical_presence();
                 self.status(
@@ -2497,7 +2586,7 @@ impl App {
         {
             return;
         }
-        let response = self.physical_request("physical_unpair", Some(volume_id), None);
+        let response = self.physical_request("physical_unpair", Some(volume_id), None, None);
         self.refresh_physical_presence();
         self.status(if response["ok"] == true {
             "Physical identity pairing cleared; disk returns to NOT VERIFIED."
@@ -2621,6 +2710,15 @@ impl App {
                 .map(String::as_str)
                 .unwrap_or("unverified"),
         );
+        if let Some(shelf) = selected
+            .and_then(|row| row["volume_id"].as_i64())
+            .and_then(|disk| self.shelf_labels.get(&disk))
+        {
+            inspector.push_str(&format!(
+                "\r\n\r\nOWNER-ENTERED SHELF/STICKER TAG (not USB identity)\r\n{shelf}"
+            ));
+        }
+
         if self.copy_source.is_some() && !self.copy_disk_groups.is_empty() {
             inspector.push_str("\r\n\r\nCOPIES BY CATALOG DISK (metadata only)");
             for group in &self.copy_disk_groups {
@@ -2950,6 +3048,7 @@ impl App {
                     );
                 }
             }
+            SHELF_SAVE => self.save_shelf_label(),
             DISK_FILTER if notification == EN_CHANGE as usize => {
                 let len = GetWindowTextLengthW(self.disk_filter);
                 let mut buffer = vec![0u16; len as usize + 1];
@@ -2994,6 +3093,7 @@ impl App {
                 self.text(self.search, "");
                 self.offset = 0;
                 self.load();
+                self.sync_shelf_editor();
             }
             FIND | FIND_DISK | DUPLICATES => {
                 if command == FIND_DISK && self.volume.is_none() {
@@ -3276,7 +3376,8 @@ impl App {
         let sidebar_height = (h - 146).max(200);
         let disk_height = (sidebar_height / 2).max(70);
         MoveWindow(self.disk_filter, 8, 106, 200, 24, 1);
-        MoveWindow(self.disks, 8, 134, 200, (disk_height - 28).max(42), 1);
+        MoveWindow(self.shelf_edit, 8, 134, 140, 24, 1);
+        MoveWindow(self.disks, 8, 162, 200, (disk_height - 56).max(42), 1);
         MoveWindow(
             self.category_list,
             8,
@@ -3290,6 +3391,9 @@ impl App {
             match *command {
                 CATEGORY_CREATE => {
                     MoveWindow(*control, 164, h - 92, 44, 24, 1);
+                }
+                SHELF_SAVE => {
+                    MoveWindow(*control, 154, 134, 54, 24, 1);
                 }
                 ANNOTATION_PREVIEW => {
                     MoveWindow(*control, w - 144, 62, 136, 23, 1);
@@ -3472,6 +3576,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 (PHYSICAL_CHECK, "Refresh &USB state"),
                 (PHYSICAL_PAIR, "&Pair physical disk…"),
                 (PHYSICAL_UNPAIR, "Unpair disk"),
+                (SHELF_SAVE, "&Save tag"),
                 (CATEGORY_FILTER, "Filter category"),
                 (CATEGORY_ASSIGN, "Assign category"),
                 (CATEGORY_CREATE, "+"),
@@ -3568,6 +3673,14 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 0,
                 wide("Filter disk labels / IDs • Ctrl+L").as_ptr() as isize,
             );
+            app.shelf_edit = control(
+                hwnd, "EDIT", "", WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL as u32, 134,
+            );
+            SendMessageW(
+                app.shelf_edit, EM_SETCUEBANNER, 0,
+                wide("Sticker / shelf • selected disk").as_ptr() as isize,
+            );
+            SendMessageW(app.shelf_edit, EM_LIMITTEXT, 80, 0);
             app.disks = control(
                 hwnd,
                 "LISTBOX",
@@ -3706,6 +3819,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 app.activate();
             } else if header.idFrom == FILES && header.code == LVN_ITEMCHANGED {
                 app.update_disk_locator();
+                app.sync_shelf_editor();
             } else if header.idFrom == FILES && header.code == LVN_COLUMNCLICK {
                 let event = &*(lp as *const NMLISTVIEW);
                 app.sort_current_page_by(event.iSubItem);

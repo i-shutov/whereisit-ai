@@ -1,3 +1,11 @@
+## UX5 — private offline USB sticker/shelf tags (2026-11-01, exact-head CI pending)
+
+In the SAME draft PR #57, a new integrated native retrieval feature allows explicitly saving/clearing a case/sticker/shelf label for one catalog disk (Win32 sidebar, SwiftUI selected-file inspector). Both native disk registers and locator show it; the Mac register filter also matches it. User-owned physical sidecar only, independently keyed to exact source generation/platform/catalog ID; no CTF, original catalog, mirror, pairing, candidate or annotation writes. Rust service rejects unconfirmed/invalid labels, tests Unicode and generation isolation, and shows that manually entered labels never make USB presence verified. New source-wiring regressions and [UX5 QA](docs/qa/UX_SHELF_TAGS_20261101.md).
+
+Recheck final exact SHA on Linux/Windows/macOS ARM64/Intel native CI, offline, integration and installed RC2→RC3 upgrades; repair any failures in the same PR, no test disabling. No human hardware/GUI acceptance, real p95 150ms, original modified or provider-blocked historic CTF checks, signing/notarization. Keep PR draft/unmerged, RC3 prerelease, no stable. No other repository was touched.
+
+---
+
 ## UX4 OS-verified candidate disk focus — 2026-11-01 (new CI required)
 
 Draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57) now attaches
