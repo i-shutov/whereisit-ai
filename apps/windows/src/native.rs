@@ -131,7 +131,7 @@ mod explorer_geometry_tests {
     }
 
     #[test]
-    fn 1366px_window_shows_selected_disk_and_recorded_path() {
+    fn window_1366px_shows_selected_disk_and_recorded_path() {
         assert_eq!(explorer_geometry(1366), (282, 854, 185));
     }
 }
