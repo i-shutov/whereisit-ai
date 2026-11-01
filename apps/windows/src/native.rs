@@ -11,7 +11,7 @@ use windows_sys::Win32::{
     Graphics::Gdi::*,
     Storage::FileSystem::{
         FileTimeToLocalFileTime, GetDriveTypeW, GetLogicalDriveStringsW, GetVolumeInformationW,
-        GetVolumeNameForVolumeMountPointW, DRIVE_FIXED, DRIVE_REMOVABLE,
+        GetVolumeNameForVolumeMountPointW,
     },
     System::{
         Com::*, LibraryLoader::*, SystemServices::SS_PATHELLIPSIS, Time::FileTimeToSystemTime,
@@ -39,6 +39,9 @@ const FILE_COPIES: usize = 116;
 const PHYSICAL_CHECK: usize = 117;
 const PHYSICAL_PAIR: usize = 118;
 const PHYSICAL_UNPAIR: usize = 119;
+// Win32 GetDriveTypeW standard result codes; windows-sys 0.61 does not export these here.
+const DRIVE_REMOVABLE: u32 = 2;
+const DRIVE_FIXED: u32 = 3;
 const DUP_MODE: usize = 112;
 const EXPORT_FORMAT: usize = 113;
 const LINK_CTF: usize = 114;
