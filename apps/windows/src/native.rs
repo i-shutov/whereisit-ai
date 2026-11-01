@@ -2533,7 +2533,14 @@ impl App {
     unsafe fn populate_candidate_disk_picker(&self) {
         SendMessageW(self.copy_disk_filter, CB_RESETCONTENT, 0, 0);
         if let Some((_, button)) = self.buttons.iter().find(|(id, _)| *id == COPY_CONNECTED) {
-            ShowWindow(*button, if self.copy_source.is_some() { SW_SHOW } else { SW_HIDE });
+            ShowWindow(
+                *button,
+                if self.copy_source.is_some() {
+                    SW_SHOW
+                } else {
+                    SW_HIDE
+                },
+            );
         }
         if self.copy_source.is_none() {
             ShowWindow(self.copy_disk_filter, SW_HIDE);
@@ -3289,7 +3296,14 @@ impl App {
                 }
                 COPY_CONNECTED => {
                     MoveWindow(*control, w - 296, 62, 140, 23, 1);
-                    ShowWindow(*control, if self.copy_source.is_some() { SW_SHOW } else { SW_HIDE });
+                    ShowWindow(
+                        *control,
+                        if self.copy_source.is_some() {
+                            SW_SHOW
+                        } else {
+                            SW_HIDE
+                        },
+                    );
                 }
                 CATEGORY_FILTER => {
                     MoveWindow(*control, 8, h - 64, 88, 24, 1);

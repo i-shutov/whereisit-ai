@@ -185,7 +185,7 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn('linked["candidate_volume_id"]', WIN)
         self.assertIn('COPIES BY CATALOG DISK (metadata only)', WIN)
         self.assertIn('ShowWindow(self.help, help_visibility);', WIN)
-        self.assertIn('MoveWindow(self.copy_disk_filter, 8, 62, (w - 164).max(100), 240, 1);', WIN)
+        self.assertIn('MoveWindow(self.copy_disk_filter, 8, 62, (w - 310).max(100), 240, 1);', WIN)
         self.assertIn('struct CandidateDiskGroup: Decodable, Identifiable', MAC)
         self.assertIn('func focusCopyCandidates(on volume: Int64?)', MAC)
         self.assertIn('args["candidate_volume_id"] = copyFocusVolumeID', MAC)
