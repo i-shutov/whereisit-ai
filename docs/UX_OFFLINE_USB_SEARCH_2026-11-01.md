@@ -139,3 +139,7 @@ hit-area tests and dual-client source-wiring regressions. Manual 880/1100/1180/
 1366px and HiDPI usability is **not** established by CI; see
 [UX pane runbook](qa/UX_NATIVE_PANE_REVIEW_20261101.md). Exact-HEAD CI is
 required before describing these changes as validated builds.
+
+## UX1 loaded-page sorting and persistent locator (2026-11-01)
+
+Windows native ListView header clicks and a macOS accessible page-sort picker now sort **only currently fetched results**, at most 250 rows, by name/disk/size/date/candidate-count/path, with ascending/descending selection. Stable catalog entry IDs keep the inspector and copy navigation tied to the actual selected file; missing numeric values remain last. The UI must explicitly label page-only order: this is **not** server-side globally sorted pagination across 3,046,027 records. Windows privately persists locator visibility and bounded splitter width in `%LOCALAPPDATA%/AtlasCatalog/ui-layout.json`; macOS stores locator visibility in UserDefaults. The preference never stores private search queries, CTF source paths or generation SHA, and does not change physical pairing or CTF/caches. [Native QA instructions](qa/UX_NATIVE_PANE_REVIEW_20261101.md). CI plus real GUI QA still required; stable 1.0 remains blocked.

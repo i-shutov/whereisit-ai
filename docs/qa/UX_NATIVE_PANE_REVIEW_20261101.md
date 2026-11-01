@@ -58,3 +58,7 @@ Capture binary/source SHA, OS build and architecture, UI scale, tested width,
 keyboard/VoiceOver results, resize/pointer-capture observations, actual USB
 device test, relevant app log and scrubbed screenshots. A native CI green check
 or synthetic unit test does **not** substitute for these observations.
+
+## Current-page sort / private layout preference manual QA
+
+Click each Windows result header twice; verify ascending then descending within the **loaded 250 records only**, and selected entry ID, locator and Ctrl+D copies remain unchanged by reordering. Unknown numeric sizes/dates/candidate counts must stay last in either direction. Changing pages must not claim globally sorted 3M-row results. On macOS use the Sort current page picker and direction control; check keyboard/VoiceOver semantics and selection by entry ID. Restart after hiding/resizing the Windows locator: the visibility and 220–420px width should be read from private UI-only JSON; corrupt JSON must fall back to defaults. On macOS verify UserDefaults keeps visibility across relaunch. This is a manual to-run checklist, not completed visual or USB acceptance.

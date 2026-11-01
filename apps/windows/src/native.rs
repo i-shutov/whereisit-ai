@@ -1,4 +1,5 @@
 use serde_json::{json, Value};
+use std::cmp::Ordering;
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -84,6 +85,88 @@ fn string(v: &Value, key: &str) -> String {
 }
 fn id(v: &Value) -> Option<i64> {
     v.get("id").and_then(Value::as_i64)
+}
+
+// Header sorting is intentionally limited to the loaded result page.
+fn cmp_text(left: &str, right: &str, descending: bool) -> Ordering {
+    let result = left.to_lowercase().cmp(&right.to_lowercase());
+    if descending { result.reverse() } else { result }
+}
+
+fn cmp_present<T: Ord>(left: Option<T>, right: Option<T>, descending: bool) -> Ordering {
+    match (left, right) {
+        (Some(a), Some(b)) => {
+            let result = a.cmp(&b);
+            if descending { result.reverse() } else { result }
+        }
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
+}
+
+const SORT_LABELS: [&str; 6] = ["Name", "Disk", "Size", "Modified", "Candidates", "Path"];
+
+fn sort_page_rows(rows: &mut [Value], column: usize, descending: bool, labels: &HashMap<i64, String>) {
+    rows.sort_by(|a, b| {
+        let order = match column {
+            0 => cmp_text(&string(a, "name"), &string(b, "name"), descending),
+            1 => {
+                let label = |row: &Value| labels.get(&row["volume_id"].as_i64().unwrap_or_default())
+                    .map(String::as_str).unwrap_or("");
+                cmp_text(label(a), label(b), descending)
+            }
+            2 => cmp_present(a["size"].as_u64(), b["size"].as_u64(), descending),
+            3 => cmp_present(a["modified_unix"].as_i64(), b["modified_unix"].as_i64(), descending),
+            4 => cmp_present(a["duplicate_count"].as_u64(), b["duplicate_count"].as_u64(), descending),
+            5 => cmp_text(&string(a, "relative_path"), &string(b, "relative_path"), descending),
+            _ => Ordering::Equal,
+        };
+        order.then_with(|| id(a).cmp(&id(b)))
+    });
+}
+
+// Versioned UI-only preference: no search query, source path/SHA or pairing ID.
+fn parse_ui_layout_preferences(raw: &str) -> (bool, i32) {
+    let Ok(value) = serde_json::from_str::<Value>(raw) else { return (true, 282); };
+    if value["version"].as_u64() != Some(1) { return (true, 282); }
+    (value["locator_visible"].as_bool().unwrap_or(true),
+     value["locator_width"].as_i64().unwrap_or(282).clamp(220, 420) as i32)
+}
+fn read_ui_layout_preferences() -> (bool, i32) {
+    std::fs::read_to_string(config_dir().join("ui-layout.json"))
+        .ok().map(|raw| parse_ui_layout_preferences(&raw)).unwrap_or((true, 282))
+}
+
+#[cfg(test)]
+mod page_sort_and_layout_tests {
+    use super::{parse_ui_layout_preferences, sort_page_rows};
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    #[test]
+    fn sort_only_loaded_entries_with_stable_ids_and_missing_metadata_last() {
+        let labels = HashMap::from([(7, "Zebra".to_owned()), (8, "Alpha".to_owned())]);
+        let mut rows = vec![
+            json!({"id":3,"name":"Movie","volume_id":7,"size":null}),
+            json!({"id":2,"name":"movie","volume_id":8,"size":500}),
+            json!({"id":1,"name":"Other","volume_id":7,"size":300}),
+        ];
+        sort_page_rows(&mut rows, 2, true, &labels);
+        assert_eq!(rows.iter().map(|e| e["id"].as_i64().unwrap()).collect::<Vec<_>>(), vec![2, 1, 3]);
+        sort_page_rows(&mut rows, 2, false, &labels);
+        assert_eq!(rows.iter().map(|e| e["id"].as_i64().unwrap()).collect::<Vec<_>>(), vec![1, 2, 3]);
+        sort_page_rows(&mut rows, 1, false, &labels);
+        assert_eq!(rows[0]["id"], 2);
+    }
+
+    #[test]
+    fn corrupt_layout_falls_back_and_user_splitter_width_is_bounded() {
+        assert_eq!(parse_ui_layout_preferences("broken"), (true, 282));
+        assert_eq!(parse_ui_layout_preferences(r#"{"version":2}"#), (true, 282));
+        assert_eq!(parse_ui_layout_preferences(r#"{"version":1,"locator_visible":false,"locator_width":9000}"#), (false, 420));
+        assert_eq!(parse_ui_layout_preferences(r#"{"version":1,"locator_width":0}"#), (true, 220));
+    }
 }
 
 // This is a view-only filter for the physical disk register; it must never
@@ -1410,6 +1493,8 @@ struct App {
     locator_requested_width: i32,
     locator_visible: bool,
     dragging_locator: bool,
+    page_sort_column: Option<usize>,
+    page_sort_descending: bool,
     buttons: Vec<(usize, HWND)>,
     physical_states: HashMap<i64, String>,
     mounted_volumes: Vec<MountedPhysicalVolume>,
@@ -1449,6 +1534,7 @@ struct App {
 impl App {
     fn new() -> Self {
         let (tx, rx) = mpsc::channel();
+        let (locator_visible, locator_width) = read_ui_layout_preferences();
         Self {
             hwnd: null_mut(),
             disks: null_mut(),
@@ -1460,9 +1546,11 @@ impl App {
             status: null_mut(),
             location: null_mut(),
             locator: null_mut(),
-            locator_requested_width: 282,
-            locator_visible: true,
+            locator_requested_width: locator_width,
+            locator_visible,
             dragging_locator: false,
+            page_sort_column: None,
+            page_sort_descending: false,
             buttons: vec![],
             physical_states: HashMap::new(),
             mounted_volumes: Vec::new(),
@@ -1930,6 +2018,7 @@ impl App {
                         data
                     };
                     self.entries = page["items"].as_array().cloned().unwrap_or_default();
+                    self.sort_loaded_page();
                     self.total_known = page["total"].is_u64();
                     self.total = page["total"]
                         .as_u64()
@@ -2258,6 +2347,49 @@ impl App {
             ),
         );
     }
+    fn sort_loaded_page(&mut self) {
+        let Some(column) = self.page_sort_column else { return; };
+        let labels: HashMap<i64, String> = self.volumes.iter()
+            .filter_map(|volume| id(volume).map(|key| (key, string(volume, "label"))))
+            .collect();
+        sort_page_rows(&mut self.entries, column, self.page_sort_descending, &labels);
+    }
+
+    fn save_ui_layout_preferences(&self) {
+        let dir = config_dir();
+        if std::fs::create_dir_all(&dir).is_ok() {
+            let data = json!({"version":1, "locator_visible":self.locator_visible,
+                "locator_width":self.locator_requested_width.clamp(220, 420)});
+            let _ = std::fs::write(dir.join("ui-layout.json"), data.to_string());
+        }
+    }
+
+    unsafe fn sort_current_page_by(&mut self, column: i32) {
+        let Ok(column) = usize::try_from(column) else { return; };
+        if column >= SORT_LABELS.len() { return; }
+        let selected_row = SendMessageW(self.files, LVM_GETNEXTITEM, usize::MAX, LVNI_SELECTED as isize);
+        let selected_id = usize::try_from(selected_row).ok()
+            .and_then(|index| self.entries.get(index)).and_then(id);
+        if self.page_sort_column == Some(column) {
+            self.page_sort_descending = !self.page_sort_descending;
+        } else {
+            self.page_sort_column = Some(column);
+            self.page_sort_descending = false;
+        }
+        self.sort_loaded_page();
+        self.render_rows();
+        if let Some(selected_id) = selected_id {
+            if let Some(row) = self.entries.iter().position(|entry| id(entry) == Some(selected_id)) {
+                let mut state: LVITEMW = std::mem::zeroed();
+                state.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
+                state.state = LVIS_SELECTED | LVIS_FOCUSED;
+                SendMessageW(self.files, LVM_SETITEMSTATE, row, &state as *const _ as isize);
+                SendMessageW(self.files, LVM_ENSUREVISIBLE, row, 0);
+                self.update_disk_locator();
+            }
+        }
+    }
+
     unsafe fn render_rows(&self) {
         SendMessageW(self.files, LVM_DELETEALLITEMS, 0, 0);
         for (row, e) in self.entries.iter().enumerate() {
@@ -2296,7 +2428,7 @@ impl App {
         }
         self.update_disk_locator();
         self.status(&format!(
-            "{}–{}{}{}{}",
+            "{}–{}{}{}{}{}",
             if self.total == 0 { 0 } else { self.offset + 1 },
             self.offset + self.entries.len(),
             if self.total_known {
@@ -2317,7 +2449,11 @@ impl App {
                 " • operation in progress"
             } else {
                 ""
-            }
+            },
+            self.page_sort_column.map(|column| format!(
+                " • {} {} (current page only)", SORT_LABELS[column],
+                if self.page_sort_descending { "descending" } else { "ascending" }
+            )).unwrap_or_default()
         ));
     }
     unsafe fn show_copies_of_selected(&mut self) {
@@ -2554,6 +2690,7 @@ impl App {
             FILE_COPIES => self.show_copies_of_selected(),
             TOGGLE_LOCATOR => {
                 self.locator_visible = !self.locator_visible;
+                self.save_ui_layout_preferences();
                 self.layout();
                 InvalidateRect(self.hwnd, null(), 0);
                 self.status(if self.locator_visible {
@@ -3132,6 +3269,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
         }
         WM_LBUTTONUP if app.dragging_locator => {
             app.dragging_locator = false;
+            app.save_ui_layout_preferences();
             ReleaseCapture();
             0
         }
@@ -3186,6 +3324,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 app.activate();
             } else if header.idFrom == FILES && header.code == LVN_ITEMCHANGED {
                 app.update_disk_locator();
+            } else if header.idFrom == FILES && header.code == LVN_COLUMNCLICK {
+                let event = &*(lp as *const NMLISTVIEW);
+                app.sort_current_page_by(event.iSubItem);
             } else if header.idFrom == FILES && header.code == LVN_KEYDOWN {
                 let key = &*(lp as *const NMLVKEYDOWN);
                 if key.wVKey == VK_RETURN {
@@ -3225,6 +3366,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             0
         }
         WM_DESTROY => {
+            app.save_ui_layout_preferences();
             KillTimer(hwnd, 1);
             KillTimer(hwnd, 2);
             PostQuitMessage(0);

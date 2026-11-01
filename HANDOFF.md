@@ -1,3 +1,9 @@
+## UX1 native loaded-page sorting + private locator preference — 2026-11-01
+
+Same draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57): native Windows column headers and macOS accessible picker/direction toggle sort only each currently loaded result page (max 250). Selection is retained by catalog entry ID; missing numeric metadata appears last. The label **current page only / PAGE ONLY** prevents a false global-sort claim. Windows saves bounded splitter width and visibility in a versioned, private UI-layout JSON; macOS uses UserDefaults for locator visibility. No CTF, source SHA, private search term, catalog DB or physical pairing is stored in these preferences. Synthetic pure Rust and cross-platform source-contract tests added. Exact new SHA CI must pass before green claims; human Win10/11/Mac Intel/ARM GUI/accessibility and unplug/replug QA is still outstanding. Never merge unverified draft or publish stable. [Manual QA](docs/qa/UX_NATIVE_PANE_REVIEW_20261101.md).
+
+---
+
 ## UX dense native layout and collapsible disk locator — 2026-11-01
 
 Draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57) continues on branch `ux/search-first-disk-locator-20261101` from the previously exact-HEAD green `7b78af89f88df64dc4bbd79eb01eed0b2ba2e760`. This integrated iteration adds an actual Win32 mouse-resizable disk locator with min-width/file-table guards, a visible native splitter grip and Ctrl+I/View collapse; macOS SwiftUI adds an accessible Command-Shift-I inspector toggle to its already-resizable HSplitView. The compact Windows result columns now preserve the recorded Path when the inspector is hidden even on 880px windows. Neither toggle changes search scope, physical verification, catalogue selection or CTF bytes. See [manual layout runbook](docs/qa/UX_NATIVE_PANE_REVIEW_20261101.md).

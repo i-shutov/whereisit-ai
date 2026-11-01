@@ -205,6 +205,8 @@ private struct CopyReturnContext {
     @Published var physicalProbeOK = false
     private var physicalCheckGeneration = 0
     @Published var entries: [Entry] = []
+    @Published var pageSortColumn = "natural"
+    @Published var pageSortDescending = false
     @Published var selection: Int64?
     @Published var query = ""
     var appliedQuery = ""
@@ -274,6 +276,43 @@ private struct CopyReturnContext {
     var mutationAllowed: Bool { job == nil && pending == 0 }
     var canCancel: Bool { job?.hasPrefix("scan-") == true }
     var selected: Entry? { entries.first { $0.id == selection } }
+
+    // Presentation only: sort at most one 250-row page, never the database/CTF.
+    private func optionalSortNumber(_ a: Int64?, _ b: Int64?) -> Int {
+        switch (a, b) {
+        case (nil, nil): return 0
+        case (nil, _): return 2
+        case (_, nil): return -2
+        case let (.some(left), .some(right)):
+            return left < right ? -1 : (left > right ? 1 : 0)
+        }
+    }
+
+    var displayEntries: [Entry] {
+        guard pageSortColumn != "natural" else { return entries }
+        return entries.sorted { left, right in
+            let comparison: Int
+            switch pageSortColumn {
+            case "name":
+                comparison = left.name.localizedStandardCompare(right.name).rawValue
+            case "disk":
+                comparison = volumeLabel(left.volume_id).localizedStandardCompare(volumeLabel(right.volume_id)).rawValue
+            case "size":
+                comparison = optionalSortNumber(left.size, right.size)
+            case "modified":
+                comparison = optionalSortNumber(left.modified_unix, right.modified_unix)
+            case "candidates":
+                comparison = optionalSortNumber(left.duplicate_count, right.duplicate_count)
+            case "path":
+                comparison = left.relative_path.localizedStandardCompare(right.relative_path).rawValue
+            default:
+                comparison = 0
+            }
+            if abs(comparison) == 2 { return comparison < 0 } // unknown metadata last
+            if comparison == 0 { return left.id < right.id }
+            return pageSortDescending ? comparison > 0 : comparison < 0
+        }
+    }
 
     init() {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("AtlasCatalog", isDirectory: true)
@@ -1176,7 +1215,7 @@ private struct CopyReturnContext {
     @StateObject private var model = Catalog()
     @FocusState private var searchFieldFocused: Bool
     @FocusState private var diskFilterFocused: Bool
-    @State private var locatorVisible = true
+    @AppStorage("AtlasCatalog.locatorVisible") private var locatorVisible = true
     var body: some View {
         VStack(spacing: 4) {
             HStack(spacing: 6) {
@@ -1227,6 +1266,24 @@ private struct CopyReturnContext {
                 Spacer(minLength: 4)
                 Text(model.resultScopeCaption).lineLimit(1).truncationMode(.middle)
                     .accessibilityLabel("Current search scope")
+                Picker("Sort current page", selection: $model.pageSortColumn) {
+                    Text("Source order").tag("natural")
+                    Text("Name").tag("name")
+                    Text("Disk").tag("disk")
+                    Text("Size").tag("size")
+                    Text("Modified").tag("modified")
+                    Text("Candidates").tag("candidates")
+                    Text("Path").tag("path")
+                }
+                .labelsHidden().frame(width: 122)
+                .accessibilityLabel("Sort the currently loaded page only")
+                .help("Sort only the 250 loaded results, never the whole catalog")
+                Button(model.pageSortDescending ? "↓" : "↑") {
+                    model.pageSortDescending.toggle()
+                }
+                .disabled(model.pageSortColumn == "natural")
+                .accessibilityLabel(model.pageSortDescending ? "Descending page sort" : "Ascending page sort")
+                Text("PAGE ONLY").font(.caption2).foregroundStyle(.secondary)
                 Button(locatorVisible ? "Hide locator" : "Show locator") {
                     locatorVisible.toggle()
                 }
@@ -1301,7 +1358,7 @@ private struct CopyReturnContext {
                         Button("Assign selected") { model.assignCategory() }.disabled(model.linkedMode || model.selection == nil || model.categoryID == nil)
                     }.padding(.horizontal, 5)
                 }.frame(minWidth: 170, idealWidth: 220, maxWidth: 320)
-                Table(model.entries, selection: $model.selection) {
+                Table(model.displayEntries, selection: $model.selection) {
                     TableColumn("Name") { entry in Label(entry.name, systemImage: entry.isFolder ? "folder" : "doc").lineLimit(1) }.width(min: 160, ideal: 250)
                     TableColumn("Disk") { entry in Text(model.volumeLabel(entry.volume_id)) }.width(min: 100, ideal: 150)
                     TableColumn("Size") { Text($0.sizeText).monospacedDigit() }.width(95)

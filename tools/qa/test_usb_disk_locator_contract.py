@@ -138,6 +138,23 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertNotIn("self.volume = None;", WIN.split("TOGGLE_LOCATOR =>", 1)[1].split("PHYSICAL_CHECK =>", 1)[0])
         self.assertNotIn("model.volumeID =", MAC.split('Button(locatorVisible ? "Hide locator" : "Show locator")', 1)[1].split(".font(.caption)", 1)[0])
 
+    def test_page_sort_is_explicitly_bounded_and_selection_stays_by_entry_id(self):
+        self.assertIn("fn sort_page_rows(", WIN)
+        self.assertIn("header.code == LVN_COLUMNCLICK", WIN)
+        self.assertIn("self.sort_loaded_page();", WIN)
+        self.assertIn("current page only", WIN)
+        self.assertIn("page_sort_and_layout_tests", WIN)
+        self.assertIn("var displayEntries: [Entry]", MAC)
+        self.assertIn("Table(model.displayEntries, selection: $model.selection)", MAC)
+        self.assertIn('Picker("Sort current page", selection: $model.pageSortColumn)', MAC)
+        self.assertIn("PAGE ONLY", MAC)
+
+    def test_locator_view_preference_is_separate_from_ctf_and_pairings(self):
+        self.assertIn('config_dir().join("ui-layout.json")', WIN)
+        self.assertIn("fn parse_ui_layout_preferences(", WIN)
+        self.assertIn("self.save_ui_layout_preferences();", WIN)
+        self.assertIn('@AppStorage("AtlasCatalog.locatorVisible")', MAC)
+
     def test_no_unverified_physical_drive_claims_in_locator(self):
         self.assertIn("Physical connection: NOT VERIFIED", WIN)
         self.assertIn("Physical connection not verified", MAC)
