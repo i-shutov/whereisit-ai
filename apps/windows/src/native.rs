@@ -305,14 +305,14 @@ fn explorer_geometry(window_width: i32) -> (i32, i32, i32) {
 }
 
 // A real Win32 three-pane splitter; the disk register stays 200px wide.
-// Retain at least 600px for results, and collapse the inspector below 1176px.
+// Retain at least 600px for results, and collapse the inspector below 1120px.
 fn explorer_geometry_for_width(
     window_width: i32,
     requested_locator: i32,
     visible: bool,
 ) -> (i32, i32, i32) {
     let maximum = (window_width - 222 - 8 - 600).min(420);
-    let locator_width = if visible && window_width >= 1176 && maximum >= 220 {
+    let locator_width = if visible && window_width >= 1120 && maximum >= 220 {
         requested_locator.clamp(220, maximum)
     } else {
         0
@@ -387,6 +387,8 @@ mod locator_splitter_tests {
             (0, 1144, 185)
         );
         assert_eq!(explorer_geometry_for_width(880, 282, true), (0, 658, 185));
+        assert_eq!(explorer_geometry_for_width(1120, 282, true), (282, 608, 0));
+        assert_eq!(explorer_geometry_for_width(1119, 282, true), (0, 897, 185));
     }
 
     #[test]

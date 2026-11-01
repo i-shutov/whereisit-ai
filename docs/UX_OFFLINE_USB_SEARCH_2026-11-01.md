@@ -124,7 +124,7 @@ This remains a source implementation checkpoint, not physical-device/GUI QA.
 The Win32 shell now uses an **actual mouse-resizable** 8px vertical grip between its
 results table and selected-file inspector. The inspector is clamped to 220–420px,
 while the results retain at least 600px whenever the third pane is visible; it
-auto-collapses below 1176px. **View → Show / hide disk locator** and **Ctrl+I**
+auto-collapses below 1120px. **View → Show / hide disk locator** and **Ctrl+I**
 provide an explicit, reversible collapse without discarding selection or search.
 At 880px the table uses adaptive columns and keeps the recorded Path readable
 because no inspector is shown. No CTF, user pairing or search-scope state is
