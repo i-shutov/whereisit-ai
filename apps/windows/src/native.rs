@@ -1587,6 +1587,7 @@ struct App {
     mounted_volumes: Vec<MountedPhysicalVolume>,
     physical_probe_ok: bool,
     duplicate_mode: HWND,
+    help: HWND,
     copy_disk_filter: HWND,
     export_format: HWND,
     category_list: HWND,
@@ -1646,6 +1647,7 @@ impl App {
             mounted_volumes: Vec::new(),
             physical_probe_ok: false,
             duplicate_mode: null_mut(),
+            help: null_mut(),
             copy_disk_filter: null_mut(),
             export_format: null_mut(),
             category_list: null_mut(),
@@ -1793,14 +1795,13 @@ impl App {
     }
     unsafe fn load(&mut self) {
         self.generation += 1;
-        ShowWindow(
-            self.copy_disk_filter,
-            if self.copy_source.is_some() {
-                SW_SHOW
-            } else {
-                SW_HIDE
-            },
-        );
+        let (copy_visibility, help_visibility) = if self.copy_source.is_some() {
+            (SW_SHOW, SW_HIDE)
+        } else {
+            (SW_HIDE, SW_SHOW)
+        };
+        ShowWindow(self.copy_disk_filter, copy_visibility);
+        ShowWindow(self.help, help_visibility);
         self.status(if self.copy_source.is_some() {
             "Comparing exact name + size metadata across all catalogued disks…"
         } else if self.duplicates {
@@ -3117,8 +3118,9 @@ impl App {
         // Search occupies the dominant space; scope is explicit on small laptops.
         MoveWindow(self.search, 8, 34, (w - 618).max(100), 24, 1);
         MoveWindow(self.duplicate_mode, w - 312, 34, 136, 200, 1);
-        // Catalogue focus, not a claim of actual USB presence.
-        MoveWindow(self.copy_disk_filter, (w - 376).max(400), 62, 368, 240, 1);
+        // Candidate focus occupies the query-help row only in copy mode.
+        // Search syntax help is hidden then; Notes stays on the right.
+        MoveWindow(self.copy_disk_filter, 8, 62, (w - 164).max(100), 240, 1);
         for (i, hwnd) in &self.buttons {
             if *i == FIND {
                 MoveWindow(*hwnd, w - 604, 34, 104, 24, 1);
@@ -3408,8 +3410,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 COPY_DISK_FILTER,
             );
             ShowWindow(app.copy_disk_filter, SW_HIDE);
-            let help=control(hwnd,"STATIC","AND  OR  NOT  ( )   name: path: ext: size: category:   Example: ext:mkv AND size:>1GB",0,142);
-            MoveWindow(help, 8, 62, 700, 18, 1);
+            app.help=control(hwnd,"STATIC","AND  OR  NOT  ( )   name: path: ext: size: category:   Example: ext:mkv AND size:>1GB",0,142);
+            MoveWindow(app.help, 8, 62, 700, 18, 1);
             app.disk_filter = control(
                 hwnd,
                 "EDIT",
