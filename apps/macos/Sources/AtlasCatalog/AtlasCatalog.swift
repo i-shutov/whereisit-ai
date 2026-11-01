@@ -313,6 +313,19 @@ enum Bridge {
         request(["op": "assign_category", "entry_id": selection, "category_id": categoryID], as: EmptyReply.self) { [weak self] result in if result != nil { self?.status = "Category assigned to selected entry." } }
     }
     func selectVolume() { stack = [(nil, "/")]; offset = 0; showingDuplicates = false; load() }
+    // Distinguish browsing the catalogued disk from searching within a scope.
+    func browseDisk(_ id: Int64) {
+        volumeID = id
+        query = ""; appliedQuery = ""
+        stack = [(nil, "/")]; offset = 0
+        showingDuplicates = false
+        load()
+    }
+    func searchAcrossAllDisks() {
+        volumeID = nil
+        stack = [(nil, "/")]
+        search()
+    }
     func load() {
         generation += 1; let token = generation; selection = nil
         var args: [String: Any] = ["offset": offset, "limit": limit]
@@ -771,6 +784,76 @@ enum Bridge {
     }
 }
 
+
+// The catalog is authoritative for the *recorded* disk and path, not for
+// current USB mount status. Never infer "connected" from a historical path.
+@MainActor struct DiskLocatorInspector: View {
+    @ObservedObject var model: Catalog
+
+    private func copy(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("FIND THE DISK").font(.caption.bold()).foregroundStyle(.secondary)
+                if let entry = model.selected {
+                    Label(model.volumeLabel(entry.volume_id), systemImage: "externaldrive")
+                        .font(.headline)
+                        .textSelection(.enabled)
+                    Text("Catalog disk ID: \(entry.volume_id)")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Label("Physical connection not verified", systemImage: "questionmark.circle")
+                        .foregroundStyle(.orange)
+                        .font(.callout)
+                    if model.linkedMode {
+                        Label("Linked CTF — read-only", systemImage: "lock")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Divider()
+                    Text("FILE").font(.caption.bold()).foregroundStyle(.secondary)
+                    Text(entry.name).font(.subheadline.weight(.semibold))
+                        .textSelection(.enabled)
+                    Text("RECORDED PATH").font(.caption.bold()).foregroundStyle(.secondary)
+                    Text(entry.relative_path)
+                        .font(.callout.monospaced())
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let bytes = entry.size { Text("Size: \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))") }
+                    if let count = entry.duplicate_count {
+                        Text("Metadata candidates: \(count) (not verified by content)")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Text("Duplicate count not calculated")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Button("Copy disk label") { copy(model.volumeLabel(entry.volume_id)) }
+                    Button("Copy recorded path") { copy(entry.relative_path) }
+                    Button("Browse this catalog disk") { model.browseDisk(entry.volume_id) }
+                        .help("Open the disk's catalogued root; does not access USB hardware")
+                    Divider()
+                } else {
+                    Text("Select a file to identify its catalogued USB disk.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                Button("Search all catalogued disks") { model.searchAcrossAllDisks() }
+                    .disabled(model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .help("Run the current expression without a disk filter")
+                Text("Connection is not verified. Match the physical disk label before plugging in; historical drive letters are not reliable.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+        }
+        .frame(minWidth: 230, idealWidth: 270, maxWidth: 330)
+        .accessibilityLabel("Selected file disk locator")
+    }
+}
+
 @MainActor struct CatalogView: View {
     @StateObject private var model = Catalog()
     var body: some View {
@@ -843,6 +926,7 @@ enum Bridge {
                     TableColumn("Description") { Text($0.description ?? "") }.width(min: 120, ideal: 240)
                 }.onTapGesture(count: 2) { model.openSelected() }
                 .contextMenu { Button("Open folder") { model.openSelected() }.disabled(model.selected?.isFolder != true) }
+                DiskLocatorInspector(model: model)
             }
             HStack(spacing: 8) {
                 Text(model.status).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
@@ -852,7 +936,7 @@ enum Bridge {
             }.font(.caption)
             Text(model.linkedMode ? "LINKED CTF (read-only) • " + (model.linkedCTFPath ?? "") : model.database).font(.caption2).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).lineLimit(1).truncationMode(.middle)
         }
-        .padding(7).controlSize(.small).frame(minWidth: 960, minHeight: 500)
+        .padding(7).controlSize(.small).frame(minWidth: 1100, minHeight: 550)
         .sheet(isPresented: $model.showingAnnotationReview) {
             if model.showingVerifiedOverlay {
                 VStack(alignment: .leading, spacing: 8) {
