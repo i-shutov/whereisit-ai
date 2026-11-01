@@ -14,6 +14,10 @@ The lower sidebar lists categories. Type a name and use `+` to create a category
 
 Every database request runs on a worker thread, including initialization, enumeration, search, duplicate queries, scan, import, and export. Windows transfers replies over an MPSC channel drained by the window timer. macOS transfers immutable response data to the main dispatch queue before updating the observable model. A monotonically increasing generation discards stale table results after a newer search or navigation. Native controls are touched only on the UI thread. A running scan has a cancellation token; import and export are shown as busy operations without a misleading cancel control. SQLite persistence and migrations belong to the engine.
 
+## UX0 — disk locator inspector (2026-11-01)
+
+Both native clients now introduce a context inspector for the currently selected search result. It shows the **exact catalog disk label and ID, recorded relative path, size, source mode, and metadata-only duplicate count**. This deliberately does **not** equate a historical drive letter or an indexed catalog with a physically attached USB drive: the connection state is displayed as **not verified** until a separate future identity/mount verification feature exists. Windows uses a selectable read-only native EDIT control (Ctrl+C for part of the text) at widths >=1120 px and preserves the full table below that width. macOS uses a third resizable HSplitView panel, offers copy label/path and navigation to the selected catalog disk, and can run the current search across all disk catalogs. See [the integrated UX plan](UX_OFFLINE_USB_SEARCH_2026-11-01.md) for the larger progression, acceptance constraints and limitations. Actual human GUI usability is still NOT_RUN.
+
 ## Windows 10+ x64
 
 Install Rust 1.90+ and Visual Studio Build Tools with the desktop C++ workload and Windows SDK, then run from the repository root:
