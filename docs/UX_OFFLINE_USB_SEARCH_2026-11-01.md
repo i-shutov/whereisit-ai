@@ -25,12 +25,18 @@ Search is the dominant action; Browse catalog and Duplicates are first-class con
 | Stage | Real deliverable | Acceptance evidence | Status |
 |---|---|---|---|
 | UX0 — Disk locator | One selected-search-result -> reliable catalog disk label / recorded location panel on **both native OS clients**, with copy/navigation and explicit unverified connection state | Exact-HEAD Windows Rust tests, macOS compiled app, 4-platform native CI, human screenshots/keyboard walkthrough still pending | **In progress** |
-| UX1 — Search-first shell | Prominent global search on app launch, persisted filter/sort and resizable/collapsible panes; keyboard-first, single-screen layout at 1366×768 and high DPI | Manual Windows 10/11 + both Mac architectures; no overflow, stable focus | Planned |
+| UX1 — Search-first shell | Prominent global search on app launch, persisted filter/sort and resizable/collapsible panes; keyboard-first, single-screen layout at 1366×768 and high DPI | Pure Windows 880/1100/1180/1366px geometry tests; Ctrl+F, Command+F and all-disk search wiring; platform builds/installer smoke; manual visual/hardware QA still pending | **In progress (keyboard + adaptive first slice)** |
 | UX2 — Physical drive identity | Registered user labels, optional physical sticker ID, mount detection by stable verified volume identity and reconciliation if IDs conflict. **Never equate historical drive letters to current USB disks** | Synthetic cross-disk collisions + real plug/unplug on target hardware | Planned |
 | UX3 — Film copies | Compare metadata candidates across drives and navigate from a result to all candidates. Distinguish unverified name+size from independently hashed identity; no offline deletion | Synthetic/real parity across 40-disk catalog, no false hash claim | Planned |
 | UX4 — Polish and acceptance | Native accessibility, keyboard traversal, reliable cancellation/progress, contrast/light-dark themes, window geometry, upgrades and observed SLO | Owner acceptance on Win10/11, Mac Intel/ARM; RC-to-RC upgrade; measured real 3M-row latency | Planned |
 
 No new browser/runtime dependency is introduced; the current Rust service API and native clients stay authoritative. Support for content previews/posters, movie-title grouping, and content hashes depicted in exploratory mockups is **not** implied by those images and is outside UX0.
+
+## UX1 implementation checkpoint — 2026-11-01
+
+- **Windows:** Ctrl+F focuses the existing search field and selects its contents, and first launch puts the cursor in search. Pure adaptive geometry chooses a 282px selected-disk inspector from 1176px window width; table Path column collapses only while that inspector displays the full location, restoring on wider windows (or if the inspector disappears at narrow widths). Compact file table columns fit the 1180px default window and the target 1366px laptop width. A unit test checks 1100/1180/1366px geometry, source wiring checks shortcuts. This remains standard Win32 controls; final visual redesign and owner ergonomics acceptance are **not yet achieved**.
+- **macOS:** Command+F focuses search without submitting unexpectedly; Enter executes the query; a separate All disks action explicitly searches across all catalogued drives. Native focus is requested when the window first appears. The three-pane inspector remains resizable. Requires manual keyboard/focus inspection on both ARM64 and Intel to call UX1 complete.
+- **Still missing:** persistent sorter/filter, draggable Windows splitters, small-display / scaling visual QA, more modern Win32 visual styling (the owner rejected the old look), physical USB identity validation, and cross-disk film-title grouping. Do not call this full UX acceptance merely because CI builds or installer smoke passes.
 
 ## UX0 implementation contract
 
