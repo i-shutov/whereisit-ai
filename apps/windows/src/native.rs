@@ -375,10 +375,17 @@ fn candidate_mount_badge(state: Option<&str>) -> &'static str {
 fn sole_connected_candidate_disk(groups: &[Value], states: &HashMap<i64, String>) -> Option<i64> {
     let mut found = None;
     for group in groups {
-        let Some(volume) = group["volume_id"].as_i64().filter(|v| *v > 0) else { continue };
+        let Some(volume) = group["volume_id"].as_i64().filter(|v| *v > 0) else {
+            continue;
+        };
         if group["count"].as_u64().unwrap_or(0) == 0
-            || states.get(&volume).map(String::as_str) != Some("connected") { continue }
-        if found.is_some() { return None }
+            || states.get(&volume).map(String::as_str) != Some("connected")
+        {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
         found = Some(volume);
     }
     found
@@ -391,8 +398,11 @@ mod verified_copy_focus_tests {
     use std::collections::HashMap;
     #[test]
     fn only_one_freshly_os_verified_candidate_can_be_focused() {
-        let groups = vec![json!({"volume_id":11,"count":2}), json!({"volume_id":12,"count":1})];
-        let mut states = HashMap::from([(11,"connected".to_owned()), (12,"offline".to_owned())]);
+        let groups = vec![
+            json!({"volume_id":11,"count":2}),
+            json!({"volume_id":12,"count":1}),
+        ];
+        let mut states = HashMap::from([(11, "connected".to_owned()), (12, "offline".to_owned())]);
         assert_eq!(sole_connected_candidate_disk(&groups, &states), Some(11));
         states.insert(12, "connected".into());
         assert_eq!(sole_connected_candidate_disk(&groups, &states), None);
@@ -400,10 +410,20 @@ mod verified_copy_focus_tests {
         assert_eq!(sole_connected_candidate_disk(&groups, &states), Some(12));
         states.clear();
         assert_eq!(sole_connected_candidate_disk(&groups, &states), None);
-        assert_eq!(sole_connected_candidate_disk(&[json!({"volume_id":12,"count":0})],
-            &HashMap::from([(12,"connected".to_owned())])), None);
-        assert_eq!(sole_connected_candidate_disk(&[json!({"volume_id":0,"count":1})],
-            &HashMap::from([(0,"connected".to_owned())])), None);
+        assert_eq!(
+            sole_connected_candidate_disk(
+                &[json!({"volume_id":12,"count":0})],
+                &HashMap::from([(12, "connected".to_owned())])
+            ),
+            None
+        );
+        assert_eq!(
+            sole_connected_candidate_disk(
+                &[json!({"volume_id":0,"count":1})],
+                &HashMap::from([(0, "connected".to_owned())])
+            ),
+            None
+        );
     }
     #[test]
     fn unfamiliar_state_fails_closed() {
@@ -2497,9 +2517,12 @@ impl App {
             self.status("Incomplete OS mount scan: physical copy location unverified.");
             return;
         }
-        let Some(volume) = sole_connected_candidate_disk(&self.copy_disk_groups,
-            &self.physical_states) else {
-            self.status("Zero or several candidate disks are OS-verified; choose a specific disk manually.");
+        let Some(volume) =
+            sole_connected_candidate_disk(&self.copy_disk_groups, &self.physical_states)
+        else {
+            self.status(
+                "Zero or several candidate disks are OS-verified; choose a specific disk manually.",
+            );
             return;
         };
         self.copy_focus_volume_id = Some(volume);
@@ -2530,8 +2553,12 @@ impl App {
         );
         for group in &self.copy_disk_groups {
             let label = string(group, "label").replace(['\r', '\n'], " ");
-            let badge = candidate_mount_badge(group["volume_id"].as_i64()
-                .and_then(|volume| self.physical_states.get(&volume)).map(String::as_str));
+            let badge = candidate_mount_badge(
+                group["volume_id"]
+                    .as_i64()
+                    .and_then(|volume| self.physical_states.get(&volume))
+                    .map(String::as_str),
+            );
             let caption = format!(
                 "{label} • {} metadata candidates • {badge}",
                 group["count"].as_u64().unwrap_or(0)
@@ -2594,8 +2621,12 @@ impl App {
                 } else {
                     ""
                 };
-                let badge = candidate_mount_badge(group["volume_id"].as_i64()
-                    .and_then(|volume| self.physical_states.get(&volume)).map(String::as_str));
+                let badge = candidate_mount_badge(
+                    group["volume_id"]
+                        .as_i64()
+                        .and_then(|volume| self.physical_states.get(&volume))
+                        .map(String::as_str),
+                );
                 inspector.push_str(&format!("\r\n{label}: {count} • {badge}{mark}"));
             }
         }
@@ -3809,8 +3840,12 @@ pub fn run() {
                     PHYSICAL_CHECK,
                     wide("Recheck physical volumes\tCtrl+R").as_ptr(),
                 );
-                AppendMenuW(view, MF_STRING, COPY_CONNECTED,
-                    wide("Focus sole OS-verified copy disk (Ctrl+G)").as_ptr());
+                AppendMenuW(
+                    view,
+                    MF_STRING,
+                    COPY_CONNECTED,
+                    wide("Focus sole OS-verified copy disk (Ctrl+G)").as_ptr(),
+                );
                 AppendMenuW(menu, MF_POPUP, view as usize, wide("View").as_ptr());
             }
             SetMenu(hwnd, menu);
