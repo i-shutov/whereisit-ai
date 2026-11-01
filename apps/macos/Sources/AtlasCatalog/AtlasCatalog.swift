@@ -26,7 +26,14 @@ struct Entry: Decodable, Identifiable {
     var sizeText: String { size.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "" }
     var dateText: String { modified_local ?? modified_unix.map { Date(timeIntervalSince1970: Double($0)).formatted(date: .numeric, time: .shortened) } ?? "" }
 }
-struct EntryPage: Decodable { let items: [Entry]; let total: Int?; let offset: Int?; let limit: Int?; let has_more: Bool? }
+struct EntryPage: Decodable {
+    let items: [Entry]
+    let total: Int?
+    let offset: Int?
+    let limit: Int?
+    let has_more: Bool?
+    let distinct_disks: Int?
+}
 struct CoreError: Decodable { let code: String?; let message: String }
 struct Envelope<T: Decodable>: Decodable { let ok: Bool; let data: T?; let error: CoreError? }
 struct EmptyReply: Decodable {}
@@ -157,6 +164,16 @@ enum Bridge {
     }
 }
 
+private struct CopyReturnContext {
+    let volumeID: Int64?
+    let stack: [(Int64?, String)]
+    let query: String
+    let appliedQuery: String
+    let offset: Int
+    let showingDuplicates: Bool
+    let appliedDuplicateMode: String
+}
+
 @MainActor final class Catalog: ObservableObject {
     @Published var database: String
     @Published var volumes: [Volume] = []
@@ -172,6 +189,9 @@ enum Bridge {
     @Published var duplicateMode = "name_size"
     var appliedDuplicateMode = "name_size"
     @Published var showingDuplicates = false
+    @Published var copySourceID: Int64?
+    @Published var copySourceName: String?
+    private var copyReturn: CopyReturnContext?
     @Published var categories: [Category] = []
     @Published var categoryID: Int64?
     @Published var categoryName = ""
@@ -261,6 +281,7 @@ enum Bridge {
         linkedCTFPath = nil; linkedGeneration = nil
         resetAnnotationReview()
         generation += 1; volumeID = nil; stack = [(nil, "/")]; entries = []; query = ""; appliedQuery = ""; showingDuplicates = false; offset = 0
+        copySourceID = nil; copySourceName = nil; copyReturn = nil
         volumes = []; categories = []; categoryID = nil; selection = nil; total = 0; hasMore = false
         status = "Opening catalog…"
         request(["op": "init"], as: EmptyReply.self) { [weak self] result in
@@ -312,9 +333,27 @@ enum Bridge {
         guard let selection, let categoryID else { return }
         request(["op": "assign_category", "entry_id": selection, "category_id": categoryID], as: EmptyReply.self) { [weak self] result in if result != nil { self?.status = "Category assigned to selected entry." } }
     }
-    func selectVolume() { stack = [(nil, "/")]; offset = 0; showingDuplicates = false; load() }
+    func selectVolume() {
+        copySourceID = nil; copySourceName = nil; copyReturn = nil
+        query = ""; appliedQuery = ""
+        stack = [(nil, "/")]; offset = 0; showingDuplicates = false; load()
+    }
+    func copiesOfSelected() {
+        guard let entry = selected, entry.kind == "file", entry.size != nil else {
+            status = "Select a file with recorded size to find catalogued metadata copies."
+            return
+        }
+        copyReturn = CopyReturnContext(volumeID: volumeID, stack: stack,
+            query: query, appliedQuery: appliedQuery, offset: offset,
+            showingDuplicates: showingDuplicates, appliedDuplicateMode: appliedDuplicateMode)
+        copySourceID = entry.id; copySourceName = entry.name
+        volumeID = nil; stack = [(nil, "/")]; offset = 0
+        showingDuplicates = false; query = ""; appliedQuery = ""
+        load()
+    }
     // Distinguish browsing the catalogued disk from searching within a scope.
     func browseDisk(_ id: Int64) {
+        copySourceID = nil; copySourceName = nil; copyReturn = nil
         volumeID = id
         query = ""; appliedQuery = ""
         stack = [(nil, "/")]; offset = 0
@@ -322,6 +361,7 @@ enum Bridge {
         load()
     }
     func searchAcrossAllDisks() {
+        copySourceID = nil; copySourceName = nil; copyReturn = nil
         volumeID = nil
         stack = [(nil, "/")]
         search()
@@ -330,6 +370,25 @@ enum Bridge {
         generation += 1; let token = generation; selection = nil
         var args: [String: Any] = ["offset": offset, "limit": limit]
         if let volumeID { args["volume_id"] = volumeID }
+        if let copySourceID {
+            args["entry_id"] = copySourceID
+            status = "Comparing exact name + size metadata across all catalogued disks…"
+            if let fields = linkedFields() {
+                args["op"] = "ctf_copy_candidates_pinned"
+                args.merge(fields) { _, newValue in newValue }
+                request(args, as: LinkedCTFResult<EntryPage>.self, generationToken: token) { [weak self] reply in
+                    guard let self, let reply else { return }
+                    self.applyPage(reply.result, token: token)
+                }
+            } else {
+                args["op"] = "copy_candidates"
+                request(args, as: EntryPage.self, generationToken: token) { [weak self] page in
+                    guard let self, let page else { return }
+                    self.applyPage(page, token: token)
+                }
+            }
+            return
+        }
         if let fields = linkedFields() {
             if showingDuplicates {
                 args["op"] = "ctf_duplicates_pinned"
@@ -373,12 +432,27 @@ enum Bridge {
         hasMore = page.has_more ?? (offset + page.items.count < total)
         status = "\(page.items.isEmpty ? 0 : offset + 1)–\(offset + page.items.count)"
             + (page.total.map { " of \($0) items" } ?? (hasMore ? " items • more available" : " items"))
-            + (showingDuplicates ? " • metadata candidates; content not verified" : "")
+            + (copySourceID != nil
+                ? " • \(page.distinct_disks ?? 0) catalog disks • exact name+size metadata, NOT content verified"
+                : (showingDuplicates ? " • metadata candidates; content not verified" : ""))
     }
-    func search() { appliedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines); showingDuplicates = false; offset = 0; load() }
+    func search() {
+        copySourceID = nil; copySourceName = nil; copyReturn = nil
+        appliedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        showingDuplicates = false; offset = 0; load()
+    }
     func duplicates() {
+        copySourceID = nil; copySourceName = nil; copyReturn = nil
         appliedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines); appliedDuplicateMode = duplicateMode; showingDuplicates = true; offset = 0; load() }
     func back() {
+        if let context = copyReturn {
+            copySourceID = nil; copySourceName = nil; copyReturn = nil
+            volumeID = context.volumeID; stack = context.stack
+            query = context.query; appliedQuery = context.appliedQuery
+            offset = context.offset; showingDuplicates = context.showingDuplicates
+            appliedDuplicateMode = context.appliedDuplicateMode
+            load(); return
+        }
         if showingDuplicates || !appliedQuery.isEmpty { showingDuplicates = false; query = ""; appliedQuery = "" }
         else if stack.count > 1 { stack.removeLast() }
         offset = 0; load()
@@ -837,6 +911,10 @@ enum Bridge {
                     }
                     Button("Copy disk label") { copy(model.volumeLabel(entry.volume_id)) }
                     Button("Copy recorded path") { copy(entry.relative_path) }
+                    Button("Find copies on other disks") { model.copiesOfSelected() }
+                        .disabled(entry.kind != "file" || entry.size == nil)
+                        .keyboardShortcut("d", modifiers: [.command])
+                        .help("Compare exact normalized file name and recorded byte size across catalogued disks; no content hashes or deletion")
                     Button("Browse this catalog disk") { model.browseDisk(entry.volume_id) }
                         .help("Open the disk's catalogued root; does not access USB hardware")
                     Divider()
@@ -907,6 +985,15 @@ enum Bridge {
                 Button("Duplicates") { model.duplicates() }
             }
             HStack { Text("AND  OR  NOT  ( )   name:  path:  ext:  size:  category:").foregroundStyle(.secondary); Spacer(); Text(model.currentPath).lineLimit(1).truncationMode(.middle) }.font(.caption)
+            if let copyName = model.copySourceName {
+                HStack(spacing: 6) {
+                    Label("COPY CANDIDATES • \(copyName)", systemImage: "doc.on.doc")
+                        .font(.caption.weight(.semibold)).lineLimit(1)
+                    Text("Name + size only; contents not compared").font(.caption).foregroundStyle(.secondary)
+                    Spacer(minLength: 6)
+                    Button("Back to results") { model.back() }
+                }.accessibilityElement(children: .contain)
+            }
             HSplitView {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("DISKS").font(.caption.bold()).foregroundStyle(.secondary).padding(.horizontal, 6)
