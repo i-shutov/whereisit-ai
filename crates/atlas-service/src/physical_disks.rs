@@ -373,8 +373,14 @@ mod tests {
         let seen = HashMap::from([("mac:demo-1111".into(), 1)]);
         assert_eq!(classify(11, &[binding.clone()], &seen, true), "connected");
         assert_eq!(classify(11, &[binding.clone()], &seen, false), "unverified");
-        assert_eq!(classify(11, &[binding.clone()], &HashMap::new(), true), "offline");
-        assert_eq!(classify(11, &[binding], &HashMap::new(), false), "unverified");
+        assert_eq!(
+            classify(11, &[binding.clone()], &HashMap::new(), true),
+            "offline"
+        );
+        assert_eq!(
+            classify(11, &[binding], &HashMap::new(), false),
+            "unverified"
+        );
     }
 
     #[test]
