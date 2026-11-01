@@ -822,6 +822,12 @@ enum Bridge {
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                     if let bytes = entry.size { Text("Size: \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))") }
+                    if let description = entry.description, !description.isEmpty {
+                        Text("DESCRIPTION").font(.caption.bold()).foregroundStyle(.secondary)
+                        Text(description).font(.caption)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     if let count = entry.duplicate_count {
                         Text("Metadata candidates: \(count) (not verified by content)")
                             .font(.caption).foregroundStyle(.secondary)
@@ -918,12 +924,10 @@ enum Bridge {
                 Table(model.entries, selection: $model.selection) {
                     TableColumn("Name") { entry in Label(entry.name, systemImage: entry.isFolder ? "folder" : "doc").lineLimit(1) }.width(min: 160, ideal: 250)
                     TableColumn("Disk") { entry in Text(model.volumeLabel(entry.volume_id)) }.width(min: 100, ideal: 150)
-                    TableColumn("Kind", value: \.kind).width(75)
                     TableColumn("Size") { Text($0.sizeText).monospacedDigit() }.width(95)
                     TableColumn("Modified") { Text($0.dateText) }.width(140)
                     TableColumn("Matches") { Text($0.duplicate_count.map(String.init) ?? "") }.width(65)
-                    TableColumn("Path", value: \.relative_path).width(min: 160, ideal: 280)
-                    TableColumn("Description") { Text($0.description ?? "") }.width(min: 120, ideal: 240)
+                    TableColumn("Path", value: \.relative_path).width(min: 140, ideal: 210)
                 }.onTapGesture(count: 2) { model.openSelected() }
                 .contextMenu { Button("Open folder") { model.openSelected() }.disabled(model.selected?.isFolder != true) }
                 DiskLocatorInspector(model: model)
