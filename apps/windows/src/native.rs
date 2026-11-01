@@ -42,6 +42,7 @@ const PHYSICAL_CHECK: usize = 117;
 const PHYSICAL_PAIR: usize = 118;
 const PHYSICAL_UNPAIR: usize = 119;
 const SHELF_SAVE: usize = 133;
+const COPY_LOCATOR: usize = 135;
 // Win32 GetDriveTypeW standard result codes; windows-sys 0.61 does not export these here.
 // Unknown/missing roots mean a potentially incomplete OS snapshot, never "offline".
 const DRIVE_UNKNOWN: u32 = 0;
@@ -235,7 +236,11 @@ mod page_sort_and_layout_tests {
 
 // This is a view-only filter for the physical disk register; it must never
 // become a query-volume filter or rewrite the selected catalog disk.
-fn filtered_disk_indices(volumes: &[Value], filter: &str) -> Vec<usize> {
+fn filtered_disk_indices(
+    volumes: &[Value],
+    shelf_labels: &HashMap<i64, String>,
+    filter: &str,
+) -> Vec<usize> {
     let needle = filter.trim().to_lowercase();
     volumes
         .iter()
@@ -243,7 +248,15 @@ fn filtered_disk_indices(volumes: &[Value], filter: &str) -> Vec<usize> {
         .filter_map(|(index, volume)| {
             let label = string(volume, "label").to_lowercase();
             let catalog_id = id(volume).map(|v| v.to_string()).unwrap_or_default();
-            if needle.is_empty() || label.contains(&needle) || catalog_id.contains(&needle) {
+            let shelf = id(volume)
+                .and_then(|disk| shelf_labels.get(&disk))
+                .map(|text| text.to_lowercase())
+                .unwrap_or_default();
+            if needle.is_empty()
+                || label.contains(&needle)
+                || catalog_id.contains(&needle)
+                || shelf.contains(&needle)
+            {
                 Some(index)
             } else {
                 None
@@ -265,6 +278,7 @@ fn filtered_disk_index_at_row(indices: &[usize], row: isize) -> Option<usize> {
 mod disk_register_filter_tests {
     use super::{filtered_disk_index_at_row, filtered_disk_indices};
     use serde_json::json;
+    use std::collections::HashMap;
 
     #[test]
     fn label_and_catalog_id_filter_keep_stable_original_indices() {
@@ -273,12 +287,18 @@ mod disk_register_filter_tests {
             json!({"id":42,"label":"Archive B"}),
             json!({"id":73,"label":"Медиатека C"}),
         ];
-        assert_eq!(filtered_disk_indices(&volumes, ""), vec![0, 1, 2]);
-        assert_eq!(filtered_disk_indices(&volumes, "мЕДИАТЕКА"), vec![0, 2]);
-        assert_eq!(filtered_disk_indices(&volumes, " 42 "), vec![1]);
-        assert!(filtered_disk_indices(&volumes, "missing").is_empty());
+        let mut shelves = HashMap::new();
+        shelves.insert(42, "Стеллаж Д / наклейка 04".to_owned());
+        assert_eq!(filtered_disk_indices(&volumes, &shelves, ""), vec![0, 1, 2]);
+        assert_eq!(filtered_disk_indices(&volumes, &shelves, "мЕДИАТЕКА"), vec![0, 2]);
+        assert_eq!(filtered_disk_indices(&volumes, &shelves, " 42 "), vec![1]);
+        assert!(filtered_disk_indices(&volumes, &shelves, "missing").is_empty());
+        assert_eq!(filtered_disk_indices(&volumes, &shelves, "нАкЛеЙкА 04"), vec![1]);
+        assert_eq!(filtered_disk_indices(&volumes, &shelves, "стеллаж д"), vec![1]);
+        // The shelf tag lives in a user-side map; original catalog rows are untouched.
+        assert!(volumes[1].get("shelf_label").is_none());
 
-        let visible = filtered_disk_indices(&volumes, "мЕДИАТЕКА");
+        let visible = filtered_disk_indices(&volumes, &shelves, "мЕДИАТЕКА");
         assert_eq!(filtered_disk_index_at_row(&visible, 0), None);
         assert_eq!(filtered_disk_index_at_row(&visible, 1), Some(0));
         assert_eq!(filtered_disk_index_at_row(&visible, 2), Some(2));
@@ -2411,7 +2431,8 @@ impl App {
     }
 
     unsafe fn populate_physical_disk_list(&mut self) {
-        self.visible_disk_indices = filtered_disk_indices(&self.volumes, &self.disk_filter_query);
+        self.visible_disk_indices =
+            filtered_disk_indices(&self.volumes, &self.shelf_labels, &self.disk_filter_query);
         SendMessageW(self.disks, LB_RESETCONTENT, 0, 0);
         let global_label = format!(
             "All disks / global search ({} of {})",
@@ -3150,6 +3171,21 @@ impl App {
             }
             FILE_COPIES => self.show_copies_of_selected(),
             COPY_CONNECTED => self.focus_sole_connected_copy(),
+            COPY_LOCATOR => {
+                let row = SendMessageW(self.files, LVM_GETNEXTITEM, usize::MAX, LVNI_SELECTED as isize);
+                if row < 0 || self.entries.get(row as usize).is_none() {
+                    self.status("Select a catalogued file before copying its retrieval note.");
+                    return;
+                }
+                // Copy only the selected row's current read-only inspector text.
+                // The Win32 EDIT owns local clipboard handling; no CTF, cache or
+                // annotation write, network request or historical path probe.
+                self.update_disk_locator();
+                SendMessageW(self.locator, EM_SETSEL, 0, -1);
+                SendMessageW(self.locator, WM_COPY, 0, 0);
+                SendMessageW(self.locator, EM_SETSEL, 0, 0);
+                self.status("Locator text sent to the local clipboard. Mount status can change; file contents were not checked.");
+            },
             TOGGLE_LOCATOR => {
                 self.locator_visible = !self.locator_visible;
                 self.save_ui_layout_preferences();
@@ -3450,6 +3486,7 @@ impl App {
             (PHYSICAL_PAIR, h - 155),
             (PHYSICAL_UNPAIR, h - 125),
             (FILE_COPIES, h - 78),
+            (COPY_LOCATOR, h - 48),
         ] {
             if let Some((_, button)) = self.buttons.iter().find(|(id, _)| *id == command) {
                 if locator_width > 0 {
@@ -3575,6 +3612,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 (NEXT, "Ne&xt"),
                 (DUPLICATES, "&Duplicates"),
                 (FILE_COPIES, "&Find copies on disks"),
+                (COPY_LOCATOR, "Copy &locator text"),
                 (COPY_CONNECTED, "&Verified copy"),
                 (PHYSICAL_CHECK, "Refresh &USB state"),
                 (PHYSICAL_PAIR, "&Pair physical disk…"),
@@ -3674,7 +3712,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 app.disk_filter,
                 EM_SETCUEBANNER,
                 0,
-                wide("Filter disk labels / IDs • Ctrl+L").as_ptr() as isize,
+                wide("Filter labels, IDs, shelf tags • Ctrl+L").as_ptr() as isize,
             );
             app.shelf_edit = control(
                 hwnd,
@@ -3981,6 +4019,12 @@ pub fn run() {
                 AppendMenuW(
                     view,
                     MF_STRING,
+                    COPY_LOCATOR,
+                    wide("Copy selected locator text\tCtrl+Shift+C").as_ptr(),
+                );
+                AppendMenuW(
+                    view,
+                    MF_STRING,
                     PHYSICAL_CHECK,
                     wide("Recheck physical volumes\tCtrl+R").as_ptr(),
                 );
@@ -4024,7 +4068,18 @@ pub fn run() {
                 (*app).command(TOGGLE_LOCATOR, 0);
                 continue;
             }
-            // Ctrl+L filters the disk register, without changing the catalog search.
+            // Ctrl+Shift+C copies the selected catalog retrieval text locally.
+            // Ctrl+C in the native inspector remains normal selected-text copy.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && GetKeyState(VK_SHIFT as i32) < 0
+                && message.wParam == b'C' as usize
+            {
+                (*app).command(COPY_LOCATOR, 0);
+                continue;
+            }
+            // Ctrl+L filters the disk register, including private shelf tags,
+            // without changing the catalog file-search scope.
             if message.message == WM_KEYDOWN
                 && GetKeyState(VK_CONTROL as i32) < 0
                 && message.wParam == b'L' as usize

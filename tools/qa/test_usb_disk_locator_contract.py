@@ -233,6 +233,21 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("OWNER STICKER / SHELF TAG (manual, not OS identity)", MAC)
         self.assertIn("(shelfLabels[$0.id] ?? \"\").localizedStandardContains(needle)", MAC)
 
+    def test_ux6_retrieval_note_and_private_shelf_filter_are_native(self):
+        self.assertIn("const COPY_LOCATOR: usize = 135", WIN)
+        self.assertIn("COPY_LOCATOR => {", WIN)
+        self.assertIn("SendMessageW(self.locator, WM_COPY, 0, 0)", WIN)
+        self.assertIn("GetKeyState(VK_SHIFT as i32) < 0", WIN)
+        self.assertIn("filtered_disk_indices(&self.volumes, &self.shelf_labels, &self.disk_filter_query)", WIN)
+        self.assertIn('wide("Filter labels, IDs, shelf tags • Ctrl+L")', WIN)
+        self.assertIn('private func retrievalNote(for entry: Entry) -> String', MAC)
+        self.assertIn('Button("Copy retrieval note")', MAC)
+        self.assertIn('.keyboardShortcut("c", modifiers: [.command, .shift])', MAC)
+        self.assertIn("model.shelfLabel(entry.volume_id)", MAC)
+        self.assertIn("model.physicalCaption(entry.volume_id)", MAC)
+        self.assertIn("file contents not compared", MAC)
+        self.assertIn("physical_shelf_labels", SERVICE)
+
     def test_no_unverified_physical_drive_claims_in_locator(self):
         self.assertIn("Physical connection: NOT VERIFIED", WIN)
         self.assertIn("Physical connection not verified", MAC)

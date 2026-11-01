@@ -1238,6 +1238,26 @@ private struct CopyReturnContext {
         NSPasteboard.general.setString(text, forType: .string)
     }
 
+    // A portable shopping-list-style retrieval note, never a live file path.
+    // Physical state is the most recent explicit OS probe, not file existence.
+    private func retrievalNote(for entry: Entry) -> String {
+        let shelf = model.shelfLabel(entry.volume_id)
+        let size = entry.size.map { "\($0) recorded bytes" } ?? "unknown"
+        let candidates = entry.duplicate_count.map { "\($0) metadata candidates" } ?? "not calculated"
+        return [
+            "WhereIsIt AI — catalog retrieval note",
+            "Disk: \(model.volumeLabel(entry.volume_id))",
+            "Catalog disk ID: \(entry.volume_id)",
+            "Owner sticker / shelf: \(shelf.isEmpty ? "not assigned" : shelf)",
+            "File: \(entry.name)",
+            "Recorded relative path: \(entry.relative_path)",
+            "Recorded size: \(size)",
+            "Physical: \(model.physicalCaption(entry.volume_id))",
+            "Copies: \(candidates); file contents not compared",
+            "OS state is from the last probe and may change; catalog paths are historical.",
+        ].joined(separator: "\n")
+    }
+
     // Kept separate from the large file inspector to bound SwiftUI type-checking
     // and allow tagging a selected register disk even without a file result.
     @ViewBuilder private var shelfTagEditor: some View {
@@ -1299,6 +1319,10 @@ private struct CopyReturnContext {
                     }
                     Button("Copy disk label") { copy(model.volumeLabel(entry.volume_id)) }
                     Button("Copy recorded path") { copy(entry.relative_path) }
+                    Button("Copy retrieval note") { copy(retrievalNote(for: entry)) }
+                        .keyboardShortcut("c", modifiers: [.command, .shift])
+                        .accessibilityLabel("Copy catalog disk, shelf and recorded file details")
+                        .help("Copy only catalog metadata and last OS probe state; no file-content verification")
                     Button("Find copies on other disks") { model.copiesOfSelected() }
                         .disabled(entry.kind != "file" || entry.size == nil)
                         .keyboardShortcut("d", modifiers: [.command])
