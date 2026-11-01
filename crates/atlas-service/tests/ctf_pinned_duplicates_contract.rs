@@ -399,7 +399,6 @@ fn duplicate_export_rejects_wrong_scope_overwrites_stale_sources_and_hash_claims
     }
 }
 
-
 #[test]
 fn selected_copy_navigation_spans_disks_and_rechecks_generation_per_page() {
     let dir = tempfile::tempdir().unwrap();
