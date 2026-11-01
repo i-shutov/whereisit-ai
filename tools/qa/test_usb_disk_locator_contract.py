@@ -130,7 +130,7 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("GetSysColorBrush(COLOR_3DSHADOW)", WIN)
         self.assertIn("locator_splitter_tests", WIN)
         self.assertIn("message.wParam == b'I' as usize", WIN)
-        self.assertIn("@State private var locatorVisible = true", MAC)
+        self.assertIn('@AppStorage("AtlasCatalog.locatorVisible") private var locatorVisible = true', MAC)
         self.assertIn('Button(locatorVisible ? "Hide locator" : "Show locator")', MAC)
         self.assertIn('if locatorVisible {\n                    DiskLocatorInspector(model: model)', MAC)
         self.assertIn('.keyboardShortcut("i", modifiers: [.command, .shift])', MAC)

@@ -90,14 +90,22 @@ fn id(v: &Value) -> Option<i64> {
 // Header sorting is intentionally limited to the loaded result page.
 fn cmp_text(left: &str, right: &str, descending: bool) -> Ordering {
     let result = left.to_lowercase().cmp(&right.to_lowercase());
-    if descending { result.reverse() } else { result }
+    if descending {
+        result.reverse()
+    } else {
+        result
+    }
 }
 
 fn cmp_present<T: Ord>(left: Option<T>, right: Option<T>, descending: bool) -> Ordering {
     match (left, right) {
         (Some(a), Some(b)) => {
             let result = a.cmp(&b);
-            if descending { result.reverse() } else { result }
+            if descending {
+                result.reverse()
+            } else {
+                result
+            }
         }
         (Some(_), None) => Ordering::Less,
         (None, Some(_)) => Ordering::Greater,
@@ -107,19 +115,40 @@ fn cmp_present<T: Ord>(left: Option<T>, right: Option<T>, descending: bool) -> O
 
 const SORT_LABELS: [&str; 6] = ["Name", "Disk", "Size", "Modified", "Candidates", "Path"];
 
-fn sort_page_rows(rows: &mut [Value], column: usize, descending: bool, labels: &HashMap<i64, String>) {
+fn sort_page_rows(
+    rows: &mut [Value],
+    column: usize,
+    descending: bool,
+    labels: &HashMap<i64, String>,
+) {
     rows.sort_by(|a, b| {
         let order = match column {
             0 => cmp_text(&string(a, "name"), &string(b, "name"), descending),
             1 => {
-                let label = |row: &Value| labels.get(&row["volume_id"].as_i64().unwrap_or_default())
-                    .map(String::as_str).unwrap_or("");
+                let label = |row: &Value| {
+                    labels
+                        .get(&row["volume_id"].as_i64().unwrap_or_default())
+                        .map(String::as_str)
+                        .unwrap_or("")
+                };
                 cmp_text(label(a), label(b), descending)
             }
             2 => cmp_present(a["size"].as_u64(), b["size"].as_u64(), descending),
-            3 => cmp_present(a["modified_unix"].as_i64(), b["modified_unix"].as_i64(), descending),
-            4 => cmp_present(a["duplicate_count"].as_u64(), b["duplicate_count"].as_u64(), descending),
-            5 => cmp_text(&string(a, "relative_path"), &string(b, "relative_path"), descending),
+            3 => cmp_present(
+                a["modified_unix"].as_i64(),
+                b["modified_unix"].as_i64(),
+                descending,
+            ),
+            4 => cmp_present(
+                a["duplicate_count"].as_u64(),
+                b["duplicate_count"].as_u64(),
+                descending,
+            ),
+            5 => cmp_text(
+                &string(a, "relative_path"),
+                &string(b, "relative_path"),
+                descending,
+            ),
             _ => Ordering::Equal,
         };
         order.then_with(|| id(a).cmp(&id(b)))
@@ -128,14 +157,25 @@ fn sort_page_rows(rows: &mut [Value], column: usize, descending: bool, labels: &
 
 // Versioned UI-only preference: no search query, source path/SHA or pairing ID.
 fn parse_ui_layout_preferences(raw: &str) -> (bool, i32) {
-    let Ok(value) = serde_json::from_str::<Value>(raw) else { return (true, 282); };
-    if value["version"].as_u64() != Some(1) { return (true, 282); }
-    (value["locator_visible"].as_bool().unwrap_or(true),
-     value["locator_width"].as_i64().unwrap_or(282).clamp(220, 420) as i32)
+    let Ok(value) = serde_json::from_str::<Value>(raw) else {
+        return (true, 282);
+    };
+    if value["version"].as_u64() != Some(1) {
+        return (true, 282);
+    }
+    (
+        value["locator_visible"].as_bool().unwrap_or(true),
+        value["locator_width"]
+            .as_i64()
+            .unwrap_or(282)
+            .clamp(220, 420) as i32,
+    )
 }
 fn read_ui_layout_preferences() -> (bool, i32) {
     std::fs::read_to_string(config_dir().join("ui-layout.json"))
-        .ok().map(|raw| parse_ui_layout_preferences(&raw)).unwrap_or((true, 282))
+        .ok()
+        .map(|raw| parse_ui_layout_preferences(&raw))
+        .unwrap_or((true, 282))
 }
 
 #[cfg(test)]
@@ -153,9 +193,19 @@ mod page_sort_and_layout_tests {
             json!({"id":1,"name":"Other","volume_id":7,"size":300}),
         ];
         sort_page_rows(&mut rows, 2, true, &labels);
-        assert_eq!(rows.iter().map(|e| e["id"].as_i64().unwrap()).collect::<Vec<_>>(), vec![2, 1, 3]);
+        assert_eq!(
+            rows.iter()
+                .map(|e| e["id"].as_i64().unwrap())
+                .collect::<Vec<_>>(),
+            vec![2, 1, 3]
+        );
         sort_page_rows(&mut rows, 2, false, &labels);
-        assert_eq!(rows.iter().map(|e| e["id"].as_i64().unwrap()).collect::<Vec<_>>(), vec![1, 2, 3]);
+        assert_eq!(
+            rows.iter()
+                .map(|e| e["id"].as_i64().unwrap())
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
         sort_page_rows(&mut rows, 1, false, &labels);
         assert_eq!(rows[0]["id"], 2);
     }
@@ -164,8 +214,16 @@ mod page_sort_and_layout_tests {
     fn corrupt_layout_falls_back_and_user_splitter_width_is_bounded() {
         assert_eq!(parse_ui_layout_preferences("broken"), (true, 282));
         assert_eq!(parse_ui_layout_preferences(r#"{"version":2}"#), (true, 282));
-        assert_eq!(parse_ui_layout_preferences(r#"{"version":1,"locator_visible":false,"locator_width":9000}"#), (false, 420));
-        assert_eq!(parse_ui_layout_preferences(r#"{"version":1,"locator_width":0}"#), (true, 220));
+        assert_eq!(
+            parse_ui_layout_preferences(
+                r#"{"version":1,"locator_visible":false,"locator_width":9000}"#
+            ),
+            (false, 420)
+        );
+        assert_eq!(
+            parse_ui_layout_preferences(r#"{"version":1,"locator_width":0}"#),
+            (true, 220)
+        );
     }
 }
 
@@ -2348,11 +2406,20 @@ impl App {
         );
     }
     fn sort_loaded_page(&mut self) {
-        let Some(column) = self.page_sort_column else { return; };
-        let labels: HashMap<i64, String> = self.volumes.iter()
+        let Some(column) = self.page_sort_column else {
+            return;
+        };
+        let labels: HashMap<i64, String> = self
+            .volumes
+            .iter()
             .filter_map(|volume| id(volume).map(|key| (key, string(volume, "label"))))
             .collect();
-        sort_page_rows(&mut self.entries, column, self.page_sort_descending, &labels);
+        sort_page_rows(
+            &mut self.entries,
+            column,
+            self.page_sort_descending,
+            &labels,
+        );
     }
 
     fn save_ui_layout_preferences(&self) {
@@ -2365,11 +2432,22 @@ impl App {
     }
 
     unsafe fn sort_current_page_by(&mut self, column: i32) {
-        let Ok(column) = usize::try_from(column) else { return; };
-        if column >= SORT_LABELS.len() { return; }
-        let selected_row = SendMessageW(self.files, LVM_GETNEXTITEM, usize::MAX, LVNI_SELECTED as isize);
-        let selected_id = usize::try_from(selected_row).ok()
-            .and_then(|index| self.entries.get(index)).and_then(id);
+        let Ok(column) = usize::try_from(column) else {
+            return;
+        };
+        if column >= SORT_LABELS.len() {
+            return;
+        }
+        let selected_row = SendMessageW(
+            self.files,
+            LVM_GETNEXTITEM,
+            usize::MAX,
+            LVNI_SELECTED as isize,
+        );
+        let selected_id = usize::try_from(selected_row)
+            .ok()
+            .and_then(|index| self.entries.get(index))
+            .and_then(id);
         if self.page_sort_column == Some(column) {
             self.page_sort_descending = !self.page_sort_descending;
         } else {
@@ -2379,11 +2457,20 @@ impl App {
         self.sort_loaded_page();
         self.render_rows();
         if let Some(selected_id) = selected_id {
-            if let Some(row) = self.entries.iter().position(|entry| id(entry) == Some(selected_id)) {
+            if let Some(row) = self
+                .entries
+                .iter()
+                .position(|entry| id(entry) == Some(selected_id))
+            {
                 let mut state: LVITEMW = std::mem::zeroed();
                 state.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
                 state.state = LVIS_SELECTED | LVIS_FOCUSED;
-                SendMessageW(self.files, LVM_SETITEMSTATE, row, &state as *const _ as isize);
+                SendMessageW(
+                    self.files,
+                    LVM_SETITEMSTATE,
+                    row,
+                    &state as *const _ as isize,
+                );
                 SendMessageW(self.files, LVM_ENSUREVISIBLE, row, 0);
                 self.update_disk_locator();
             }
@@ -2450,10 +2537,17 @@ impl App {
             } else {
                 ""
             },
-            self.page_sort_column.map(|column| format!(
-                " • {} {} (current page only)", SORT_LABELS[column],
-                if self.page_sort_descending { "descending" } else { "ascending" }
-            )).unwrap_or_default()
+            self.page_sort_column
+                .map(|column| format!(
+                    " • {} {} (current page only)",
+                    SORT_LABELS[column],
+                    if self.page_sort_descending {
+                        "descending"
+                    } else {
+                        "ascending"
+                    }
+                ))
+                .unwrap_or_default()
         ));
     }
     unsafe fn show_copies_of_selected(&mut self) {
