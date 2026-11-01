@@ -27,3 +27,31 @@ The left disk register still browses catalog snapshots without accessing physica
 Run Python native wiring regression, Windows compiled duplicate-mount picker unit test, Rust service tests plus Linux fmt/Clippy, Windows x64 and Mac ARM64/Intel native installer builds, offline kit and installed RC2-to-RC3 upgrade on the final SHA. Inspect actual Actions jobs rather than assume success.
 
 Manual Win10/11 and Mac ARM/Intel checks: browse disk A, search by Enter and confirm results from other disks, choose This disk and verify narrow scope, switch into duplicates and confirm global scope, Ctrl/Command+D candidates then Back, keyboard/screen-reader navigation, 880/1100/1180/1366 px and high-DPI layout. Plug/unplug labelled USB; change Windows drive letter, clone or multi-mount UUID, cancel and replace during pairing, switch CTF generation, verify fail-closed status. Native CI cannot replace these hardware checks. Stable v1.0 remains blocked by earlier published gates including real p95 150ms, signatures and unavailable historical raw bytes.
+
+## UX register filter integration — 2026-11-01
+
+With roughly 40 intermittently attached catalogued disks, use **Ctrl+L** on Windows
+or **Command+L** on macOS to focus the new *disk register* filter. Enter any
+part of the recorded physical disk label or its catalog numeric ID. Filtering
+is Unicode case-insensitive (including Cyrillic), works offline, and never
+queries a current USB drive or CTF contents. It displays a live visible/total
+counter, including when no disks match. Clear the filter using Escape in the
+Windows filter field or the accessible clear button on macOS.
+
+**Crucial:** this is strictly a view-only register filter. An already-selected
+disk can disappear from the filtered list without silently changing file-search
+scope, selected entry, physical pairing or CTF SHA pinning. Choosing a new
+filtered row resolves the original catalog disk ID, **not the filtered row
+number**. The global-search row remains available independently. Reopening a
+catalog clears the register filter; global file search still searches all
+catalogued disks, not just the filtered register. On Windows the selection is
+visibly cleared when the current scoped disk is hidden, but the underlying
+scope remains; the main location caption continues to explain the scope.
+
+Acceptance: Windows compiled Rust index-map tests (including Cyrillic and
+missing matches), native Linux Python source wiring, Windows x64 and macOS
+ARM64/Intel builds. Manual QA: filter by label, then numeric disk ID; select
+second filtered row and verify the actual original catalog ID in the locator;
+filter out an active disk, run global search, clear filter and check scope;
+use Ctrl/Command+F then Ctrl/Command+L, screen reader/Tab at 1100/1366 px.
+This does not establish hardware USB identity or manual GUI acceptance.

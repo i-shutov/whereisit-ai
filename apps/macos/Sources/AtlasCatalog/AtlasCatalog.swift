@@ -197,6 +197,7 @@ private struct CopyReturnContext {
 @MainActor final class Catalog: ObservableObject {
     @Published var database: String
     @Published var volumes: [Volume] = []
+    @Published var diskFilter = ""
     @Published var volumeID: Int64?
     @Published var physicalStates: [Int64: String] = [:]
     @Published var mountedPhysicalVolumes: [LivePhysicalVolume] = []
@@ -307,7 +308,7 @@ private struct CopyReturnContext {
         resetAnnotationReview()
         generation += 1; volumeID = nil; stack = [(nil, "/")]; entries = []; query = ""; appliedQuery = ""; showingDuplicates = false; offset = 0
         copySourceID = nil; copySourceName = nil; copyReturn = nil
-        volumes = []; categories = []; categoryID = nil; selection = nil; total = 0; hasMore = false
+        volumes = []; diskFilter = ""; categories = []; categoryID = nil; selection = nil; total = 0; hasMore = false
         physicalStates = [:]; mountedPhysicalVolumes = []; selectedPhysicalID = ""; physicalProbeOK = false
         physicalCheckGeneration += 1
         status = "Opening catalog…"
@@ -322,6 +323,14 @@ private struct CopyReturnContext {
         return "Disk #\(id)"
     }
 
+    // View-only filtering: never change volumeID, query scope or disk pairing.
+    var visibleVolumes: [Volume] {
+        let needle = diskFilter.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return volumes }
+        return volumes.filter {
+            $0.label.localizedStandardContains(needle) || String($0.id).contains(needle)
+        }
+    }
     var selectedDiskForPairing: Int64? { selected?.volume_id ?? volumeID }
     var physicalUserStore: String {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -1166,6 +1175,7 @@ private struct CopyReturnContext {
 @MainActor struct CatalogView: View {
     @StateObject private var model = Catalog()
     @FocusState private var searchFieldFocused: Bool
+    @FocusState private var diskFilterFocused: Bool
     var body: some View {
         VStack(spacing: 4) {
             HStack(spacing: 6) {
@@ -1222,10 +1232,44 @@ private struct CopyReturnContext {
             }
             HSplitView {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("DISKS").font(.caption.bold()).foregroundStyle(.secondary).padding(.horizontal, 6)
+                    HStack(spacing: 5) {
+                        Text("DISKS • \(model.visibleVolumes.count)/\(model.volumes.count)")
+                            .font(.caption.bold()).foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
+                        Button {
+                            diskFilterFocused = true
+                        } label: {
+                            Image(systemName: "line.3.horizontal.decrease")
+                        }
+                        .keyboardShortcut("l", modifiers: [.command])
+                        .accessibilityLabel("Focus disk register filter")
+                        .help("Filter registered disk labels or catalog IDs (Command-L)")
+                    }.padding(.horizontal, 6)
+                    HStack(spacing: 4) {
+                        TextField("Filter disk label / ID", text: $model.diskFilter)
+                            .focused($diskFilterFocused)
+                            .accessibilityLabel("Filter catalog disk register")
+                            .help("Filter only the left register; does not restrict global file search")
+                        if !model.diskFilter.isEmpty {
+                            Button {
+                                model.diskFilter = ""
+                                diskFilterFocused = true
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                            }
+                            .accessibilityLabel("Clear disk register filter")
+                            .help("Show all registered disks without changing search scope")
+                        }
+                    }.padding(.horizontal, 5)
+                    if let selectedID = model.volumeID,
+                       !model.visibleVolumes.contains(where: { $0.id == selectedID }) {
+                        Text("Current disk scope is hidden by register filter")
+                            .font(.caption2).foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                    }
                     List(selection: Binding(get: { model.volumeID }, set: { model.volumeID = $0; model.selectVolume() })) {
                         Text("All disks / global search").tag(Optional<Int64>.none)
-                        ForEach(model.volumes) { disk in
+                        ForEach(model.visibleVolumes) { disk in
                             VStack(alignment: .leading, spacing: 1) {
                                 Label(disk.label, systemImage: "externaldrive")
                                 Text("\(disk.entry_count ?? 0) items • \(model.physicalCaption(disk.id))").font(.caption).foregroundStyle(.secondary).lineLimit(1)

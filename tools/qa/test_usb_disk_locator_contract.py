@@ -103,6 +103,22 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("Duplicate OS volume UUID: ambiguous mounts cannot be paired.", MAC)
         self.assertIn("observed_ids", (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encoding="utf-8"))
 
+    def test_register_filter_is_view_only_and_preserves_real_disk_indices(self):
+        self.assertIn("fn filtered_disk_indices(", WIN)
+        self.assertIn("fn filtered_disk_index_at_row(", WIN)
+        self.assertIn("disk_register_filter_tests", WIN)
+        self.assertIn("filtered_disk_index_at_row(&self.visible_disk_indices, index)", WIN)
+        self.assertIn("self.populate_physical_disk_list();", WIN)
+        self.assertIn("DISK_FILTER if notification == EN_CHANGE as usize", WIN)
+        self.assertIn("GetFocus() == (*app).disk_filter", WIN)
+        self.assertIn("message.wParam == b'L' as usize", WIN)
+        self.assertIn("var visibleVolumes: [Volume]", MAC)
+        self.assertIn("ForEach(model.visibleVolumes)", MAC)
+        self.assertIn("Filter catalog disk register", MAC)
+        self.assertIn("model.diskFilter = \"\"", MAC)
+        self.assertIn('.keyboardShortcut("l", modifiers: [.command])', MAC)
+        self.assertIn("View-only filtering: never change volumeID", MAC)
+
     def test_no_unverified_physical_drive_claims_in_locator(self):
         self.assertIn("Physical connection: NOT VERIFIED", WIN)
         self.assertIn("Physical connection not verified", MAC)

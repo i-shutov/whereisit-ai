@@ -1,3 +1,20 @@
+## UX1 integrated disk-register filtering — 2026-11-01 (exact-HEAD CI pending)
+
+Continued the same draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57)
+with a cross-platform native label/catalog-ID quick filter for ~40 mostly
+unplugged USB disks. Windows Ctrl+L and macOS Command+L focus the register
+filter, independently of Ctrl/Command+F global file search. Windows maps
+filtered list rows back to stable original catalog IDs; hidden selection does
+not silently switch search scope or physical pairing. Synthetic Windows Rust
+mapping tests and Python dual-native wiring regression added. Runbook:
+[register filter / search and pairing](docs/qa/UX_GLOBAL_SEARCH_AND_PAIRING_PICKER_20261101.md).
+Check **new exact-HEAD** Windows, macOS ARM64/Intel, Linux, offline kit and
+upgrade workflows before claiming PASS; manual real 1366×768/HiDPI/a11y and
+USB plug/unplug remain unaccepted. CTF stays read-only and SHA pinned; no
+owner raw CTF/SQLite or path is published. PR remains draft, no merge or stable.
+
+---
+
 ## UX1 + UX2 integrated scope and pairing picker — 2026-11-01 (CI pending)
 
 Draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57) now makes Search/Enter and broad Duplicates global by default on both Win32 and SwiftUI, even after disk browsing. This disk is an explicit narrow search; native result context displays the applied scope. The Windows picker and macOS SwiftUI picker exclude simultaneously duplicate live OS UUIDs from pairing choices, **without filtering the observations sent to Rust**, so physical_status still fails closed on conflicts. This does not prove physical hardware, content identity or visual UX acceptance. [Runbook](docs/qa/UX_GLOBAL_SEARCH_AND_PAIRING_PICKER_20261101.md). Recheck final exact-HEAD native CI, upgrades, integration and offline kit; no PR merge, stable release, private artifacts or other-repository changes.

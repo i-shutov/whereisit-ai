@@ -49,6 +49,7 @@ const LINK_CTF: usize = 114;
 const ANNOTATION_PREVIEW: usize = 115;
 const ANNOTATION_PAGE_SIZE: usize = 20;
 const DISKS: usize = 120;
+const DISK_FILTER: usize = 128;
 const FILES: usize = 121;
 const CATEGORIES: usize = 122;
 const CATEGORY_FILTER: usize = 123;
@@ -83,6 +84,61 @@ fn string(v: &Value, key: &str) -> String {
 fn id(v: &Value) -> Option<i64> {
     v.get("id").and_then(Value::as_i64)
 }
+
+// This is a view-only filter for the physical disk register; it must never
+// become a query-volume filter or rewrite the selected catalog disk.
+fn filtered_disk_indices(volumes: &[Value], filter: &str) -> Vec<usize> {
+    let needle = filter.trim().to_lowercase();
+    volumes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, volume)| {
+            let label = string(volume, "label").to_lowercase();
+            let catalog_id = id(volume).map(|v| v.to_string()).unwrap_or_default();
+            if needle.is_empty() || label.contains(&needle) || catalog_id.contains(&needle) {
+                Some(index)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+// Row zero always means global browse. Any other row must resolve through
+// the *filtered* mapping, never through the original volume array.
+fn filtered_disk_index_at_row(indices: &[usize], row: isize) -> Option<usize> {
+    usize::try_from(row)
+        .ok()
+        .filter(|row| *row > 0)
+        .and_then(|row| indices.get(row - 1).copied())
+}
+
+#[cfg(test)]
+mod disk_register_filter_tests {
+    use super::{filtered_disk_index_at_row, filtered_disk_indices};
+    use serde_json::json;
+
+    #[test]
+    fn label_and_catalog_id_filter_keep_stable_original_indices() {
+        let volumes = vec![
+            json!({"id":17,"label":"Медиатека А"}),
+            json!({"id":42,"label":"Archive B"}),
+            json!({"id":73,"label":"Медиатека C"}),
+        ];
+        assert_eq!(filtered_disk_indices(&volumes, ""), vec![0, 1, 2]);
+        assert_eq!(filtered_disk_indices(&volumes, "мЕДИАТЕКА"), vec![0, 2]);
+        assert_eq!(filtered_disk_indices(&volumes, " 42 "), vec![1]);
+        assert!(filtered_disk_indices(&volumes, "missing").is_empty());
+
+        let visible = filtered_disk_indices(&volumes, "мЕДИАТЕКА");
+        assert_eq!(filtered_disk_index_at_row(&visible, 0), None);
+        assert_eq!(filtered_disk_index_at_row(&visible, 1), Some(0));
+        assert_eq!(filtered_disk_index_at_row(&visible, 2), Some(2));
+        assert_eq!(filtered_disk_index_at_row(&visible, 3), None);
+        assert_eq!(filtered_disk_index_at_row(&visible, -1), None);
+    }
+}
+
 fn config_dir() -> PathBuf {
     PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap_or_else(|| ".".into()))
         .join("AtlasCatalog")
@@ -1249,6 +1305,9 @@ struct CopyReturn {
 struct App {
     hwnd: HWND,
     disks: HWND,
+    disk_filter: HWND,
+    disk_filter_query: String,
+    visible_disk_indices: Vec<usize>,
     files: HWND,
     search: HWND,
     status: HWND,
@@ -1296,6 +1355,9 @@ impl App {
         Self {
             hwnd: null_mut(),
             disks: null_mut(),
+            disk_filter: null_mut(),
+            disk_filter_query: String::new(),
+            visible_disk_indices: Vec::new(),
             files: null_mut(),
             search: null_mut(),
             status: null_mut(),
@@ -1411,6 +1473,9 @@ impl App {
         let _ = std::fs::create_dir_all(config_dir());
         self.generation += 1;
         self.volumes.clear();
+        self.disk_filter_query.clear();
+        self.visible_disk_indices.clear();
+        self.text(self.disk_filter, "");
         self.physical_states.clear();
         self.mounted_volumes.clear();
         self.physical_probe_ok = false;
@@ -1752,13 +1817,6 @@ impl App {
                     self.volumes = values.as_array().cloned().unwrap_or_default();
                     self.refresh_physical_presence();
                     self.populate_physical_disk_list();
-                    let index = self
-                        .volumes
-                        .iter()
-                        .position(|v| id(v) == self.volume)
-                        .map(|i| i + 1)
-                        .unwrap_or(0);
-                    SendMessageW(self.disks, LB_SETCURSEL, index, 0);
                     if self.entries.is_empty() {
                         self.status(&format!("{} disks in catalog", self.volumes.len()));
                     } else {
@@ -1888,16 +1946,22 @@ impl App {
             .unwrap_or_else(|_| json!({"ok":false}))
     }
 
-    unsafe fn populate_physical_disk_list(&self) {
-        let previous = SendMessageW(self.disks, LB_GETCURSEL, 0, 0).max(0);
+    unsafe fn populate_physical_disk_list(&mut self) {
+        self.visible_disk_indices = filtered_disk_indices(&self.volumes, &self.disk_filter_query);
         SendMessageW(self.disks, LB_RESETCONTENT, 0, 0);
+        let global_label = format!(
+            "All disks / global search ({} of {})",
+            self.visible_disk_indices.len(),
+            self.volumes.len()
+        );
         SendMessageW(
             self.disks,
             LB_ADDSTRING,
             0,
-            wide("All disks / global search").as_ptr() as isize,
+            wide(&global_label).as_ptr() as isize,
         );
-        for disk in &self.volumes {
+        for &volume_index in &self.visible_disk_indices {
+            let disk = &self.volumes[volume_index];
             let badge = match self
                 .physical_states
                 .get(&id(disk).unwrap_or_default())
@@ -1915,18 +1979,19 @@ impl App {
             );
             SendMessageW(self.disks, LB_ADDSTRING, 0, wide(&label).as_ptr() as isize);
         }
-        let selected = if self.volume.is_some() {
-            self.volumes
+        // Keep the underlying browsing/search scope even when its row is
+        // temporarily hidden by the view-only filter. Never select All by
+        // accident while a scoped disk is filtered out.
+        let selected = if let Some(volume_id) = self.volume {
+            self.visible_disk_indices
                 .iter()
-                .position(|disk| id(disk) == self.volume)
-                .map(|i| i + 1)
-                .unwrap_or(0) as isize
-        } else if previous as usize <= self.volumes.len() {
-            previous
+                .position(|&index| id(&self.volumes[index]) == Some(volume_id))
+                .map(|index| index + 1)
+                .unwrap_or(usize::MAX)
         } else {
             0
         };
-        SendMessageW(self.disks, LB_SETCURSEL, selected as usize, 0);
+        SendMessageW(self.disks, LB_SETCURSEL, selected, 0);
     }
 
     unsafe fn refresh_physical_presence(&mut self) {
@@ -2308,6 +2373,13 @@ impl App {
                     );
                 }
             }
+            DISK_FILTER if notification == EN_CHANGE as usize => {
+                let len = GetWindowTextLengthW(self.disk_filter);
+                let mut buffer = vec![0u16; len as usize + 1];
+                GetWindowTextW(self.disk_filter, buffer.as_mut_ptr(), len + 1);
+                self.disk_filter_query = String::from_utf16_lossy(&buffer[..len as usize]);
+                self.populate_physical_disk_list();
+            }
             DISKS if notification == LBN_SELCHANGE as usize => {
                 self.copy_source = None;
                 self.copy_return = None;
@@ -2318,7 +2390,9 @@ impl App {
                 self.volume = if index == 0 {
                     None
                 } else {
-                    self.volumes.get(index as usize - 1).and_then(id)
+                    filtered_disk_index_at_row(&self.visible_disk_indices, index)
+                        .and_then(|volume_index| self.volumes.get(volume_index))
+                        .and_then(id)
                 };
                 self.stack = vec![(None, "/".into())];
                 self.query.clear();
@@ -2363,13 +2437,7 @@ impl App {
                     self.duplicates = context.duplicates;
                     self.offset = context.offset;
                     self.text(self.search, &self.query);
-                    let index = self
-                        .volumes
-                        .iter()
-                        .position(|v| id(v) == self.volume)
-                        .map(|i| i + 1)
-                        .unwrap_or(0);
-                    SendMessageW(self.disks, LB_SETCURSEL, index, 0);
+                    self.populate_physical_disk_list();
                     self.load();
                     return;
                 }
@@ -2585,7 +2653,8 @@ impl App {
         MoveWindow(self.location, 8, 83, (w - 16).max(50), 20, 1);
         let sidebar_height = (h - 146).max(200);
         let disk_height = (sidebar_height / 2).max(70);
-        MoveWindow(self.disks, 8, 106, 200, disk_height, 1);
+        MoveWindow(self.disk_filter, 8, 106, 200, 24, 1);
+        MoveWindow(self.disks, 8, 134, 200, (disk_height - 28).max(42), 1);
         MoveWindow(
             self.category_list,
             8,
@@ -2838,6 +2907,19 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             SendMessageW(app.export_format, CB_SETCURSEL, 0, 0);
             let help=control(hwnd,"STATIC","AND  OR  NOT  ( )   name: path: ext: size: category:   Example: ext:mkv AND size:>1GB",0,142);
             MoveWindow(help, 8, 62, 700, 18, 1);
+            app.disk_filter = control(
+                hwnd,
+                "EDIT",
+                "",
+                WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL as u32,
+                DISK_FILTER,
+            );
+            SendMessageW(
+                app.disk_filter,
+                EM_SETCUEBANNER,
+                0,
+                wide("Filter disk labels / IDs • Ctrl+L").as_ptr() as isize,
+            );
             app.disks = control(
                 hwnd,
                 "LISTBOX",
@@ -3059,6 +3141,22 @@ pub fn run() {
             {
                 SetFocus((*app).search);
                 SendMessageW((*app).search, EM_SETSEL, 0, -1);
+                continue;
+            }
+            // Ctrl+L filters the disk register, without changing the catalog search.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && message.wParam == b'L' as usize
+            {
+                SetFocus((*app).disk_filter);
+                SendMessageW((*app).disk_filter, EM_SETSEL, 0, -1);
+                continue;
+            }
+            if message.message == WM_KEYDOWN
+                && message.wParam == VK_ESCAPE as usize
+                && GetFocus() == (*app).disk_filter
+            {
+                SetWindowTextW((*app).disk_filter, wide("").as_ptr());
                 continue;
             }
             // Ctrl+D compares selected file metadata across catalogued disks.
