@@ -104,6 +104,13 @@ fn disk_locator_text(entry: Option<&Value>, disk_label: &str, linked_ctf: bool) 
     let file_name = string(entry, "name");
     let recorded_path = string(entry, "relative_path");
     let size = display_size(entry["size"].as_u64());
+    let kind = string(entry, "kind");
+    let description = string(entry, "description");
+    let description_details = if description.is_empty() {
+        String::new()
+    } else {
+        format!("\r\nDESCRIPTION\r\n{description}\r\n")
+    };
     let candidates = entry["duplicate_count"]
         .as_u64()
         .map(|n| format!("{n} metadata candidates (not content-verified)"))
@@ -114,7 +121,7 @@ fn disk_locator_text(entry: Option<&Value>, disk_label: &str, linked_ctf: bool) 
         "SQLite catalog snapshot"
     };
     format!(
-        "DISK TO LOCATE\r\n\r\n{disk_label}\r\nCatalog disk ID: {disk_id}\r\n\r\nPhysical connection: NOT VERIFIED\r\nThe catalog does not prove this USB disk is currently mounted.\r\n\r\nFILE\r\n{file_name}\r\n\r\nRECORDED LOCATION\r\n{recorded_path}\r\n\r\nSize: {size}\r\nCopies: {candidates}\r\nSource: {mode}\r\n\r\nSelect this text and press Ctrl+C to copy a disk label or path."
+        "DISK TO LOCATE\r\n\r\n{disk_label}\r\nCatalog disk ID: {disk_id}\r\n\r\nPhysical connection: NOT VERIFIED\r\nThe catalog does not prove this USB disk is currently mounted.\r\n\r\nFILE\r\n{file_name}\r\n\r\nRECORDED LOCATION\r\n{recorded_path}\r\n\r\nSize: {size}\r\nKind: {kind}\r\nCopies: {candidates}\r\nSource: {mode}\r\n{description_details}\r\nSelect this text and press Ctrl+C to copy a disk label or path."
     )
 }
 
@@ -1657,7 +1664,6 @@ impl App {
             let cols = [
                 string(e, "name"),
                 self.volume_label(e["volume_id"].as_i64()),
-                string(e, "kind"),
                 display_size(e["size"].as_u64()),
                 e.get("modified_local")
                     .and_then(Value::as_str)
@@ -1668,7 +1674,6 @@ impl App {
                     .map(|s| s.to_string())
                     .unwrap_or_default(),
                 string(e, "relative_path"),
-                string(e, "description"),
             ];
             for (col, text) in cols.iter().enumerate() {
                 let mut w = wide(text);
@@ -2317,14 +2322,12 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 (LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP) as isize,
             );
             for (i, (name, width)) in [
-                ("Name", 220),
-                ("Disk", 150),
-                ("Kind", 80),
-                ("Size", 100),
-                ("Modified", 140),
-                ("Matches", 70),
-                ("Path", 280),
-                ("Description", 260),
+                ("Name", 235),
+                ("Disk", 130),
+                ("Size", 95),
+                ("Modified", 130),
+                ("Candidates", 65),
+                ("Path", 250),
             ]
             .iter()
             .enumerate()
