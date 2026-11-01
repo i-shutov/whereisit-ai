@@ -366,21 +366,15 @@ mod tests {
 
     #[test]
     fn incomplete_os_scan_never_claims_connected_or_offline() {
-        let binding = Binding {
+        let bindings = [Binding {
             volume_id: 11,
             physical_id: "mac:demo-1111".into(),
-        };
+        }];
         let seen = HashMap::from([("mac:demo-1111".into(), 1)]);
-        assert_eq!(classify(11, std::slice::from_ref(&binding), &seen, true), "connected");
-        assert_eq!(classify(11, std::slice::from_ref(&binding), &seen, false), "unverified");
-        assert_eq!(
-            classify(11, std::slice::from_ref(&binding), &HashMap::new(), true),
-            "offline"
-        );
-        assert_eq!(
-            classify(11, &[binding], &HashMap::new(), false),
-            "unverified"
-        );
+        assert_eq!(classify(11, &bindings, &seen, true), "connected");
+        assert_eq!(classify(11, &bindings, &seen, false), "unverified");
+        assert_eq!(classify(11, &bindings, &HashMap::new(), true), "offline");
+        assert_eq!(classify(11, &bindings, &HashMap::new(), false), "unverified");
     }
 
     #[test]
