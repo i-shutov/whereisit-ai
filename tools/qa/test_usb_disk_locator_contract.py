@@ -155,6 +155,21 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("self.save_ui_layout_preferences();", WIN)
         self.assertIn('@AppStorage("AtlasCatalog.locatorVisible")', MAC)
 
+    def test_incomplete_os_probe_fails_closed_on_both_native_platforms(self):
+        self.assertIn("fn scannable_windows_drive_type(", WIN)
+        self.assertIn("DRIVE_NO_ROOT_DIR => None", WIN)
+        self.assertIn("None => return None,     // transient/inaccessible root: fail closed", WIN)
+        self.assertIn("physical_probe_completeness_tests", WIN)
+        self.assertIn("message.wParam == b'R' as usize", WIN)
+        self.assertIn("PHYSICAL_CHECK, 0", WIN)
+        self.assertIn(".volumeIsLocalKey", MAC)
+        self.assertIn("if !isLocal { continue }", MAC)
+        self.assertIn("!uuid.isEmpty else { return nil }", MAC)
+        self.assertNotIn("return urls.compactMap", MAC)
+        self.assertIn('Button("Refresh OS mounts")', MAC)
+        self.assertIn('.keyboardShortcut("r", modifiers: [.command])', MAC)
+        self.assertIn("OS scan incomplete: physical presence not verified.", MAC)
+
     def test_no_unverified_physical_drive_claims_in_locator(self):
         self.assertIn("Physical connection: NOT VERIFIED", WIN)
         self.assertIn("Physical connection not verified", MAC)

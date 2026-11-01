@@ -42,6 +42,9 @@ const PHYSICAL_CHECK: usize = 117;
 const PHYSICAL_PAIR: usize = 118;
 const PHYSICAL_UNPAIR: usize = 119;
 // Win32 GetDriveTypeW standard result codes; windows-sys 0.61 does not export these here.
+// Unknown/missing roots mean a potentially incomplete OS snapshot, never "offline".
+const DRIVE_UNKNOWN: u32 = 0;
+const DRIVE_NO_ROOT_DIR: u32 = 1;
 const DRIVE_REMOVABLE: u32 = 2;
 const DRIVE_FIXED: u32 = 3;
 const DUP_MODE: usize = 112;
@@ -354,6 +357,30 @@ mod physical_mount_picker_tests {
     }
 }
 
+/// None means that this OS mount snapshot is incomplete. Never translate it
+/// into an offline claim; only skip drive types known not to be local volumes.
+fn scannable_windows_drive_type(kind: u32) -> Option<bool> {
+    match kind {
+        DRIVE_UNKNOWN | DRIVE_NO_ROOT_DIR => None,
+        DRIVE_FIXED | DRIVE_REMOVABLE => Some(true),
+        _ => Some(false),
+    }
+}
+
+#[cfg(test)]
+mod physical_probe_completeness_tests {
+    use super::*;
+    #[test]
+    fn unknown_or_disappearing_root_is_not_a_successful_scan() {
+        assert_eq!(scannable_windows_drive_type(DRIVE_UNKNOWN), None);
+        assert_eq!(scannable_windows_drive_type(DRIVE_NO_ROOT_DIR), None);
+        assert_eq!(scannable_windows_drive_type(DRIVE_FIXED), Some(true));
+        assert_eq!(scannable_windows_drive_type(DRIVE_REMOVABLE), Some(true));
+        assert_eq!(scannable_windows_drive_type(4), Some(false)); // remote
+        assert_eq!(scannable_windows_drive_type(5), Some(false)); // optical
+    }
+}
+
 unsafe fn windows_mounted_volumes() -> Option<Vec<MountedPhysicalVolume>> {
     let required = GetLogicalDriveStringsW(0, null_mut());
     if required == 0 || required > 32_768 {
@@ -371,9 +398,10 @@ unsafe fn windows_mounted_volumes() -> Option<Vec<MountedPhysicalVolume>> {
         }
         let mut terminated = root.to_vec();
         terminated.push(0);
-        let drive_type = GetDriveTypeW(terminated.as_ptr());
-        if drive_type != DRIVE_FIXED && drive_type != DRIVE_REMOVABLE {
-            continue;
+        match scannable_windows_drive_type(GetDriveTypeW(terminated.as_ptr())) {
+            Some(true) => {}
+            Some(false) => continue, // recognized non-local mount
+            None => return None,     // transient/inaccessible root: fail closed
         }
         let mut guid = [0u16; 128];
         if GetVolumeNameForVolumeMountPointW(
@@ -3567,6 +3595,12 @@ pub fn run() {
                     TOGGLE_LOCATOR,
                     wide("Show / hide disk locator\tCtrl+I").as_ptr(),
                 );
+                AppendMenuW(
+                    view,
+                    MF_STRING,
+                    PHYSICAL_CHECK,
+                    wide("Recheck physical volumes\tCtrl+R").as_ptr(),
+                );
                 AppendMenuW(menu, MF_POPUP, view as usize, wide("View").as_ptr());
             }
             SetMenu(hwnd, menu);
@@ -3582,6 +3616,15 @@ pub fn run() {
             {
                 SetFocus((*app).search);
                 SendMessageW((*app).search, EM_SETSEL, 0, -1);
+                continue;
+            }
+            // Ctrl+R explicitly rechecks OS volume identities from anywhere in
+            // the native shell. It never assumes a historical mount letter.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && message.wParam == b'R' as usize
+            {
+                (*app).command(PHYSICAL_CHECK, 0);
                 continue;
             }
             // Ctrl+I collapses or restores the native disk locator.

@@ -101,3 +101,31 @@ mount roots, CTF hashes or user-side SQLite enter public CI/artifacts.
 - Full native UX is **not accepted** until those real-hardware tests pass.
   Stable 1.0 also remains blocked by the existing historic/original CTF,
   performance p95, code-signing and notarization gates.
+
+## UX2 snapshot-completeness and one-key OS recheck (2026-11-01)
+
+A failed or partial identity scan is **not an absence test**. Windows now rejects
+a GetDriveTypeW unknown/no-root result as an incomplete snapshot (in addition
+to existing GUID/serial lookup failures). macOS scans only visible **local**
+volumes; remote SMB/NFS mounts cannot be paired as USB candidates. If any
+visible local volume has unreadable resource metadata or no UUID, the *whole*
+macOS probe fails closed rather than using a misleading partial list. This
+can intentionally keep all states **unverified** on systems with unsupported
+filesystems: availability is preferable to neither false "offline" nor false
+"connected". USB clones remain ambiguous.
+
+The native commands **Ctrl+R** (Windows, View menu) and **Command+R** (macOS,
+inspector) force a fresh probe without changing the search scope or modifying
+CTF data. macOS shows an accessibility-labelled incomplete-scan message.
+Automated coverage: pure Rust Win32 drive-type classifier tests, Rust physical
+state transition tests and both-client source-wiring checks. They are
+**synthetic/contract tests, not physical device acceptance**.
+
+Manual QA: plug in the paired disk, confirm connected only after fresh probe,
+unplug and observe offline only after a *successful complete* scan; interrupt
+mounting/metadata access to force incomplete scan and confirm NOT VERIFIED.
+Repeat with an SMB mount (Mac) and transient invalid drive letter (Windows).
+Verify Ctrl+R/Command+R using keyboard, screen reader and hidden locator;
+test distinct catalog selection, disk binding and copy-candidate pages.
+Record OS build, mount topology, exact SHA, keyboard and screen reader outcomes,
+but do not publish user mount paths or UUIDs.

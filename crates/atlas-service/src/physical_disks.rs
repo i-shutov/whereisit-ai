@@ -365,6 +365,19 @@ mod tests {
     }
 
     #[test]
+    fn incomplete_os_scan_never_claims_connected_or_offline() {
+        let binding = Binding {
+            volume_id: 11,
+            physical_id: "mac:demo-1111".into(),
+        };
+        let seen = HashMap::from([("mac:demo-1111".into(), 1)]);
+        assert_eq!(classify(11, &[binding.clone()], &seen, true), "connected");
+        assert_eq!(classify(11, &[binding.clone()], &seen, false), "unverified");
+        assert_eq!(classify(11, &[binding.clone()], &HashMap::new(), true), "offline");
+        assert_eq!(classify(11, &[binding], &HashMap::new(), false), "unverified");
+    }
+
+    #[test]
     fn duplicate_probe_id_cannot_claim_connection() {
         let binding = Binding {
             volume_id: 4,

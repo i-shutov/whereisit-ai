@@ -406,22 +406,29 @@ private struct CopyReturnContext {
         default: return "questionmark.circle"
         }
     }
-    // Return nil only when OS enumeration itself failed. Unknown/unsupported
-    // volume identifiers are omitted, never silently matched by mount path.
+    // Only a *complete* local-volume snapshot can prove that a previously
+    // paired volume is absent. Remote volumes are irrelevant to USB matching;
+    // if ANY visible local mount cannot be classified or lacks a filesystem
+    // UUID, return nil rather than quietly omitting it and claiming "offline".
     func scanPhysicalVolumes() -> [LivePhysicalVolume]? {
-        let keys: Set<URLResourceKey> = [.volumeUUIDStringKey, .volumeNameKey]
+        let keys: Set<URLResourceKey> = [.volumeUUIDStringKey, .volumeNameKey, .volumeIsLocalKey]
         guard let urls = FileManager.default.mountedVolumeURLs(
             includingResourceValuesForKeys: Array(keys), options: [.skipHiddenVolumes]
         ) else { return nil }
-        return urls.compactMap { url in
+        var result: [LivePhysicalVolume] = []
+        for url in urls {
             guard let values = try? url.resourceValues(forKeys: keys),
-                  let uuid = values.volumeUUIDString?.lowercased(), !uuid.isEmpty else { return nil }
-            return LivePhysicalVolume(
+                  let isLocal = values.volumeIsLocal else { return nil }
+            if !isLocal { continue }
+            guard let uuid = values.volumeUUIDString?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+                  !uuid.isEmpty else { return nil }
+            result.append(LivePhysicalVolume(
                 id: "mac:" + uuid,
                 name: values.volumeName ?? url.lastPathComponent,
                 currentMount: url.path
-            )
+            ))
         }
+        return result
     }
     func physicalArguments(_ observed: [LivePhysicalVolume], probeOK: Bool) -> [String: Any] {
         [
@@ -1193,7 +1200,15 @@ private struct CopyReturnContext {
                     Label("Duplicate OS volume UUID: ambiguous mounts cannot be paired.", systemImage: "exclamationmark.triangle")
                         .font(.caption).foregroundStyle(.orange)
                 }
+                if !model.physicalProbeOK {
+                    Label("OS scan incomplete: physical presence not verified.", systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(.orange)
+                        .accessibilityLabel("Physical connection unverified: OS volume scan incomplete")
+                }
                 Button("Refresh OS mounts") { model.refreshPhysicalPresence() }
+                    .keyboardShortcut("r", modifiers: [.command])
+                    .help("Recheck current OS volume identities (Command-R); never use a recorded drive letter")
+                    .accessibilityLabel("Recheck physical OS volumes")
                 Button("Pair selected catalog disk…") { model.pairSelectedPhysicalDisk() }
                     .disabled(model.selectedDiskForPairing == nil || model.selectedPhysicalID.isEmpty || !model.physicalProbeOK)
                 Button("Remove saved pairing…") { model.unpairSelectedPhysicalDisk() }

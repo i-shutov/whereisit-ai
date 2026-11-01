@@ -1,3 +1,21 @@
+## UX2 integrated OS snapshot completeness — 2026-11-01 (exact-HEAD CI pending)
+
+Draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57) adds a
+fail-closed native USB identity recheck across Windows Win32 and macOS SwiftUI.
+Windows now marks unknown/disappearing GetDriveTypeW roots as incomplete (not
+offline), and Mac ignores remote mounts but treats any unreadable local UUID
+as an incomplete scan (not a false "offline"). Ctrl+R / Command+R explicitly
+refresh current OS observations, without changing global search; Mac displays
+an accessible failure indicator. Rust classification and Win32 classifier tests,
+dual-native source wiring checks and the physical QA runbook are updated.
+Do not assert CI success until **new exact-HEAD** actions pass 4-platform native,
+offline kit, integration and installed RC2→RC3 upgrade. Real hardware,
+Win10/11/Mac ARM/Intel GUI/a11y, historical/original CTF, p95 and signatures
+remain release blockers. CTF read-only/source SHA pinning and user-owned
+binding database are unchanged; no private data published. No merge/stable.
+
+---
+
 ## UX1 native loaded-page sorting + private locator preference — 2026-11-01
 
 Same draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57): native Windows column headers and macOS accessible picker/direction toggle sort only each currently loaded result page (max 250). Selection is retained by catalog entry ID; missing numeric metadata appears last. The label **current page only / PAGE ONLY** prevents a false global-sort claim. Windows saves bounded splitter width and visibility in a versioned, private UI-layout JSON; macOS uses UserDefaults for locator visibility. No CTF, source SHA, private search term, catalog DB or physical pairing is stored in these preferences. Synthetic pure Rust and cross-platform source-contract tests added. Exact new SHA CI must pass before green claims; human Win10/11/Mac Intel/ARM GUI/accessibility and unplug/replug QA is still outstanding. Never merge unverified draft or publish stable. [Manual QA](docs/qa/UX_NATIVE_PANE_REVIEW_20261101.md).
