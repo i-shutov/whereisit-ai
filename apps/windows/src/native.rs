@@ -2532,6 +2532,9 @@ impl App {
 
     unsafe fn populate_candidate_disk_picker(&self) {
         SendMessageW(self.copy_disk_filter, CB_RESETCONTENT, 0, 0);
+        if let Some((_, button)) = self.buttons.iter().find(|(id, _)| *id == COPY_CONNECTED) {
+            ShowWindow(*button, if self.copy_source.is_some() { SW_SHOW } else { SW_HIDE });
+        }
         if self.copy_source.is_none() {
             ShowWindow(self.copy_disk_filter, SW_HIDE);
             return;
@@ -3241,7 +3244,7 @@ impl App {
         MoveWindow(self.duplicate_mode, w - 312, 34, 136, 200, 1);
         // Candidate focus occupies the query-help row only in copy mode.
         // Search syntax help is hidden then; Notes stays on the right.
-        MoveWindow(self.copy_disk_filter, 8, 62, (w - 164).max(100), 240, 1);
+        MoveWindow(self.copy_disk_filter, 8, 62, (w - 310).max(100), 240, 1);
         for (i, hwnd) in &self.buttons {
             if *i == FIND {
                 MoveWindow(*hwnd, w - 604, 34, 104, 24, 1);
@@ -3283,6 +3286,10 @@ impl App {
                 }
                 ANNOTATION_PREVIEW => {
                     MoveWindow(*control, w - 144, 62, 136, 23, 1);
+                }
+                COPY_CONNECTED => {
+                    MoveWindow(*control, w - 296, 62, 140, 23, 1);
+                    ShowWindow(*control, if self.copy_source.is_some() { SW_SHOW } else { SW_HIDE });
                 }
                 CATEGORY_FILTER => {
                     MoveWindow(*control, 8, h - 64, 88, 24, 1);
@@ -3447,7 +3454,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 (NEXT, "Ne&xt"),
                 (DUPLICATES, "&Duplicates"),
                 (FILE_COPIES, "&Find copies on disks"),
-                (COPY_CONNECTED, "Focus &verified copy disk"),
+                (COPY_CONNECTED, "&Verified copy"),
                 (PHYSICAL_CHECK, "Refresh &USB state"),
                 (PHYSICAL_PAIR, "&Pair physical disk…"),
                 (PHYSICAL_UNPAIR, "Unpair disk"),

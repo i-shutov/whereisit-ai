@@ -197,6 +197,8 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("verified_copy_focus_tests", WIN)
         self.assertIn("candidate_mount_badge", WIN)
         self.assertIn("COPY_CONNECTED => self.focus_sole_connected_copy()", WIN)
+        self.assertIn("MoveWindow(*control, w - 296, 62, 140, 23, 1);", WIN)
+        self.assertIn("ShowWindow(*button, if self.copy_source.is_some()", WIN)
         focus = WIN.split("unsafe fn focus_sole_connected_copy(", 1)[1].split("unsafe fn populate_candidate_disk_picker", 1)[0]
         self.assertIn("self.refresh_physical_presence();", focus)
         self.assertIn("self.physical_probe_ok", focus)

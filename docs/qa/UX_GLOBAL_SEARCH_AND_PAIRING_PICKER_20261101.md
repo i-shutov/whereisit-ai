@@ -100,3 +100,9 @@ This does not establish hardware USB identity or manual GUI acceptance.
 
 CI tests only synthetic selection logic/native source wiring and native build;
 manual physical USB/GUI/SLO/signing remains a stable release blocker.
+
+The Windows UX4 action must also be a **visible, keyboard-focusable button**
+within the copy-candidate toolbar, not a zero-sized, invisible tab stop.
+Verify it appears only in the candidate mode and does not overlap the disk
+selector or Notes control at 880px and 1366px. The View menu and Ctrl+G
+remain alternatives when the locator pane is collapsed.
