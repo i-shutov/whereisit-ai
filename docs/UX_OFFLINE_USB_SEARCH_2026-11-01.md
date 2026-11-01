@@ -27,10 +27,42 @@ Search is the dominant action; Browse catalog and Duplicates are first-class con
 | UX0 — Disk locator | One selected-search-result -> reliable catalog disk label / recorded location panel on **both native OS clients**, with copy/navigation and explicit unverified connection state | Exact-HEAD Windows Rust tests, macOS compiled app, 4-platform native CI, human screenshots/keyboard walkthrough still pending | **In progress** |
 | UX1 — Search-first shell | Prominent global search on app launch, persisted filter/sort and resizable/collapsible panes; keyboard-first, single-screen layout at 1366×768 and high DPI | Pure Windows 880/1100/1180/1366px geometry tests; Ctrl+F, Command+F and all-disk search wiring; platform builds/installer smoke; manual visual/hardware QA still pending | **In progress (keyboard + adaptive first slice)** |
 | UX2 — Physical drive identity | Registered user labels, optional physical sticker ID, mount detection by stable verified volume identity and reconciliation if IDs conflict. **Never equate historical drive letters to current USB disks** | Synthetic cross-disk collisions + real plug/unplug on target hardware | Planned |
-| UX3 — Film copies | Compare metadata candidates across drives and navigate from a result to all candidates. Distinguish unverified name+size from independently hashed identity; no offline deletion | Synthetic/real parity across 40-disk catalog, no false hash claim | Planned |
+| UX3 — Film copies | Selected result → exact normalized name + recorded size candidates across catalogued volumes, paginated, with back navigation; metadata only, never verified file equality or deletion. | Synthetic SQLite + pinned CTF fixture with generation-change rejection, native wiring checks; real-device acceptance pending. | **Implementation candidate in PR #57; not accepted** |
 | UX4 — Polish and acceptance | Native accessibility, keyboard traversal, reliable cancellation/progress, contrast/light-dark themes, window geometry, upgrades and observed SLO | Owner acceptance on Win10/11, Mac Intel/ARM; RC-to-RC upgrade; measured real 3M-row latency | Planned |
 
 No new browser/runtime dependency is introduced; the current Rust service API and native clients stay authoritative. Support for content previews/posters, movie-title grouping, and content hashes depicted in exploratory mockups is **not** implied by those images and is outside UX0.
+
+### UX3 incremental integration: selected-result cross-disk copies (PR #57)
+
+The native clients now offer **Find copies on other disks**, distinct from broad
+**Duplicates**. Windows uses the locator action/Ctrl+D; macOS uses the locator
+action/Command+D. Both preserve a return-to-results context, reuse the bounded
+result tables, and navigate the list of catalogued disks for the selected file.
+
+The new read-only \`copy_candidates\` service operation takes an **entry ID**
+and resolves its normalized filename and recorded byte size from that actual
+catalogue entry. It counts all entries and distinct catalogued volumes with
+those two metadata keys, then pages over their recorded locations. The linked
+operation \`ctf_copy_candidates_pinned\` independently verifies the original
+external CTF generation SHA on **every** page; it never mutates the source
+or the generated mirror. Synthetic SQLite and two-disk CTF tests cover
+normalization, name/size collisions, bounded pagination, provenance flags,
+source-change refusal and source/mirror byte preservation.
+
+The count **includes** the selected file; copies on the same physical disk
+may appear in the list. No result is a hash-verified byte match, confirmed
+physical USB presence, guaranteed movie-title match, or safe deletion target.
+Different filenames containing identical bytes will not be found by this
+exact-name+size mode. This does not claim the ~40 owner disks were retested
+for this new UI feature.
+
+**Outstanding:** stable OS-verified physical disk identity (UX2) must precede
+any "connected" display. The code still says **physical connection not
+verified**. Full Win32 search-first styling, persistent sort/filter, resizable
+splitters, 1366×768/HiDPI ergonomic and keyboard/accessibility inspection, real
+device/large-CTF latency verification, and owner acceptance are not complete.
+Final exact-HEAD four-platform native CI and upgrade gates must pass before
+the PR can be considered a release candidate, and stable 1.0 remains blocked.
 
 ## UX1 implementation checkpoint — 2026-11-01
 
