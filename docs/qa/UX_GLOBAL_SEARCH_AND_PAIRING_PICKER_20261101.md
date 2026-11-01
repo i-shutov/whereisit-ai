@@ -78,3 +78,25 @@ This does not establish hardware USB identity or manual GUI acceptance.
 5. Test Windows at 880 and 1366 px, Mac ARM64/Intel with native accessibility,
    physical locator collapsed and visible, keyboard focus and HiDPI. Source
    wiring/unit/installer CI is not human GUI or actual-device acceptance.
+
+## UX4 — OS-verified candidate navigation: manual gate
+
+1. Search all catalogued disks, select a named/size-recorded file and Find
+   copies. Confirm each candidate disk shows name+size count and OS pairing
+   status (not evidence that the file is physically present or identical).
+2. Explicitly pair exactly one candidate catalog disk to a live OS-mounted
+   USB volume after inspecting its physical label. Recheck Ctrl+R/Command+R;
+   the candidate chip/selector must change to "OS verified now" without
+   rerunning file search. Unplug and recheck; the chip must stop claiming
+   connected. Repeat with failed/incomplete scan and duplicated UUIDs.
+3. Invoke Ctrl+G on Windows or Command+G on Mac: a fresh probe must occur,
+   then a single OS-verified candidate becomes the scoped metadata list.
+   With zero OR two+ eligible disks, do not automatically choose anything;
+   retain manual disk selection. Verify Back restores original results.
+4. Change linked CTF generation/selected source while async macOS response
+   is pending: stale reply must not navigate. Inspect Narrator/VoiceOver,
+   keyboard focus, Win10/11 880/1366px, macOS ARM64/Intel and HiDPI. Record
+   exact commit + OS build, never publish mount paths or OS UUIDs.
+
+CI tests only synthetic selection logic/native source wiring and native build;
+manual physical USB/GUI/SLO/signing remains a stable release blocker.

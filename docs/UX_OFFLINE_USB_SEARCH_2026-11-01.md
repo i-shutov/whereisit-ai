@@ -170,3 +170,21 @@ These are catalogue metadata candidates, never proof of byte equality, an
 attached physical USB disk or permission to delete a file. Manual UX,
 accessibility, device and 1366x768/HiDPI acceptance remain outstanding.
 See [UX3 QA](qa/UX_GLOBAL_SEARCH_AND_PAIRING_PICKER_20261101.md).
+
+## UX4 — OS-verified copy-disk navigation (2026-11-01)
+
+Native candidate-disk chips/combobox now display catalogued **name+recorded
+size** candidate counts alongside the **current OS pairing state** (verified,
+offline, conflict or unverified). Windows Ctrl+G/View and macOS Command+G/
+accessible button explicitly request a **fresh complete native OS mount scan**
+before focusing a disk that has exactly one paired, verified candidate group.
+Zero or two+ eligible disks never trigger an automatic guess; operator chooses
+manually. Win32 refreshes copy-picker badges when OS mount status changes;
+SwiftUI validates probe generation, source scope and selected file ID before
+asynchronous navigation. This changes no CTF/SQLite files or user bindings.
+
+Paired filesystem volume UUID is not a guaranteed manufacturer USB serial,
+and **OS presence never implies the catalogued file actually exists**. No
+content hashes/equality or deletion permission is inferred. Exact linked CTF
+source-generation pinning is unchanged. Manual Win10/11 and macOS ARM/Intel
+USB clone/plug/unplug, keyboard and accessibility acceptance is still blocked.

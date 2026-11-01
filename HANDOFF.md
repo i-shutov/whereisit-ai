@@ -1,3 +1,22 @@
+## UX4 OS-verified candidate disk focus — 2026-11-01 (new CI required)
+
+Draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57) now attaches
+fail-closed live OS pairing states to each catalogued copy-candidate disk,
+with a fresh-probe, exactly-one-connected shortcut (Win32 Ctrl+G/View; macOS
+Command+G/accessibility button). Zero/multiple candidates are never guessed.
+Win32 repaints candidate selector after USB changes; SwiftUI protects async
+probe response with generation/source/entry-ID checks before focusing. This
+only navigates *metadata name+size candidates*, not file existence, content
+hashes or hardware manufacturer's unique identity. Synthetic Rust/pure Windows
+and dual-native Python wiring regressions, QA runbook and UX spec updated.
+The new HEAD requires exact-HASH native Linux/Windows/Mac ARM64/Intel CI,
+offline, integration and installed RC2→RC3 checks before a green claim.
+Read-only CTF/source SHA pinning, private annotation and pairing stores remain
+unchanged. No merge or stable; real device/GUI, modified/historic CTF, p95
+150ms, signing and notarization remain blockers. No other repo edits.
+
+---
+
 ## UX3 integrated disk-level copy focus — 2026-11-01 (new CI pending)
 
 Existing draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57) now

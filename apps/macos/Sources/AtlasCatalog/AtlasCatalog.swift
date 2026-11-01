@@ -230,6 +230,7 @@ private struct CopyReturnContext {
     @Published var copyDiskGroups: [CandidateDiskGroup] = []
     @Published var copyFocusVolumeID: Int64?
     private var copyReturn: CopyReturnContext?
+    private var pendingConnectedCopySourceID: Int64?
     @Published var categories: [Category] = []
     @Published var categoryID: Int64?
     @Published var categoryName = ""
@@ -400,6 +401,26 @@ private struct CopyReturnContext {
             }
     }
     func physicalState(_ id: Int64) -> String { physicalStates[id] ?? "unverified" }
+    func candidateCopyOSCaption(_ id: Int64) -> String {
+        switch physicalState(id) {
+        case "connected": return "OS verified now"
+        case "offline": return "paired, offline"
+        case "conflict": return "identity conflict"
+        default: return "not verified"
+        }
+    }
+    var soleConnectedCandidateDisk: Int64? {
+        let matches = copyDiskGroups.filter { $0.count > 0 && physicalState($0.volume_id) == "connected" }
+        return matches.count == 1 ? matches.first?.volume_id : nil
+    }
+    func focusSoleConnectedCopy() {
+        guard let source = copySourceID, !copyDiskGroups.isEmpty else {
+            status = "Find metadata copy candidates first."
+            return
+        }
+        pendingConnectedCopySourceID = source
+        refreshPhysicalPresence()  // Fresh, complete OS probe before focus.
+    }
     func physicalCaption(_ id: Int64) -> String {
         switch physicalState(id) {
         case "connected": return "OS volume connected (paired UUID verified)"
@@ -466,13 +487,27 @@ private struct CopyReturnContext {
         args["op"] = "physical_status"
         let observed = mountedPhysicalVolumes.map(\.id)
         request(args, as: PhysicalStateReply.self) { [weak self] result in
-            guard let self, let result, self.physicalCheckGeneration == checkToken,
+            guard let self, self.physicalCheckGeneration == checkToken,
                   self.physicalScope == scope,
-                  self.mountedPhysicalVolumes.map(\.id) == observed,
-                  self.physicalProbeOK == result.probe_ok else { return }
-            self.physicalStates = Dictionary(
-                uniqueKeysWithValues: result.items.map { ($0.volume_id, $0.state) }
-            )
+                  self.mountedPhysicalVolumes.map(\.id) == observed else { return }
+            // No positive status survives a missing/failed service response.
+            if let result, self.physicalProbeOK == result.probe_ok {
+                self.physicalStates = Dictionary(
+                    uniqueKeysWithValues: result.items.map { ($0.volume_id, $0.state) }
+                )
+            }
+            if let source = self.pendingConnectedCopySourceID {
+                self.pendingConnectedCopySourceID = nil
+                guard source == self.copySourceID else { return }
+                if self.physicalProbeOK, result?.probe_ok == true,
+                   let disk = self.soleConnectedCandidateDisk {
+                    self.focusCopyCandidates(on: disk)
+                } else {
+                    self.status = self.physicalProbeOK && result != nil
+                        ? "Zero or several candidate disks are OS-verified; select one explicitly."
+                        : "OS mount scan incomplete; no physical copy disk was verified."
+                }
+            }
         }
     }
     func pairSelectedPhysicalDisk() {
@@ -1333,6 +1368,10 @@ private struct CopyReturnContext {
                         .font(.caption.weight(.semibold)).lineLimit(1)
                     Text("Name + size only; contents not compared").font(.caption).foregroundStyle(.secondary)
                     Spacer(minLength: 6)
+                    Button("Use verified mounted disk") { model.focusSoleConnectedCopy() }
+                        .keyboardShortcut("g", modifiers: [.command])
+                        .help("Fresh OS check, then focus the sole explicitly paired and observed candidate disk (Command-G)")
+                        .accessibilityLabel("Focus sole OS-verified copy disk after refreshing live mounts")
                     Button("Back to results") { model.back() }
                 }.accessibilityElement(children: .contain)
                 ScrollView(.horizontal) {
@@ -1342,10 +1381,10 @@ private struct CopyReturnContext {
                         }
                         .accessibilityLabel("Show all name and size candidate copies across catalogued disks")
                         ForEach(model.copyDiskGroups) { group in
-                            Button("\(group.label) (\(group.count))") {
+                            Button("\(group.label) (\(group.count)) • \(model.candidateCopyOSCaption(group.volume_id))") {
                                 model.focusCopyCandidates(on: group.volume_id)
                             }
-                            .accessibilityLabel("Show \(group.count) metadata candidates on catalog disk \(group.label)")
+                            .accessibilityLabel("Show \(group.count) metadata candidates on catalog disk \(group.label); \(model.candidateCopyOSCaption(group.volume_id))")
                             .help("Filter these metadata candidates to this catalogue disk; does not access physical USB")
                         }
                     }.buttonStyle(.bordered)

@@ -192,6 +192,23 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn('ScrollView(.horizontal)', MAC)
         self.assertIn('Filter these metadata candidates to this catalogue disk', MAC)
 
+    def test_copy_disk_picker_rechecks_real_os_pairing_before_auto_focus(self):
+        self.assertIn("fn sole_connected_candidate_disk(", WIN)
+        self.assertIn("verified_copy_focus_tests", WIN)
+        self.assertIn("candidate_mount_badge", WIN)
+        self.assertIn("COPY_CONNECTED => self.focus_sole_connected_copy()", WIN)
+        focus = WIN.split("unsafe fn focus_sole_connected_copy(", 1)[1].split("unsafe fn populate_candidate_disk_picker", 1)[0]
+        self.assertIn("self.refresh_physical_presence();", focus)
+        self.assertIn("self.physical_probe_ok", focus)
+        self.assertIn("self.populate_candidate_disk_picker();", WIN.split("if old_states != self.physical_states", 1)[1].split("unsafe fn selected_physical_catalog_disk", 1)[0])
+        self.assertIn("message.wParam == b'G' as usize", WIN)
+        self.assertIn("model.candidateCopyOSCaption(group.volume_id)", MAC)
+        self.assertIn("model.focusSoleConnectedCopy()", MAC)
+        self.assertIn("pendingConnectedCopySourceID = source", MAC)
+        self.assertIn("self.physicalCheckGeneration == checkToken", MAC)
+        self.assertIn("source == self.copySourceID", MAC)
+        self.assertIn('Button("Use verified mounted disk")', MAC)
+
     def test_no_unverified_physical_drive_claims_in_locator(self):
         self.assertIn("Physical connection: NOT VERIFIED", WIN)
         self.assertIn("Physical connection not verified", MAC)

@@ -56,6 +56,7 @@ const DISKS: usize = 120;
 const DISK_FILTER: usize = 128;
 const TOGGLE_LOCATOR: usize = 129;
 const COPY_DISK_FILTER: usize = 131;
+const COPY_CONNECTED: usize = 132;
 const FILES: usize = 121;
 const CATEGORIES: usize = 122;
 const CATEGORY_FILTER: usize = 123;
@@ -355,6 +356,62 @@ mod physical_mount_picker_tests {
         assert_eq!(offered.len(), 1);
         assert_eq!(offered[0].description, "unique");
         assert!(unique_pairable_mounts(&mounts[..2]).is_empty());
+    }
+}
+
+// Copy-location badges are metadata + explicit live-OS pairing states only.
+// An OS mount identity is not proof of file bytes or manufacturer serial.
+fn candidate_mount_badge(state: Option<&str>) -> &'static str {
+    match state {
+        Some("connected") => "OS verified now",
+        Some("offline") => "paired • offline",
+        Some("conflict") => "identity conflict",
+        _ => "not verified",
+    }
+}
+
+// Multiple observed candidate volumes require explicit human selection.
+// Repeated/corrupt group IDs are conservatively treated as ambiguous.
+fn sole_connected_candidate_disk(groups: &[Value], states: &HashMap<i64, String>) -> Option<i64> {
+    let mut found = None;
+    for group in groups {
+        let Some(volume) = group["volume_id"].as_i64().filter(|v| *v > 0) else { continue };
+        if group["count"].as_u64().unwrap_or(0) == 0
+            || states.get(&volume).map(String::as_str) != Some("connected") { continue }
+        if found.is_some() { return None }
+        found = Some(volume);
+    }
+    found
+}
+
+#[cfg(test)]
+mod verified_copy_focus_tests {
+    use super::{candidate_mount_badge, sole_connected_candidate_disk};
+    use serde_json::json;
+    use std::collections::HashMap;
+    #[test]
+    fn only_one_freshly_os_verified_candidate_can_be_focused() {
+        let groups = vec![json!({"volume_id":11,"count":2}), json!({"volume_id":12,"count":1})];
+        let mut states = HashMap::from([(11,"connected".to_owned()), (12,"offline".to_owned())]);
+        assert_eq!(sole_connected_candidate_disk(&groups, &states), Some(11));
+        states.insert(12, "connected".into());
+        assert_eq!(sole_connected_candidate_disk(&groups, &states), None);
+        states.insert(11, "conflict".into());
+        assert_eq!(sole_connected_candidate_disk(&groups, &states), Some(12));
+        states.clear();
+        assert_eq!(sole_connected_candidate_disk(&groups, &states), None);
+        assert_eq!(sole_connected_candidate_disk(&[json!({"volume_id":12,"count":0})],
+            &HashMap::from([(12,"connected".to_owned())])), None);
+        assert_eq!(sole_connected_candidate_disk(&[json!({"volume_id":0,"count":1})],
+            &HashMap::from([(0,"connected".to_owned())])), None);
+    }
+    #[test]
+    fn unfamiliar_state_fails_closed() {
+        assert_eq!(candidate_mount_badge(Some("connected")), "OS verified now");
+        assert_eq!(candidate_mount_badge(Some("offline")), "paired • offline");
+        assert_eq!(candidate_mount_badge(Some("conflict")), "identity conflict");
+        assert_eq!(candidate_mount_badge(None), "not verified");
+        assert_eq!(candidate_mount_badge(Some("stale")), "not verified");
     }
 }
 
@@ -2314,6 +2371,10 @@ impl App {
         }
         if old_states != self.physical_states {
             self.populate_physical_disk_list();
+            // USB reconnect/unplug must also repaint current copy disk badges.
+            if self.copy_source.is_some() {
+                self.populate_candidate_disk_picker();
+            }
             self.update_disk_locator();
         }
     }
@@ -2425,6 +2486,27 @@ impl App {
         });
     }
 
+    unsafe fn focus_sole_connected_copy(&mut self) {
+        if self.copy_source.is_none() || self.copy_disk_groups.is_empty() {
+            self.status("Find copies of a file first (Ctrl+D).");
+            return;
+        }
+        // No stale cached green badge: probe the OS again before navigating.
+        self.refresh_physical_presence();
+        if !self.physical_probe_ok {
+            self.status("Incomplete OS mount scan: physical copy location unverified.");
+            return;
+        }
+        let Some(volume) = sole_connected_candidate_disk(&self.copy_disk_groups,
+            &self.physical_states) else {
+            self.status("Zero or several candidate disks are OS-verified; choose a specific disk manually.");
+            return;
+        };
+        self.copy_focus_volume_id = Some(volume);
+        self.offset = 0;
+        self.load();
+    }
+
     unsafe fn populate_candidate_disk_picker(&self) {
         SendMessageW(self.copy_disk_filter, CB_RESETCONTENT, 0, 0);
         if self.copy_source.is_none() {
@@ -2448,8 +2530,10 @@ impl App {
         );
         for group in &self.copy_disk_groups {
             let label = string(group, "label").replace(['\r', '\n'], " ");
+            let badge = candidate_mount_badge(group["volume_id"].as_i64()
+                .and_then(|volume| self.physical_states.get(&volume)).map(String::as_str));
             let caption = format!(
-                "{label} • {} candidates",
+                "{label} • {} metadata candidates • {badge}",
                 group["count"].as_u64().unwrap_or(0)
             );
             SendMessageW(
@@ -2510,8 +2594,13 @@ impl App {
                 } else {
                     ""
                 };
-                inspector.push_str(&format!("\r\n{label}: {count}{mark}"));
+                let badge = candidate_mount_badge(group["volume_id"].as_i64()
+                    .and_then(|volume| self.physical_states.get(&volume)).map(String::as_str));
+                inspector.push_str(&format!("\r\n{label}: {count} • {badge}{mark}"));
             }
+        }
+        if self.copy_source.is_some() {
+            inspector.push_str("\r\n\r\nCtrl+G: focus sole OS-verified disk after fresh probe.\r\nMetadata only: candidate file contents not checked.");
         }
         self.text(self.locator, &inspector);
     }
@@ -2916,6 +3005,7 @@ impl App {
                 self.load();
             }
             FILE_COPIES => self.show_copies_of_selected(),
+            COPY_CONNECTED => self.focus_sole_connected_copy(),
             TOGGLE_LOCATOR => {
                 self.locator_visible = !self.locator_visible;
                 self.save_ui_layout_preferences();
@@ -3326,6 +3416,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 (NEXT, "Ne&xt"),
                 (DUPLICATES, "&Duplicates"),
                 (FILE_COPIES, "&Find copies on disks"),
+                (COPY_CONNECTED, "Focus &verified copy disk"),
                 (PHYSICAL_CHECK, "Refresh &USB state"),
                 (PHYSICAL_PAIR, "&Pair physical disk…"),
                 (PHYSICAL_UNPAIR, "Unpair disk"),
@@ -3718,6 +3809,8 @@ pub fn run() {
                     PHYSICAL_CHECK,
                     wide("Recheck physical volumes\tCtrl+R").as_ptr(),
                 );
+                AppendMenuW(view, MF_STRING, COPY_CONNECTED,
+                    wide("Focus sole OS-verified copy disk (Ctrl+G)").as_ptr());
                 AppendMenuW(menu, MF_POPUP, view as usize, wide("View").as_ptr());
             }
             SetMenu(hwnd, menu);
@@ -3766,6 +3859,15 @@ pub fn run() {
                 && GetFocus() == (*app).disk_filter
             {
                 SetWindowTextW((*app).disk_filter, wide("").as_ptr());
+                continue;
+            }
+            // Ctrl+G reprobes OS identities and focuses only one unambiguous
+            // paired, currently mounted catalog-copy disk.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && message.wParam == b'G' as usize
+            {
+                (*app).command(COPY_CONNECTED, 0);
                 continue;
             }
             // Ctrl+D compares selected file metadata across catalogued disks.
