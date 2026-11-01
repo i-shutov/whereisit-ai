@@ -43,7 +43,7 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("SendMessageW((*app).search, EM_SETSEL, 0, -1)", WIN)
         self.assertIn("@FocusState private var searchFieldFocused: Bool", MAC)
         self.assertIn(".focused($searchFieldFocused)", MAC)
-        self.assertIn('Button("All disks") { model.searchAcrossAllDisks() }', MAC)
+        self.assertIn('Button("Search all disks") { model.searchAcrossAllDisks() }', MAC)
         self.assertIn('.keyboardShortcut("f", modifiers: [.command])', MAC)
 
     def test_selected_file_copy_navigation_is_native_and_source_pinned(self):
@@ -82,6 +82,26 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("physicalArguments(freshProbe, probeOK: true)", MAC)
         self.assertIn('Button("Refresh OS mounts")', MAC)
         self.assertIn('Button("Pair selected catalog disk…")', MAC)
+
+    def test_search_defaults_to_all_disks_and_local_scope_is_explicit(self):
+        self.assertIn("FIND | FIND_DISK | DUPLICATES =>", WIN)
+        self.assertIn("if command == FIND || command == DUPLICATES", WIN)
+        self.assertIn('FIND_DISK, "&This disk"', WIN)
+        self.assertIn("Global search across all catalogued disks", WIN)
+        self.assertIn("func searchInSelectedDisk()", MAC)
+        self.assertIn("var resultScopeCaption: String", MAC)
+        self.assertIn('Button("Search all disks") { model.searchAcrossAllDisks() }', MAC)
+        self.assertIn('Button("This disk") { model.searchInSelectedDisk() }', MAC)
+        self.assertIn("METADATA DUPLICATES • ALL CATALOGUED DISKS", MAC)
+
+    def test_pairing_picker_rejects_colliding_live_volume_uuids(self):
+        self.assertIn("fn unique_pairable_mounts(", WIN)
+        self.assertIn("cloned_and_multi_mounted_identity_is_not_a_pairing_choice", WIN)
+        self.assertIn("for candidate in candidates {", WIN)
+        self.assertIn("var pairablePhysicalVolumes: [LivePhysicalVolume]", MAC)
+        self.assertIn("ForEach(model.pairablePhysicalVolumes)", MAC)
+        self.assertIn("Duplicate OS volume UUID: ambiguous mounts cannot be paired.", MAC)
+        self.assertIn("observed_ids", (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encoding="utf-8"))
 
     def test_no_unverified_physical_drive_claims_in_locator(self):
         self.assertIn("Physical connection: NOT VERIFIED", WIN)

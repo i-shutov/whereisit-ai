@@ -101,3 +101,7 @@ user-owned SQLite, not to linked CTF/mirror or annotations. **OS volume IDs are
 not globally unique hardware serials**; clones and human-identification errors
 remain an acceptance risk. See [UX2 runbook](qa/PHYSICAL_USB_IDENTITY_WP_20261101.md).
 Native builds and real plug/unplug testing are not implied by the source change.
+
+## UX1 + UX2 checkpoint — global search and collision-safe pairing (2026-11-01)
+
+Native Enter/Search and broad Duplicates now clear any implicit disk filter and operate across all registered disks. Per-disk search is a separately labelled This disk command; applied scope is visible in native results. Both OS clients exclude concurrently duplicated volume UUIDs **from pairing choices only**, while passing every raw observed ID to the Rust conflict detector. Windows warns when a selectable local fixed mount might be a system drive. The source remains generation-pinned read-only; no hash/content-equality or deletion assertions. See [runbook](qa/UX_GLOBAL_SEARCH_AND_PAIRING_PICKER_20261101.md). Exact final-HEAD CI and real GUI/hardware checks are required; no stable release authorized.

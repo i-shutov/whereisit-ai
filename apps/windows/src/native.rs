@@ -31,6 +31,7 @@ const IMPORT: usize = 104;
 const EXPORT: usize = 105;
 const BACK: usize = 106;
 const FIND: usize = 107;
+const FIND_DISK: usize = 127;
 const PREV: usize = 108;
 const NEXT: usize = 109;
 const CANCEL: usize = 110;
@@ -114,6 +115,36 @@ struct MountedPhysicalVolume {
 /// volume GUID and serial; no historic drive letter is used as identity.
 /// USB HDDs can report DRIVE_FIXED, so show every accessible local volume
 /// to the operator and require explicit physical-label confirmation.
+// Do not offer simultaneously duplicated OS identities as pairing choices.
+// The service receives the unfiltered observations to signal conflicts.
+fn unique_pairable_mounts(volumes: &[MountedPhysicalVolume]) -> Vec<MountedPhysicalVolume> {
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for mount in volumes {
+        *counts.entry(mount.id.as_str()).or_insert(0) += 1;
+    }
+    volumes.iter()
+        .filter(|mount| counts.get(mount.id.as_str()) == Some(&1))
+        .cloned().collect()
+}
+
+#[cfg(test)]
+mod physical_mount_picker_tests {
+    use super::{unique_pairable_mounts, MountedPhysicalVolume};
+
+    #[test]
+    fn cloned_and_multi_mounted_identity_is_not_a_pairing_choice() {
+        let mounts = vec![
+            MountedPhysicalVolume { id: "win:{aaaa}:11111111".into(), description: "first".into() },
+            MountedPhysicalVolume { id: "win:{aaaa}:11111111".into(), description: "clone".into() },
+            MountedPhysicalVolume { id: "win:{bbbb}:22222222".into(), description: "unique".into() },
+        ];
+        let offered = unique_pairable_mounts(&mounts);
+        assert_eq!(offered.len(), 1);
+        assert_eq!(offered[0].description, "unique");
+        assert!(unique_pairable_mounts(&mounts[..2]).is_empty());
+    }
+}
+
 unsafe fn windows_mounted_volumes() -> Option<Vec<MountedPhysicalVolume>> {
     let required = GetLogicalDriveStringsW(0, null_mut());
     if required == 0 || required > 32_768 {
@@ -1421,8 +1452,10 @@ impl App {
                     "Cross-disk metadata candidates (not content-verified)"
                 } else if self.query.is_empty() {
                     self.stack.last().map(|p| p.1.as_str()).unwrap_or("/")
+                } else if self.volume.is_some() {
+                    "Search within selected catalog disk"
                 } else {
-                    "Search results"
+                    "Global search across all catalogued disks"
                 }
             ),
         );
@@ -1937,10 +1970,16 @@ impl App {
             return;
         }
         let name = self.volume_label(Some(volume_id));
-        // Only a conscious operator can associate a catalog record with a live device.
-        for candidate in self.mounted_volumes.clone() {
+        // Keep raw observation collisions in the Rust service, but never
+        // display a duplicate UUID as an unambiguous pairing candidate.
+        let candidates = unique_pairable_mounts(&self.mounted_volumes);
+        if candidates.is_empty() {
+            self.status("OS volume identities collide; pairing refused until resolved.");
+            return;
+        }
+        for candidate in candidates {
             let question = format!(
-                "CATALOG DISK: {name}\r\n\r\nLIVE OS VOLUME: {}\r\n\r\nPhysically check the USB disk label. Pair this catalog record to this OS volume UUID?\r\n\r\nYES: pair this disk   NO: inspect next mount   CANCEL: stop",
+                "CATALOG DISK: {name}\r\n\r\nLIVE OS VOLUME: {}\r\n\r\nThis may be an INTERNAL/system drive. Inspect the actual USB disk sticker and current mount before confirming this OS volume pairing.\r\n\r\nYES: pair this disk   NO: inspect next mount   CANCEL: stop",
                 candidate.description
             );
             let answer = MessageBoxW(
@@ -2277,7 +2316,11 @@ impl App {
                 self.offset = 0;
                 self.load();
             }
-            FIND | DUPLICATES => {
+            FIND | FIND_DISK | DUPLICATES => {
+                if command == FIND_DISK && self.volume.is_none() {
+                    self.status("Choose a disk in the register for an explicit disk-only search.");
+                    return;
+                }
                 self.copy_source = None;
                 self.copy_return = None;
                 let len = GetWindowTextLengthW(self.search);
@@ -2287,6 +2330,13 @@ impl App {
                     .trim()
                     .into();
                 self.duplicates = command == DUPLICATES;
+                if command == FIND || command == DUPLICATES {
+                    // Enter/Search and Duplicates are always cross-disk.
+                    // "This disk" is the only way to retain the selected filter.
+                    self.volume = None;
+                    self.stack = vec![(None, "/".into())];
+                    SendMessageW(self.disks, LB_SETCURSEL, 0, 0);
+                }
                 if self.duplicates {
                     self.applied_duplicate_mode = self.duplicate_mode_name();
                 }
@@ -2498,17 +2548,21 @@ impl App {
             }
         }
         MoveWindow(self.export_format, 648, 6, 188, 200, 1);
-        MoveWindow(self.search, 8, 34, (w - 470).max(100), 24, 1);
-        MoveWindow(self.duplicate_mode, w - 268, 34, 136, 200, 1);
+        // Search occupies the dominant space; scope is explicit on small laptops.
+        MoveWindow(self.search, 8, 34, (w - 618).max(100), 24, 1);
+        MoveWindow(self.duplicate_mode, w - 312, 34, 136, 200, 1);
         for (i, hwnd) in &self.buttons {
             if *i == FIND {
-                MoveWindow(*hwnd, w - 456, 34, 80, 24, 1);
+                MoveWindow(*hwnd, w - 604, 34, 104, 24, 1);
+            }
+            if *i == FIND_DISK {
+                MoveWindow(*hwnd, w - 494, 34, 88, 24, 1);
             }
             if *i == BACK {
-                MoveWindow(*hwnd, w - 370, 34, 96, 24, 1);
+                MoveWindow(*hwnd, w - 400, 34, 82, 24, 1);
             }
             if *i == DUPLICATES {
-                MoveWindow(*hwnd, w - 126, 34, 118, 24, 1);
+                MoveWindow(*hwnd, w - 170, 34, 162, 24, 1);
             }
             if *i == PREV {
                 MoveWindow(*hwnd, w - 200, h - 32, 90, 24, 1);
@@ -2688,7 +2742,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 (ANNOTATION_PREVIEW, "Review &notes…"),
                 (EXPORT, "&Export…"),
                 (CANCEL, "&Cancel scan"),
-                (FIND, "&Search"),
+                (FIND, "Search &all"),
+                (FIND_DISK, "&This disk"),
                 (BACK, "&Back"),
                 (PREV, "&Previous"),
                 (NEXT, "Ne&xt"),

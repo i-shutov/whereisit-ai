@@ -1,3 +1,9 @@
+## UX1 + UX2 integrated scope and pairing picker — 2026-11-01 (CI pending)
+
+Draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57) now makes Search/Enter and broad Duplicates global by default on both Win32 and SwiftUI, even after disk browsing. This disk is an explicit narrow search; native result context displays the applied scope. The Windows picker and macOS SwiftUI picker exclude simultaneously duplicate live OS UUIDs from pairing choices, **without filtering the observations sent to Rust**, so physical_status still fails closed on conflicts. This does not prove physical hardware, content identity or visual UX acceptance. [Runbook](docs/qa/UX_GLOBAL_SEARCH_AND_PAIRING_PICKER_20261101.md). Recheck final exact-HEAD native CI, upgrades, integration and offline kit; no PR merge, stable release, private artifacts or other-repository changes.
+
+---
+
 ## UX2 physical OS-volume pairing candidate — 2026-11-01 (CI pending)
 
 PR #57 implements a shared fail-closed user SQLite binding service plus real

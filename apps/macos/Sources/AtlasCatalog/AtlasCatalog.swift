@@ -331,6 +331,16 @@ private struct CopyReturnContext {
         if let linkedGeneration { return "ctf:" + linkedGeneration }
         return "sqlite:" + database
     }
+    // Keep raw OS observations for the shared conflict detector; the picker
+    // only displays UUIDs observed exactly once in the current scan.
+    var pairablePhysicalVolumes: [LivePhysicalVolume] {
+        let counts = Dictionary(mountedPhysicalVolumes.map { ($0.id, 1) }, uniquingKeysWith: +)
+        return mountedPhysicalVolumes.filter { counts[$0.id] == 1 }
+            .sorted {
+                let order = $0.name.localizedStandardCompare($1.name)
+                return order == .orderedSame ? $0.currentMount < $1.currentMount : order == .orderedAscending
+            }
+    }
     func physicalState(_ id: Int64) -> String { physicalStates[id] ?? "unverified" }
     func physicalCaption(_ id: Int64) -> String {
         switch physicalState(id) {
@@ -382,7 +392,7 @@ private struct CopyReturnContext {
         let probe = scanPhysicalVolumes()
         physicalProbeOK = probe != nil
         mountedPhysicalVolumes = probe ?? []
-        if !mountedPhysicalVolumes.contains(where: { $0.id == selectedPhysicalID }) {
+        if !pairablePhysicalVolumes.contains(where: { $0.id == selectedPhysicalID }) {
             selectedPhysicalID = ""
         }
         // Do not carry a positive connection claim through a failed or pending probe.
@@ -402,7 +412,7 @@ private struct CopyReturnContext {
     }
     func pairSelectedPhysicalDisk() {
         guard let volumeID = selectedDiskForPairing,
-              let candidate = mountedPhysicalVolumes.first(where: { $0.id == selectedPhysicalID }) else {
+              let candidate = pairablePhysicalVolumes.first(where: { $0.id == selectedPhysicalID }) else {
             status = "Select a catalog disk and a freshly verified OS-mounted volume."
             physicalStates = [:]
             return
@@ -533,11 +543,27 @@ private struct CopyReturnContext {
         showingDuplicates = false
         load()
     }
-    func searchAcrossAllDisks() {
+    func searchAcrossAllDisks() { search() }
+
+    func searchInSelectedDisk() {
+        guard volumeID != nil else {
+            status = "Choose a catalog disk for an explicit disk-only search."
+            return
+        }
         copySourceID = nil; copySourceName = nil; copyReturn = nil
-        volumeID = nil
-        stack = [(nil, "/")]
-        search()
+        appliedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        showingDuplicates = false; offset = 0; load()
+    }
+
+    var resultScopeCaption: String {
+        if copySourceID != nil { return "COPY CANDIDATES • ALL CATALOGUED DISKS" }
+        if showingDuplicates { return "METADATA DUPLICATES • ALL CATALOGUED DISKS" }
+        if !appliedQuery.isEmpty {
+            return volumeID.map { "SEARCH IN CATALOG DISK: " + volumeLabel($0) }
+                ?? "SEARCH • ALL CATALOGUED DISKS"
+        }
+        return volumeID.map { "BROWSE CATALOG DISK: " + volumeLabel($0) + " • " + currentPath }
+            ?? "SEARCH ACROSS ALL DISKS"
     }
     func load() {
         generation += 1; let token = generation; selection = nil
@@ -611,12 +637,17 @@ private struct CopyReturnContext {
     }
     func search() {
         copySourceID = nil; copySourceName = nil; copyReturn = nil
+        // The primary Search/Enter action is global, even after browsing a disk.
+        volumeID = nil; stack = [(nil, "/")]
         appliedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         showingDuplicates = false; offset = 0; load()
     }
     func duplicates() {
         copySourceID = nil; copySourceName = nil; copyReturn = nil
-        appliedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines); appliedDuplicateMode = duplicateMode; showingDuplicates = true; offset = 0; load() }
+        volumeID = nil; stack = [(nil, "/")]
+        appliedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        appliedDuplicateMode = duplicateMode; showingDuplicates = true; offset = 0; load()
+    }
     func back() {
         if let context = copyReturn {
             copySourceID = nil; copySourceName = nil; copyReturn = nil
@@ -1103,13 +1134,17 @@ private struct CopyReturnContext {
                 Text("LIVE OS MOUNT IDENTITIES").font(.caption.bold()).foregroundStyle(.secondary)
                 Picker("Mounted OS volume", selection: $model.selectedPhysicalID) {
                     Text("Choose a current mount").tag("")
-                    ForEach(model.mountedPhysicalVolumes) { mount in
+                    ForEach(model.pairablePhysicalVolumes) { mount in
                         Text("\(mount.name) • \(mount.currentMount)").tag(mount.id)
                     }
                 }
                 .labelsHidden()
                 .accessibilityLabel("Mounted volume for explicit physical disk pairing")
                 .help("Use only after checking the actual USB sticker; filesystem UUID can be cloned")
+                if model.pairablePhysicalVolumes.count < model.mountedPhysicalVolumes.count {
+                    Label("Duplicate OS volume UUID: ambiguous mounts cannot be paired.", systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(.orange)
+                }
                 Button("Refresh OS mounts") { model.refreshPhysicalPresence() }
                 Button("Pair selected catalog disk…") { model.pairSelectedPhysicalDisk() }
                     .disabled(model.selectedDiskForPairing == nil || model.selectedPhysicalID.isEmpty || !model.physicalProbeOK)
@@ -1165,16 +1200,17 @@ private struct CopyReturnContext {
                 Button { searchFieldFocused = true } label: { Image(systemName: "magnifyingglass") }
                     .keyboardShortcut("f", modifiers: [.command])
                     .help("Focus file search (Command-F)")
-                Button("Search") { model.search() }
-                Button("All disks") { model.searchAcrossAllDisks() }
-                    .disabled(model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .help("Search current expression across all 40 catalogued USB disks")
+                Button("Search all disks") { model.searchAcrossAllDisks() }
+                    .help("Default Enter/Command-F search scope: all catalogued disks")
+                Button("This disk") { model.searchInSelectedDisk() }
+                    .disabled(model.volumeID == nil || model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .help("Narrow this expression explicitly to the selected catalog disk")
                 Picker("Duplicate matching", selection: $model.duplicateMode) {
                     Text("Name + size").tag("name_size"); Text("Size").tag("size"); Text("Name").tag("name")
                 }.labelsHidden().frame(width: 120).accessibilityLabel("Duplicate matching mode")
                 Button("Duplicates") { model.duplicates() }
             }
-            HStack { Text("AND  OR  NOT  ( )   name:  path:  ext:  size:  category:").foregroundStyle(.secondary); Spacer(); Text(model.currentPath).lineLimit(1).truncationMode(.middle) }.font(.caption)
+            HStack { Text("AND  OR  NOT  ( )   name:  path:  ext:  size:  category:").foregroundStyle(.secondary); Spacer(); Text(model.resultScopeCaption).lineLimit(1).truncationMode(.middle).accessibilityLabel("Current search scope") }.font(.caption)
             if let copyName = model.copySourceName {
                 HStack(spacing: 6) {
                     Label("COPY CANDIDATES • \(copyName)", systemImage: "doc.on.doc")
