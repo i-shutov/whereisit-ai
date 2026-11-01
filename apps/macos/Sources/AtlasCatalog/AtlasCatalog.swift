@@ -40,6 +40,26 @@ struct EmptyReply: Decodable {}
 struct Category: Decodable, Identifiable { let id: Int64; let parent_id: Int64?; let name: String }
 struct CreatedCategory: Decodable { let id: Int64 }
 struct LinkedCTFSync: Decodable { let generation: String; let entries: Int64; let volumes: Int64; let rebuilt: Bool }
+
+// File system UUIDs are from the currently mounted OS volume, never a
+// historical CTF path. A cloned disk may share a UUID: require human pairing,
+// detect simultaneous collisions, and never infer byte-equivalent content.
+struct LivePhysicalVolume: Identifiable, Hashable {
+    let id: String
+    let name: String
+    let currentMount: String
+}
+struct PhysicalStateRow: Decodable {
+    let volume_id: Int64
+    let state: String
+}
+struct PhysicalStateReply: Decodable {
+    let items: [PhysicalStateRow]
+    let probe_ok: Bool
+}
+struct PhysicalPairReply: Decodable { let paired: Bool }
+struct PhysicalUnpairReply: Decodable { let removed: Bool }
+
 struct LinkedExportReceipt: Decodable { let result: LinkedExportSummary }
 struct LinkedExportSummary: Decodable { let rows: Int64 }
 struct LinkedCTFResult<T: Decodable>: Decodable { let generation: String; let result: T }
@@ -178,6 +198,10 @@ private struct CopyReturnContext {
     @Published var database: String
     @Published var volumes: [Volume] = []
     @Published var volumeID: Int64?
+    @Published var physicalStates: [Int64: String] = [:]
+    @Published var mountedPhysicalVolumes: [LivePhysicalVolume] = []
+    @Published var selectedPhysicalID = ""
+    @Published var physicalProbeOK = false
     @Published var entries: [Entry] = []
     @Published var selection: Int64?
     @Published var query = ""
@@ -283,6 +307,7 @@ private struct CopyReturnContext {
         generation += 1; volumeID = nil; stack = [(nil, "/")]; entries = []; query = ""; appliedQuery = ""; showingDuplicates = false; offset = 0
         copySourceID = nil; copySourceName = nil; copyReturn = nil
         volumes = []; categories = []; categoryID = nil; selection = nil; total = 0; hasMore = false
+        physicalStates = [:]; mountedPhysicalVolumes = []; selectedPhysicalID = ""; physicalProbeOK = false
         status = "Opening catalog…"
         request(["op": "init"], as: EmptyReply.self) { [weak self] result in
             guard let self, result != nil else { return }
@@ -294,6 +319,142 @@ private struct CopyReturnContext {
         if let label = volumes.first(where: { $0.id == id })?.label, !label.isEmpty { return label }
         return "Disk #\(id)"
     }
+
+    var selectedDiskForPairing: Int64? { selected?.volume_id ?? volumeID }
+    var physicalUserStore: String {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AtlasCatalog/physical-volume-bindings.sqlite").path
+    }
+    var physicalScope: String {
+        if let linkedGeneration { return "ctf:" + linkedGeneration }
+        return "sqlite:" + database
+    }
+    func physicalState(_ id: Int64) -> String { physicalStates[id] ?? "unverified" }
+    func physicalCaption(_ id: Int64) -> String {
+        switch physicalState(id) {
+        case "connected": return "OS volume connected (paired UUID verified)"
+        case "offline": return "Offline: paired UUID absent in OS scan"
+        case "conflict": return "OS identity conflict — resolve manually"
+        default: return "Physical connection not verified"
+        }
+    }
+    func physicalSymbol(_ id: Int64) -> String {
+        switch physicalState(id) {
+        case "connected": return "checkmark.circle.fill"
+        case "offline": return "externaldrive.badge.xmark"
+        case "conflict": return "exclamationmark.triangle.fill"
+        default: return "questionmark.circle"
+        }
+    }
+    // Return nil only when OS enumeration itself failed. Unknown/unsupported
+    // volume identifiers are omitted, never silently matched by mount path.
+    func scanPhysicalVolumes() -> [LivePhysicalVolume]? {
+        let keys: Set<URLResourceKey> = [.volumeUUIDStringKey, .volumeNameKey]
+        guard let urls = FileManager.default.mountedVolumeURLs(
+            includingResourceValuesForKeys: Array(keys), options: [.skipHiddenVolumes]
+        ) else { return nil }
+        return urls.compactMap { url in
+            guard let values = try? url.resourceValues(forKeys: keys),
+                  let uuid = values.volumeUUIDString?.lowercased(), !uuid.isEmpty else { return nil }
+            return LivePhysicalVolume(
+                id: "mac:" + uuid,
+                name: values.volumeName ?? url.lastPathComponent,
+                currentMount: url.path
+            )
+        }
+    }
+    func physicalArguments(_ observed: [LivePhysicalVolume], probeOK: Bool) -> [String: Any] {
+        [
+            "user_store": physicalUserStore,
+            "catalog_key": physicalScope,
+            "platform": "macos",
+            "volume_ids": volumes.map(\.id),
+            "observed_ids": observed.map(\.id),
+            "probe_ok": probeOK
+        ]
+    }
+    func refreshPhysicalPresence() {
+        let scope = physicalScope
+        let probe = scanPhysicalVolumes()
+        physicalProbeOK = probe != nil
+        mountedPhysicalVolumes = probe ?? []
+        if !mountedPhysicalVolumes.contains(where: { $0.id == selectedPhysicalID }) {
+            selectedPhysicalID = ""
+        }
+        // Do not carry a positive connection claim through a failed or pending probe.
+        physicalStates = [:]
+        var args = physicalArguments(mountedPhysicalVolumes, probeOK: physicalProbeOK)
+        args["op"] = "physical_status"
+        let observed = mountedPhysicalVolumes.map(\.id)
+        request(args, as: PhysicalStateReply.self) { [weak self] result in
+            guard let self, let result, self.physicalScope == scope,
+                  self.mountedPhysicalVolumes.map(\.id) == observed,
+                  self.physicalProbeOK == result.probe_ok else { return }
+            self.physicalStates = Dictionary(
+                uniqueKeysWithValues: result.items.map { ($0.volume_id, $0.state) }
+            )
+        }
+    }
+    func pairSelectedPhysicalDisk() {
+        guard let volumeID = selectedDiskForPairing,
+              let candidate = mountedPhysicalVolumes.first(where: { $0.id == selectedPhysicalID }),
+              let freshProbe = scanPhysicalVolumes(),
+              freshProbe.filter({ $0.id == candidate.id }).count == 1 else {
+            status = "Select a catalog disk and a freshly verified OS-mounted volume."
+            physicalStates = [:]
+            return
+        }
+        let warning = NSAlert()
+        warning.alertStyle = .warning
+        warning.messageText = "Pair catalog disk with this mounted OS volume?"
+        warning.informativeText = """
+        Catalog disk: \(volumeLabel(volumeID))
+        Current OS volume: \(candidate.name) at \(candidate.currentMount)
+
+        Check the physical USB disk label before pairing. Volume UUID is a filesystem identity, not a manufacturer hardware serial. A cloned volume can have the same UUID. No CTF or file contents will be modified.
+        """
+        warning.addButton(withTitle: "Pair explicitly")
+        warning.addButton(withTitle: "Cancel")
+        guard warning.runModal() == .alertFirstButtonReturn else { return }
+        let scope = physicalScope
+        var args = physicalArguments(freshProbe, probeOK: true)
+        args["op"] = "physical_pair"
+        args["volume_id"] = volumeID
+        args["physical_id"] = candidate.id
+        args["confirmed"] = true
+        request(args, as: PhysicalPairReply.self) { [weak self] result in
+            guard let self, self.physicalScope == scope else { return }
+            self.refreshPhysicalPresence()
+            if result?.paired == true {
+                self.status = "Paired to live OS volume UUID. Rechecks run every six seconds."
+            } else {
+                self.status = "Pairing refused: another disk, stale identity or explicit unpair required."
+            }
+        }
+    }
+    func unpairSelectedPhysicalDisk() {
+        guard let volumeID = selectedDiskForPairing else {
+            status = "Select a catalog disk to remove its OS pairing."
+            return
+        }
+        let warning = NSAlert()
+        warning.messageText = "Remove this physical disk pairing?"
+        warning.informativeText = "Only the user-owned OS identity mapping for \(volumeLabel(volumeID)) will be removed. Catalog and linked CTF remain unchanged."
+        warning.addButton(withTitle: "Remove pairing")
+        warning.addButton(withTitle: "Cancel")
+        guard warning.runModal() == .alertFirstButtonReturn else { return }
+        let scope = physicalScope
+        var args = physicalArguments(mountedPhysicalVolumes, probeOK: physicalProbeOK)
+        args["op"] = "physical_unpair"
+        args["volume_id"] = volumeID
+        args["confirmed"] = true
+        request(args, as: PhysicalUnpairReply.self) { [weak self] result in
+            guard let self, self.physicalScope == scope else { return }
+            self.refreshPhysicalPresence()
+            self.status = result != nil ? "Pairing removed; disk is NOT VERIFIED." : "Could not remove user-side pairing."
+        }
+    }
+
     func refreshVolumes() {
         refreshCategories()
         if let fields = linkedFields() {
@@ -302,6 +463,7 @@ private struct CopyReturnContext {
             request(requestData, as: LinkedCTFResult<[Volume]>.self) { [weak self] response in
                 guard let self, let response else { return }
                 self.volumes = response.result
+                self.refreshPhysicalPresence()
                 self.status = "\(response.result.count) linked CTF disks • read-only; search or select a disk"
             }
             return
@@ -309,6 +471,7 @@ private struct CopyReturnContext {
         request(["op": "volumes"], as: [Volume].self) { [weak self] values in
             guard let self, let values else { return }
             self.volumes = values
+            self.refreshPhysicalPresence()
             self.status = "\(values.count) disks • choose a disk or search all disks"
         }
     }
@@ -486,6 +649,7 @@ private struct CopyReturnContext {
             self.job = nil
             guard let result else { return }
             self.linkedCTFPath = source; self.linkedGeneration = result.generation
+            self.physicalStates = [:]; self.selectedPhysicalID = ""
             if self.exportFormat == "ctf" { self.exportFormat = "csv" }
             self.volumeID = nil; self.stack = [(nil, "/")]; self.entries = []
             self.query = ""; self.appliedQuery = ""; self.showingDuplicates = false
@@ -879,8 +1043,8 @@ private struct CopyReturnContext {
                         .textSelection(.enabled)
                     Text("Catalog disk ID: \(entry.volume_id)")
                         .font(.caption).foregroundStyle(.secondary)
-                    Label("Physical connection not verified", systemImage: "questionmark.circle")
-                        .foregroundStyle(.orange)
+                    Label(model.physicalCaption(entry.volume_id), systemImage: model.physicalSymbol(entry.volume_id))
+                        .foregroundStyle(model.physicalState(entry.volume_id) == "connected" ? Color.green : Color.orange)
                         .font(.callout)
                     if model.linkedMode {
                         Label("Linked CTF — read-only", systemImage: "lock")
@@ -925,7 +1089,23 @@ private struct CopyReturnContext {
                 Button("Search all catalogued disks") { model.searchAcrossAllDisks() }
                     .disabled(model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .help("Run the current expression without a disk filter")
-                Text("Connection is not verified. Match the physical disk label before plugging in; historical drive letters are not reliable.")
+                Divider()
+                Text("LIVE OS MOUNT IDENTITIES").font(.caption.bold()).foregroundStyle(.secondary)
+                Picker("Mounted OS volume", selection: $model.selectedPhysicalID) {
+                    Text("Choose a current mount").tag("")
+                    ForEach(model.mountedPhysicalVolumes) { mount in
+                        Text("\(mount.name) • \(mount.currentMount)").tag(mount.id)
+                    }
+                }
+                .labelsHidden()
+                .accessibilityLabel("Mounted volume for explicit physical disk pairing")
+                .help("Use only after checking the actual USB sticker; filesystem UUID can be cloned")
+                Button("Refresh OS mounts") { model.refreshPhysicalPresence() }
+                Button("Pair selected catalog disk…") { model.pairSelectedPhysicalDisk() }
+                    .disabled(model.selectedDiskForPairing == nil || model.selectedPhysicalID.isEmpty || !model.physicalProbeOK)
+                Button("Remove saved pairing…") { model.unpairSelectedPhysicalDisk() }
+                    .disabled(model.selectedDiskForPairing == nil)
+                Text("Only a freshly OS-verified, explicitly paired UUID may show connected. A clone may share a filesystem UUID. Historical drive letters are never used.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
@@ -1002,7 +1182,7 @@ private struct CopyReturnContext {
                         ForEach(model.volumes) { disk in
                             VStack(alignment: .leading, spacing: 1) {
                                 Label(disk.label, systemImage: "externaldrive")
-                                Text("\(disk.entry_count ?? 0) items • \(disk.root_path ?? "")").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                Text("\(disk.entry_count ?? 0) items • \(model.physicalCaption(disk.id))").font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             }.tag(Optional(disk.id)).help(disk.root_path ?? disk.label)
                         }
                     }.listStyle(.sidebar)
@@ -1038,7 +1218,10 @@ private struct CopyReturnContext {
             Text(model.linkedMode ? "LINKED CTF (read-only) • " + (model.linkedCTFPath ?? "") : model.database).font(.caption2).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).lineLimit(1).truncationMode(.middle)
         }
         .padding(7).controlSize(.small).frame(minWidth: 1100, minHeight: 550)
-        .onAppear { searchFieldFocused = true }
+        .onAppear { searchFieldFocused = true; model.refreshPhysicalPresence() }
+        .onReceive(Timer.publish(every: 6, on: .main, in: .common).autoconnect()) { _ in
+            model.refreshPhysicalPresence()
+        }
         .sheet(isPresented: $model.showingAnnotationReview) {
             if model.showingVerifiedOverlay {
                 VStack(alignment: .leading, spacing: 8) {
