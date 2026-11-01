@@ -14,50 +14,79 @@ pub(crate) fn page(catalog: &Catalog, request: &Value) -> Result<Value> {
     // Indexed base table for identity/count; full entries view for the page.
     // Both SQLite v1 and v3 schemas are supported without changing the source.
     let table = catalog.query_table("")?;
-    let selected: Option<(String, i64)> = catalog
+    let selected: Option<(String, i64, i64)> = catalog
         .conn()
         .query_row(
-            &format!("SELECT name_norm,size FROM {table} WHERE id=?1 AND kind='file'"),
+            &format!("SELECT name_norm,size,volume_id FROM {table} WHERE id=?1 AND kind='file'"),
             [entry_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()?;
-    let (name_key, size) = selected.ok_or_else(|| {
-        Error::new(
-            "not_found",
-            "Selected file is unavailable in this catalog snapshot",
-        )
+    let (name_key, size, source_volume_id) = selected.ok_or_else(|| {
+        Error::new("not_found", "Selected file is unavailable in this catalog snapshot")
     })?;
-    let (total, distinct_disks): (i64, i64) = catalog.conn().query_row(
-        &format!(
-            "SELECT COUNT(*),COUNT(DISTINCT volume_id) FROM {table} \
-             WHERE kind='file' AND name_norm=?1 AND size=?2"
-        ),
-        params![name_key, size],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
-    let mut stmt = catalog.conn().prepare(
+    let candidate_volume_id = optional_id(request, "candidate_volume_id")?;
+    // All-match disk counts are independent of page focus; catalog labels are
+    // not evidence that any USB disk is currently connected.
+    let mut group_stmt = catalog.conn().prepare(&format!(
+        "SELECT e.volume_id,v.label,COUNT(*) FROM {table} e
+         LEFT JOIN volumes v ON v.id=e.volume_id
+         WHERE e.kind='file' AND e.name_norm=?1 AND e.size=?2
+         GROUP BY e.volume_id ORDER BY e.volume_id"
+    ))?;
+    let disk_groups: Vec<Value> = group_stmt
+        .query_map(params![&name_key, size], |row| {
+            let id: i64 = row.get(0)?;
+            let label: Option<String> = row.get(1)?;
+            let count: i64 = row.get(2)?;
+            Ok(json!({"volume_id":id,
+                "label":label.unwrap_or_else(|| format!("Disk #{id}")),
+                "count":count}))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let all_total: i64 = disk_groups.iter().filter_map(|v| v["count"].as_i64()).sum();
+    let distinct_disks = disk_groups.len();
+    let total = candidate_volume_id.map_or(all_total, |focused| {
+        disk_groups.iter().find(|group| group["volume_id"] == focused)
+            .and_then(|group| group["count"].as_i64()).unwrap_or(0)
+    });
+    let focus_clause = if candidate_volume_id.is_some() {
+        " AND volume_id=?3"
+    } else { "" };
+    let limit_param = if candidate_volume_id.is_some() { 4 } else { 3 };
+    let offset_param = limit_param + 1;
+    let sql = format!(
         "SELECT id,volume_id,parent_id,name,relative_path,kind,size,modified_unix,\
          description,tags FROM entries \
-         WHERE kind='file' AND name_norm=?1 AND size=?2 \
-         ORDER BY volume_id,relative_path,id LIMIT ?3 OFFSET ?4",
-    )?;
+         WHERE kind='file' AND name_norm=?1 AND size=?2{focus_clause} \
+         ORDER BY volume_id,relative_path,id LIMIT ?{limit_param} OFFSET ?{offset_param}"
+    );
+    let mut parameters = vec![
+        rusqlite::types::Value::Text(name_key),
+        rusqlite::types::Value::Integer(size),
+    ];
+    if let Some(volume_id) = candidate_volume_id {
+        parameters.push(rusqlite::types::Value::Integer(volume_id));
+    }
+    parameters.push(rusqlite::types::Value::Integer(limit as i64));
+    parameters.push(rusqlite::types::Value::Integer(offset as i64));
+    let mut stmt = catalog.conn().prepare(&sql)?;
     let items = stmt
-        .query_map(
-            params![name_key, size, limit as i64, offset as i64],
-            |row| {
-                let entry = atlas_core::entry_row(row)?;
-                let mut value = serde_json::to_value(entry).expect("Entry serializes");
-                // Count includes the selected file; never imply content identity.
-                value["duplicate_count"] = json!(total);
-                Ok(value)
-            },
-        )?
+        .query_map(rusqlite::params_from_iter(parameters), |row| {
+            let entry = atlas_core::entry_row(row)?;
+            let mut value = serde_json::to_value(entry).expect("Entry serializes");
+            // Count always refers to the all-disk metadata class.
+            value["duplicate_count"] = json!(all_total);
+            Ok(value)
+        })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(json!({
-        "items": items, "total": total, "offset": offset, "limit": limit,
+        "items": items, "total": total, "all_total": all_total,
+        "offset": offset, "limit": limit,
         "has_more": offset.saturating_add(limit) < total as u64,
-        "source_entry_id": entry_id, "distinct_disks": distinct_disks,
+        "source_entry_id": entry_id, "source_volume_id": source_volume_id,
+        "candidate_volume_id":candidate_volume_id,
+        "distinct_disks": distinct_disks, "disk_groups": disk_groups,
         "basis": "exact_normalized_name_and_size", "verified": false,
         "read_only": true
     }))
@@ -111,6 +140,12 @@ mod tests {
         let first = page(&catalog, &json!({"entry_id":selected,"offset":0,"limit":2})).unwrap();
         assert_eq!(first["total"], 3);
         assert_eq!(first["distinct_disks"], 2);
+        assert_eq!(first["disk_groups"].as_array().unwrap().len(), 2);
+        assert_eq!(first["disk_groups"][0]["label"], "Shelf A");
+        assert_eq!(first["disk_groups"][0]["count"], 2);
+        assert_eq!(first["disk_groups"][1]["label"], "Shelf B");
+        assert_eq!(first["disk_groups"][1]["count"], 1);
+        assert_eq!(first["all_total"], 3);
         assert_eq!(first["items"].as_array().unwrap().len(), 2);
         assert_eq!(first["has_more"], true);
         assert_eq!(first["verified"], false);
@@ -126,6 +161,17 @@ mod tests {
             .chain(second["items"].as_array().unwrap().iter())
             .map(|r| r["id"].as_i64().unwrap())
             .collect::<Vec<_>>();
+        let disk_b = first["disk_groups"][1]["volume_id"].as_i64().unwrap();
+        let focused = page(&catalog, &json!({"entry_id":selected,
+            "candidate_volume_id":disk_b,"offset":0,"limit":2})).unwrap();
+        assert_eq!(focused["total"], 1);
+        assert_eq!(focused["all_total"], 3);
+        assert_eq!(focused["distinct_disks"], 2);
+        assert_eq!(focused["has_more"], false);
+        assert_eq!(focused["items"][0]["volume_id"], disk_b);
+        assert_eq!(focused["items"][0]["duplicate_count"], 3);
+        assert!(page(&catalog, &json!({"entry_id":selected,
+            "candidate_volume_id":0})).is_err());
         assert!(ids.contains(&selected));
         assert_eq!(ids.len(), 3);
         assert!(page(&catalog, &json!({"entry_id":folder})).is_err());

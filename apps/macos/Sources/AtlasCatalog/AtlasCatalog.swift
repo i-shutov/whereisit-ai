@@ -26,6 +26,12 @@ struct Entry: Decodable, Identifiable {
     var sizeText: String { size.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "" }
     var dateText: String { modified_local ?? modified_unix.map { Date(timeIntervalSince1970: Double($0)).formatted(date: .numeric, time: .shortened) } ?? "" }
 }
+struct CandidateDiskGroup: Decodable, Identifiable {
+    let volume_id: Int64
+    let label: String
+    let count: Int
+    var id: Int64 { volume_id }
+}
 struct EntryPage: Decodable {
     let items: [Entry]
     let total: Int?
@@ -33,6 +39,8 @@ struct EntryPage: Decodable {
     let limit: Int?
     let has_more: Bool?
     let distinct_disks: Int?
+    let all_total: Int?
+    let disk_groups: [CandidateDiskGroup]?
 }
 struct CoreError: Decodable { let code: String?; let message: String }
 struct Envelope<T: Decodable>: Decodable { let ok: Bool; let data: T?; let error: CoreError? }
@@ -219,6 +227,8 @@ private struct CopyReturnContext {
     @Published var showingDuplicates = false
     @Published var copySourceID: Int64?
     @Published var copySourceName: String?
+    @Published var copyDiskGroups: [CandidateDiskGroup] = []
+    @Published var copyFocusVolumeID: Int64?
     private var copyReturn: CopyReturnContext?
     @Published var categories: [Category] = []
     @Published var categoryID: Int64?
@@ -576,6 +586,12 @@ private struct CopyReturnContext {
         query = ""; appliedQuery = ""
         stack = [(nil, "/")]; offset = 0; showingDuplicates = false; load()
     }
+    func focusCopyCandidates(on volume: Int64?) {
+        guard copySourceID != nil else { return }
+        copyFocusVolumeID = volume
+        offset = 0
+        load()
+    }
     func copiesOfSelected() {
         guard let entry = selected, entry.kind == "file", entry.size != nil else {
             status = "Select a file with recorded size to find catalogued metadata copies."
@@ -585,6 +601,7 @@ private struct CopyReturnContext {
             query: query, appliedQuery: appliedQuery, offset: offset,
             showingDuplicates: showingDuplicates, appliedDuplicateMode: appliedDuplicateMode)
         copySourceID = entry.id; copySourceName = entry.name
+        copyFocusVolumeID = nil; copyDiskGroups = []
         volumeID = nil; stack = [(nil, "/")]; offset = 0
         showingDuplicates = false; query = ""; appliedQuery = ""
         load()
@@ -626,6 +643,7 @@ private struct CopyReturnContext {
         if let volumeID { args["volume_id"] = volumeID }
         if let copySourceID {
             args["entry_id"] = copySourceID
+            if let copyFocusVolumeID { args["candidate_volume_id"] = copyFocusVolumeID }
             status = "Comparing exact name + size metadata across all catalogued disks…"
             if let fields = linkedFields() {
                 args["op"] = "ctf_copy_candidates_pinned"
@@ -683,11 +701,14 @@ private struct CopyReturnContext {
     func applyPage(_ page: EntryPage, token: Int) {
         guard generation == token else { return }
         entries = page.items; total = page.total ?? (offset + page.items.count)
+        copyDiskGroups = copySourceID == nil ? [] : (page.disk_groups ?? [])
         hasMore = page.has_more ?? (offset + page.items.count < total)
         status = "\(page.items.isEmpty ? 0 : offset + 1)–\(offset + page.items.count)"
             + (page.total.map { " of \($0) items" } ?? (hasMore ? " items • more available" : " items"))
             + (copySourceID != nil
-                ? " • \(page.distinct_disks ?? 0) catalog disks • exact name+size metadata, NOT content verified"
+                ? " • \(page.distinct_disks ?? 0) catalog disks total"
+                    + (copyFocusVolumeID == nil ? "" : " • focused from \(page.all_total ?? 0) candidates")
+                    + " • exact name+size metadata, NOT content verified"
                 : (showingDuplicates ? " • metadata candidates; content not verified" : ""))
     }
     func search() {
@@ -1314,6 +1335,23 @@ private struct CopyReturnContext {
                     Spacer(minLength: 6)
                     Button("Back to results") { model.back() }
                 }.accessibilityElement(children: .contain)
+                ScrollView(.horizontal) {
+                    HStack(spacing: 5) {
+                        Button("All disks (\(model.copyDiskGroups.reduce(0) { $0 + $1.count }))") {
+                            model.focusCopyCandidates(on: nil)
+                        }
+                        .accessibilityLabel("Show all name and size candidate copies across catalogued disks")
+                        ForEach(model.copyDiskGroups) { group in
+                            Button("\(group.label) (\(group.count))") {
+                                model.focusCopyCandidates(on: group.volume_id)
+                            }
+                            .accessibilityLabel("Show \(group.count) metadata candidates on catalog disk \(group.label)")
+                            .help("Filter these metadata candidates to this catalogue disk; does not access physical USB")
+                        }
+                    }.buttonStyle(.bordered)
+                }
+                .accessibilityLabel("Copy candidate disk filters")
+                .frame(height: 30)
             }
             HSplitView {
                 VStack(alignment: .leading, spacing: 3) {

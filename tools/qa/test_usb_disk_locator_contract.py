@@ -170,6 +170,26 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn('.keyboardShortcut("r", modifiers: [.command])', MAC)
         self.assertIn("OS scan incomplete: physical presence not verified.", MAC)
 
+    def test_cross_disk_candidate_focus_is_bounded_metadata_only(self):
+        SERVICE = (ROOT / "crates/atlas-service/src/copy_candidates.rs").read_text(encoding="utf-8")
+        self.assertIn('candidate_volume_id', SERVICE)
+        self.assertIn('disk_groups', SERVICE)
+        self.assertIn('source_volume_id', SERVICE)
+        self.assertIn('all_total', SERVICE)
+        self.assertIn('exact_normalized_name_and_size', SERVICE)
+        self.assertIn('"verified": false', SERVICE)
+        self.assertIn('ctf_mirror::read_pinned(request', SERVICE)
+        self.assertIn('COPY_DISK_FILTER if notification == CBN_SELCHANGE', WIN)
+        self.assertIn('self.copy_focus_volume_id = if selected == 0', WIN)
+        self.assertIn('self.populate_candidate_disk_picker();', WIN)
+        self.assertIn('linked["candidate_volume_id"]', WIN)
+        self.assertIn('COPIES BY CATALOG DISK (metadata only)', WIN)
+        self.assertIn('struct CandidateDiskGroup: Decodable, Identifiable', MAC)
+        self.assertIn('func focusCopyCandidates(on volume: Int64?)', MAC)
+        self.assertIn('args["candidate_volume_id"] = copyFocusVolumeID', MAC)
+        self.assertIn('ScrollView(.horizontal)', MAC)
+        self.assertIn('Filter these metadata candidates to this catalogue disk', MAC)
+
     def test_no_unverified_physical_drive_claims_in_locator(self):
         self.assertIn("Physical connection: NOT VERIFIED", WIN)
         self.assertIn("Physical connection not verified", MAC)

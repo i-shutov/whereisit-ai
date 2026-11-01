@@ -55,6 +55,7 @@ const ANNOTATION_PAGE_SIZE: usize = 20;
 const DISKS: usize = 120;
 const DISK_FILTER: usize = 128;
 const TOGGLE_LOCATOR: usize = 129;
+const COPY_DISK_FILTER: usize = 131;
 const FILES: usize = 121;
 const CATEGORIES: usize = 122;
 const CATEGORY_FILTER: usize = 123;
@@ -1586,12 +1587,15 @@ struct App {
     mounted_volumes: Vec<MountedPhysicalVolume>,
     physical_probe_ok: bool,
     duplicate_mode: HWND,
+    copy_disk_filter: HWND,
     export_format: HWND,
     category_list: HWND,
     category_name: HWND,
     categories: Vec<Value>,
     duplicates: bool,
     copy_source: Option<i64>,
+    copy_focus_volume_id: Option<i64>,
+    copy_disk_groups: Vec<Value>,
     copy_return: Option<CopyReturn>,
     applied_duplicate_mode: &'static str,
     db: String,
@@ -1642,12 +1646,15 @@ impl App {
             mounted_volumes: Vec::new(),
             physical_probe_ok: false,
             duplicate_mode: null_mut(),
+            copy_disk_filter: null_mut(),
             export_format: null_mut(),
             category_list: null_mut(),
             category_name: null_mut(),
             categories: vec![],
             duplicates: false,
             copy_source: None,
+            copy_focus_volume_id: None,
+            copy_disk_groups: vec![],
             copy_return: None,
             applied_duplicate_mode: "name_size",
             db: std::env::args().nth(1).unwrap_or_else(default_db),
@@ -1786,6 +1793,7 @@ impl App {
     }
     unsafe fn load(&mut self) {
         self.generation += 1;
+        ShowWindow(self.copy_disk_filter, if self.copy_source.is_some() { SW_SHOW } else { SW_HIDE });
         self.status(if self.copy_source.is_some() {
             "Comparing exact name + size metadata across all catalogued disks…"
         } else if self.duplicates {
@@ -1812,6 +1820,7 @@ impl App {
         if let Some(source) = self.copy_source {
             if let Some(mut linked) = self.linked_request("ctf_copy_candidates_pinned") {
                 linked["entry_id"] = json!(source);
+                linked["candidate_volume_id"] = json!(self.copy_focus_volume_id);
                 linked["offset"] = json!(self.offset);
                 linked["limit"] = json!(LIMIT);
                 self.call("rows", linked);
@@ -1819,6 +1828,7 @@ impl App {
                 self.call(
                     "rows",
                     json!({"op":"copy_candidates","entry_id":source,
+                    "candidate_volume_id":self.copy_focus_volume_id,
                     "offset":self.offset,"limit":LIMIT}),
                 );
             }
@@ -2104,6 +2114,10 @@ impl App {
                         data
                     };
                     self.entries = page["items"].as_array().cloned().unwrap_or_default();
+                    self.copy_disk_groups = if self.copy_source.is_some() {
+                        page["disk_groups"].as_array().cloned().unwrap_or_default()
+                    } else { vec![] };
+                    self.populate_candidate_disk_picker();
                     self.sort_loaded_page();
                     self.total_known = page["total"].is_u64();
                     self.total = page["total"]
@@ -2401,6 +2415,30 @@ impl App {
         });
     }
 
+    unsafe fn populate_candidate_disk_picker(&self) {
+        SendMessageW(self.copy_disk_filter, CB_RESETCONTENT, 0, 0);
+        if self.copy_source.is_none() {
+            ShowWindow(self.copy_disk_filter, SW_HIDE);
+            return;
+        }
+        let all: u64 = self.copy_disk_groups.iter()
+            .filter_map(|group| group["count"].as_u64()).sum();
+        let caption = format!("All candidate disks • {all} files / {} disks",
+            self.copy_disk_groups.len());
+        SendMessageW(self.copy_disk_filter, CB_ADDSTRING, 0, wide(&caption).as_ptr() as isize);
+        for group in &self.copy_disk_groups {
+            let label = string(group, "label").replace(['\r', '\n'], " ");
+            let caption = format!("{label} • {} candidates", group["count"].as_u64().unwrap_or(0));
+            SendMessageW(self.copy_disk_filter, CB_ADDSTRING, 0, wide(&caption).as_ptr() as isize);
+        }
+        let selection = self.copy_focus_volume_id
+            .and_then(|focused| self.copy_disk_groups.iter().position(
+                |group| group["volume_id"].as_i64() == Some(focused)))
+            .map(|index| index + 1).unwrap_or(0);
+        SendMessageW(self.copy_disk_filter, CB_SETCURSEL, selection, 0);
+        ShowWindow(self.copy_disk_filter, SW_SHOW);
+    }
+
     unsafe fn update_disk_locator(&self) {
         let index = SendMessageW(
             self.files,
@@ -2416,9 +2454,7 @@ impl App {
         let disk = selected
             .map(|row| self.volume_label(row["volume_id"].as_i64()))
             .unwrap_or_default();
-        self.text(
-            self.locator,
-            &disk_locator_text(
+        let mut inspector = disk_locator_text(
                 selected,
                 &disk,
                 self.linked_mode(),
@@ -2430,8 +2466,19 @@ impl App {
                     )
                     .map(String::as_str)
                     .unwrap_or("unverified"),
-            ),
-        );
+            );
+        if self.copy_source.is_some() && !self.copy_disk_groups.is_empty() {
+            inspector.push_str("\r\n\r\nCOPIES BY CATALOG DISK (metadata only)");
+            for group in &self.copy_disk_groups {
+                let label = string(group, "label").replace(['\r', '\n'], " ");
+                let count = group["count"].as_u64().unwrap_or(0);
+                let mark = if group["volume_id"].as_i64() == self.copy_focus_volume_id {
+                    " [FILTERED]"
+                } else { "" };
+                inspector.push_str(&format!("\r\n{label}: {count}{mark}"));
+            }
+        }
+        self.text(self.locator, &inspector);
     }
     fn sort_loaded_page(&mut self) {
         let Some(column) = self.page_sort_column else {
@@ -2554,7 +2601,11 @@ impl App {
                 " items".into()
             },
             if self.copy_source.is_some() {
-                " • name+size metadata only; no contents compared"
+                if self.copy_focus_volume_id.is_some() {
+                    " • selected catalog disk; name+size only; contents not compared"
+                } else {
+                    " • all catalog disks; name+size only; contents not compared"
+                }
             } else if self.duplicates {
                 " • metadata candidates; content not verified"
             } else {
@@ -2611,6 +2662,9 @@ impl App {
             });
         }
         self.copy_source = Some(source);
+        self.copy_focus_volume_id = None;
+        self.copy_disk_groups.clear();
+        self.populate_candidate_disk_picker();
         self.volume = None;
         self.offset = 0;
         self.stack = vec![(None, "/".into())];
@@ -2737,6 +2791,17 @@ impl App {
                 GetWindowTextW(self.disk_filter, buffer.as_mut_ptr(), len + 1);
                 self.disk_filter_query = String::from_utf16_lossy(&buffer[..len as usize]);
                 self.populate_physical_disk_list();
+            }
+            COPY_DISK_FILTER if notification == CBN_SELCHANGE as usize
+                && self.copy_source.is_some() => {
+                let selected = SendMessageW(self.copy_disk_filter, CB_GETCURSEL, 0, 0);
+                if selected < 0 { return; }
+                self.copy_focus_volume_id = if selected == 0 { None } else {
+                    self.copy_disk_groups.get(selected as usize - 1)
+                        .and_then(|group| group["volume_id"].as_i64())
+                };
+                self.offset = 0;
+                self.load();
             }
             DISKS if notification == LBN_SELCHANGE as usize => {
                 self.copy_source = None;
@@ -3012,6 +3077,8 @@ impl App {
         // Search occupies the dominant space; scope is explicit on small laptops.
         MoveWindow(self.search, 8, 34, (w - 618).max(100), 24, 1);
         MoveWindow(self.duplicate_mode, w - 312, 34, 136, 200, 1);
+        // Catalogue focus, not a claim of actual USB presence.
+        MoveWindow(self.copy_disk_filter, (w - 376).max(400), 62, 368, 240, 1);
         for (i, hwnd) in &self.buttons {
             if *i == FIND {
                 MoveWindow(*hwnd, w - 604, 34, 104, 24, 1);
@@ -3293,6 +3360,11 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 );
             }
             SendMessageW(app.export_format, CB_SETCURSEL, 0, 0);
+            app.copy_disk_filter = control(
+                hwnd, "COMBOBOX", "", WS_TABSTOP | CBS_DROPDOWNLIST as u32,
+                COPY_DISK_FILTER,
+            );
+            ShowWindow(app.copy_disk_filter, SW_HIDE);
             let help=control(hwnd,"STATIC","AND  OR  NOT  ( )   name: path: ext: size: category:   Example: ext:mkv AND size:>1GB",0,142);
             MoveWindow(help, 8, 62, 700, 18, 1);
             app.disk_filter = control(

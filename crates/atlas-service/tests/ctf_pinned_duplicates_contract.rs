@@ -463,6 +463,23 @@ fn selected_copy_navigation_spans_disks_and_rechecks_generation_per_page() {
     );
     assert_eq!(first["data"]["result"]["total"], 2);
     assert_eq!(first["data"]["result"]["distinct_disks"], 2);
+    let groups = first["data"]["result"]["disk_groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0]["count"], 1);
+    assert_eq!(groups[1]["count"], 1);
+    assert_eq!(first["data"]["result"]["all_total"], 2);
+    let focus = groups[1]["volume_id"].as_i64().unwrap();
+    let focused = call(json!({
+        "op":"ctf_copy_candidates_pinned","path":source,"cache_root":cache,
+        "generation":generation,"entry_id":selected_id,
+        "candidate_volume_id":focus,"offset":0,"limit":1
+    }));
+    assert_eq!(focused["ok"], true, "{focused}");
+    assert_eq!(focused["data"]["source_sha_checked"], true);
+    assert_eq!(focused["data"]["read_only"], true);
+    assert_eq!(focused["data"]["result"]["total"], 1);
+    assert_eq!(focused["data"]["result"]["all_total"], 2);
+    assert_eq!(focused["data"]["result"]["items"][0]["volume_id"], focus);
     assert_eq!(first["data"]["result"]["has_more"], true);
     let second = copy_page(1);
     assert_eq!(second["ok"], true, "{second}");
@@ -483,5 +500,11 @@ fn selected_copy_navigation_spans_disks_and_rechecks_generation_per_page() {
     fs::write(&source, b"synthetic modified bytes").unwrap();
     let stale = copy_page(1);
     assert_eq!(stale["ok"], false, "{stale}");
+    let stale_focused = call(json!({
+        "op":"ctf_copy_candidates_pinned","path":source,"cache_root":cache,
+        "generation":generation,"entry_id":selected_id,
+        "candidate_volume_id":focus,"offset":0,"limit":1
+    }));
+    assert_eq!(stale_focused["error"]["code"], "source_changed");
     assert_eq!(stale["error"]["code"], "source_changed", "{stale}");
 }
