@@ -21,7 +21,9 @@ fn store_path(request: &Value) -> Result<&Path> {
     let value = text(request, "user_store")?;
     let path = Path::new(value);
     if !path.is_absolute() || value.len() > 4096 {
-        return Err(invalid("user_store must be a bounded absolute user-owned path"));
+        return Err(invalid(
+            "user_store must be a bounded absolute user-owned path",
+        ));
     }
     Ok(path)
 }
@@ -32,7 +34,9 @@ fn scope(request: &Value) -> Result<&str> {
         || !(value.starts_with("ctf:") || value.starts_with("sqlite:"))
         || value.ends_with(':')
     {
-        return Err(invalid("catalog_key must identify an exact catalog/source generation"));
+        return Err(invalid(
+            "catalog_key must identify an exact catalog/source generation",
+        ));
     }
     Ok(value)
 }
@@ -47,7 +51,11 @@ fn platform(request: &Value) -> Result<&str> {
 
 fn normalized_id(raw: &str, platform: &str) -> Result<String> {
     let id = raw.trim().to_ascii_lowercase();
-    let prefix = if platform == "windows" { "win:" } else { "mac:" };
+    let prefix = if platform == "windows" {
+        "win:"
+    } else {
+        "mac:"
+    };
     if id.len() < prefix.len() + 8
         || id.len() > 160
         || !id.starts_with(prefix)
@@ -55,7 +63,9 @@ fn normalized_id(raw: &str, platform: &str) -> Result<String> {
             .bytes()
             .all(|c| c.is_ascii_alphanumeric() || b":{}-".contains(&c))
     {
-        return Err(invalid("Physical identity must be a platform-specific volume UUID"));
+        return Err(invalid(
+            "Physical identity must be a platform-specific volume UUID",
+        ));
     }
     Ok(id)
 }
@@ -284,23 +294,39 @@ mod tests {
     #[test]
     fn unknown_offline_online_and_generation_scope_are_distinct() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("identity.sqlite").to_string_lossy().into_owned();
+        let path = dir
+            .path()
+            .join("identity.sqlite")
+            .to_string_lossy()
+            .into_owned();
         let base = json!({"user_store":path,"catalog_key":"ctf:synthetic-v1",
             "platform":"macos","volume_ids":[1,2],"observed_ids":["mac:aaaa-1111"],"probe_ok":true});
         let mut read = base.clone();
         read["op"] = json!("physical_status");
-        assert_eq!(request(read.clone())["data"]["items"][0]["state"], "unverified");
+        assert_eq!(
+            request(read.clone())["data"]["items"][0]["state"],
+            "unverified"
+        );
         let mut pair = base.clone();
         pair["op"] = json!("physical_pair");
         pair["volume_id"] = json!(1);
         pair["physical_id"] = json!("mac:AAAA-1111");
         pair["confirmed"] = json!(true);
         assert_eq!(request(pair)["data"]["paired"], true);
-        assert_eq!(request(read.clone())["data"]["items"][0]["state"], "connected");
+        assert_eq!(
+            request(read.clone())["data"]["items"][0]["state"],
+            "connected"
+        );
         read["observed_ids"] = json!([]);
-        assert_eq!(request(read.clone())["data"]["items"][0]["state"], "offline");
+        assert_eq!(
+            request(read.clone())["data"]["items"][0]["state"],
+            "offline"
+        );
         read["probe_ok"] = json!(false);
-        assert_eq!(request(read.clone())["data"]["items"][0]["state"], "unverified");
+        assert_eq!(
+            request(read.clone())["data"]["items"][0]["state"],
+            "unverified"
+        );
         read["catalog_key"] = json!("ctf:synthetic-v2");
         read["probe_ok"] = json!(true);
         assert_eq!(request(read)["data"]["items"][0]["state"], "unverified");
@@ -309,7 +335,11 @@ mod tests {
     #[test]
     fn pairing_is_explicit_and_conflicts_fail_closed() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("identity.sqlite").to_string_lossy().into_owned();
+        let path = dir
+            .path()
+            .join("identity.sqlite")
+            .to_string_lossy()
+            .into_owned();
         let mut pair = json!({"op":"physical_pair","user_store":path,
             "catalog_key":"sqlite:synthetic","platform":"windows","volume_id":1,
             "physical_id":"win:{aaaa-bbbb}:12345678","observed_ids":["win:{aaaa-bbbb}:12345678"]});
