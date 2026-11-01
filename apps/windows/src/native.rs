@@ -460,6 +460,33 @@ fn candidate_mount_badge(state: Option<&str>) -> &'static str {
     }
 }
 
+// The picker is a physical retrieval aid: catalog ID and owner sticker come
+// before its potentially non-unique historical label. OS status is independent
+// of the tag and never establishes file-byte or hash identity.
+fn candidate_disk_choice_caption(
+    group: &Value,
+    shelf_labels: &HashMap<i64, String>,
+    states: &HashMap<i64, String>,
+) -> String {
+    let disk_id = group["volume_id"].as_i64().unwrap_or_default();
+    let label = string(group, "label").replace(['\r', '\n'], " ");
+    let catalog_name = if label.trim().is_empty() {
+        "Unnamed disk"
+    } else {
+        label.trim()
+    };
+    let sticker = shelf_labels
+        .get(&disk_id)
+        .filter(|tag| !tag.trim().is_empty())
+        .map(|tag| format!("sticker: {tag}"))
+        .unwrap_or_else(|| "no sticker tag".to_owned());
+    let badge = candidate_mount_badge(states.get(&disk_id).map(String::as_str));
+    format!(
+        "#{disk_id} • {sticker} • {catalog_name} • {} metadata candidates • {badge}",
+        group["count"].as_u64().unwrap_or(0)
+    )
+}
+
 // Multiple observed candidate volumes require explicit human selection.
 // Repeated/corrupt group IDs are conservatively treated as ambiguous.
 fn sole_connected_candidate_disk(groups: &[Value], states: &HashMap<i64, String>) -> Option<i64> {
@@ -483,7 +510,9 @@ fn sole_connected_candidate_disk(groups: &[Value], states: &HashMap<i64, String>
 
 #[cfg(test)]
 mod verified_copy_focus_tests {
-    use super::{candidate_mount_badge, sole_connected_candidate_disk};
+    use super::{
+        candidate_disk_choice_caption, candidate_mount_badge, sole_connected_candidate_disk,
+    };
     use serde_json::json;
     use std::collections::HashMap;
     #[test]
@@ -515,6 +544,34 @@ mod verified_copy_focus_tests {
             None
         );
     }
+    #[test]
+    fn candidate_picker_keeps_exact_disk_sticker_and_uncertain_os_state() {
+        let mut tags = HashMap::new();
+        tags.insert(42, "Полка Д / USB-04".to_owned());
+        let group = json!({"volume_id":42,"label":"Archive A","count":3});
+        let connected = HashMap::from([(42, "connected".to_owned())]);
+        let caption = candidate_disk_choice_caption(&group, &tags, &connected);
+        assert!(caption.starts_with("#42 • sticker: Полка Д / USB-04 • Archive A"));
+        assert!(caption.contains("3 metadata candidates"));
+        assert!(caption.ends_with("OS verified now"));
+
+        // The sticker/label never make an unpaired or conflicted drive online.
+        let unknown = candidate_disk_choice_caption(&group, &tags, &HashMap::new());
+        assert!(unknown.ends_with("not verified"));
+        let conflict = candidate_disk_choice_caption(
+            &group,
+            &tags,
+            &HashMap::from([(42, "conflict".to_owned())]),
+        );
+        assert!(conflict.ends_with("identity conflict"));
+        assert!(!unknown.contains("OS verified now"));
+
+        let other = json!({"volume_id":142,"label":"Archive A","count":1});
+        let missing = candidate_disk_choice_caption(&other, &tags, &HashMap::new());
+        assert!(missing.starts_with("#142 • no sticker tag • Archive A"));
+        assert!(!missing.contains("Полка Д"));
+    }
+
     #[test]
     fn unfamiliar_state_fails_closed() {
         assert_eq!(candidate_mount_badge(Some("connected")), "OS verified now");
@@ -2471,6 +2528,7 @@ impl App {
         }
         self.shelf_edit_disk = None;
         self.populate_physical_disk_list();
+        self.populate_candidate_disk_picker();
         self.sync_shelf_editor();
         self.update_disk_locator();
     }
@@ -2744,17 +2802,8 @@ impl App {
             wide(&caption).as_ptr() as isize,
         );
         for group in &self.copy_disk_groups {
-            let label = string(group, "label").replace(['\r', '\n'], " ");
-            let badge = candidate_mount_badge(
-                group["volume_id"]
-                    .as_i64()
-                    .and_then(|volume| self.physical_states.get(&volume))
-                    .map(String::as_str),
-            );
-            let caption = format!(
-                "{label} • {} metadata candidates • {badge}",
-                group["count"].as_u64().unwrap_or(0)
-            );
+            let caption =
+                candidate_disk_choice_caption(group, &self.shelf_labels, &self.physical_states);
             SendMessageW(
                 self.copy_disk_filter,
                 CB_ADDSTRING,

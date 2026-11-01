@@ -268,6 +268,25 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertNotIn("browseDisk(", mac_reveal)
         self.assertNotIn("load()", mac_reveal)
 
+    def test_ux8_retrieval_candidates_show_private_stickers_without_assuming_mount(self):
+        self.assertIn("fn candidate_disk_choice_caption(", WIN)
+        self.assertIn("candidate_picker_keeps_exact_disk_sticker_and_uncertain_os_state", WIN)
+        picker = WIN.split("unsafe fn populate_candidate_disk_picker(", 1)[1].split("unsafe fn update_disk_locator(", 1)[0]
+        self.assertIn("candidate_disk_choice_caption(group, &self.shelf_labels, &self.physical_states)", picker)
+        refresh = WIN.split("unsafe fn refresh_shelf_labels(", 1)[1].split("unsafe fn save_shelf_label(", 1)[0]
+        self.assertIn("self.populate_candidate_disk_picker();", refresh)
+        self.assertIn("func candidateCopyDiskCaption(_ group: CandidateDiskGroup)", MAC)
+        self.assertIn("func candidateCopyDiskAccessibility(_ group: CandidateDiskGroup)", MAC)
+        self.assertIn("Button(model.candidateCopyDiskCaption(group))", MAC)
+        self.assertIn(".accessibilityLabel(model.candidateCopyDiskAccessibility(group))", MAC)
+        refresh_mac = MAC.split("func refreshShelfLabels()", 1)[1].split("func saveShelfLabel(", 1)[0]
+        self.assertIn("shelfLabels = [:]", refresh_mac)
+        self.assertIn("self.shelfLabelRequestGeneration == requestToken", refresh_mac)
+        self.assertIn("self.physicalScope == scope", refresh_mac)
+        self.assertIn("catalogIDs.contains(row.volume_id)", refresh_mac)
+        self.assertIn("shelfLabelRequestGeneration += 1", MAC.split("func saveShelfLabel(", 1)[1].split("func physicalState(", 1)[0])
+        self.assertIn("Content identity not verified.", MAC)
+
     def test_no_unverified_physical_drive_claims_in_locator(self):
         self.assertIn("Physical connection: NOT VERIFIED", WIN)
         self.assertIn("Physical connection not verified", MAC)

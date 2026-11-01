@@ -216,6 +216,7 @@ private struct CopyReturnContext {
     @Published var selectedPhysicalID = ""
     @Published var physicalProbeOK = false
     private var physicalCheckGeneration = 0
+    private var shelfLabelRequestGeneration = 0
     @Published var entries: [Entry] = []
     @Published var pageSortColumn = "natural"
     @Published var pageSortDescending = false
@@ -427,14 +428,21 @@ private struct CopyReturnContext {
     func shelfLabel(_ disk: Int64) -> String { shelfLabels[disk] ?? "" }
 
     func refreshShelfLabels() {
+        shelfLabelRequestGeneration += 1
+        let requestToken = shelfLabelRequestGeneration
         let scope = physicalScope
+        let catalogIDs = Set(volumes.map(\.id))
+        // A previous catalog's tag must not remain visible while loading another.
+        shelfLabels = [:]
         var args = physicalArguments([], probeOK: false)
         args["op"] = "physical_shelf_labels"
         request(args, as: ShelfLabelReply.self) { [weak self] result in
-            guard let self, self.physicalScope == scope else { return }
+            guard let self, self.physicalScope == scope,
+                  self.shelfLabelRequestGeneration == requestToken else { return }
             self.shelfLabels = Dictionary(uniqueKeysWithValues:
                 (result?.items ?? []).filter { row in
-                    self.volumes.contains(where: { $0.id == row.volume_id })
+                    catalogIDs.contains(row.volume_id)
+                    && self.volumes.contains(where: { $0.id == row.volume_id })
                 }.map { ($0.volume_id, $0.shelf_label) })
         }
     }
@@ -452,6 +460,8 @@ private struct CopyReturnContext {
             return
         }
         let scope = physicalScope
+        // Reject an older read that might otherwise overwrite the newly saved tag.
+        shelfLabelRequestGeneration += 1
         var args = physicalArguments([], probeOK: false)
         args["op"] = "physical_shelf_label_set"
         args["volume_id"] = volume
@@ -475,6 +485,17 @@ private struct CopyReturnContext {
         case "conflict": return "identity conflict"
         default: return "not verified"
         }
+    }
+    // Physical retrieval first: exact catalog disk ID and private shelf/sticker
+    // tag, then historical catalog label, metadata count and independent OS state.
+    func candidateCopyDiskCaption(_ group: CandidateDiskGroup) -> String {
+        let tag = shelfLabel(group.volume_id)
+        let sticker = tag.isEmpty ? "no sticker tag" : "sticker: \(tag)"
+        return "#\(group.volume_id) • \(sticker) • \(group.label) • \(group.count) metadata candidates • \(candidateCopyOSCaption(group.volume_id))"
+    }
+    func candidateCopyDiskAccessibility(_ group: CandidateDiskGroup) -> String {
+        let tag = shelfLabel(group.volume_id)
+        return "Show \(group.count) name and size metadata candidates on catalog disk number \(group.volume_id), \(group.label). Owner sticker or shelf: \(tag.isEmpty ? "not assigned" : tag). \(candidateCopyOSCaption(group.volume_id)). Content identity not verified."
     }
     var soleConnectedCandidateDisk: Int64? {
         let matches = copyDiskGroups.filter { $0.count > 0 && physicalState($0.volume_id) == "connected" }
@@ -1529,11 +1550,11 @@ private struct CopyReturnContext {
                         }
                         .accessibilityLabel("Show all name and size candidate copies across catalogued disks")
                         ForEach(model.copyDiskGroups) { group in
-                            Button("\(group.label) (\(group.count)) • \(model.candidateCopyOSCaption(group.volume_id))") {
+                            Button(model.candidateCopyDiskCaption(group)) {
                                 model.focusCopyCandidates(on: group.volume_id)
                             }
-                            .accessibilityLabel("Show \(group.count) metadata candidates on catalog disk \(group.label); \(model.candidateCopyOSCaption(group.volume_id))")
-                            .help("Filter these metadata candidates to this catalogue disk; does not access physical USB")
+                            .accessibilityLabel(model.candidateCopyDiskAccessibility(group))
+                            .help("Choose by exact catalog ID and your sticker/shelf tag; metadata candidates only. No physical file access or content comparison.")
                         }
                     }.buttonStyle(.bordered)
                 }

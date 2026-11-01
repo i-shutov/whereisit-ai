@@ -1,3 +1,25 @@
+
+
+## UX8 — candidate disk shelf/sticker retrieval + stale-response guard (2026-11-02)
+
+Implemented in the same draft PR #57 on Win32 and SwiftUI: every per-disk
+name+size candidate chooser identifies the **exact catalog disk ID** before its
+historical label and displays the **owner-entered sticker/shelf tag** (or
+explicitly says none is assigned), the metadata candidate count and the
+independently checked OS presence/conflict/unverified state. This closes an
+important physical retrieval gap: a candidate "Archive" label alone could
+correspond to several of the ~40 USB disks. It does not infer file content
+equality, USB identity from a sticker, current paths, or safe deletion.
+
+Windows updates the chooser immediately after a tag is saved/refreshed and
+unit-tests Cyrillic stickers, duplicate labels and unverified/conflict states.
+macOS uses VoiceOver-specific descriptive labels and prevents an older
+asynchronous shelf response from overwriting a new catalog scope or user tag.
+Cross-client source-wiring regression covers both native code paths.
+Manual hardware and visual acceptance remains outstanding; instructions:
+[UX8 QA](docs/qa/UX8_CANDIDATE_DISK_SHELF_LOCATOR_20261102.md).
+The **new exact-HEAD CI results must be checked** before declaring this block
+green. PR stays draft/unmerged; no stable 1.0, no private data in git.
 ## UX7 — selected file to exact catalog disk in register (2026-11-01, new exact-HEAD CI required)
 
 Same draft PR #57 adds a source-backed retrieval shortcut: Win32 Show disk / Ctrl+J and SwiftUI Show disk in register / Command-J isolate the selected current result's exact existing catalog disk ID inside the left register of approximately 40 mostly unplugged disks. The register text filter becomes id:<catalog-volume-ID>, an exact numeric key; label, private shelf tag and partial-number collisions cannot resolve the wrong disk. Current file query/selection/page, cross-disk copy candidates, and independent OS-paired state remain unchanged. Clicking the now-visible disk is a separate intentional browse action, not a live USB filesystem access.

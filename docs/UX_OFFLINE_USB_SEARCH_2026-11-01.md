@@ -205,3 +205,25 @@ The native Windows and macOS apps can explicitly copy a **catalog retrieval note
 ## UX7 — selected file to exact catalog disk in left register (2026-11-01)
 
 Win32 Show disk / Ctrl+J and SwiftUI Show disk in register / Command-J provide a direct retrieval route from a selected global-search result to a physical-shelf lookup. The action filters only the register to the exact current catalog ID (id:42 for disk 42); partial IDs, labels and private sticker tags cannot produce a misleading match. It does not clear global/copy results, alter search scope, change selection, access a mounted USB drive or claim hash equality. Selecting the shown disk with a separate click is the deliberate browse operation. An absent/stale result or unknown disk fails closed. See docs/qa/UX7_EXACT_DISK_REGISTER_REVEAL_20261101.md. CI is required on the final SHA; real GUI, keyboard/a11y and hardware acceptance remain open.
+
+
+## UX8 — candidate disk shelf/sticker retrieval + stale-response guard (2026-11-02)
+
+Implemented in the same draft PR #57 on Win32 and SwiftUI: every per-disk
+name+size candidate chooser identifies the **exact catalog disk ID** before its
+historical label and displays the **owner-entered sticker/shelf tag** (or
+explicitly says none is assigned), the metadata candidate count and the
+independently checked OS presence/conflict/unverified state. This closes an
+important physical retrieval gap: a candidate "Archive" label alone could
+correspond to several of the ~40 USB disks. It does not infer file content
+equality, USB identity from a sticker, current paths, or safe deletion.
+
+Windows updates the chooser immediately after a tag is saved/refreshed and
+unit-tests Cyrillic stickers, duplicate labels and unverified/conflict states.
+macOS uses VoiceOver-specific descriptive labels and prevents an older
+asynchronous shelf response from overwriting a new catalog scope or user tag.
+Cross-client source-wiring regression covers both native code paths.
+Manual hardware and visual acceptance remains outstanding; instructions:
+[UX8 QA](qa/UX8_CANDIDATE_DISK_SHELF_LOCATOR_20261102.md).
+The **new exact-HEAD CI results must be checked** before declaring this block
+green. PR stays draft/unmerged; no stable 1.0, no private data in git.
