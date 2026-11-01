@@ -371,10 +371,10 @@ mod tests {
             physical_id: "mac:demo-1111".into(),
         };
         let seen = HashMap::from([("mac:demo-1111".into(), 1)]);
-        assert_eq!(classify(11, &[binding.clone()], &seen, true), "connected");
-        assert_eq!(classify(11, &[binding.clone()], &seen, false), "unverified");
+        assert_eq!(classify(11, std::slice::from_ref(&binding), &seen, true), "connected");
+        assert_eq!(classify(11, std::slice::from_ref(&binding), &seen, false), "unverified");
         assert_eq!(
-            classify(11, &[binding.clone()], &HashMap::new(), true),
+            classify(11, std::slice::from_ref(&binding), &HashMap::new(), true),
             "offline"
         );
         assert_eq!(
