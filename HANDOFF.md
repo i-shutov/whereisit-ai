@@ -1,3 +1,11 @@
+## UX7 — selected file to exact catalog disk in register (2026-11-01, new exact-HEAD CI required)
+
+Same draft PR #57 adds a source-backed retrieval shortcut: Win32 Show disk / Ctrl+J and SwiftUI Show disk in register / Command-J isolate the selected current result's exact existing catalog disk ID inside the left register of approximately 40 mostly unplugged disks. The register text filter becomes id:<catalog-volume-ID>, an exact numeric key; label, private shelf tag and partial-number collisions cannot resolve the wrong disk. Current file query/selection/page, cross-disk copy candidates, and independent OS-paired state remain unchanged. Clicking the now-visible disk is a separate intentional browse action, not a live USB filesystem access.
+
+Native Rust row-to-disk and ID collision tests, two-frontend Python source regressions, and docs/qa/UX7_EXACT_DISK_REGISTER_REVEAL_20261101.md cover safety, accessibility and manual steps. Recheck new exact-HEAD Linux fmt/tests/Clippy, Windows and Mac ARM64/Intel native builds, integration/offline kit and installed upgrades before a PASS claim. This does not verify physical hardware, file contents, visual ergonomics, or p95 search. Linked CTF stays generation-pinned read-only. PR stays draft/unmerged; stable 1.0 blocked. No other repositories modified.
+
+---
+
 ## UX6 exact-HEAD Rustfmt failure repaired (2026-11-01; recheck new HEAD)
 
 The initial UX6 SHA [27edf20](https://github.com/i-shutov/whereisit-ai/commit/27edf20d783744eeadc36493de9d067f4da9abf9) failed [offline-kit run 41345029231](https://github.com/i-shutov/whereisit-ai/actions/runs/41345029231), step **Check integrated Rust contracts**, at `cargo fmt --all -- --check` in `apps/windows/src/native.rs`. Formatting-only differences (three test assertions, one Win32 SendMessageW invocation and match-arm comma) were applied in the SAME draft PR, without suppressing any check. No conclusion for the revised HEAD or other earlier pending workflows is implied; inspect the NEW SHA's Linux/Win/Mac ARM+Intel native CI, offline, integration and installed upgrade workflows. No stable publication or merge.

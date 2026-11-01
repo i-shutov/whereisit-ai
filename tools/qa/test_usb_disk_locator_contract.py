@@ -248,6 +248,26 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("file contents not compared", MAC)
         self.assertIn("physical_shelf_labels", SERVICE)
 
+    def test_ux7_exact_catalog_disk_reveal_preserves_search_scope(self):
+        self.assertIn("const REVEAL_DISK: usize = 136", WIN)
+        self.assertIn("fn reveal_disk_filter_for_row(", WIN)
+        self.assertIn('needle.strip_prefix("id:")', WIN)
+        self.assertIn("selected_file_reveals_only_its_exact_existing_catalog_disk", WIN)
+        self.assertIn("REVEAL_DISK => {", WIN)
+        self.assertIn("(*app).command(REVEAL_DISK, 0)", WIN)
+        win_reveal = WIN.split("REVEAL_DISK => {", 1)[1].split("COPY_CONNECTED =>", 1)[0]
+        self.assertIn("self.disk_filter_query = filter.clone()", win_reveal)
+        self.assertNotIn("self.volume =", win_reveal)
+        self.assertNotIn("self.load()", win_reveal)
+        self.assertIn('needle.lowercased().hasPrefix("id:")', MAC)
+        self.assertIn('Button("Show disk in register")', MAC)
+        self.assertIn('.keyboardShortcut("j", modifiers: [.command])', MAC)
+        mac_reveal = MAC.split("func revealSelectedDiskInRegister()", 1)[1].split("var selectedDiskForPairing", 1)[0]
+        self.assertIn("diskFilter =", mac_reveal)
+        self.assertNotIn("volumeID =", mac_reveal)
+        self.assertNotIn("browseDisk(", mac_reveal)
+        self.assertNotIn("load()", mac_reveal)
+
     def test_no_unverified_physical_drive_claims_in_locator(self):
         self.assertIn("Physical connection: NOT VERIFIED", WIN)
         self.assertIn("Physical connection not verified", MAC)

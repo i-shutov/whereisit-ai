@@ -43,6 +43,7 @@ const PHYSICAL_PAIR: usize = 118;
 const PHYSICAL_UNPAIR: usize = 119;
 const SHELF_SAVE: usize = 133;
 const COPY_LOCATOR: usize = 135;
+const REVEAL_DISK: usize = 136;
 // Win32 GetDriveTypeW standard result codes; windows-sys 0.61 does not export these here.
 // Unknown/missing roots mean a potentially incomplete OS snapshot, never "offline".
 const DRIVE_UNKNOWN: u32 = 0;
@@ -242,6 +243,20 @@ fn filtered_disk_indices(
     filter: &str,
 ) -> Vec<usize> {
     let needle = filter.trim().to_lowercase();
+    // Exact catalog ID: no partial number, misleading label or shelf match.
+    if let Some(raw_id) = needle.strip_prefix("id:") {
+        let Ok(requested_id) = raw_id.trim().parse::<i64>() else {
+            return Vec::new();
+        };
+        if requested_id <= 0 {
+            return Vec::new();
+        }
+        return volumes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, volume)| (id(volume) == Some(requested_id)).then_some(index))
+            .collect();
+    }
     volumes
         .iter()
         .enumerate()
@@ -274,9 +289,28 @@ fn filtered_disk_index_at_row(indices: &[usize], row: isize) -> Option<usize> {
         .and_then(|row| indices.get(row - 1).copied())
 }
 
+// Resolve a selected entry on the CURRENT page to an existing catalog disk.
+// Never infer an OS mount, a historical drive letter or a file's live presence.
+fn reveal_disk_filter_for_row(
+    entries: &[Value],
+    selected_row: isize,
+    volumes: &[Value],
+) -> Option<String> {
+    let index = usize::try_from(selected_row).ok()?;
+    let disk_id = entries
+        .get(index)?
+        .get("volume_id")?
+        .as_i64()
+        .filter(|id| *id > 0)?;
+    volumes
+        .iter()
+        .any(|volume| id(volume) == Some(disk_id))
+        .then(|| format!("id:{disk_id}"))
+}
+
 #[cfg(test)]
 mod disk_register_filter_tests {
-    use super::{filtered_disk_index_at_row, filtered_disk_indices};
+    use super::{filtered_disk_index_at_row, filtered_disk_indices, reveal_disk_filter_for_row};
     use serde_json::json;
     use std::collections::HashMap;
 
@@ -313,6 +347,32 @@ mod disk_register_filter_tests {
         assert_eq!(filtered_disk_index_at_row(&visible, 2), Some(2));
         assert_eq!(filtered_disk_index_at_row(&visible, 3), None);
         assert_eq!(filtered_disk_index_at_row(&visible, -1), None);
+    }
+    #[test]
+    fn selected_file_reveals_only_its_exact_existing_catalog_disk() {
+        let volumes = vec![
+            json!({"id":4,"label":"Disk 42 in description"}),
+            json!({"id":42,"label":"Archive"}),
+            json!({"id":142,"label":"id:42 misleading label"}),
+        ];
+        let entries = vec![
+            json!({"volume_id":42,"name":"Example.mkv"}),
+            json!({"volume_id":99,"name":"Unknown.mkv"}),
+            json!({"volume_id":-1,"name":"Invalid.mkv"}),
+        ];
+        let shelves = HashMap::new();
+        assert_eq!(
+            reveal_disk_filter_for_row(&entries, 0, &volumes).as_deref(),
+            Some("id:42")
+        );
+        assert_eq!(filtered_disk_indices(&volumes, &shelves, "id:42"), vec![1]);
+        assert_eq!(filtered_disk_indices(&volumes, &shelves, "ID:4"), vec![0]);
+        assert!(filtered_disk_indices(&volumes, &shelves, "id:").is_empty());
+        assert!(filtered_disk_indices(&volumes, &shelves, "id:-1").is_empty());
+        assert!(filtered_disk_indices(&volumes, &shelves, "id:999").is_empty());
+        for row in [-1, 1, 2, 3] {
+            assert_eq!(reveal_disk_filter_for_row(&entries, row, &volumes), None);
+        }
     }
 }
 
@@ -737,7 +797,7 @@ fn disk_locator_text(
     };
     let presence = physical_state_label(physical_state);
     format!(
-        "DISK TO LOCATE\r\n\r\n{disk_label}\r\nCatalog disk ID: {disk_id}\r\n\r\n{presence}\r\nCurrent mount state depends on explicit OS-volume pairing; historical drive letters are not evidence.\r\n\r\nFILE\r\n{file_name}\r\n\r\nRECORDED LOCATION\r\n{recorded_path}\r\n\r\nSize: {size}\r\nKind: {kind}\r\nCopies: {candidates}\r\nSource: {mode}\r\n{description_details}\r\nSelect text and press Ctrl+C to copy. Ctrl+D finds catalogued name+size copies."
+        "DISK TO LOCATE\r\n\r\n{disk_label}\r\nCatalog disk ID: {disk_id}\r\n\r\n{presence}\r\nCurrent mount state depends on explicit OS-volume pairing; historical drive letters are not evidence.\r\n\r\nFILE\r\n{file_name}\r\n\r\nRECORDED LOCATION\r\n{recorded_path}\r\n\r\nSize: {size}\r\nKind: {kind}\r\nCopies: {candidates}\r\nSource: {mode}\r\n{description_details}\r\nSelect text and press Ctrl+C to copy. Ctrl+D finds catalogued name+size copies. Ctrl+J reveals its exact catalog disk in the left register without changing search scope."
     )
 }
 
@@ -3179,6 +3239,27 @@ impl App {
                 self.load();
             }
             FILE_COPIES => self.show_copies_of_selected(),
+            REVEAL_DISK => {
+                let selected_row = SendMessageW(
+                    self.files,
+                    LVM_GETNEXTITEM,
+                    usize::MAX,
+                    LVNI_SELECTED as isize,
+                );
+                let Some(filter) =
+                    reveal_disk_filter_for_row(&self.entries, selected_row, &self.volumes)
+                else {
+                    self.status("Select a current file result with a registered catalog disk.");
+                    return;
+                };
+                // View filter only: never change query, browse scope, OS pairing,
+                // linked source, selection or candidate-copy navigation.
+                self.disk_filter_query = filter.clone();
+                self.text(self.disk_filter, &filter);
+                self.populate_physical_disk_list();
+                SetFocus(self.disk_filter);
+                self.status("Showing selected file's exact disk in register. Search scope and OS pairing unchanged; click disk to browse.");
+            }
             COPY_CONNECTED => self.focus_sole_connected_copy(),
             COPY_LOCATOR => {
                 let row = SendMessageW(
@@ -3500,11 +3581,19 @@ impl App {
             (PHYSICAL_PAIR, h - 155),
             (PHYSICAL_UNPAIR, h - 125),
             (FILE_COPIES, h - 78),
+            (REVEAL_DISK, h - 78),
             (COPY_LOCATOR, h - 48),
         ] {
             if let Some((_, button)) = self.buttons.iter().find(|(id, _)| *id == command) {
                 if locator_width > 0 {
-                    MoveWindow(*button, 214 + file_width + 8, y, locator_width, 26, 1);
+                    let left = 214 + file_width + 8;
+                    let half = (locator_width - 6) / 2;
+                    let (button_left, button_width) = match command {
+                        FILE_COPIES => (left, half),
+                        REVEAL_DISK => (left + half + 6, locator_width - half - 6),
+                        _ => (left, locator_width),
+                    };
+                    MoveWindow(*button, button_left, y, button_width, 26, 1);
                     ShowWindow(*button, SW_SHOW);
                 } else {
                     ShowWindow(*button, SW_HIDE);
@@ -3625,7 +3714,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 (PREV, "&Previous"),
                 (NEXT, "Ne&xt"),
                 (DUPLICATES, "&Duplicates"),
-                (FILE_COPIES, "&Find copies on disks"),
+                (FILE_COPIES, "&Find copies"),
+                (REVEAL_DISK, "&Show disk"),
                 (COPY_LOCATOR, "Copy &locator text"),
                 (COPY_CONNECTED, "&Verified copy"),
                 (PHYSICAL_CHECK, "Refresh &USB state"),
@@ -4039,6 +4129,12 @@ pub fn run() {
                 AppendMenuW(
                     view,
                     MF_STRING,
+                    REVEAL_DISK,
+                    wide("Show selected file's disk in register\tCtrl+J").as_ptr(),
+                );
+                AppendMenuW(
+                    view,
+                    MF_STRING,
                     PHYSICAL_CHECK,
                     wide("Recheck physical volumes\tCtrl+R").as_ptr(),
                 );
@@ -4107,6 +4203,15 @@ pub fn run() {
                 && GetFocus() == (*app).disk_filter
             {
                 SetWindowTextW((*app).disk_filter, wide("").as_ptr());
+                continue;
+            }
+            // Ctrl+J shows the selected file's exact catalog disk in the
+            // view-only left register without modifying global search scope.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && message.wParam == b'J' as usize
+            {
+                (*app).command(REVEAL_DISK, 0);
                 continue;
             }
             // Ctrl+G reprobes OS identities and focuses only one unambiguous

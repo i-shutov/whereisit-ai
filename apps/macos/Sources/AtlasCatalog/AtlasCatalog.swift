@@ -382,10 +382,28 @@ private struct CopyReturnContext {
     var visibleVolumes: [Volume] {
         let needle = diskFilter.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !needle.isEmpty else { return volumes }
+        // id:42 uses strict catalog identity, not a fuzzy number/label match.
+        // This filter never changes search scope or verifies a mounted USB.
+        if needle.lowercased().hasPrefix("id:") {
+            guard let requestedID = Int64(String(needle.dropFirst(3))), requestedID > 0
+            else { return [] }
+            return volumes.filter { $0.id == requestedID }
+        }
         return volumes.filter {
             $0.label.localizedStandardContains(needle) || String($0.id).contains(needle)
                 || (shelfLabels[$0.id] ?? "").localizedStandardContains(needle)
         }
+    }
+    func revealSelectedDiskInRegister() {
+        guard let entry = selected,
+              volumes.contains(where: { $0.id == entry.volume_id }) else {
+            status = "Select a current file result with a registered catalog disk."
+            return
+        }
+        // View-only change: leave global/copy query, page and selected entry
+        // intact; only a separate explicit disk click begins browsing.
+        diskFilter = "id:\(entry.volume_id)"
+        status = "Showing exact catalog disk #\(entry.volume_id) in register. Search scope and OS pairing unchanged; click disk to browse."
     }
     var selectedDiskForPairing: Int64? { selected?.volume_id ?? volumeID }
     var physicalUserStore: String {
@@ -1323,6 +1341,10 @@ private struct CopyReturnContext {
                         .keyboardShortcut("c", modifiers: [.command, .shift])
                         .accessibilityLabel("Copy catalog disk, shelf and recorded file details")
                         .help("Copy only catalog metadata and last OS probe state; no file-content verification")
+                    Button("Show disk in register") { model.revealSelectedDiskInRegister() }
+                        .keyboardShortcut("j", modifiers: [.command])
+                        .accessibilityLabel("Find selected file's exact catalog disk in the left register")
+                        .help("Filter register by exact catalog ID; no scope change or USB verification")
                     Button("Find copies on other disks") { model.copiesOfSelected() }
                         .disabled(entry.kind != "file" || entry.size == nil)
                         .keyboardShortcut("d", modifiers: [.command])
@@ -1537,7 +1559,7 @@ private struct CopyReturnContext {
                         TextField("Filter disk label / ID", text: $model.diskFilter)
                             .focused($diskFilterFocused)
                             .accessibilityLabel("Filter catalog disk register")
-                            .help("Filter only the left register; does not restrict global file search")
+                            .help("Filter only left register; id:42 isolates exact catalog disk 42. Global file search unchanged.")
                         if !model.diskFilter.isEmpty {
                             Button {
                                 model.diskFilter = ""
