@@ -1707,6 +1707,7 @@ impl App {
                     };
                     self.volumes = values.as_array().cloned().unwrap_or_default();
                     self.refresh_physical_presence();
+                    self.populate_physical_disk_list();
                     let index = self
                         .volumes
                         .iter()
@@ -1953,6 +1954,20 @@ impl App {
             }
             if answer != IDYES {
                 continue;
+            }
+            // The mount may have disappeared or been replaced during the
+            // operator's confirmation dialog. Probe AGAIN before binding.
+            self.refresh_physical_presence();
+            if !self.physical_probe_ok
+                || self
+                    .mounted_volumes
+                    .iter()
+                    .filter(|v| v.id == candidate.id && v.description == candidate.description)
+                    .count()
+                    != 1
+            {
+                self.status("OS volume changed during pairing; no pairing saved. Retry after checking the USB device.");
+                return;
             }
             let response =
                 self.physical_request("physical_pair", Some(volume_id), Some(&candidate.id));

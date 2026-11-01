@@ -202,6 +202,7 @@ private struct CopyReturnContext {
     @Published var mountedPhysicalVolumes: [LivePhysicalVolume] = []
     @Published var selectedPhysicalID = ""
     @Published var physicalProbeOK = false
+    private var physicalCheckGeneration = 0
     @Published var entries: [Entry] = []
     @Published var selection: Int64?
     @Published var query = ""
@@ -308,6 +309,7 @@ private struct CopyReturnContext {
         copySourceID = nil; copySourceName = nil; copyReturn = nil
         volumes = []; categories = []; categoryID = nil; selection = nil; total = 0; hasMore = false
         physicalStates = [:]; mountedPhysicalVolumes = []; selectedPhysicalID = ""; physicalProbeOK = false
+        physicalCheckGeneration += 1
         status = "Opening catalog…"
         request(["op": "init"], as: EmptyReply.self) { [weak self] result in
             guard let self, result != nil else { return }
@@ -374,6 +376,8 @@ private struct CopyReturnContext {
         ]
     }
     func refreshPhysicalPresence() {
+        physicalCheckGeneration += 1
+        let checkToken = physicalCheckGeneration
         let scope = physicalScope
         let probe = scanPhysicalVolumes()
         physicalProbeOK = probe != nil
@@ -387,7 +391,8 @@ private struct CopyReturnContext {
         args["op"] = "physical_status"
         let observed = mountedPhysicalVolumes.map(\.id)
         request(args, as: PhysicalStateReply.self) { [weak self] result in
-            guard let self, let result, self.physicalScope == scope,
+            guard let self, let result, self.physicalCheckGeneration == checkToken,
+                  self.physicalScope == scope,
                   self.mountedPhysicalVolumes.map(\.id) == observed,
                   self.physicalProbeOK == result.probe_ok else { return }
             self.physicalStates = Dictionary(
@@ -397,9 +402,7 @@ private struct CopyReturnContext {
     }
     func pairSelectedPhysicalDisk() {
         guard let volumeID = selectedDiskForPairing,
-              let candidate = mountedPhysicalVolumes.first(where: { $0.id == selectedPhysicalID }),
-              let freshProbe = scanPhysicalVolumes(),
-              freshProbe.filter({ $0.id == candidate.id }).count == 1 else {
+              let candidate = mountedPhysicalVolumes.first(where: { $0.id == selectedPhysicalID }) else {
             status = "Select a catalog disk and a freshly verified OS-mounted volume."
             physicalStates = [:]
             return
@@ -416,6 +419,13 @@ private struct CopyReturnContext {
         warning.addButton(withTitle: "Pair explicitly")
         warning.addButton(withTitle: "Cancel")
         guard warning.runModal() == .alertFirstButtonReturn else { return }
+        // Reprobe after the modal, not before: the disk may have been unplugged.
+        guard let freshProbe = scanPhysicalVolumes(),
+              freshProbe.filter({ $0.id == candidate.id && $0.currentMount == candidate.currentMount }).count == 1 else {
+            physicalStates = [:]
+            status = "OS volume changed during confirmation; pairing refused. Refresh mounts."
+            return
+        }
         let scope = physicalScope
         var args = physicalArguments(freshProbe, probeOK: true)
         args["op"] = "physical_pair"

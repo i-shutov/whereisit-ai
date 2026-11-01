@@ -212,6 +212,9 @@ pub fn pair(request: &Value) -> Result<Value> {
     if request.get("confirmed") != Some(&Value::Bool(true)) {
         return Err(invalid("Explicit operator confirmation is required"));
     }
+    if request.get("probe_ok") != Some(&Value::Bool(true)) {
+        return Err(invalid("A successful live OS probe is required for pairing"));
+    }
     let physical_id = normalized_id(text(request, "physical_id")?, os)?;
     if observed(request, os)?.get(&physical_id) != Some(&1) {
         return Err(Error::new(
@@ -342,9 +345,12 @@ mod tests {
             .into_owned();
         let mut pair = json!({"op":"physical_pair","user_store":path,
             "catalog_key":"sqlite:synthetic","platform":"windows","volume_id":1,
-            "physical_id":"win:{aaaa-bbbb}:12345678","observed_ids":["win:{aaaa-bbbb}:12345678"]});
+            "physical_id":"win:{aaaa-bbbb}:12345678","observed_ids":["win:{aaaa-bbbb}:12345678"],"probe_ok":true});
         assert_eq!(request(pair.clone())["ok"], false);
         pair["confirmed"] = json!(true);
+        pair["probe_ok"] = json!(false);
+        assert_eq!(request(pair.clone())["ok"], false);
+        pair["probe_ok"] = json!(true);
         assert_eq!(request(pair.clone())["ok"], true);
         pair["volume_id"] = json!(2);
         assert_eq!(request(pair.clone())["error"]["code"], "identity_conflict");
