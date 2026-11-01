@@ -1,3 +1,9 @@
+## UX6 exact-HEAD Rustfmt failure repaired (2026-11-01; recheck new HEAD)
+
+The initial UX6 SHA [27edf20](https://github.com/i-shutov/whereisit-ai/commit/27edf20d783744eeadc36493de9d067f4da9abf9) failed [offline-kit run 41345029231](https://github.com/i-shutov/whereisit-ai/actions/runs/41345029231), step **Check integrated Rust contracts**, at `cargo fmt --all -- --check` in `apps/windows/src/native.rs`. Formatting-only differences (three test assertions, one Win32 SendMessageW invocation and match-arm comma) were applied in the SAME draft PR, without suppressing any check. No conclusion for the revised HEAD or other earlier pending workflows is implied; inspect the NEW SHA's Linux/Win/Mac ARM+Intel native CI, offline, integration and installed upgrade workflows. No stable publication or merge.
+
+---
+
 ## UX6 — physical retrieval note and cross-platform shelf-tag search (2026-11-01; exact-HEAD CI required)
 
 The same draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57) now gives the user a **local, explicit Copy locator text** action in Win32 (button/View/Ctrl+Shift+C) and **Copy retrieval note** in SwiftUI (accessible Command-Shift-C). The note names the **catalogued** disk, manually assigned physical sticker/shelf tag, recorded relative path, metadata candidate count and the *last observed* OS-pairing state, with explicit warnings that an OS mount does not prove file contents or current presence after the scan. Neither client traverses a mount nor writes CTF/SQLite/annotations when copying. The Windows native register can now find a disk by its user-entered sticker/shelf tag (case-insensitive Cyrillic), matching the existing Mac register; its filtered-row ID mapping and global search scope remain unchanged. New Windows unit regression, dual-native source-wiring test, and [UX6 runbook](docs/qa/UX6_RETRIEVAL_NOTE_20261101.md) cover the feature.

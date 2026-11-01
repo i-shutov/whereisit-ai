@@ -290,11 +290,20 @@ mod disk_register_filter_tests {
         let mut shelves = HashMap::new();
         shelves.insert(42, "Стеллаж Д / наклейка 04".to_owned());
         assert_eq!(filtered_disk_indices(&volumes, &shelves, ""), vec![0, 1, 2]);
-        assert_eq!(filtered_disk_indices(&volumes, &shelves, "мЕДИАТЕКА"), vec![0, 2]);
+        assert_eq!(
+            filtered_disk_indices(&volumes, &shelves, "мЕДИАТЕКА"),
+            vec![0, 2]
+        );
         assert_eq!(filtered_disk_indices(&volumes, &shelves, " 42 "), vec![1]);
         assert!(filtered_disk_indices(&volumes, &shelves, "missing").is_empty());
-        assert_eq!(filtered_disk_indices(&volumes, &shelves, "нАкЛеЙкА 04"), vec![1]);
-        assert_eq!(filtered_disk_indices(&volumes, &shelves, "стеллаж д"), vec![1]);
+        assert_eq!(
+            filtered_disk_indices(&volumes, &shelves, "нАкЛеЙкА 04"),
+            vec![1]
+        );
+        assert_eq!(
+            filtered_disk_indices(&volumes, &shelves, "стеллаж д"),
+            vec![1]
+        );
         // The shelf tag lives in a user-side map; original catalog rows are untouched.
         assert!(volumes[1].get("shelf_label").is_none());
 
@@ -3172,7 +3181,12 @@ impl App {
             FILE_COPIES => self.show_copies_of_selected(),
             COPY_CONNECTED => self.focus_sole_connected_copy(),
             COPY_LOCATOR => {
-                let row = SendMessageW(self.files, LVM_GETNEXTITEM, usize::MAX, LVNI_SELECTED as isize);
+                let row = SendMessageW(
+                    self.files,
+                    LVM_GETNEXTITEM,
+                    usize::MAX,
+                    LVNI_SELECTED as isize,
+                );
                 if row < 0 || self.entries.get(row as usize).is_none() {
                     self.status("Select a catalogued file before copying its retrieval note.");
                     return;
@@ -3185,7 +3199,7 @@ impl App {
                 SendMessageW(self.locator, WM_COPY, 0, 0);
                 SendMessageW(self.locator, EM_SETSEL, 0, 0);
                 self.status("Locator text sent to the local clipboard. Mount status can change; file contents were not checked.");
-            },
+            }
             TOGGLE_LOCATOR => {
                 self.locator_visible = !self.locator_visible;
                 self.save_ui_layout_preferences();
