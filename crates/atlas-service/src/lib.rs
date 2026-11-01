@@ -5,6 +5,7 @@ mod ctf_annotation_backup;
 mod ctf_annotations;
 mod ctf_duplicate_export;
 mod ctf_duplicates;
+mod copy_candidates;
 mod ctf_export;
 mod ctf_mirror;
 #[path = "../ctf_sidecar/mod.rs"]
@@ -79,12 +80,14 @@ fn dispatch(input: &str) -> Result<Value> {
         "ctf_annotations_deactivate_pinned" => ctf_annotations::deactivate(&v)?,
         "ctf_annotations_set_pinned" => ctf_annotations::set(&v)?,
         "ctf_duplicates_pinned" => ctf_duplicates::duplicates(&v)?,
+        "ctf_copy_candidates_pinned" => copy_candidates::linked(&v)?,
         "compact_catalog" => maintenance::compact_copy(&v)?,
         "validate_catalog" => maintenance::validate(&v)?,
         "import_ctf" => legacy::import(&mut Catalog::open(text(&v, "db")?)?, &v)?,
         "export_ctf" => legacy::export(&Catalog::open(text(&v, "db")?)?, &v)?,
         "ctf_info" => legacy::info(&v)?,
         "duplicates" => duplicates::duplicates(&Catalog::open(text(&v, "db")?)?, &v)?,
+        "copy_candidates" => copy_candidates::page(&Catalog::open(text(&v, "db")?)?, &v)?,
         "export_csv" | "export_parquet" | "export_json" => {
             exports::export(&Catalog::open(text(&v, "db")?)?, &v, op)?
         }
