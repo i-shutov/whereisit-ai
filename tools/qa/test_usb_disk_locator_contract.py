@@ -23,18 +23,20 @@ class DiskLocatorWiringTests(unittest.TestCase):
         copy = MAC.split("if let pending = self.pendingMountCopy {", 1)[1].split(
             "if let pending = self.pendingConnectedCopyFocus {", 1
         )[0]
-        self.assertIn("let secondMatches = secondProbe.filter({ $0.id == verifiedID })", copy)
-        self.assertIn("secondMatches.count == 1", copy)
         self.assertIn(
-            "secondMatches[0].currentMount == mounted.currentMount", copy
+            "let freshMatch = secondProbe.first(where: { $0.id == verifiedID })", copy
         )
+        self.assertIn("secondProbe.filter({ $0.id == verifiedID }).count == 1", copy)
+        self.assertIn("freshMatch.currentMount == mounted.currentMount", copy)
         self.assertNotIn("$0.id == verifiedID && $0.currentMount", copy)
         pair = MAC.split("// Reprobe after the modal", 1)[1].split(
             "let scope = physicalScope", 1
         )[0]
-        self.assertIn("let freshMatches = freshProbe.filter({ $0.id == candidate.id })", pair)
-        self.assertIn("freshMatches.count == 1", pair)
-        self.assertIn("freshMatches[0].currentMount == candidate.currentMount", pair)
+        self.assertIn(
+            "let freshMatch = freshProbe.first(where: { $0.id == candidate.id })", pair
+        )
+        self.assertIn("freshProbe.filter({ $0.id == candidate.id }).count == 1", pair)
+        self.assertIn("freshMatch.currentMount == candidate.currentMount", pair)
 
 
     def test_windows_selection_is_driven_by_current_page(self):

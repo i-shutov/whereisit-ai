@@ -853,9 +853,9 @@ private struct CopyReturnContext {
                       let secondProbe = self.scanPhysicalVolumes(),
                       // Count the UUID itself, NOT UUID+path: a clone may
                       // appear at another mount between the two OS probes.
-                      let secondMatches = secondProbe.filter({ $0.id == verifiedID }),
-                      secondMatches.count == 1,
-                      secondMatches[0].currentMount == mounted.currentMount else {
+                      let freshMatch = secondProbe.first(where: { $0.id == verifiedID }),
+                      secondProbe.filter({ $0.id == verifiedID }).count == 1,
+                      freshMatch.currentMount == mounted.currentMount else {
                     self.status = "Current OS mount root NOT verified; source, pairing or USB volume changed."
                     return
                 }
@@ -929,9 +929,9 @@ private struct CopyReturnContext {
         guard let freshProbe = scanPhysicalVolumes(),
               // Reject a same-UUID clone at ANY other mount, even when the
               // originally selected UUID+path still matches exactly once.
-              let freshMatches = freshProbe.filter({ $0.id == candidate.id }),
-              freshMatches.count == 1,
-              freshMatches[0].currentMount == candidate.currentMount else {
+              let freshMatch = freshProbe.first(where: { $0.id == candidate.id }),
+              freshProbe.filter({ $0.id == candidate.id }).count == 1,
+              freshMatch.currentMount == candidate.currentMount else {
             physicalStates = [:]
             status = "OS volume changed during confirmation; pairing refused. Refresh mounts."
             return
