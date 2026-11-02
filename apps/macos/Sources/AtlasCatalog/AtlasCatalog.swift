@@ -457,6 +457,28 @@ private struct CopyReturnContext {
             else { return [] }
             return volumes.filter { $0.id == requestedID }
         }
+        // Reserved audit filters match exact catalog IDs only; failed or
+        // pending native OS probes downgrade everything to unverified.
+        let lower = needle.lowercased()
+        if lower.hasPrefix("state:") {
+            let requested = String(lower.dropFirst(6)).trimmingCharacters(in: .whitespaces)
+            guard ["connected", "offline", "conflict", "unverified"].contains(requested)
+            else { return [] }
+            return volumes.filter { physicalState($0.id) == requested }
+        }
+        if lower.hasPrefix("tag:") {
+            let requested = String(lower.dropFirst(4)).trimmingCharacters(in: .whitespaces)
+            switch requested {
+            case "missing":
+                return volumes.filter { shelfLabel($0.id).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            case "shared":
+                return volumes.filter { disk in
+                    shelfTagConflicts[disk.id]?.contains(where: { $0 != disk.id }) ?? false
+                }
+            default:
+                return []
+            }
+        }
         return volumes.filter {
             $0.label.localizedStandardContains(needle) || String($0.id).contains(needle)
                 || (shelfLabels[$0.id] ?? "").localizedStandardContains(needle)
@@ -472,6 +494,38 @@ private struct CopyReturnContext {
     func candidateRegisterAccessibility(_ disk: Volume) -> String {
         let tag = shelfLabel(disk.id)
         return "Catalog disk number \(disk.id), \(disk.label). \(candidateRegisterCount(disk.id)) recorded name and size metadata candidates, not verified file copies. Owner sticker or shelf \(tag.isEmpty ? "not assigned" : tag). Last OS check: \(candidateCopyOSCaption(disk.id)). \(shelfConflictCaption(disk.id) ?? ""). File contents not compared."
+    }
+    var registerAuditCounts: (connected: Int, offline: Int, conflict: Int, unknown: Int, missing: Int, shared: Int) {
+        var counts = (connected: 0, offline: 0, conflict: 0, unknown: 0, missing: 0, shared: 0)
+        for disk in volumes {
+            switch physicalState(disk.id) {
+            case "connected": counts.connected += 1
+            case "offline": counts.offline += 1
+            case "conflict": counts.conflict += 1
+            default: counts.unknown += 1
+            }
+            if shelfLabel(disk.id).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                counts.missing += 1
+            }
+            if shelfTagConflicts[disk.id]?.contains(where: { $0 != disk.id }) == true {
+                counts.shared += 1
+            }
+        }
+        return counts
+    }
+    var registerAuditCaption: String {
+        let c = registerAuditCounts
+        return "OS ✓\(c.connected) ○\(c.offline) !\(c.conflict) ?\(c.unknown) • no tag \(c.missing) shared \(c.shared)"
+    }
+    var registerAuditAccessibility: String {
+        let c = registerAuditCounts
+        return "Last OS probe: \(c.connected) explicitly paired and OS-verified, \(c.offline) paired but absent, \(c.conflict) identity conflicts, \(c.unknown) not verified. \(c.missing) missing owner sticker and \(c.shared) disks using a shared sticker. No file contents checked."
+    }
+    func showPhysicalStateInRegister(_ state: String) {
+        guard state == "connected" || state == "unverified" else { return }
+        diskFilter = "state:" + state
+        refreshPhysicalPresence() // asynchronous: old positive badges cleared immediately
+        status = "Filtering catalog disk register by a fresh OS UUID check. Search and file selection unchanged; no file contents verified."
     }
     func revealCopyCandidateDisksInRegister() {
         guard copySourceID != nil, !copyDiskGroups.isEmpty else {
@@ -577,7 +631,15 @@ private struct CopyReturnContext {
         }
     }
 
-    func physicalState(_ id: Int64) -> String { physicalStates[id] ?? "unverified" }
+    func physicalState(_ id: Int64) -> String {
+        guard physicalProbeOK else { return "unverified" }
+        switch physicalStates[id] {
+        case "connected": return "connected"
+        case "offline": return "offline"
+        case "conflict": return "conflict"
+        default: return "unverified"
+        }
+    }
     func candidateCopyOSCaption(_ id: Int64) -> String {
         switch physicalState(id) {
         case "connected": return "OS verified now"
@@ -1850,6 +1912,18 @@ private struct CopyReturnContext {
                         Text("DISKS • \(model.visibleVolumes.count)/\(model.volumes.count)")
                             .font(.caption.bold()).foregroundStyle(.secondary)
                         Spacer(minLength: 0)
+                        Button {
+                            model.showPhysicalStateInRegister("connected")
+                        } label: { Image(systemName: "checkmark.circle") }
+                        .keyboardShortcut("o", modifiers: [.command, .shift])
+                        .accessibilityLabel("Filter register to freshly OS-verified connected catalog disks")
+                        .help("Refresh OS UUIDs; show only explicitly paired connected disks (Command-Shift-O)")
+                        Button {
+                            model.showPhysicalStateInRegister("unverified")
+                        } label: { Image(systemName: "questionmark.circle") }
+                        .keyboardShortcut("u", modifiers: [.command, .shift])
+                        .accessibilityLabel("Filter register to catalog disks without verified physical identity")
+                        .help("Refresh OS UUIDs; show unverified disks, including scan failures (Command-Shift-U)")
                         Button("Candidates") {
                             model.revealCopyCandidateDisksInRegister()
                         }
@@ -1866,11 +1940,16 @@ private struct CopyReturnContext {
                         .accessibilityLabel("Focus disk register filter")
                         .help("Filter registered disk labels or catalog IDs (Command-L)")
                     }.padding(.horizontal, 6)
+                    Text(model.registerAuditCaption)
+                        .font(.caption2).foregroundStyle(.secondary)
+                        .lineLimit(1).minimumScaleFactor(0.75)
+                        .accessibilityLabel(model.registerAuditAccessibility)
+                        .padding(.horizontal, 6)
                     HStack(spacing: 4) {
                         TextField("Filter disk label / ID", text: $model.diskFilter)
                             .focused($diskFilterFocused)
                             .accessibilityLabel("Filter catalog disk register")
-                            .help("Filter only left register; id:42 isolates exact disk 42; copies: shows current candidate disks. Global search unchanged.")
+                            .help("Register only: id:42, copies:, state:connected/offline/conflict/unverified, tag:missing/shared. Search scope unchanged.")
                         if !model.diskFilter.isEmpty {
                             Button {
                                 model.diskFilter = ""

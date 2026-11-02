@@ -329,3 +329,9 @@ stale selection and missing/zero/invalid sizes. Linked original CTF generation
 is SHA-verified per request as before. See
 [UX18 runbook](qa/UX18_SAME_SIZE_RENAMED_CANDIDATES_20261102.md).
 Physical GUI QA and real 3M-row search SLO remain unverified.
+
+## UX19 — physical disk audit (2026-11-02)
+
+The native left register adds last OS-checked counts for **connected** (only an explicitly paired and independently observed current OS filesystem UUID), **paired offline** (identity absent in a complete OS scan), **conflict** (cloned/colliding UUID or pairing), and **unverified** (unpaired/failed/pending scan). Separate counts flag disks with missing/shared private shelf stickers, which are retrieval hints, never hardware evidence. These are audit counts of registered catalog disks, **not live file counts**.
+
+Both clients support view-only register filters \`state:connected\`, \`state:offline\`, \`state:conflict\`, \`state:unverified\`, \`tag:missing\`, \`tag:shared\`. Reserved invalid state/tag expressions match no disks (do not become fuzzy labels). Windows **Ctrl+Shift+O/U** and macOS **Command+Shift+O/U** run a fresh OS volume UUID check and filter to connected/unverified respectively. They do not affect current search query, selected disk browsing scope or file selection. Failed/incomplete probes make every physical state unverified; they never assert offline or connected from a historical mount letter. Operator must pair each catalog disk explicitly; duplicate filesystem UUIDs are not unique physical-disk serials. See [UX19 runbook](qa/UX19_PHYSICAL_REGISTER_AUDIT_20261102.md). CI-native builds/unit tests are not human USB/keyboard/a11y acceptance.

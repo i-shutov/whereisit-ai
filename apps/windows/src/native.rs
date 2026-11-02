@@ -51,6 +51,8 @@ const FOCUS_RESULTS: usize = 140;
 const VIDEO_FILTER: usize = 141;
 const SAME_FILENAME: usize = 143;
 const SAME_RECORDED_SIZE: usize = 144;
+const PHYSICAL_CONNECTED_FILTER: usize = 145;
+const PHYSICAL_UNVERIFIED_FILTER: usize = 146;
 const SEARCH_BOX: usize = 130;
 // Win32 GetDriveTypeW standard result codes; windows-sys 0.61 does not export these here.
 // Unknown/missing roots mean a potentially incomplete OS snapshot, never "offline".
@@ -430,6 +432,109 @@ fn filtered_disk_indices(
         .collect()
 }
 
+// Register audit works on an OS-probed, explicitly paired catalog ID only.
+// Historical mount paths, catalog labels and shelf tags cannot assert presence.
+fn audited_physical_state<'a>(
+    disk: i64,
+    states: &'a HashMap<i64, String>,
+    probe_ok: bool,
+) -> &'a str {
+    if !probe_ok {
+        return "unverified";
+    }
+    match states.get(&disk).map(String::as_str) {
+        Some("connected") => "connected",
+        Some("offline") => "offline",
+        Some("conflict") => "conflict",
+        _ => "unverified",
+    }
+}
+
+// None means an ordinary label/ID filter handled by filtered_disk_indices.
+// Invalid reserved prefixes match NOTHING; they never fall through to a fuzzy ID.
+fn audited_register_filter_indices(
+    volumes: &[Value],
+    shelves: &HashMap<i64, String>,
+    shared_stickers: &HashMap<i64, Vec<i64>>,
+    states: &HashMap<i64, String>,
+    probe_ok: bool,
+    filter: &str,
+) -> Option<Vec<usize>> {
+    let needle = filter.trim().to_lowercase();
+    let state = needle.strip_prefix("state:");
+    let tag = needle.strip_prefix("tag:");
+    if state.is_none() && tag.is_none() {
+        return None;
+    }
+    Some(
+        volumes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, volume)| {
+                let disk = id(volume).filter(|disk| *disk > 0)?;
+                let matched = if let Some(requested) = state {
+                    match requested.trim() {
+                        "connected" | "offline" | "conflict" | "unverified" => {
+                            audited_physical_state(disk, states, probe_ok) == requested.trim()
+                        }
+                        _ => false,
+                    }
+                } else {
+                    match tag.unwrap_or_default().trim() {
+                        "missing" => !shelves
+                            .get(&disk)
+                            .is_some_and(|label| !label.trim().is_empty()),
+                        "shared" => shared_stickers
+                            .get(&disk)
+                            .is_some_and(|members| members.iter().any(|other| *other != disk)),
+                        _ => false,
+                    }
+                };
+                matched.then_some(index)
+            })
+            .collect(),
+    )
+}
+
+// Complete registered catalog, not just the currently filtered/selected row.
+// Counts are snapshots from the last successfully checked OS response; "unknown"
+// includes all disks if the native OS scan was incomplete.
+fn register_audit_counts(
+    volumes: &[Value],
+    shelves: &HashMap<i64, String>,
+    shared_stickers: &HashMap<i64, Vec<i64>>,
+    states: &HashMap<i64, String>,
+    probe_ok: bool,
+) -> [usize; 6] {
+    // connected, paired offline, conflict, unverified, no sticker, shared sticker
+    let mut counts = [0usize; 6];
+    for volume in volumes {
+        let Some(disk) = id(volume).filter(|disk| *disk > 0) else {
+            continue;
+        };
+        let state_index = match audited_physical_state(disk, states, probe_ok) {
+            "connected" => 0,
+            "offline" => 1,
+            "conflict" => 2,
+            _ => 3,
+        };
+        counts[state_index] += 1;
+        if !shelves
+            .get(&disk)
+            .is_some_and(|label| !label.trim().is_empty())
+        {
+            counts[4] += 1;
+        }
+        if shared_stickers
+            .get(&disk)
+            .is_some_and(|members| members.iter().any(|other| *other != disk))
+        {
+            counts[5] += 1;
+        }
+    }
+    counts
+}
+
 // A view-only shortcut for the physical pickup workflow: IDs must come from
 // the current catalogued copy groups, never fuzzy labels or historical paths.
 // Candidate-register order is the physical pickup order: last OS observation,
@@ -500,8 +605,8 @@ fn reveal_disk_filter_for_row(
 #[cfg(test)]
 mod disk_register_filter_tests {
     use super::{
-        candidate_register_indices, filtered_disk_index_at_row, filtered_disk_indices,
-        reveal_disk_filter_for_row,
+        audited_register_filter_indices, candidate_register_indices, filtered_disk_index_at_row,
+        filtered_disk_indices, register_audit_counts, reveal_disk_filter_for_row,
     };
     use serde_json::json;
     use std::collections::HashMap;
@@ -540,6 +645,58 @@ mod disk_register_filter_tests {
         assert_eq!(filtered_disk_index_at_row(&visible, 3), None);
         assert_eq!(filtered_disk_index_at_row(&visible, -1), None);
     }
+
+    #[test]
+    fn physical_audit_filters_keep_exact_ids_and_fail_closed_on_scan_failure() {
+        let volumes = vec![
+            json!({"id":4,"label":"Copy of disk 42"}),
+            json!({"id":42,"label":"Archive"}),
+            json!({"id":142,"label":"Archive"}),
+            json!({"id":99,"label":"Other"}),
+        ];
+        let shelves = HashMap::from([
+            (42, "Полка А".to_owned()),
+            (142, "Полка А".to_owned()),
+        ]);
+        let shared = HashMap::from([
+            (42, vec![42, 142]),
+            (142, vec![42, 142]),
+        ]);
+        let states = HashMap::from([
+            (4, "offline".to_owned()),
+            (42, "connected".to_owned()),
+            (142, "conflict".to_owned()),
+        ]);
+        let audit = |probe_ok, filter| {
+            audited_register_filter_indices(
+                &volumes, &shelves, &shared, &states, probe_ok, filter,
+            )
+            .unwrap()
+        };
+        // Never match a label containing 42 to the exact observed disk #42.
+        assert_eq!(audit(true, "state:connected"), vec![1]);
+        assert_eq!(audit(true, "state:offline"), vec![0]);
+        assert_eq!(audit(true, "state:conflict"), vec![2]);
+        assert_eq!(audit(true, "state:unverified"), vec![3]);
+        assert!(audit(true, "state:unknown").is_empty());
+        assert_eq!(audit(true, "tag:missing"), vec![0, 3]);
+        assert_eq!(audit(true, "tag:shared"), vec![1, 2]);
+        assert!(audit(true, "tag:not-valid").is_empty());
+        assert_eq!(filtered_disk_index_at_row(&audit(true, "state:connected"), 1), Some(1));
+        // Failed/incomplete OS probe must clear every connected/offline claim.
+        assert!(audit(false, "state:connected").is_empty());
+        assert!(audit(false, "state:offline").is_empty());
+        assert_eq!(audit(false, "state:unverified"), vec![0, 1, 2, 3]);
+        assert_eq!(
+            register_audit_counts(&volumes, &shelves, &shared, &states, true),
+            [1, 1, 1, 1, 2, 2]
+        );
+        assert_eq!(
+            register_audit_counts(&volumes, &shelves, &shared, &states, false),
+            [0, 0, 0, 4, 2, 2]
+        );
+    }
+
     #[test]
     fn candidate_only_register_uses_exact_ids_and_preserves_original_row_mapping() {
         let volumes = vec![
@@ -3270,14 +3427,31 @@ impl App {
             } else {
                 vec![]
             }
+        } else if let Some(indices) = audited_register_filter_indices(
+            &self.volumes,
+            &self.shelf_labels,
+            &self.shelf_tag_conflicts,
+            &self.physical_states,
+            self.physical_probe_ok,
+            &self.disk_filter_query,
+        ) {
+            indices
         } else {
             filtered_disk_indices(&self.volumes, &self.shelf_labels, &self.disk_filter_query)
         };
         SendMessageW(self.disks, LB_RESETCONTENT, 0, 0);
+        let audit = register_audit_counts(
+            &self.volumes,
+            &self.shelf_labels,
+            &self.shelf_tag_conflicts,
+            &self.physical_states,
+            self.physical_probe_ok,
+        );
         let global_label = format!(
-            "All disks / global search ({} of {})",
+            "All disks ({}/{}) | OS +{} -{} !{} ?{} | stickers missing {} shared {}",
             self.visible_disk_indices.len(),
-            self.volumes.len()
+            self.volumes.len(),
+            audit[0], audit[1], audit[2], audit[3], audit[4], audit[5],
         );
         SendMessageW(
             self.disks,
@@ -4204,6 +4378,21 @@ impl App {
                 self.status("Register shows exact IDs of candidate disks only. Search, selected file and OS pairing are unchanged; Ctrl+L clears filter.");
             }
             COPY_CONNECTED => self.focus_sole_connected_copy(),
+            PHYSICAL_CONNECTED_FILTER | PHYSICAL_UNVERIFIED_FILTER => {
+                // First check current OS volumes. A failed probe cannot retain
+                // a prior connected result in the left view.
+                self.refresh_physical_presence();
+                let filter = if command == PHYSICAL_CONNECTED_FILTER {
+                    "state:connected"
+                } else {
+                    "state:unverified"
+                };
+                self.disk_filter_query = filter.to_owned();
+                self.text(self.disk_filter, filter);
+                self.populate_physical_disk_list();
+                SetFocus(self.disks);
+                self.status("Physical register audit: only last OS-checked IDs, no recorded path/label inference. Search scope unchanged; Ctrl+L clears.");
+            }
             COPY_PAGE_MANIFEST => {
                 if !self.page_ready || self.copy_source.is_none() {
                     self.status("Wait for the current candidate page to finish verifying before copying paths.");
@@ -5138,6 +5327,18 @@ pub fn run() {
                 AppendMenuW(
                     physical,
                     MF_STRING,
+                    PHYSICAL_CONNECTED_FILTER,
+                    wide("Show OS-verified connected disks in register\tCtrl+Shift+O").as_ptr(),
+                );
+                AppendMenuW(
+                    physical,
+                    MF_STRING,
+                    PHYSICAL_UNVERIFIED_FILTER,
+                    wide("Show unverified disks in register\tCtrl+Shift+U").as_ptr(),
+                );
+                AppendMenuW(
+                    physical,
+                    MF_STRING,
                     PHYSICAL_PAIR,
                     wide("Pair selected catalog disk with OS volume...").as_ptr(),
                 );
@@ -5312,6 +5513,24 @@ pub fn run() {
                 && message.wParam == b'M' as usize
             {
                 (*app).command(COPY_PAGE_MANIFEST, 0);
+                continue;
+            }
+            // Ctrl+Shift+O/U perform a fresh OS scan and filter ONLY the
+            // register to paired connected or not-verified catalog disk IDs.
+            // Explicitly never alter the search query, disk scope, or pairing.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && GetKeyState(VK_SHIFT as i32) < 0
+                && (message.wParam == b'O' as usize || message.wParam == b'U' as usize)
+            {
+                (*app).command(
+                    if message.wParam == b'O' as usize {
+                        PHYSICAL_CONNECTED_FILTER
+                    } else {
+                        PHYSICAL_UNVERIFIED_FILTER
+                    },
+                    0,
+                );
                 continue;
             }
             // Ctrl+L filters the disk register, including private shelf tags,
