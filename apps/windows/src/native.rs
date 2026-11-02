@@ -786,8 +786,14 @@ mod verified_copy_focus_tests {
             (7, "offline".to_owned()),
             (44, "conflict".to_owned()),
         ]);
-        let plan = super::candidate_disk_pickup_list("Movie\r\nspoof.mkv", &groups, &tags, &states, &HashMap::new())
-            .unwrap();
+        let plan = super::candidate_disk_pickup_list(
+            "Movie\r\nspoof.mkv",
+            &groups,
+            &tags,
+            &states,
+            &HashMap::new(),
+        )
+        .unwrap();
         let positions = [42, 7, 142, 44].map(|disk| plan.find(&format!("#{disk} •")).unwrap());
         assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
         assert!(plan.contains("#42 • sticker: Полка Д • Same title"));
@@ -798,7 +804,9 @@ mod verified_copy_focus_tests {
         assert!(plan.contains("Movie  spoof.mkv"));
         assert!(!plan.contains("Movie\r\nspoof.mkv"));
         assert!(plan.contains("do NOT auto-delete"));
-        assert!(super::candidate_disk_pickup_list("x", &[], &tags, &states, &HashMap::new()).is_none());
+        assert!(
+            super::candidate_disk_pickup_list("x", &[], &tags, &states, &HashMap::new()).is_none()
+        );
     }
 
     #[test]

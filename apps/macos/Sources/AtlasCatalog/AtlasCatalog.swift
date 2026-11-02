@@ -1733,8 +1733,9 @@ private struct CopyReturnContext {
                             VStack(alignment: .leading, spacing: 1) {
                                 Label(disk.label, systemImage: "externaldrive")
                                 if model.shelfConflictCaption(disk.id) != nil {
-                                    Text("SHARED STICKER — check other catalog disk IDs in locator")
+                                    Text(model.shelfConflictCaption(disk.id) ?? "SHARED STICKER")
                                         .font(.caption2).foregroundStyle(.orange)
+                                        .accessibilityLabel(model.shelfConflictCaption(disk.id) ?? "SHARED STICKER")
                                 }
                                 Text("\(model.shelfLabel(disk.id).isEmpty ? "" : "Shelf: " + model.shelfLabel(disk.id) + " • ")\(disk.entry_count ?? 0) items • \(model.physicalCaption(disk.id))")
                                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)

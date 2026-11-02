@@ -308,10 +308,7 @@ fn shelf_collisions(stored: &[(i64, String)]) -> Vec<Value> {
             tags.entry(normalized).or_default().push(*disk);
         }
     }
-    let mut collisions: Vec<Vec<i64>> = tags
-        .into_values()
-        .filter(|ids| ids.len() > 1)
-        .collect();
+    let mut collisions: Vec<Vec<i64>> = tags.into_values().filter(|ids| ids.len() > 1).collect();
     for ids in &mut collisions {
         ids.sort_unstable();
     }
@@ -475,11 +472,20 @@ mod tests {
     #[test]
     fn repeated_stickers_are_scoped_warnings_not_mount_evidence() {
         let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("user.sqlite").to_string_lossy().into_owned();
+        let path = tmp
+            .path()
+            .join("user.sqlite")
+            .to_string_lossy()
+            .into_owned();
         let base = json!({"op":"physical_shelf_labels","user_store":path,
             "catalog_key":"ctf:synthetic-a","platform":"windows","volume_ids":[1,2,3,4],
             "observed_ids":[],"probe_ok":true});
-        for (disk, tag) in [(1,"Стеллаж   Б"),(2,"стеллаж б"),(3,"USB-04"),(4,"usb-04")] {
+        for (disk, tag) in [
+            (1, "Стеллаж   Б"),
+            (2, "стеллаж б"),
+            (3, "USB-04"),
+            (4, "usb-04"),
+        ] {
             let mut save = base.clone();
             save["op"] = json!("physical_shelf_label_set");
             save["volume_id"] = json!(disk);
@@ -492,7 +498,7 @@ mod tests {
             json!([{"volume_ids":[1,2]},{"volume_ids":[3,4]}])
         );
         let mut subset = base.clone();
-        subset["volume_ids"] = json!([1,3]);
+        subset["volume_ids"] = json!([1, 3]);
         assert_eq!(request(subset)["data"]["collisions"], json!([]));
         let mut other = base.clone();
         other["catalog_key"] = json!("ctf:synthetic-b");
