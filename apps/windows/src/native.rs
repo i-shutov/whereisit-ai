@@ -4317,7 +4317,9 @@ impl App {
             if (result as isize) > 32 {
                 self.status("Explorer accepted the OS-verified disk root request; catalogued files and bytes remain UNVERIFIED.");
             } else {
-                self.status("Explorer could not open the verified disk root. Recheck the physical volume.");
+                self.status(
+                    "Explorer could not open the verified disk root. Recheck the physical volume.",
+                );
             }
         } else {
             self.text(self.locator, &root);
