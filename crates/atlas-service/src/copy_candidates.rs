@@ -33,7 +33,12 @@ pub(crate) fn page(catalog: &Catalog, request: &Value) -> Result<Value> {
     let other_disks_only = match request.get("other_disks_only") {
         None => false,
         Some(Value::Bool(flag)) => *flag,
-        _ => return Err(Error::new("invalid_request", "other_disks_only must be a boolean")),
+        _ => {
+            return Err(Error::new(
+                "invalid_request",
+                "other_disks_only must be a boolean",
+            ))
+        }
     };
     // All-match disk counts are independent of page focus; catalog labels are
     // not evidence that any USB disk is currently connected.

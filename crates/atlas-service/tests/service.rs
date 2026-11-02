@@ -272,8 +272,10 @@ fn other_disk_copy_candidates_dispatch_excludes_source_volume_before_paging() {
     assert_eq!(legacy["ok"], true, "{legacy}");
     assert_eq!(legacy["data"]["total"], 2);
     assert_eq!(legacy["data"]["distinct_disks"], 2);
-    let other = call(json!({"op":"copy_candidates","db":db,"entry_id":selected_id,
-        "other_disks_only":true,"offset":0,"limit":1}));
+    let other = call(
+        json!({"op":"copy_candidates","db":db,"entry_id":selected_id,
+        "other_disks_only":true,"offset":0,"limit":1}),
+    );
     assert_eq!(other["ok"], true, "{other}");
     assert_eq!(other["data"]["all_total"], 2);
     assert_eq!(other["data"]["other_total"], 1);

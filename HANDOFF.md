@@ -1,3 +1,9 @@
+## UX21 exact-HEAD CI formatting repair (2026-11-02; rerun required)
+
+Initial UX21 [SHA bd67f2d](https://github.com/i-shutov/whereisit-ai/commit/bd67f2d4bfdc702ccc69b3efa0fdfd50757b36de) passed Rust workspace tests and native source-wiring regression but failed **cargo fmt --all -- --check** in [native CI run 41416845087](https://github.com/i-shutov/whereisit-ai/actions/runs/41416845087) and [offline-kit run 41416845100](https://github.com/i-shutov/whereisit-ai/actions/runs/41416845100). Exact diff: match-arm wrapping in `copy_candidates.rs`, one pinned CTF assertion, and one service-integration JSON call. Applied precisely the reported formatting in the SAME draft PR #57, without disabling checks. New exact-HEAD native four-platform, offline-kit, integration and upgrade jobs must be verified before a green claim. Historic real-owner CTF acceptance is separate; no real USB/visual or stable 1.0 claim.
+
+---
+
 ## UX21 — true other-media copy scope, native Win32 + SwiftUI (2026-11-02; CI pending)
 
 Draft PR #57 fixes a user-visible mismatch: **Find copies on other disks** formerly returned metadata candidates from the source catalog disk itself. The optional read-only service flag `other_disks_only: true` now removes **all** records on the source `volume_id` before SQL LIMIT/OFFSET, grouping and per-disk focus. `all_total` still denotes the complete name+recorded-size class, `other_total` counts external candidates only, and the unflagged API remains backward compatible. Both native clients explicitly request this scope for ordinary SQLite and SHA-pinned linked CTF; status/scope captions now say **OTHER catalog disks**. Zero matches on other media is a legitimate zero-result answer, not evidence of missing file bytes. Physical OS verification, pairing, sidecar tags and personal annotations remain independent and unchanged.

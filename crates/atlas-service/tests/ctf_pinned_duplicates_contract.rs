@@ -489,7 +489,10 @@ fn selected_copy_navigation_spans_disks_and_rechecks_generation_per_page() {
     assert_eq!(other["data"]["result"]["all_total"], 2);
     assert_eq!(other["data"]["result"]["other_total"], 1);
     assert_eq!(other["data"]["result"]["distinct_disks"], 1);
-    assert_eq!(other["data"]["result"]["items"][0]["volume_id"], external_disk);
+    assert_eq!(
+        other["data"]["result"]["items"][0]["volume_id"],
+        external_disk
+    );
     assert_eq!(other["data"]["result"]["verified"], false);
     let focus = groups[1]["volume_id"].as_i64().unwrap();
     let focused = call(json!({
