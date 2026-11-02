@@ -4674,11 +4674,15 @@ impl App {
                     );
                     return;
                 };
-                if let Some(pinned) = self.linked_request("ctf_volumes_pinned") {
-                    // Revalidate linked CTF generation asynchronously; never
-                    // freeze the Win32 UI waiting for a large source read.
-                    self.pending_mount_root = Some((catalog_id, self.generation));
-                    self.call("mount_root_source", pinned);
+                if self.linked_mode() {
+                    if let Some(pinned) = self.linked_request("ctf_volumes_pinned") {
+                        // Revalidate linked CTF generation asynchronously; never
+                        // freeze Win32 while the source reader checks the SHA.
+                        self.pending_mount_root = Some((catalog_id, self.generation));
+                        self.call("mount_root_source", pinned);
+                    } else {
+                        self.status("Linked CTF generation cannot be checked; OS root NOT copied.");
+                    }
                 } else {
                     self.copy_verified_os_mount_root(catalog_id);
                 }

@@ -564,6 +564,8 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn('let secondProbe = self.scanPhysicalVolumes()', MAC)
         self.assertIn('self.physicalState(pending.disk) == "connected"', MAC)
         self.assertIn('Button("Copy current OS root")', MAC)
+        self.assertIn('Button("OS root") { model.copyCurrentOSMountRoot() }', MAC)
+        self.assertIn('if self.linked_mode() {', WIN)
         self.assertIn('.keyboardShortcut("h", modifiers: [.command, .shift])', MAC)
         self.assertNotIn('file://' + ' + entry.relative_path', WIN + MAC)
 

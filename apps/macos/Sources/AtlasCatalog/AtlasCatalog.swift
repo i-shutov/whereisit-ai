@@ -1805,7 +1805,6 @@ private struct CopyReturnContext {
                 }
                 Button("Copy current OS root") { model.copyCurrentOSMountRoot() }
                     .disabled(model.selectedDiskForPairing == nil)
-                    .keyboardShortcut("h", modifiers: [.command, .shift])
                     .accessibilityLabel("Copy current OS volume root, only after verifying explicit pairing")
                     .help("Recheck linked CTF SHA, OS UUID and mount; copies only the current mount root, NOT a file path (Command-Shift-H)")
                 Button("Refresh OS mounts") { model.refreshPhysicalPresence() }
@@ -1948,6 +1947,13 @@ private struct CopyReturnContext {
                 .keyboardShortcut("e", modifiers: [.command])
                 .accessibilityLabel("Focus verified loaded search results")
                 .help("Focus the current results page without changing the disk search scope (Command-E)")
+                // Always visible (including 880px with the inspector collapsed).
+                // Do not attach the only Command-Shift-H handler to a hidden pane.
+                Button("OS root") { model.copyCurrentOSMountRoot() }
+                    .disabled(model.selectedDiskForPairing == nil)
+                    .keyboardShortcut("h", modifiers: [.command, .shift])
+                    .accessibilityLabel("Copy freshly OS-verified volume root")
+                    .help("Recheck CTF generation and paired live mount; never infer a historical file path")
                 Button(locatorVisible ? "Hide locator" : "Show locator") {
                     locatorVisible.toggle()
                 }
