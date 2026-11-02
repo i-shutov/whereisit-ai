@@ -1,3 +1,9 @@
+## UX16 — native video-extension search preset (2026-11-02; exact-HEAD CI required)
+
+Draft PR #57 integrates indexed `type:video` catalog metadata predicate with Win32 Ctrl+Shift+V / SwiftUI Command+Shift+V and native toggle buttons. Global search, grouped OR query semantics, reversible editable text and linked-CTF source generation SHA verification remain intact. Synthetic two-disk Rust and dual-native source regressions plus [UX16 QA runbook](docs/qa/UX16_VIDEO_EXTENSION_SEARCH_20261102.md) added. This is **not** movie recognition, live USB file existence or content/hash equality. Human native UI/hardware acceptance and p95 150ms are unverified; no merge or stable 1.0.
+
+---
+
 ## UX15 — keyboard-first dense result table (2026-11-02; CI must verify exact HEAD)
 
 Draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57) now adds explicit catalogue **Kind** to the compact native result tables and to loaded-page-only sorting in Win32 and SwiftUI. Windows Ctrl+E and macOS Command+E move from search/register to the verified current results and select the first row only if none is selected; no stale page focus when a new query is loading. The associated Rust guards/tests, dual-native source regression and [UX15 manual QA runbook](docs/qa/UX15_DENSE_RESULTS_AND_FOCUS_20261102.md) cover page freshness, correct column indices, 880–1366px layout and keyboard/a11y review. These are catalogue metadata, not OS file presence or hash evidence. All CTF/physical pairings and private annotations remain unchanged. Rerun full exact-HEAD CI and installed upgrades; human USB/GUI tests, real SLO, historic CTF, signatures and stable 1.0 acceptance remain blocked. PR must stay draft/unmerged.

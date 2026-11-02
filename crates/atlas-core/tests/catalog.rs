@@ -362,3 +362,47 @@ fn bulk_import_collects_query_planner_statistics() {
     assert!(n > 0, "planner statistics missing after bulk import");
     assert_eq!(c.search("ext:flac", None, 0, 10).unwrap().total, 100);
 }
+
+#[test]
+fn video_extension_search_across_disconnected_disks_is_metadata_only() {
+    let d = tempfile::tempdir().unwrap();
+    let mut catalog = Catalog::open(d.path().join("video.sqlite")).unwrap();
+    let shelf_a = catalog
+        .bulk_import("Shelf A", "offline:a", |w| {
+            w.insert(&entry("Герой.mkv", 10))?;
+            w.insert(&entry("Герой.txt", 10))?;
+            Ok(())
+        })
+        .unwrap();
+    catalog
+        .bulk_import("Shelf B", "offline:b", |w| {
+            w.insert(&entry("Hero.MP4", 20))?;
+            w.insert(&entry("Hero.avi", 30))?;
+            w.insert(&entry("Guide.pdf", 40))?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(catalog.search("type:video", None, 0, 250).unwrap().total, 3);
+    assert_eq!(
+        catalog
+            .search("type:VIDEO", Some(shelf_a.id), 0, 250)
+            .unwrap()
+            .total,
+        1
+    );
+    assert_eq!(
+        catalog
+            .search("(name:Герой OR name:Hero) AND type:video", None, 0, 250)
+            .unwrap()
+            .total,
+        3
+    );
+    assert!(catalog.search("type:movie", None, 0, 250).is_err());
+    assert_eq!(
+        catalog
+            .search("type:video AND ext:pdf", None, 0, 250)
+            .unwrap()
+            .total,
+        0
+    );
+}

@@ -420,6 +420,21 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn('.keyboardShortcut("e", modifiers: [.command])', MAC)
         self.assertIn('if !ready { resultTableFocused = false }', MAC)
 
+    def test_ux16_video_preset_is_core_query_in_two_native_clients(self):
+        parser = (ROOT / "crates/atlas-core/src/query.rs").read_text(encoding="utf-8")
+        catalog = (ROOT / "crates/atlas-core/tests/catalog.rs").read_text(encoding="utf-8")
+        self.assertIn('"type" if v == "video" => Ok(VIDEO_EXTENSION_SQL.into())', parser)
+        self.assertIn('"type" => Err(Error::new(', parser)
+        self.assertIn('video_extension_search_across_disconnected_disks_is_metadata_only', catalog)
+        self.assertIn('fn toggle_video_query(', WIN)
+        self.assertIn('VIDEO_FILTER => {', WIN)
+        self.assertIn('self.command(FIND, 0);', WIN)
+        self.assertIn("message.wParam == b'V' as usize", WIN)
+        self.assertIn('func toggleVideoFormatSearch()', MAC)
+        self.assertIn('query = next', MAC)
+        self.assertIn('.keyboardShortcut("v", modifiers: [.command, .shift])', MAC)
+        self.assertIn('model.videoFilterActive ? "All formats" : "Video files"', MAC)
+
     def test_no_unverified_physical_drive_claims_in_locator(self):
         self.assertIn("Physical connection: NOT VERIFIED", WIN)
         self.assertIn("Physical connection not verified", MAC)

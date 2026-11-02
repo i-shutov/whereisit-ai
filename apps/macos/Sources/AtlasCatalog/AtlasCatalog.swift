@@ -227,6 +227,35 @@ private struct CopyReturnContext {
     @Published var pageSortDescending = false
     @Published var selection: Int64?
     @Published var query = ""
+    // This preset uses catalogued extensions; no movie identification or hash.
+    var videoFilterActive: Bool {
+        let current = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if current == "type:video" { return true }
+        let suffix = " AND type:video"
+        guard current.hasSuffix(suffix) else { return false }
+        let wrapped = String(current.dropLast(suffix.count))
+        return wrapped.hasPrefix("(") && wrapped.hasSuffix(")")
+    }
+    func toggleVideoFormatSearch() {
+        let current = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let next: String
+        if current == "type:video" {
+            next = ""
+        } else if videoFilterActive {
+            let wrapped = String(current.dropLast(" AND type:video".count))
+            next = String(wrapped.dropFirst().dropLast())
+        } else if current.isEmpty {
+            next = "type:video"
+        } else {
+            next = "(\(current)) AND type:video"
+        }
+        guard next.utf8.count <= 4096 else {
+            status = "Query would exceed 4096 UTF-8 bytes. Shorten it first."
+            return
+        }
+        query = next
+        search()
+    }
     var appliedQuery = ""
     @Published var status = "Opening catalog…"
     @Published var error: String?
@@ -1671,8 +1700,14 @@ private struct CopyReturnContext {
                 Button("Duplicates") { model.duplicates() }
             }
             HStack(spacing: 8) {
-                Text("AND  OR  NOT  ( )   name:  path:  ext:  size:  category:")
+                Text("AND  OR  NOT  ( )   name:  path:  ext:  type:video")
                     .foregroundStyle(.secondary)
+                Button(model.videoFilterActive ? "All formats" : "Video files") {
+                    model.toggleVideoFormatSearch()
+                }
+                .keyboardShortcut("v", modifiers: [.command, .shift])
+                .accessibilityLabel("Toggle extension-based video search across all catalogued disks")
+                .help("Filename extensions only, not film recognition or content hashes (Command-Shift-V)")
                 Spacer(minLength: 4)
                 Text(model.resultScopeCaption).lineLimit(1).truncationMode(.middle)
                     .accessibilityLabel("Current search scope")

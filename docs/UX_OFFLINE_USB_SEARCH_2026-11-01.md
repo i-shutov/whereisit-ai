@@ -306,3 +306,8 @@ selection exists; a pending/empty page cannot reactivate historical rows.
 See [manual UX15 runbook](qa/UX15_DENSE_RESULTS_AND_FOCUS_20261102.md).
 Build CI is not visual, accessibility, USB hardware or owner-performance QA;
 linked source stays read-only and generation pinned, stable 1.0 blocked.
+
+
+## UX16 — indexed metadata video-extension search (2026-11-02)
+
+Win32 Ctrl+Shift+V / SwiftUI Command+Shift+V toggle a visible, reversible `type:video` global search predicate, or `(<original>) AND type:video`, maintaining boolean OR precedence. The core matches 13 recorded filename extensions only. This is not film identification, byte equality, online file proof or a deletion suggestion. Linked CTF SHA-pinning/read-only and private disk identity stores remain unchanged. Synthetic tests and [manual UX16 runbook](qa/UX16_VIDEO_EXTENSION_SEARCH_20261102.md) included; real hardware, UI and performance SLO not accepted.

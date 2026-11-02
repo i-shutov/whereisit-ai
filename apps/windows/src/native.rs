@@ -48,6 +48,8 @@ const COPY_PICKUP_PLAN: usize = 137;
 const COPY_PAGE_MANIFEST: usize = 138;
 const COPY_REGISTER_FILTER: usize = 139;
 const FOCUS_RESULTS: usize = 140;
+const VIDEO_FILTER: usize = 141;
+const SEARCH_BOX: usize = 130;
 // Win32 GetDriveTypeW standard result codes; windows-sys 0.61 does not export these here.
 // Unknown/missing roots mean a potentially incomplete OS snapshot, never "offline".
 const DRIVE_UNKNOWN: u32 = 0;
@@ -97,6 +99,50 @@ fn string(v: &Value, key: &str) -> String {
 }
 fn id(v: &Value) -> Option<i64> {
     v.get("id").and_then(Value::as_i64)
+}
+
+// Reversible visible query predicate; this does not inspect live USB file bytes.
+fn video_filter_active(raw: &str) -> bool {
+    let query = raw.trim();
+    query == "type:video"
+        || query
+            .strip_suffix(" AND type:video")
+            .is_some_and(|base| base.starts_with('(') && base.ends_with(')'))
+}
+fn toggle_video_query(raw: &str) -> Option<String> {
+    let query = raw.trim();
+    let next = if query == "type:video" {
+        String::new()
+    } else if video_filter_active(query) {
+        let wrapped = query.strip_suffix(" AND type:video")?;
+        wrapped[1..wrapped.len() - 1].to_owned()
+    } else if query.is_empty() {
+        "type:video".to_owned()
+    } else {
+        format!("({query}) AND type:video")
+    };
+    (next.len() <= 4096).then_some(next)
+}
+#[cfg(test)]
+mod video_query_tests {
+    use super::{toggle_video_query, video_filter_active};
+
+    #[test]
+    fn reversible_unicode_or_query_and_empty_query() {
+        let base = "name:Герой OR name:Hero";
+        let expanded = toggle_video_query(base).unwrap();
+        assert_eq!(expanded, "(name:Герой OR name:Hero) AND type:video");
+        assert!(video_filter_active(&expanded));
+        assert_eq!(toggle_video_query(&expanded).unwrap(), base);
+        assert_eq!(toggle_video_query("").unwrap(), "type:video");
+        assert_eq!(toggle_video_query("type:video").unwrap(), "");
+    }
+
+    #[test]
+    fn no_truncation_of_overlong_query() {
+        assert!(toggle_video_query(&"я".repeat(2048)).is_none());
+        assert!(!video_filter_active("name:video"));
+    }
 }
 
 // Header sorting is intentionally limited to the loaded result page.
@@ -2440,6 +2486,24 @@ impl App {
     unsafe fn status(&self, text: &str) {
         self.text(self.status, text);
     }
+    unsafe fn search_edit_text(&self) -> String {
+        let len = GetWindowTextLengthW(self.search);
+        let mut buffer = vec![0u16; len as usize + 1];
+        GetWindowTextW(self.search, buffer.as_mut_ptr(), len + 1);
+        String::from_utf16_lossy(&buffer[..len as usize])
+    }
+    unsafe fn update_video_filter_caption(&self) {
+        if let Some((_, button)) = self.buttons.iter().find(|(id, _)| *id == VIDEO_FILTER) {
+            self.text(
+                *button,
+                if video_filter_active(&self.search_edit_text()) {
+                    "All &formats"
+                } else {
+                    "&Video files"
+                },
+            );
+        }
+    }
     fn linked_request(&self, operation: &str) -> Option<Value> {
         let source = self.linked_ctf.as_ref()?;
         let generation = self.linked_generation.as_ref()?;
@@ -3853,6 +3917,18 @@ impl App {
                 }
             }
             SHELF_SAVE => self.save_shelf_label(),
+            SEARCH_BOX if notification == EN_CHANGE as usize => {
+                self.update_video_filter_caption();
+            }
+            VIDEO_FILTER => {
+                if let Some(next) = toggle_video_query(&self.search_edit_text()) {
+                    self.text(self.search, &next);
+                    self.update_video_filter_caption();
+                    self.command(FIND, 0);
+                } else {
+                    self.status("Query would exceed 4096 UTF-8 bytes. Shorten it first.");
+                }
+            }
             DISK_FILTER if notification == EN_CHANGE as usize => {
                 let len = GetWindowTextLengthW(self.disk_filter);
                 let mut buffer = vec![0u16; len as usize + 1];
@@ -4267,6 +4343,7 @@ impl App {
             (w - 466).max(100)
         };
         MoveWindow(self.copy_disk_filter, 8, 62, copy_filter_width, 240, 1);
+        MoveWindow(self.help, 8, 62, (w - 340).max(150), 18, 1);
         for (i, hwnd) in &self.buttons {
             if *i == FIND {
                 MoveWindow(*hwnd, w - 604, 34, 104, 24, 1);
@@ -4309,6 +4386,17 @@ impl App {
                 }
                 SHELF_SAVE => {
                     MoveWindow(*control, 154, 134, 54, 24, 1);
+                }
+                VIDEO_FILTER => {
+                    MoveWindow(*control, w - 290, 62, 132, 23, 1);
+                    ShowWindow(
+                        *control,
+                        if self.copy_source.is_some() {
+                            SW_HIDE
+                        } else {
+                            SW_SHOW
+                        },
+                    );
                 }
                 ANNOTATION_PREVIEW => {
                     MoveWindow(*control, w - 144, 62, 136, 23, 1);
@@ -4517,6 +4605,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 (PREV, "&Previous"),
                 (NEXT, "Ne&xt"),
                 (DUPLICATES, "&Duplicates"),
+                (VIDEO_FILTER, "&Video files"),
                 (FILE_COPIES, "&Find copies"),
                 (REVEAL_DISK, "&Show disk"),
                 (COPY_LOCATOR, "Copy &locator text"),
@@ -4608,7 +4697,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 COPY_DISK_FILTER,
             );
             ShowWindow(app.copy_disk_filter, SW_HIDE);
-            app.help=control(hwnd,"STATIC","AND  OR  NOT  ( )   name: path: ext: size: category:   Example: ext:mkv AND size:>1GB",0,142);
+            app.help=control(hwnd,"STATIC","AND  OR  NOT  ( )   name: path: ext: type:video size: category:",0,142);
             MoveWindow(app.help, 8, 62, 700, 18, 1);
             app.disk_filter = control(
                 hwnd,
@@ -5015,6 +5104,15 @@ pub fn run() {
                 && message.wParam == b'I' as usize
             {
                 (*app).command(TOGGLE_LOCATOR, 0);
+                continue;
+            }
+            // Ctrl+Shift+V toggles a catalogued-extension global filter, not film recognition.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && GetKeyState(VK_SHIFT as i32) < 0
+                && message.wParam == b'V' as usize
+            {
+                (*app).command(VIDEO_FILTER, 0);
                 continue;
             }
             // Ctrl+Shift+C copies the selected catalog retrieval text locally.
