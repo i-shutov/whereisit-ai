@@ -1,3 +1,25 @@
+## UX35 — selected-film and keyboard focus Back restoration (2026-11-03)
+
+The original selected film was lost when navigating search → metadata
+candidates → recorded folder → Back → Back. Implemented exact-entry-ID
+**and** exact-catalog-disk-ID restoration for Win32 and SwiftUI after a
+fresh bounded page read, never from remembered row offsets or old paths.
+Windows restores ListView selection/focus; Mac restores Table selection/focus.
+New searches, failed/abandoned/ambiguous/stale-generation pages refuse
+restoration. Filename/size excursions and direct parent-folder Back use the
+same logic. CTF remains read-only, generation SHA rechecked on each page,
+OS identity unchanged. Synthetic Rust tests, dual-native wiring regressions
+and [UX35 runbook](docs/qa/UX35_EXACT_BACK_SELECTION_20261103.md) added.
+
+**Exact-HEAD CI pending** at commit construction; inspect the four native
+jobs plus offline, integration, and RC2→RC3 upgrade on this commit. Draft PR
+#57 remains unmerged, RC3 unsigned prerelease, stable 1.0 blocked by
+original-modified/historical CTF access, real Win10/11/Mac ARM/Intel GUI+USB
+acceptance, signing/notarization and measured p95 <=150ms. No private
+data or other repositories changed.
+
+---
+
 ## UX34 exact-HEAD CI repair — Rustfmt-only gate (2026-11-02)
 
 At original integrated UX34 source SHA

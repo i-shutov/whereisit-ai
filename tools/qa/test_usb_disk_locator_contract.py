@@ -17,6 +17,30 @@ PHYSICAL = (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encod
 
 class DiskLocatorWiringTests(unittest.TestCase):
 
+    def test_ux35_back_restores_exact_current_row_only_after_new_page(self):
+        self.assertIn("struct ReturnRowFocus {", WIN)
+        self.assertIn("fn verified_return_row_index(", WIN)
+        self.assertIn("back_restores_exact_disk_and_entry_only_on_new_verified_page", WIN)
+        self.assertIn("pending_selection_restore: Option<(u64, ReturnRowFocus)>", WIN)
+        self.assertEqual(WIN.count("self.load_restoring(context.selected);"), 2)
+        self.assertIn("self.pending_selection_restore = None;", WIN)
+        accepted = WIN.split('"rows" => {', 1)[1].split('"maintenance" =>', 1)[0]
+        for token in ("self.pending_selection_restore.take()", "verified_return_row_index(",
+                      "LVM_ENSUREVISIBLE", "SetFocus(self.files);"):
+            self.assertIn(token, accepted)
+        self.assertIn("struct ReturnSelection {", MAC)
+        self.assertIn("private var pendingReturnSelection:", MAC)
+        self.assertIn("private func loadRestoring(_ row: ReturnSelection)", MAC)
+        self.assertIn("pendingReturnSelection?.token != token", MAC)
+        self.assertIn("matches.count == 1", MAC)
+        self.assertIn("selection = pending.row.id", MAC)
+        self.assertIn("restoredSelectionNonce += 1", MAC)
+        self.assertIn("loadRestoring(candidate.selectedFile); return", MAC)
+        self.assertIn("loadRestoring(context.selectedFile); return", MAC)
+        self.assertIn(".onChange(of: model.restoredSelectionNonce)", MAC)
+        self.assertNotIn("entries = context.", MAC)
+        self.assertNotIn("self.entries = context.", WIN)
+
     def test_ux34_verified_identity_is_shared_by_all_native_physical_ui(self):
         self.assertIn("fn verified_physical_state_map(", WIN)
         self.assertIn("fn safe_physical_states(&self)", WIN)

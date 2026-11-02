@@ -551,3 +551,13 @@ and sole-connected shortcut; macOS central physicalState requires exactly
 one current OS observation of a verified non-empty filesystem UUID.
 Synthetic regression/runbook: [UX34](qa/UX34_CONSISTENT_OS_STATUS_20261102.md).
 Exact new-head CI and real USB/GUI acceptance remain separate release gates.
+
+## UX35 checkpoint — exact reselected search film (2026-11-03)
+
+Windows Win32 and macOS SwiftUI now reselect the exact entry and catalog disk
+only after Back obtains a new, generation-pinned page. Keyboard focus returns
+to the current result; two-level candidate → folder → original-search navigation
+preserves both selections. Stale, failed, missing or ambiguous rows fail closed.
+See [UX35 manual runbook](qa/UX35_EXACT_BACK_SELECTION_20261103.md).
+No live file, historical mount, hash or deletion claims; exact-HEAD CI and
+hardware/GUI release gates still apply.

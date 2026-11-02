@@ -133,6 +133,7 @@ mod recorded_parent_folder_tests {
             Some(42),
             250,
             "copies:".into(),
+            Some(super::ReturnRowFocus { entry_id: 801, disk_id: 42 }),
         )
         .expect("valid selected candidate source");
         assert_eq!(context.source_id, 701);
@@ -140,8 +141,9 @@ mod recorded_parent_folder_tests {
         assert_eq!(context.focus_volume_id, Some(42));
         assert_eq!(context.offset, 250);
         assert_eq!(context.disk_filter_query, "copies:");
-        assert!(CandidateFolderReturn::snapshot(None, None, Some(42), 0, String::new()).is_none());
-        assert!(CandidateFolderReturn::snapshot(Some(0), None, None, 0, String::new()).is_none());
+        assert_eq!(context.selected.entry_id, 801);
+        assert!(CandidateFolderReturn::snapshot(None, None, Some(42), 0, String::new(), None).is_none());
+        assert!(CandidateFolderReturn::snapshot(Some(0), None, None, 0, String::new(), None).is_none());
     }
 
     #[test]
@@ -3405,12 +3407,69 @@ struct Reply {
     annotation_session: u64,
     result: Value,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ReturnRowFocus {
+    entry_id: i64,
+    disk_id: i64,
+}
+impl ReturnRowFocus {
+    fn from_entry(entry: &Value) -> Option<Self> {
+        Some(Self {
+            entry_id: id(entry).filter(|value| *value > 0)?,
+            disk_id: entry["volume_id"].as_i64().filter(|value| *value > 0)?,
+        })
+    }
+}
+// Unique exact entry+disk pair, and only on this generation's successful page.
+fn verified_return_row_index(
+    entries: &[Value],
+    focus: ReturnRowFocus,
+    expected_generation: u64,
+    current_generation: u64,
+    page_ready: bool,
+) -> Option<usize> {
+    if !page_ready || expected_generation != current_generation {
+        return None;
+    }
+    let mut matches = entries.iter().enumerate().filter(|(_, row)| {
+        id(row) == Some(focus.entry_id) && row["volume_id"].as_i64() == Some(focus.disk_id)
+    });
+    let (index, _) = matches.next()?;
+    if matches.next().is_some() { return None; }
+    Some(index)
+}
+
+#[cfg(test)]
+mod return_row_focus_tests {
+    use super::{verified_return_row_index, ReturnRowFocus};
+    use serde_json::json;
+
+    #[test]
+    fn back_restores_exact_disk_and_entry_only_on_new_verified_page() {
+        let entries = vec![
+            json!({"id":3, "volume_id":4}),
+            json!({"id":701, "volume_id":142}),
+            json!({"id":701, "volume_id":42}),
+        ];
+        let original = ReturnRowFocus { entry_id: 701, disk_id: 42 };
+        assert_eq!(verified_return_row_index(&entries, original, 17, 17, true), Some(2));
+        assert_eq!(verified_return_row_index(&entries, original, 17, 18, true), None);
+        assert_eq!(verified_return_row_index(&entries, original, 17, 17, false), None);
+        assert_eq!(verified_return_row_index(&entries, ReturnRowFocus { entry_id: 701, disk_id: 4 }, 17, 17, true), None);
+        assert_eq!(verified_return_row_index(&[entries[2].clone(), entries[2].clone()], original, 17, 17, true), None);
+        assert_eq!(verified_return_row_index(&[], original, 17, 17, true), None);
+        assert!(ReturnRowFocus::from_entry(&json!({"id":0,"volume_id":42})).is_none());
+        assert!(ReturnRowFocus::from_entry(&json!({"id":701,"volume_id":0})).is_none());
+    }
+}
+
 struct CopyReturn {
     volume: Option<i64>,
     stack: Vec<(Option<i64>, String)>,
     query: String,
     duplicates: bool,
     offset: usize,
+    selected: ReturnRowFocus,
 }
 
 // An excursion from an other-disk candidate to its recorded catalog folder.
@@ -3421,6 +3480,7 @@ struct CandidateFolderReturn {
     focus_volume_id: Option<i64>,
     offset: usize,
     disk_filter_query: String,
+    selected: ReturnRowFocus,
 }
 impl CandidateFolderReturn {
     fn snapshot(
@@ -3429,6 +3489,7 @@ impl CandidateFolderReturn {
         focus_volume_id: Option<i64>,
         offset: usize,
         disk_filter_query: String,
+        selected: Option<ReturnRowFocus>,
     ) -> Option<Self> {
         Some(Self {
             source_id: source_id.filter(|id| *id > 0)?,
@@ -3436,6 +3497,7 @@ impl CandidateFolderReturn {
             focus_volume_id,
             offset,
             disk_filter_query,
+            selected: selected?,
         })
     }
 }
@@ -3500,6 +3562,7 @@ struct App {
     copy_disk_groups: Vec<Value>,
     copy_return: Option<CopyReturn>,
     candidate_folder_return: Option<CandidateFolderReturn>,
+    pending_selection_restore: Option<(u64, ReturnRowFocus)>,
     applied_duplicate_mode: &'static str,
     db: String,
     linked_ctf: Option<String>,
@@ -3584,6 +3647,7 @@ impl App {
             copy_disk_groups: vec![],
             copy_return: None,
             candidate_folder_return: None,
+            pending_selection_restore: None,
             applied_duplicate_mode: "name_size",
             db: std::env::args().nth(1).unwrap_or_else(default_db),
             linked_ctf: None,
@@ -3783,6 +3847,11 @@ impl App {
         self.call("categories", json!({"op":"categories"}));
         self.load();
     }
+    // Back re-queries the catalog and never reuses a stale result row.
+    unsafe fn load_restoring(&mut self, selected: ReturnRowFocus) {
+        self.pending_selection_restore = Some((self.generation + 1, selected));
+        self.load();
+    }
     unsafe fn load(&mut self) {
         // The candidate-only register is a temporary view, not a persistent
         // search scope: restore the full register upon leaving copy mode.
@@ -3797,6 +3866,9 @@ impl App {
             self.populate_physical_disk_list();
         }
         self.generation += 1;
+        if self.pending_selection_restore.as_ref().is_some_and(|(n, _)| *n != self.generation) {
+            self.pending_selection_restore = None;
+        }
         self.page_awaiting = false;
         self.page_retry_available = false;
         // Hide all rows from the preceding scope/page before the async reply.
@@ -3922,6 +3994,7 @@ impl App {
         // This is a UI stop, NOT a core/CTF I/O interrupt. A worker may
         // finish, but its generation cannot populate or authorize old rows.
         self.generation = self.generation.wrapping_add(1);
+        self.pending_selection_restore = None;
         self.page_awaiting = false;
         self.page_retry_available = true;
         self.page_ready = false;
@@ -4101,6 +4174,7 @@ impl App {
                 continue;
             }
             if reply.result["ok"] != true {
+                if reply.tag == "rows" { self.pending_selection_restore = None; }
                 if reply.tag == "linked_sync" {
                     self.pending_link_path = None;
                 }
@@ -4290,6 +4364,22 @@ impl App {
                         .as_bool()
                         .unwrap_or(self.offset + self.entries.len() < self.total);
                     self.render_rows();
+                    if let Some((expected, focus)) = self.pending_selection_restore.take() {
+                        if let Some(row) = verified_return_row_index(
+                            &self.entries, focus, expected, self.generation, self.page_ready,
+                        ) {
+                            let mut state: LVITEMW = std::mem::zeroed();
+                            state.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
+                            state.state = LVIS_SELECTED | LVIS_FOCUSED;
+                            SendMessageW(self.files, LVM_SETITEMSTATE, row, &state as *const _ as isize);
+                            SendMessageW(self.files, LVM_ENSUREVISIBLE, row, 0);
+                            SetFocus(self.files);
+                            self.update_disk_locator();
+                            self.status("Back: exact catalog file restored after fresh page check.");
+                        } else {
+                            self.status("Back: original catalog entry missing or ambiguous; no stale selection.");
+                        }
+                    }
                 }
                 "maintenance" => {
                     self.status(
@@ -5314,6 +5404,13 @@ impl App {
             self.status("Select a current file with a valid parent on an existing catalog disk.");
             return;
         };
+        let Some(focus) = (row >= 0)
+            .then(|| self.entries.get(row as usize))
+            .flatten()
+            .and_then(ReturnRowFocus::from_entry) else {
+            self.status("Selected catalog entry lacks a stable ID/disk pair.");
+            return;
+        };
         if self.copy_source.is_some() {
             // Preserve the original global-search return below this candidate
             // excursion; the candidate itself has a separate exact-ID return.
@@ -5323,6 +5420,7 @@ impl App {
                 self.copy_focus_volume_id,
                 self.offset,
                 self.disk_filter_query.clone(),
+                Some(focus),
             ) else {
                 self.status("Invalid candidate source; recorded folder navigation refused.");
                 return;
@@ -5335,6 +5433,7 @@ impl App {
                 query: self.query.clone(),
                 duplicates: self.duplicates,
                 offset: self.offset,
+                selected: focus,
             });
         }
         self.copy_source = None;
@@ -5386,6 +5485,9 @@ impl App {
             self.status("Filename is invalid or exceeds the 4096-byte search limit.");
             return;
         };
+        let Some(focus) = ReturnRowFocus::from_entry(entry) else {
+            self.status("Selected catalog file has no stable ID/disk pair."); return;
+        };
         self.candidate_folder_return = None;
         self.copy_return = Some(CopyReturn {
             volume: self.volume,
@@ -5393,6 +5495,7 @@ impl App {
             query: self.query.clone(),
             duplicates: self.duplicates,
             offset: self.offset,
+            selected: focus,
         });
         self.copy_source = None;
         self.copy_source_name = None;
@@ -5431,6 +5534,9 @@ impl App {
             self.status("Recorded size must be positive, known and within signed 64-bit range.");
             return;
         };
+        let Some(focus) = ReturnRowFocus::from_entry(entry) else {
+            self.status("Selected catalog file has no stable ID/disk pair."); return;
+        };
         self.candidate_folder_return = None;
         self.copy_return = Some(CopyReturn {
             volume: self.volume,
@@ -5438,6 +5544,7 @@ impl App {
             query: self.query.clone(),
             duplicates: self.duplicates,
             offset: self.offset,
+            selected: focus,
         });
         self.copy_source = None;
         self.copy_source_name = None;
@@ -5473,6 +5580,9 @@ impl App {
         let Some(source) = id(entry) else {
             return;
         };
+        let Some(focus) = ReturnRowFocus::from_entry(entry) else {
+            self.status("Selected catalog file has no stable ID/disk pair."); return;
+        };
         self.candidate_folder_return = None;
         if self.copy_source.is_none() {
             self.copy_return = Some(CopyReturn {
@@ -5481,6 +5591,7 @@ impl App {
                 query: self.query.clone(),
                 duplicates: self.duplicates,
                 offset: self.offset,
+                selected: focus,
             });
         }
         self.copy_source = Some(source);
@@ -5809,7 +5920,7 @@ impl App {
                     self.text(self.search, "");
                     self.text(self.disk_filter, &self.disk_filter_query);
                     self.populate_physical_disk_list();
-                    self.load(); // Fresh pinned CTF source SHA, not cached rows.
+                    self.load_restoring(context.selected); // Re-fetch, then exact row.
                     return;
                 }
                 if let Some(context) = self.copy_return.take() {
@@ -5822,7 +5933,7 @@ impl App {
                     self.offset = context.offset;
                     self.text(self.search, &self.query);
                     self.populate_physical_disk_list();
-                    self.load();
+                    self.load_restoring(context.selected);
                     return;
                 }
                 if !self.query.is_empty() || self.duplicates {

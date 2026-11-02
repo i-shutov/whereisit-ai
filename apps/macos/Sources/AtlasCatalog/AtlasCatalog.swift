@@ -200,6 +200,11 @@ enum Bridge {
     }
 }
 
+private struct ReturnSelection {
+    let id: Int64
+    let diskID: Int64
+}
+
 private struct CopyReturnContext {
     let volumeID: Int64?
     let stack: [(Int64?, String)]
@@ -208,6 +213,7 @@ private struct CopyReturnContext {
     let offset: Int
     let showingDuplicates: Bool
     let appliedDuplicateMode: String
+    let selectedFile: ReturnSelection
 }
 
 // Candidate-folder excursions retain the original source-search history.
@@ -217,6 +223,7 @@ private struct CandidateFolderReturnContext {
     let focusVolumeID: Int64?
     let offset: Int
     let diskFilter: String
+    let selectedFile: ReturnSelection
 }
 
 @MainActor final class Catalog: ObservableObject {
@@ -245,6 +252,8 @@ private struct CandidateFolderReturnContext {
     @Published var pageSortColumn = "natural"
     @Published var pageSortDescending = false
     @Published var selection: Int64?
+    @Published var restoredSelectionNonce = 0
+    private var pendingReturnSelection: (token: Int, row: ReturnSelection)?
     @Published var query = ""
     // This preset uses catalogued extensions; no movie identification or hash.
     var videoFilterActive: Bool {
@@ -1388,11 +1397,13 @@ private struct CandidateFolderReturnContext {
         if let sourceID = copySourceID {
             candidateFolderReturn = CandidateFolderReturnContext(
                 sourceID: sourceID, sourceName: copySourceName,
-                focusVolumeID: copyFocusVolumeID, offset: offset, diskFilter: diskFilter)
+                focusVolumeID: copyFocusVolumeID, offset: offset, diskFilter: diskFilter,
+                selectedFile: ReturnSelection(id: entry.id, diskID: entry.volume_id))
         } else if candidateFolderReturn == nil {
             copyReturn = CopyReturnContext(volumeID: volumeID, stack: stack,
                 query: query, appliedQuery: appliedQuery, offset: offset,
-                showingDuplicates: showingDuplicates, appliedDuplicateMode: appliedDuplicateMode)
+                showingDuplicates: showingDuplicates, appliedDuplicateMode: appliedDuplicateMode,
+                selectedFile: ReturnSelection(id: entry.id, diskID: entry.volume_id))
         }
         copySourceID = nil; copySourceName = nil
         copyFocusVolumeID = nil; copyDiskGroups = []
@@ -1426,7 +1437,8 @@ private struct CandidateFolderReturnContext {
         candidateFolderReturn = nil
         copyReturn = CopyReturnContext(volumeID: volumeID, stack: stack,
             query: query, appliedQuery: appliedQuery, offset: offset,
-            showingDuplicates: showingDuplicates, appliedDuplicateMode: appliedDuplicateMode)
+            showingDuplicates: showingDuplicates, appliedDuplicateMode: appliedDuplicateMode,
+            selectedFile: ReturnSelection(id: entry.id, diskID: entry.volume_id))
         copySourceID = nil; copySourceName = nil
         volumeID = nil; stack = [(nil, "/")]; offset = 0
         showingDuplicates = false; query = expression; appliedQuery = expression
@@ -1448,7 +1460,8 @@ private struct CandidateFolderReturnContext {
         candidateFolderReturn = nil
         copyReturn = CopyReturnContext(volumeID: volumeID, stack: stack,
             query: query, appliedQuery: appliedQuery, offset: offset,
-            showingDuplicates: showingDuplicates, appliedDuplicateMode: appliedDuplicateMode)
+            showingDuplicates: showingDuplicates, appliedDuplicateMode: appliedDuplicateMode,
+            selectedFile: ReturnSelection(id: entry.id, diskID: entry.volume_id))
         copySourceID = nil; copySourceName = nil
         volumeID = nil; stack = [(nil, "/")]; offset = 0
         showingDuplicates = false; query = expression; appliedQuery = expression
@@ -1462,7 +1475,8 @@ private struct CandidateFolderReturnContext {
         candidateFolderReturn = nil
         copyReturn = CopyReturnContext(volumeID: volumeID, stack: stack,
             query: query, appliedQuery: appliedQuery, offset: offset,
-            showingDuplicates: showingDuplicates, appliedDuplicateMode: appliedDuplicateMode)
+            showingDuplicates: showingDuplicates, appliedDuplicateMode: appliedDuplicateMode,
+            selectedFile: ReturnSelection(id: entry.id, diskID: entry.volume_id))
         copySourceID = entry.id; copySourceName = entry.name
         copyFocusVolumeID = nil; copyDiskGroups = []
         volumeID = nil; stack = [(nil, "/")]; offset = 0
@@ -1504,8 +1518,13 @@ private struct CandidateFolderReturnContext {
         return volumeID.map { "BROWSE CATALOG DISK: " + volumeLabel($0) + " • " + currentPath }
             ?? "SEARCH ACROSS ALL DISKS"
     }
+    private func loadRestoring(_ row: ReturnSelection) {
+        pendingReturnSelection = (token: generation + 1, row: row)
+        load() // Always a fresh bounded and generation-pinned service page.
+    }
     func load() {
         generation += 1; let token = generation
+        if pendingReturnSelection?.token != token { pendingReturnSelection = nil }
         awaitingPage = true; retryPageAvailable = false
         // Clear previous-scope rows immediately; an old page must not be actionable.
         selection = nil; entries = []; total = 0; hasMore = false; pageReady = false
@@ -1578,6 +1597,7 @@ private struct CandidateFolderReturnContext {
     func stopWaitingForPage() {
         guard awaitingPage else { return }
         generation += 1
+        pendingReturnSelection = nil
         awaitingPage = false
         retryPageAvailable = true
         pageReady = false
@@ -1593,6 +1613,7 @@ private struct CandidateFolderReturnContext {
         guard generation == token else { return }
         awaitingPage = false
         guard let page else {
+            pendingReturnSelection = nil
             retryPageAvailable = true // Includes pinned CTF SHA changes or read errors.
             return
         }
@@ -1603,6 +1624,18 @@ private struct CandidateFolderReturnContext {
         pageReady = true
         awaitingPage = false; retryPageAvailable = false
         entries = page.items; total = page.total ?? (offset + page.items.count)
+        if let pending = pendingReturnSelection, pending.token == token {
+            pendingReturnSelection = nil
+            let matches = page.items.filter {
+                $0.id == pending.row.id && $0.volume_id == pending.row.diskID
+            }
+            if matches.count == 1 {
+                selection = pending.row.id
+                restoredSelectionNonce += 1
+            } else {
+                status = "Back: original entry absent or ambiguous; no stale row selected."
+            }
+        }
         copyDiskGroups = copySourceID == nil ? [] : (page.disk_groups ?? [])
         hasMore = page.has_more ?? (offset + page.items.count < total)
         status = "\(page.items.isEmpty ? 0 : offset + 1)–\(offset + page.items.count)"
@@ -1637,7 +1670,7 @@ private struct CandidateFolderReturnContext {
             volumeID = nil; stack = [(nil, "/")]
             query = ""; appliedQuery = ""; showingDuplicates = false
             offset = candidate.offset; diskFilter = candidate.diskFilter
-            load(); return
+            loadRestoring(candidate.selectedFile); return
         }
         if let context = copyReturn {
             copySourceID = nil; copySourceName = nil; copyReturn = nil; candidateFolderReturn = nil
@@ -1645,7 +1678,7 @@ private struct CandidateFolderReturnContext {
             query = context.query; appliedQuery = context.appliedQuery
             offset = context.offset; showingDuplicates = context.showingDuplicates
             appliedDuplicateMode = context.appliedDuplicateMode
-            load(); return
+            loadRestoring(context.selectedFile); return
         }
         if showingDuplicates || !appliedQuery.isEmpty { showingDuplicates = false; query = ""; appliedQuery = "" }
         else if stack.count > 1 { stack.removeLast() }
@@ -2596,6 +2629,10 @@ private struct CandidateFolderReturnContext {
         }
         .padding(7).controlSize(.small).frame(minWidth: locatorVisible ? 1100 : 880, minHeight: 550)
         .onAppear { searchFieldFocused = true; model.refreshPhysicalPresence() }
+        .onChange(of: model.restoredSelectionNonce) { _ in
+            // Focus the newly verified selected row, never a cached old row.
+            resultTableFocused = true
+        }
         .onChange(of: model.pageReady) { ready in
             if !ready { resultTableFocused = false }
         }
