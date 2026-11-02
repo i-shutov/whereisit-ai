@@ -17,6 +17,30 @@ PHYSICAL = (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encod
 
 class DiskLocatorWiringTests(unittest.TestCase):
 
+    def test_ux36_verified_keyboard_paging_and_fresh_page_focus_both_native_clients(self):
+        # Only a returned, decoded current page authorizes navigation.
+        # The backend is re-queried for each new page with pinned CTF SHA.
+        self.assertIn("fn verified_page_offset(", WIN)
+        self.assertIn("mod verified_page_navigation_tests", WIN)
+        self.assertIn("pending_page_focus: Option<u64>", WIN)
+        self.assertIn("self.pending_page_focus.take() == Some(self.generation)", WIN)
+        self.assertIn("self.pending_page_focus = None;", WIN)
+        self.assertIn("self.pending_page_focus = Some(self.generation.wrapping_add(1));", WIN)
+        self.assertIn("GetKeyState(VK_MENU as i32) < 0", WIN)
+        self.assertIn("message.wParam == VK_PRIOR as usize", WIN)
+        self.assertIn("message.wParam == VK_NEXT as usize", WIN)
+        self.assertIn("*command == PREV || *command == NEXT", WIN)
+        self.assertIn("var canPreviousResultsPage: Bool", MAC)
+        self.assertIn("var canNextResultsPage: Bool", MAC)
+        self.assertIn("func moveResultsPage(forward: Bool)", MAC)
+        self.assertIn("pendingPageFocusToken = generation + 1", MAC)
+        self.assertIn("pendingPageFocusToken == token", MAC)
+        self.assertIn("page.items.filter({ $0.id == first.id }).count == 1", MAC)
+        self.assertIn("restoredSelectionNonce += 1", MAC)
+        self.assertIn('.keyboardShortcut(.leftArrow, modifiers: [.command, .option])', MAC)
+        self.assertIn('.keyboardShortcut(.rightArrow, modifiers: [.command, .option])', MAC)
+        self.assertNotIn('Button("Next") { model.offset += model.limit;', MAC)
+
     def test_ux35_back_restores_exact_current_row_only_after_new_page(self):
         self.assertIn("struct ReturnRowFocus {", WIN)
         self.assertIn("fn verified_return_row_index(", WIN)

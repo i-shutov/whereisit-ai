@@ -1,3 +1,29 @@
+## UX36 — verified keyboard page navigation + fresh row focus (2026-11-03)
+
+On draft PR #57, added a bounded pager to BOTH native clients. Win32
+Ctrl+Alt+PageUp/PageDown, SwiftUI Command+Option+Left/Right Arrow, with
+disabled invalid buttons and accessible page state. Neither app can
+navigate from a pending, failed or stopped page, from an absent latest
+has-more flag, or from a stale selection. New page clears the old row
+immediately and automatically focuses/selects the first actual row only
+after a matching fresh generation-pinned service response; empty or
+ambiguous result pages stay unselected. Windows also bounds arithmetic
+overflow. Exact native keyboard wiring, compiled Windows pure Rust tests
+and synthetic cross-client contract tests added, plus
+[manual UX36 runbook](docs/qa/UX36_VERIFIED_KEYBOARD_PAGING_20261103.md).
+A successful native build does NOT prove manual OS GUI/USB acceptance.
+
+The code integration SHA and exact-HEAD CI must be verified following
+this document update. Do not merge draft PR #57 or publish stable 1.0.
+RC3 is an unsigned prerelease. Genuine earlier 44-disk / 3,046,027-entry
+CTF acceptance is distinct from synthetic CI. Two historical raw CTFs
+remain provider-blocked; do not request them again. Original modified CTF,
+manual Win10/11 and Mac ARM/Intel, Authenticode/notarization, and
+real p95 <=150ms remain unaccepted. CTF read-only, SHA pinned, user
+annotations separated; no private catalog bytes or hashes committed.
+
+---
+
 ## UX35 exact-HEAD CI defect and repair (2026-11-03)
 
 At initial UX35 commit `1460dd4dcd48492e6edba47cce4180ff499f8807`,

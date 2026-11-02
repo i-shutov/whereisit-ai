@@ -254,6 +254,8 @@ private struct CandidateFolderReturnContext {
     @Published var selection: Int64?
     @Published var restoredSelectionNonce = 0
     private var pendingReturnSelection: (token: Int, row: ReturnSelection)?
+    // Fresh page focus is requested by a paging action, never a stale response.
+    private var pendingPageFocusToken: Int?
     @Published var query = ""
     // This preset uses catalogued extensions; no movie identification or hash.
     var videoFilterActive: Bool {
@@ -363,6 +365,19 @@ private struct CandidateFolderReturnContext {
     var generation = 0
     let limit = 250
     var currentPath: String { stack.last?.1 ?? "/" }
+    var canPreviousResultsPage: Bool { pageReady && !awaitingPage && offset > 0 }
+    var canNextResultsPage: Bool {
+        pageReady && !awaitingPage && hasMore && offset <= Int.max - limit
+    }
+    func moveResultsPage(forward: Bool) {
+        guard forward ? canNextResultsPage : canPreviousResultsPage else {
+            status = "Page navigation unavailable until the current page is verified."
+            return
+        }
+        offset = forward ? offset + limit : max(0, offset - limit)
+        pendingPageFocusToken = generation + 1
+        load() // Always reverify linked original CTF generation on every page.
+    }
     var mutationAllowed: Bool { job == nil && pending == 0 }
     var canCancel: Bool { job?.hasPrefix("scan-") == true }
     var selected: Entry? { entries.first { $0.id == selection } }
@@ -1525,11 +1540,13 @@ private struct CandidateFolderReturnContext {
     func load() {
         generation += 1; let token = generation
         if pendingReturnSelection?.token != token { pendingReturnSelection = nil }
+        if pendingPageFocusToken != token { pendingPageFocusToken = nil }
         awaitingPage = true; retryPageAvailable = false
         // Clear previous-scope rows immediately; an old page must not be actionable.
         selection = nil; entries = []; total = 0; hasMore = false; pageReady = false
         if linkedMode && linkedFields() == nil {
             awaitingPage = false
+            pendingPageFocusToken = nil
             retryPageAvailable = true
             copyDiskGroups = []
             status = "Linked CTF generation missing; SQLite search fallback refused."
@@ -1598,6 +1615,7 @@ private struct CandidateFolderReturnContext {
         guard awaitingPage else { return }
         generation += 1
         pendingReturnSelection = nil
+        pendingPageFocusToken = nil
         awaitingPage = false
         retryPageAvailable = true
         pageReady = false
@@ -1614,6 +1632,7 @@ private struct CandidateFolderReturnContext {
         awaitingPage = false
         guard let page else {
             pendingReturnSelection = nil
+            pendingPageFocusToken = nil
             retryPageAvailable = true // Includes pinned CTF SHA changes or read errors.
             return
         }
@@ -1634,6 +1653,16 @@ private struct CandidateFolderReturnContext {
                 restoredSelectionNonce += 1
             } else {
                 status = "Back: original entry absent or ambiguous; no stale row selected."
+            }
+        }
+        // Only the newly verified page may select its first row. A duplicate
+        // identifier or an empty page leaves selection/focus unassigned.
+        if pendingPageFocusToken == token {
+            pendingPageFocusToken = nil
+            if let first = page.items.first,
+               page.items.filter({ $0.id == first.id }).count == 1 {
+                selection = first.id
+                restoredSelectionNonce += 1
             }
         }
         copyDiskGroups = copySourceID == nil ? [] : (page.disk_groups ?? [])
@@ -2622,8 +2651,21 @@ private struct CandidateFolderReturnContext {
                     .keyboardShortcut("y", modifiers: [.command, .shift])
                     .accessibilityLabel("Retry dismissed or failed catalog page in the same scope")
                     .help("Rechecks linked CTF generation SHA for a new page (Command-Shift-Y)")
-                Button("Previous") { model.offset = max(0, model.offset - model.limit); model.load() }.disabled(model.offset == 0)
-                Button("Next") { model.offset += model.limit; model.load() }.disabled(!model.hasMore)
+                Text(model.pageReady ? "Page \(model.offset / model.limit + 1)" : "Page not verified")
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .accessibilityLabel(model.pageReady
+                        ? "Verified catalog page \(model.offset / model.limit + 1)"
+                        : "No verified catalog page")
+                Button("Previous") { model.moveResultsPage(forward: false) }
+                    .disabled(!model.canPreviousResultsPage)
+                    .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
+                    .accessibilityLabel("Previous verified catalog results page")
+                    .help("Fresh source recheck; Command-Option-Left Arrow")
+                Button("Next") { model.moveResultsPage(forward: true) }
+                    .disabled(!model.canNextResultsPage)
+                    .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+                    .accessibilityLabel("Next verified catalog results page")
+                    .help("Fresh source recheck; Command-Option-Right Arrow")
             }.font(.caption)
             Text(model.linkedMode ? "LINKED CTF (read-only) • " + (model.linkedCTFPath ?? "") : model.database).font(.caption2).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).lineLimit(1).truncationMode(.middle)
         }

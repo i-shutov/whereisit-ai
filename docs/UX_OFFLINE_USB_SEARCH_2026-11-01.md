@@ -561,3 +561,20 @@ preserves both selections. Stale, failed, missing or ambiguous rows fail closed.
 See [UX35 manual runbook](qa/UX35_EXACT_BACK_SELECTION_20261103.md).
 No live file, historical mount, hash or deletion claims; exact-HEAD CI and
 hardware/GUI release gates still apply.
+
+
+## UX36 — verified keyboard-first pagination and fresh result focus (2026-11-03)
+
+Windows Ctrl+Alt+PageUp/PageDown and macOS Command+Option+Left/Right
+Arrow navigate the currently verified search/copy-candidate page.
+The current query, explicit disk scope and contextual Back history survive.
+Both clients disable paging during pending, stopped or failed reads,
+never infer next-page availability from historical state, and requery
+the original linked CTF with an independently checked source generation
+SHA on each new page. A successful, exact-generation page focuses its
+first actual row; no previous page entry is reused during loading.
+Windows has checked offset arithmetic. macOS announces verified pager
+state for accessibility. See
+[UX36 runbook](qa/UX36_VERIFIED_KEYBOARD_PAGING_20261103.md).
+Physical file presence, hash equality and safe deletion are NOT implied.
+Synthetic native tests are not hardware/GUI acceptance; stable 1.0 remains blocked.

@@ -62,6 +62,63 @@ const OPEN_VERIFIED_OS_ROOT: usize = 152;
 // Monotonic OS state lifetime: never trust stale green badges after suspend.
 const PHYSICAL_STATE_TTL: Duration = Duration::from_secs(12);
 
+// Pagination is only allowed from a successfully decoded current page. A
+// pending/stopped/failed CTF or SQLite request is never navigation evidence.
+// In particular, has_more must come from the fresh page, not a remembered total.
+fn verified_page_offset(
+    offset: usize,
+    limit: usize,
+    has_more: bool,
+    page_ready: bool,
+    page_awaiting: bool,
+    forward: bool,
+) -> Option<usize> {
+    if !page_ready || page_awaiting || limit == 0 {
+        return None;
+    }
+    if forward {
+        if has_more {
+            offset.checked_add(limit)
+        } else {
+            None
+        }
+    } else if offset > 0 {
+        Some(offset.saturating_sub(limit))
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod verified_page_navigation_tests {
+    use super::verified_page_offset;
+
+    #[test]
+    fn only_verified_current_pages_can_navigate() {
+        assert_eq!(verified_page_offset(0, 250, true, true, false, true), Some(250));
+        assert_eq!(verified_page_offset(500, 250, true, true, false, false), Some(250));
+        assert_eq!(verified_page_offset(0, 250, true, true, false, false), None);
+        assert_eq!(verified_page_offset(500, 250, false, true, false, true), None);
+    }
+
+    #[test]
+    fn pending_cancelled_failed_or_invalid_pages_cannot_be_reused() {
+        assert_eq!(verified_page_offset(500, 250, true, false, false, false), None);
+        assert_eq!(verified_page_offset(500, 250, true, false, true, true), None);
+        assert_eq!(verified_page_offset(500, 250, true, true, true, false), None);
+        assert_eq!(verified_page_offset(500, 0, true, true, false, true), None);
+        assert_eq!(verified_page_offset(100, 250, true, true, false, false), Some(0));
+    }
+
+    #[test]
+    fn next_page_offset_cannot_overflow() {
+        assert_eq!(
+            verified_page_offset(usize::MAX - 1, 250, true, true, false, true),
+            None
+        );
+    }
+}
+
 // WM_DEVICECHANGE wParam values, defined here to avoid any extra driver/API
 // dependency. Query/remove-pending must clear status BEFORE removal completes.
 #[derive(Debug, PartialEq, Eq)]
@@ -3605,6 +3662,7 @@ struct App {
     copy_return: Option<CopyReturn>,
     candidate_folder_return: Option<CandidateFolderReturn>,
     pending_selection_restore: Option<(u64, ReturnRowFocus)>,
+    pending_page_focus: Option<u64>,
     applied_duplicate_mode: &'static str,
     db: String,
     linked_ctf: Option<String>,
@@ -3690,6 +3748,7 @@ impl App {
             copy_return: None,
             candidate_folder_return: None,
             pending_selection_restore: None,
+            pending_page_focus: None,
             applied_duplicate_mode: "name_size",
             db: std::env::args().nth(1).unwrap_or_else(default_db),
             linked_ctf: None,
@@ -3915,6 +3974,9 @@ impl App {
         {
             self.pending_selection_restore = None;
         }
+        if self.pending_page_focus.is_some_and(|expected| expected != self.generation) {
+            self.pending_page_focus = None;
+        }
         self.page_awaiting = false;
         self.page_retry_available = false;
         // Hide all rows from the preceding scope/page before the async reply.
@@ -3964,6 +4026,7 @@ impl App {
             self.linked_generation.as_deref(),
         ) {
             self.copy_disk_groups.clear();
+            self.pending_page_focus = None;
             self.page_retry_available = true;
             self.status(
                 "Linked CTF generation unavailable; no local SQLite search or copy fallback.",
@@ -4041,6 +4104,7 @@ impl App {
         // finish, but its generation cannot populate or authorize old rows.
         self.generation = self.generation.wrapping_add(1);
         self.pending_selection_restore = None;
+        self.pending_page_focus = None;
         self.page_awaiting = false;
         self.page_retry_available = true;
         self.page_ready = false;
@@ -4179,6 +4243,9 @@ impl App {
             if reply.tag == "rows" {
                 self.page_awaiting = false;
                 self.page_retry_available = reply.result["ok"] != true;
+                if self.page_retry_available {
+                    self.pending_page_focus = None;
+                }
             }
             if reply.tag == "annotation_confirm" {
                 if reply.result["ok"] == true {
@@ -4439,6 +4506,21 @@ impl App {
                             self.status("Back: original catalog entry missing or ambiguous; no stale selection.");
                         }
                     }
+                    // New page keyboard focus is granted ONLY after the matching
+                    // generation's pinned CTF/SQLite reply has supplied real rows.
+                    if self.pending_page_focus.take() == Some(self.generation)
+                        && self.page_ready
+                        && self.entries.first().and_then(id).is_some()
+                        && self.entries.first().and_then(|row| row["volume_id"].as_i64()).is_some()
+                    {
+                        let mut item: LVITEMW = std::mem::zeroed();
+                        item.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
+                        item.state = LVIS_SELECTED | LVIS_FOCUSED;
+                        SendMessageW(self.files, LVM_SETITEMSTATE, 0, &item as *const _ as isize);
+                        SendMessageW(self.files, LVM_ENSUREVISIBLE, 0, 0);
+                        SetFocus(self.files);
+                        self.update_disk_locator();
+                    }
                 }
                 "maintenance" => {
                     self.status(
@@ -4473,6 +4555,11 @@ impl App {
                     self.page_retry_available as i32
                 } else if *command == CANCEL {
                     self.job.as_ref().is_some_and(|j| j.starts_with("win-")) as i32
+                } else if *command == PREV || *command == NEXT {
+                    verified_page_offset(
+                        self.offset, LIMIT, self.has_more, self.page_ready,
+                        self.page_awaiting, *command == NEXT,
+                    ).is_some() as i32
                 } else if *command == ANNOTATION_PREVIEW {
                     (self.linked_mode() && self.job.is_none() && self.pending == 0) as i32
                 } else if [OPEN, NEW, SCAN, IMPORT, LINK_CTF, EXPORT].contains(command) {
@@ -6175,14 +6262,20 @@ impl App {
             }
             PHYSICAL_PAIR => self.pair_selected_physical_disk(),
             PHYSICAL_UNPAIR => self.unpair_selected_physical_disk(),
-            PREV => {
-                self.offset = self.offset.saturating_sub(LIMIT);
-                self.load();
-            }
-            NEXT => {
-                if self.has_more {
-                    self.offset += LIMIT;
-                    self.load();
+            PREV | NEXT => {
+                if let Some(target) = verified_page_offset(
+                    self.offset,
+                    LIMIT,
+                    self.has_more,
+                    self.page_ready,
+                    self.page_awaiting,
+                    command == NEXT,
+                ) {
+                    self.offset = target;
+                    self.pending_page_focus = Some(self.generation.wrapping_add(1));
+                    self.load(); // Fresh bounded page, including CTF generation SHA.
+                } else {
+                    self.status("Page navigation unavailable until the current page is verified.");
                 }
             }
             CANCEL => {
@@ -7348,6 +7441,17 @@ pub fn run() {
             {
                 SetFocus((*app).search);
                 SendMessageW((*app).search, EM_SETSEL, 0, -1);
+                continue;
+            }
+            // Ctrl+Alt+PageUp/PageDown navigates bounded VERIFIED results only.
+            // Changing the page never reuses a stale row, history or disk letter.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && GetKeyState(VK_MENU as i32) < 0
+                && GetKeyState(VK_SHIFT as i32) >= 0
+                && (message.wParam == VK_PRIOR as usize || message.wParam == VK_NEXT as usize)
+            {
+                (*app).command(if message.wParam == VK_NEXT as usize { NEXT } else { PREV }, 0);
                 continue;
             }
             // Ctrl+E moves to the currently SHA-verified result page; it never
