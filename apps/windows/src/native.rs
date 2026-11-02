@@ -59,6 +59,44 @@ const COPY_VERIFIED_OS_ROOT: usize = 149;
 const COPY_DISK_CARD: usize = 150;
 // Monotonic OS state lifetime: never trust stale green badges after suspend.
 const PHYSICAL_STATE_TTL: Duration = Duration::from_secs(12);
+
+// WM_DEVICECHANGE wParam values, defined here to avoid any extra driver/API
+// dependency. Query/remove-pending must clear status BEFORE removal completes.
+#[derive(Debug, PartialEq, Eq)]
+enum VolumeChangeResponse {
+    Ignore,
+    Invalidate,
+    Reprobe,
+}
+
+fn volume_change_response(event: usize) -> VolumeChangeResponse {
+    match event {
+        0x8001 | 0x8003 => VolumeChangeResponse::Invalidate, // QUERYREMOVE / REMOVEPENDING
+        0x0007 | 0x0018 | 0x8000 | 0x8002 | 0x8004 => {
+            // DEVNODES_CHANGED / CONFIGCHANGED / ARRIVAL /
+            // QUERYREMOVEFAILED / REMOVECOMPLETE.
+            VolumeChangeResponse::Reprobe
+        }
+        _ => VolumeChangeResponse::Ignore,
+    }
+}
+
+#[cfg(test)]
+mod hotplug_invalidation_tests {
+    use super::{volume_change_response, VolumeChangeResponse};
+
+    #[test]
+    fn physical_usb_mount_changes_fail_closed_before_recheck() {
+        for pending in [0x8001, 0x8003] {
+            assert_eq!(volume_change_response(pending), VolumeChangeResponse::Invalidate);
+        }
+        for completed in [0x0007, 0x0018, 0x8000, 0x8002, 0x8004] {
+            assert_eq!(volume_change_response(completed), VolumeChangeResponse::Reprobe);
+        }
+        assert_eq!(volume_change_response(0), VolumeChangeResponse::Ignore);
+        assert_eq!(volume_change_response(0xffff), VolumeChangeResponse::Ignore);
+    }
+}
 const SEARCH_BOX: usize = 130;
 // Win32 GetDriveTypeW standard result codes; windows-sys 0.61 does not export these here.
 // Unknown/missing roots mean a potentially incomplete OS snapshot, never "offline".
@@ -5898,6 +5936,22 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 let key = &*(lp as *const NMLVKEYDOWN);
                 if key.wVKey == VK_RETURN {
                     app.activate();
+                }
+            }
+            0
+        }
+        WM_DEVICECHANGE => {
+            // Event-driven invalidation closes the unplug/replug gap between
+            // periodic 6s probes. Never synthesize a connected state from the
+            // notification or a historical drive letter: use a complete OS scan.
+            match volume_change_response(wp) {
+                VolumeChangeResponse::Ignore => {}
+                VolumeChangeResponse::Invalidate => app.invalidate_physical_presence(),
+                VolumeChangeResponse::Reprobe => {
+                    app.invalidate_physical_presence();
+                    if !app.volumes.is_empty() {
+                        app.refresh_physical_presence();
+                    }
                 }
             }
             0

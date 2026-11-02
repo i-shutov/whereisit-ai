@@ -938,6 +938,24 @@ private struct CopyReturnContext {
             "probe_ok": probeOK
         ]
     }
+    // Mount notifications are not proof of USB identity. Invalidate immediately
+    // so a former connected badge and pending root/candidate copy cannot survive
+    // unplugging, while the next complete OS + service scan determines status.
+    func invalidatePhysicalPresenceAfterMountEvent() {
+        physicalCheckGeneration += 1  // discard an older asynchronous status reply
+        physicalVerifiedUptime = nil
+        physicalStates = [:]
+        verifiedPhysicalIDs = [:]
+        physicalProbeOK = false
+        mountedPhysicalVolumes = []
+        selectedPhysicalID = ""
+        pendingMountCopy = nil
+        pendingConnectedCopyFocus = nil
+    }
+    func recheckPhysicalPresenceAfterMountEvent() {
+        invalidatePhysicalPresenceAfterMountEvent()
+        refreshPhysicalPresence()
+    }
     func refreshPhysicalPresence() {
         // Start TTL before enumeration, not on a delayed async service reply.
         let scannedAt = ProcessInfo.processInfo.systemUptime
@@ -2299,6 +2317,15 @@ private struct CopyReturnContext {
         }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)) { _ in
             model.refreshPhysicalPresence()
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.willUnmountNotification)) { _ in
+            model.invalidatePhysicalPresenceAfterMountEvent()
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didUnmountNotification)) { _ in
+            model.recheckPhysicalPresenceAfterMountEvent()
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didMountNotification)) { _ in
+            model.recheckPhysicalPresenceAfterMountEvent()
         }
         .sheet(isPresented: $model.showingAnnotationReview) {
             if model.showingVerifiedOverlay {

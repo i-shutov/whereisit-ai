@@ -678,6 +678,34 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertNotIn("selected file included.", WIN)
         self.assertNotIn("selected file included.", MAC)
 
+    def test_ux26_hotplug_mount_events_immediately_revoke_stale_os_identity(self):
+        self.assertIn("fn volume_change_response(event: usize)", WIN)
+        self.assertIn("physical_usb_mount_changes_fail_closed_before_recheck", WIN)
+        change = WIN.split("WM_DEVICECHANGE => {", 1)[1].split("WM_ACTIVATEAPP => {", 1)[0]
+        self.assertIn("app.invalidate_physical_presence();", change)
+        self.assertIn("app.refresh_physical_presence();", change)
+        self.assertIn("VolumeChangeResponse::Invalidate => app.invalidate_physical_presence()", change)
+        self.assertNotIn('GetLogicalDrives', change)
+        self.assertIn("func invalidatePhysicalPresenceAfterMountEvent()", MAC)
+        reset = MAC.split("func invalidatePhysicalPresenceAfterMountEvent()", 1)[1].split(
+            "func recheckPhysicalPresenceAfterMountEvent()", 1
+        )[0]
+        for guard in (
+            "physicalCheckGeneration += 1",
+            "physicalVerifiedUptime = nil",
+            "physicalStates = [:]",
+            "verifiedPhysicalIDs = [:]",
+            "physicalProbeOK = false",
+            "mountedPhysicalVolumes = []",
+            "pendingMountCopy = nil",
+            "pendingConnectedCopyFocus = nil",
+        ):
+            self.assertIn(guard, reset)
+        for event in ("willUnmountNotification", "didUnmountNotification", "didMountNotification"):
+            self.assertIn("NSWorkspace." + event, MAC)
+        self.assertIn("model.invalidatePhysicalPresenceAfterMountEvent()", MAC)
+        self.assertIn("model.recheckPhysicalPresenceAfterMountEvent()", MAC)
+        self.assertIn('self.physicalCheckGeneration == checkToken', MAC)
 
 if __name__ == "__main__":
     unittest.main()

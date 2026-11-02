@@ -406,3 +406,26 @@ docs/qa/UX25_CANDIDATE_CLIPBOARD_SHA_RECHECK_20261102.md.
 Linked CTF is read-only; owner data never enters CI or clipboard QA.
 CI and manual USB/GUI/historical-CTF/signing/p95 release gates remain
 separate. PR remains draft/unmerged, stable 1.0 BLOCKED.
+
+
+## UX26 — event-driven USB mount invalidation (2026-11-02)
+
+Windows Win32 handles native `WM_DEVICECHANGE` volume/device-node arrival,
+completed removal, removal-pending and query events: it immediately clears
+cached positive OS pairing status, then probes live OS volumes afresh **only**
+after completed changes. macOS SwiftUI listens to `NSWorkspace` will-unmount,
+did-unmount and did-mount notifications: pending removal immediately revokes
+positive statuses and in-flight OS-root/candidate-copy intents; completed
+changes trigger a new complete OS UUID scan and independently checked binding.
+Existing 6-second polling and 12-second monotonic expiry remain fallback if
+notifications are delayed or missed. No OS event itself proves hardware
+identity, file presence, equal file bytes, or content hashes; all positive
+statuses still require a successful complete native OS probe + explicit scoped
+binding. UI search, CTF generation pinning and user-side annotations unchanged.
+
+Windows compiled event-classification tests, dual native source contracts and
+[UX26 manual hotplug runbook](qa/UX26_EVENT_DRIVEN_USB_HOTPLUG_20261102.md)
+are supplied in the same draft PR #57. Exact-HEAD four-platform native,
+integration, offline acceptance and upgrade CI must pass; physical Win10/11,
+Mac ARM/Intel plug/unplug, cloned volume, pending unmount and VoiceOver/
+keyboard/HiDPI acceptance remain unverified. Stable 1.0 blocked.

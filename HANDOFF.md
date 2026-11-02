@@ -532,3 +532,23 @@ docs/qa/UX25_CANDIDATE_CLIPBOARD_SHA_RECHECK_20261102.md.
 Linked CTF is read-only; owner data never enters CI or clipboard QA.
 CI and manual USB/GUI/historical-CTF/signing/p95 release gates remain
 separate. PR remains draft/unmerged, stable 1.0 BLOCKED.
+
+
+## UX26 — event-driven native mount invalidation (2026-11-02, PR #57)
+
+A meaningful source-level defect remained after UX23: despite 6-second polling,
+USB unplug could leave the *last verified* green disk badge visible until the
+next tick. Both native clients now revoke old physical presence immediately
+upon OS mount-change events. Windows WM_DEVICECHANGE distinguishes removal-
+pending (invalidate only) from completed arrival/removal (invalidate and new
+full OS scan); SwiftUI NSWorkspace willUnmount/didUnmount/didMount revokes
+in-flight mount-root/candidate-copy intents and their response generations.
+No event, historical drive letter, user shelf tag or catalog entry is treated
+as proof of live bytes. Periodic fallback, explicit pair DB, generation-pinned
+read-only CTF and separate annotations remain intact.
+
+Evidence contract: compiled Windows event tests, both-native source regression,
+new docs/qa/UX26_EVENT_DRIVEN_USB_HOTPLUG_20261102.md; the final exact-HEAD
+Actions results must be verified separately before any PASS claim. Manual USB
+hardware/Win10/11/Mac ARM/Intel, historic CTF, signing/notarization and real
+p95 <=150ms remain stable 1.0 gates. Do not merge draft #57 automatically.
