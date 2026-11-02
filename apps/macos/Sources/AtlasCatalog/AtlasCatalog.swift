@@ -613,10 +613,11 @@ private struct CopyReturnContext {
     // paired volume is absent. Remote volumes are irrelevant to USB matching;
     // if ANY visible local mount cannot be classified or lacks a filesystem
     // UUID, return nil rather than quietly omitting it and claiming "offline".
+    // Hidden local mounts count too; excluding them could produce false "offline".
     func scanPhysicalVolumes() -> [LivePhysicalVolume]? {
         let keys: Set<URLResourceKey> = [.volumeUUIDStringKey, .volumeNameKey, .volumeIsLocalKey]
         guard let urls = FileManager.default.mountedVolumeURLs(
-            includingResourceValuesForKeys: Array(keys), options: [.skipHiddenVolumes]
+            includingResourceValuesForKeys: Array(keys), options: []
         ) else { return nil }
         var result: [LivePhysicalVolume] = []
         for url in urls {

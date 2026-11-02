@@ -1,3 +1,9 @@
+## UX11 — native whole-volume OS scan, fail-closed (2026-11-02; exact HEAD CI pending)
+
+In the same draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57), resolved a physical disk trust defect: letter-only Win32 enumeration could falsely call an explicitly paired, live letterless/folder-mounted USB volume **offline**. The native Windows shell now enumerates OS volume GUIDs, derives GUID+serial identity, shows available current mount-point hints and checks complete enumeration/close. SwiftUI now includes hidden local mounts; incomplete UUID scans remain unverified, never false offline. A live OS UUID and explicit per-generation pairing prove only OS volume presence, not manufacturer hardware identity, recorded file presence, hash or metadata-copy equality. Windows pure unit + dual-native wiring regression and [UX11 manual runbook](docs/qa/UX11_ALL_VOLUME_PROBE_20261102.md) added. Recheck exact-HEAD Linux/Windows/macOS ARM/Intel, integration/offline kit and RC2→RC3 upgrades before declaring green. Manual hardware/GUI, original modified/historic CTF, signing/notarization and real p95 remain blockers. PR draft/unmerged, RC3 unsigned prerelease only.
+
+---
+
 ## UX9 exact-HEAD CI repair (2026-11-02)
 
 Initial UX9 [SHA 6649bb3](https://github.com/i-shutov/whereisit-ai/commit/6649bb33db9cb4ec19da86232735bdafa9647207) failed [offline acceptance](https://github.com/i-shutov/whereisit-ai/actions/runs/41361019201) at **Check integrated Rust contracts → cargo fmt --all -- --check** (Rustfmt-only formatting of the new Windows shortlist helper, test and button layout). Fixed the reported diff **in the same draft PR #57**, no tests disabled. Recheck all new exact-HEAD jobs before green status; earlier pending workflow results cannot certify a later SHA.

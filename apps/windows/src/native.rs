@@ -11,8 +11,8 @@ use windows_sys::Win32::{
     Foundation::*,
     Graphics::Gdi::*,
     Storage::FileSystem::{
-        FileTimeToLocalFileTime, GetDriveTypeW, GetLogicalDriveStringsW, GetVolumeInformationW,
-        GetVolumeNameForVolumeMountPointW,
+        FileTimeToLocalFileTime, FindFirstVolumeW, FindNextVolumeW, FindVolumeClose,
+        GetDriveTypeW, GetVolumeInformationW, GetVolumePathNamesForVolumeNameW,
     },
     System::{
         Com::*, LibraryLoader::*, SystemServices::SS_PATHELLIPSIS, Time::FileTimeToSystemTime,
@@ -796,76 +796,128 @@ mod physical_probe_completeness_tests {
     }
 }
 
+// A live filesystem volume can have no letter or be mounted ONLY in a folder.
+// Keep the native volume GUID and current serial; never match historical paths.
+fn windows_volume_guid_identity(path: &str, serial: u32) -> Option<String> {
+    let guid = path.strip_prefix(r"\\?\Volume")?.strip_suffix('\\')?;
+    if guid.len() != 38 || !guid.starts_with('{') || !guid.ends_with('}') {
+        return None;
+    }
+    let body = &guid[1..guid.len() - 1];
+    if body.len() != 36
+        || !body.bytes().enumerate().all(|(index, byte)| {
+            if [8, 13, 18, 23].contains(&index) {
+                byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
+    {
+        return None;
+    }
+    Some(format!("win:{guid}:{serial:08x}").to_ascii_lowercase())
+}
+
+#[cfg(test)]
+mod all_volume_probe_tests {
+    use super::windows_volume_guid_identity;
+
+    #[test]
+    fn guid_identity_is_stable_without_a_drive_letter() {
+        let live = r"\\?\Volume{12345678-1234-abcd-ABCD-1234567890ab}\";
+        assert_eq!(
+            windows_volume_guid_identity(live, 0x1234_abcd).as_deref(),
+            Some("win:{12345678-1234-abcd-abcd-1234567890ab}:1234abcd")
+        );
+        assert!(windows_volume_guid_identity(r"C:\", 1).is_none());
+        assert!(windows_volume_guid_identity(r"\\?\Volume{not-a-uuid}\", 1).is_none());
+        assert!(windows_volume_guid_identity(
+            r"\\?\Volume{12345678-1234-abcd-abcd-1234567890ab}",
+            1
+        )
+        .is_none());
+    }
+}
+
+// GetLogicalDriveStringsW ignores folder-only and letterless OS volumes.
+// A complete volume-GUID scan prevents a still-connected paired USB from
+// being marked offline just because its previous letter disappeared.
 unsafe fn windows_mounted_volumes() -> Option<Vec<MountedPhysicalVolume>> {
-    let required = GetLogicalDriveStringsW(0, null_mut());
-    if required == 0 || required > 32_768 {
+    let mut name = [0u16; 1024];
+    let handle = FindFirstVolumeW(name.as_mut_ptr(), name.len() as u32);
+    if handle == INVALID_HANDLE_VALUE {
         return None;
     }
-    let mut roots = vec![0u16; required as usize + 2];
-    let written = GetLogicalDriveStringsW(roots.len() as u32, roots.as_mut_ptr());
-    if written == 0 || written >= roots.len() as u32 {
-        return None;
-    }
-    let mut result = Vec::new();
-    for root in roots[..written as usize].split(|unit| *unit == 0) {
-        if root.is_empty() {
-            continue;
-        }
-        let mut terminated = root.to_vec();
-        terminated.push(0);
-        match scannable_windows_drive_type(GetDriveTypeW(terminated.as_ptr())) {
-            Some(true) => {}
-            Some(false) => continue, // recognized non-local mount
-            None => return None,     // transient/inaccessible root: fail closed
-        }
-        let mut guid = [0u16; 128];
-        if GetVolumeNameForVolumeMountPointW(
-            terminated.as_ptr(),
-            guid.as_mut_ptr(),
-            guid.len() as u32,
-        ) == 0
-        {
-            return None;
-        }
-        let guid_end = guid.iter().position(|unit| *unit == 0)?;
-        let guid_name = String::from_utf16_lossy(&guid[..guid_end]);
-        let start = guid_name.find('{')?;
-        let end = guid_name.find('}')?;
-        if end <= start {
-            return None;
-        }
-        let mut volume_label = [0u16; 128];
-        let mut serial = 0u32;
-        if GetVolumeInformationW(
-            terminated.as_ptr(),
-            volume_label.as_mut_ptr(),
-            volume_label.len() as u32,
-            &mut serial,
-            null_mut(),
-            null_mut(),
-            null_mut(),
-            0,
-        ) == 0
-        {
-            return None;
-        }
-        let label_end = volume_label.iter().position(|unit| *unit == 0)?;
-        let label = String::from_utf16_lossy(&volume_label[..label_end]);
-        let root_path = String::from_utf16_lossy(root);
-        result.push(MountedPhysicalVolume {
-            id: format!("win:{}:{serial:08x}", &guid_name[start..=end]).to_ascii_lowercase(),
-            description: format!(
-                "{} • current OS mount {}",
-                if label.is_empty() {
-                    "(unnamed)"
+    let probe = (|| {
+        let mut result = Vec::new();
+        loop {
+            let end = name.iter().position(|unit| *unit == 0)?;
+            let volume_path = String::from_utf16_lossy(&name[..end]);
+            match scannable_windows_drive_type(GetDriveTypeW(name.as_ptr())) {
+                Some(false) => {} // recognized nonlocal/nonfilesystem volume
+                None => return None, // incomplete OS probe: cannot assert offline
+                Some(true) => {
+                    let mut label_buffer = [0u16; 128];
+                    let mut serial = 0u32;
+                    if GetVolumeInformationW(
+                        name.as_ptr(),
+                        label_buffer.as_mut_ptr(),
+                        label_buffer.len() as u32,
+                        &mut serial,
+                        null_mut(),
+                        null_mut(),
+                        null_mut(),
+                        0,
+                    ) == 0 {
+                        return None;
+                    }
+                    let identity = windows_volume_guid_identity(&volume_path, serial)?;
+                    let label_end = label_buffer.iter().position(|unit| *unit == 0)?;
+                    let label = String::from_utf16_lossy(&label_buffer[..label_end]);
+                    // Mount-point names aid identification but NEVER define UUID.
+                    let mut paths = vec![0u16; 32_768];
+                    let mut needed = 0u32;
+                    let mount_found = GetVolumePathNamesForVolumeNameW(
+                        name.as_ptr(), paths.as_mut_ptr(), paths.len() as u32, &mut needed,
+                    ) != 0;
+                    let mounts = if mount_found {
+                        paths.split(|unit| *unit == 0)
+                            .filter(|units| !units.is_empty())
+                            .map(String::from_utf16_lossy)
+                            .collect::<Vec<_>>()
+                    } else {
+                        Vec::new()
+                    };
+                    let location = if mounts.is_empty() {
+                        "no letter / folder mount reported".to_owned()
+                    } else {
+                        mounts.join(", ")
+                    };
+                    result.push(MountedPhysicalVolume {
+                        id: identity,
+                        description: format!(
+                            "{} • current OS volume {location}",
+                            if label.is_empty() { "(unnamed)" } else { &label },
+                        ),
+                    });
+                }
+            }
+            if result.len() > 256 {
+                return None;
+            }
+            if FindNextVolumeW(handle, name.as_mut_ptr(), name.len() as u32) == 0 {
+                return if GetLastError() == ERROR_NO_MORE_FILES {
+                    Some(result)
                 } else {
-                    &label
-                },
-                root_path
-            ),
-        });
+                    None
+                };
+            }
+        }
+    })();
+    if FindVolumeClose(handle) == 0 {
+        return None;
     }
-    Some(result)
+    probe
 }
 
 fn physical_state_label(state: &str) -> &'static str {
