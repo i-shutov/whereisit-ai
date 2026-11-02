@@ -139,12 +139,8 @@ mod recorded_parent_folder_tests {
         assert_eq!(context.focus_volume_id, Some(42));
         assert_eq!(context.offset, 250);
         assert_eq!(context.disk_filter_query, "copies:");
-        assert!(
-            CandidateFolderReturn::snapshot(None, None, Some(42), 0, String::new()).is_none()
-        );
-        assert!(
-            CandidateFolderReturn::snapshot(Some(0), None, None, 0, String::new()).is_none()
-        );
+        assert!(CandidateFolderReturn::snapshot(None, None, Some(42), 0, String::new()).is_none());
+        assert!(CandidateFolderReturn::snapshot(Some(0), None, None, 0, String::new()).is_none());
     }
 
     #[test]
@@ -4727,7 +4723,9 @@ impl App {
     // rather than attempting to open a historical USB filesystem location.
     unsafe fn browse_recorded_parent_folder(&mut self) {
         if !self.page_ready {
-            self.status("Wait for a current search or candidate page before browsing its recorded folder.");
+            self.status(
+                "Wait for a current search or candidate page before browsing its recorded folder.",
+            );
             return;
         }
         let row = SendMessageW(

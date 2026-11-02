@@ -1,3 +1,21 @@
+## UX28 exact-HEAD Rustfmt diagnosis and repair (2026-11-02)
+
+At the first UX28 HEAD `2241c3be121dc41f91dd0af874a73dea5df10190`,
+the [native Linux test job](https://github.com/i-shutov/whereisit-ai/actions/runs/41469634689)
+passed workspace Rust unit tests and the Python dual-native source-contract
+regression but **failed only `cargo fmt --all -- --check`**. The
+[offline-kit workflow](https://github.com/i-shutov/whereisit-ai/actions/runs/41469634681)
+failed at its first `Check integrated Rust contracts` step for the same
+two Rustfmt hunks in `apps/windows/src/native.rs`: assertion wrapping
+and the new folder-navigation status call. Those exact formatting changes
+have been applied in the **same draft PR #57**, without suppressing tests.
+The [UX28 integration wiring](https://github.com/i-shutov/whereisit-ai/actions/runs/41469634859)
+passed. New final-HEAD native/offline/integration/installed-upgrade checks
+are required; earlier green workflows cannot certify the repair.
+No real USB GUI, original/historical CTF or stable-release acceptance.
+
+---
+
 ## UX28 — two-level candidate → folder → source-search navigation (2026-11-02)
 
 Draft PR #57: both native clients let a selected **other-disk candidate** file
