@@ -547,6 +547,26 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn('let stale_other = call(json!({', pinned)
         self.assertIn('assert_eq!(stale_other["error"]["code"], "source_changed");', pinned)
 
+    def test_ux22_live_os_root_requires_service_pairing_and_two_native_probes(self):
+        self.assertIn('"verified_physical_id":verified_physical_id', PHYSICAL)
+        self.assertIn('let state = classify(id, &known, &seen, probe_ok);', PHYSICAL)
+        self.assertIn('if state == "connected"', PHYSICAL)
+        self.assertIn('fn verified_mount_root(', WIN)
+        self.assertIn('only_explicit_unique_os_verified_identity_exposes_current_mount_root', WIN)
+        self.assertIn('self.refresh_physical_presence();', WIN)
+        self.assertIn('let from_fresh_probe = windows_mounted_volumes()', WIN)
+        self.assertIn('self.linked_request("ctf_volumes_pinned")', WIN)
+        self.assertIn('COPY_VERIFIED_OS_ROOT =>', WIN)
+        self.assertIn("message.wParam == b'H' as usize", WIN)
+        self.assertIn('let verified_physical_id: String?', MAC)
+        self.assertIn('func copyCurrentOSMountRoot()', MAC)
+        self.assertIn('pinned["op"] = "ctf_volumes_pinned"', MAC)
+        self.assertIn('let secondProbe = self.scanPhysicalVolumes()', MAC)
+        self.assertIn('self.physicalState(pending.disk) == "connected"', MAC)
+        self.assertIn('Button("Copy current OS root")', MAC)
+        self.assertIn('.keyboardShortcut("h", modifiers: [.command, .shift])', MAC)
+        self.assertNotIn('file://' + ' + entry.relative_path', WIN + MAC)
+
     def test_no_unverified_physical_drive_claims_in_locator(self):
         self.assertIn("Physical connection: NOT VERIFIED", WIN)
         self.assertIn("Physical connection not verified", MAC)

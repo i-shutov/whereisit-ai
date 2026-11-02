@@ -60,6 +60,7 @@ struct LivePhysicalVolume: Identifiable, Hashable {
 struct PhysicalStateRow: Decodable {
     let volume_id: Int64
     let state: String
+    let verified_physical_id: String?
 }
 struct PhysicalStateReply: Decodable {
     let items: [PhysicalStateRow]
@@ -215,6 +216,8 @@ private struct CopyReturnContext {
     @Published var diskFilter = ""
     @Published var volumeID: Int64?
     @Published var physicalStates: [Int64: String] = [:]
+    @Published var verifiedPhysicalIDs: [Int64: String] = [:]
+    private var pendingMountCopy: (disk: Int64, scope: String)?
     @Published var shelfLabels: [Int64: String] = [:]
     @Published var shelfTagConflicts: [Int64: [Int64]] = [:]
     @Published var mountedPhysicalVolumes: [LivePhysicalVolume] = []
@@ -422,7 +425,8 @@ private struct CopyReturnContext {
         generation += 1; volumeID = nil; stack = [(nil, "/")]; entries = []; query = ""; appliedQuery = ""; showingDuplicates = false; offset = 0
         copySourceID = nil; copySourceName = nil; copyReturn = nil
         volumes = []; diskFilter = ""; categories = []; categoryID = nil; selection = nil; total = 0; hasMore = false
-        physicalStates = [:]; shelfLabels = [:]; mountedPhysicalVolumes = []; selectedPhysicalID = ""; physicalProbeOK = false
+        physicalStates = [:]; verifiedPhysicalIDs = [:]; pendingMountCopy = nil
+        shelfLabels = [:]; mountedPhysicalVolumes = []; selectedPhysicalID = ""; physicalProbeOK = false
         physicalCheckGeneration += 1
         status = "Opening catalog…"
         request(["op": "init"], as: EmptyReply.self) { [weak self] result in
@@ -820,6 +824,7 @@ private struct CopyReturnContext {
         }
         // Do not carry a positive connection claim through a failed or pending probe.
         physicalStates = [:]
+        verifiedPhysicalIDs = [:]
         var args = physicalArguments(mountedPhysicalVolumes, probeOK: physicalProbeOK)
         args["op"] = "physical_status"
         let observed = mountedPhysicalVolumes.map(\.id)
@@ -832,6 +837,29 @@ private struct CopyReturnContext {
                 self.physicalStates = Dictionary(
                     uniqueKeysWithValues: result.items.map { ($0.volume_id, $0.state) }
                 )
+                self.verifiedPhysicalIDs = Dictionary(uniqueKeysWithValues:
+                    result.items.compactMap { row -> (Int64, String)? in
+                        guard row.state == "connected", let id = row.verified_physical_id else { return nil }
+                        return (row.volume_id, id)
+                    })
+            }
+            if let pending = self.pendingMountCopy {
+                self.pendingMountCopy = nil
+                guard pending.scope == scope, self.selectedDiskForPairing == pending.disk,
+                      self.physicalState(pending.disk) == "connected",
+                      let verifiedID = self.verifiedPhysicalIDs[pending.disk],
+                      let mounted = self.mountedPhysicalVolumes.first(where: { $0.id == verifiedID }),
+                      self.mountedPhysicalVolumes.filter({ $0.id == verifiedID }).count == 1,
+                      let secondProbe = self.scanPhysicalVolumes(),
+                      secondProbe.filter({
+                          $0.id == verifiedID && $0.currentMount == mounted.currentMount
+                      }).count == 1 else {
+                    self.status = "Current OS mount root NOT verified; source, pairing or USB volume changed."
+                    return
+                }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(mounted.currentMount, forType: .string)
+                self.status = "CURRENT OS root copied after two UUID probes; catalogued file presence and bytes unverified."
             }
             if let pending = self.pendingConnectedCopyFocus {
                 self.pendingConnectedCopyFocus = nil
@@ -847,6 +875,35 @@ private struct CopyReturnContext {
             }
         }
     }
+    // A current OS mount root, never a path reconstructed from CTF.
+    // Source generation, explicit pair mapping, and native UUID/mount identity
+    // must all be rechecked; an OS mount is NOT proof the catalogued file exists.
+    func copyCurrentOSMountRoot() {
+        guard let disk = selectedDiskForPairing, volumes.contains(where: { $0.id == disk }) else {
+            status = "Select a current file or catalog disk before copying a live OS mount."
+            return
+        }
+        let scope = physicalScope
+        if let fields = linkedFields() {
+            var pinned = fields
+            pinned["op"] = "ctf_volumes_pinned"
+            status = "Rechecking linked source generation before copying OS root…"
+            request(pinned, as: LinkedCTFResult<[Volume]>.self) { [weak self] reply in
+                guard let self, self.physicalScope == scope,
+                      self.selectedDiskForPairing == disk else { return }
+                guard reply != nil else {
+                    self.status = "Linked CTF generation could not be verified; no OS root copied."
+                    return
+                }
+                self.pendingMountCopy = (disk, scope)
+                self.refreshPhysicalPresence()
+            }
+        } else {
+            pendingMountCopy = (disk, scope)
+            refreshPhysicalPresence()
+        }
+    }
+
     func pairSelectedPhysicalDisk() {
         guard let volumeID = selectedDiskForPairing,
               let candidate = pairablePhysicalVolumes.first(where: { $0.id == selectedPhysicalID }) else {
@@ -1216,7 +1273,8 @@ private struct CopyReturnContext {
             self.job = nil
             guard let result else { return }
             self.linkedCTFPath = source; self.linkedGeneration = result.generation
-            self.physicalStates = [:]; self.shelfLabels = [:]; self.selectedPhysicalID = ""
+            self.physicalStates = [:]; self.verifiedPhysicalIDs = [:]; self.pendingMountCopy = nil
+            self.shelfLabels = [:]; self.selectedPhysicalID = ""
             if self.exportFormat == "ctf" { self.exportFormat = "csv" }
             self.volumeID = nil; self.stack = [(nil, "/")]; self.entries = []
             self.query = ""; self.appliedQuery = ""; self.showingDuplicates = false
@@ -1745,6 +1803,11 @@ private struct CopyReturnContext {
                         .font(.caption).foregroundStyle(.orange)
                         .accessibilityLabel("Physical connection unverified: OS volume scan incomplete")
                 }
+                Button("Copy current OS root") { model.copyCurrentOSMountRoot() }
+                    .disabled(model.selectedDiskForPairing == nil)
+                    .keyboardShortcut("h", modifiers: [.command, .shift])
+                    .accessibilityLabel("Copy current OS volume root, only after verifying explicit pairing")
+                    .help("Recheck linked CTF SHA, OS UUID and mount; copies only the current mount root, NOT a file path (Command-Shift-H)")
                 Button("Refresh OS mounts") { model.refreshPhysicalPresence() }
                     .keyboardShortcut("r", modifiers: [.command])
                     .help("Recheck current OS volume identities (Command-R); never use a recorded drive letter")

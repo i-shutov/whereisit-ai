@@ -1,0 +1,13 @@
+# UX22 — Current OS mount root, never a historical catalog path
+
+**Status:** implementation candidate in draft PR #57. These steps require manual real USB and GUI checks; CI tests use synthetic fixtures only.
+
+1. On Win10/11 and macOS Intel/ARM launch the search-first three-pane app; load a linked *synthetic* CTF or a synthetic local SQLite. Select a file on disk #42. The result's recorded relative path MUST remain separate from the actual OS mount root.
+2. Without any physical pairing use **Copy OS root** / Ctrl+Shift+H (Windows) or Command+Shift+H (Mac). The action MUST refuse to copy a guessed letter/path, regardless of disk label or historical CTF root.
+3. Explicitly pair a *test* USB volume to that catalog disk via the existing confirmed pairing dialog. Reprobe and use Copy OS root. Clipboard must contain only the current OS volume root returned by native OS enumeration (drive/folder mount or mountedVolumeURL), **not** `relative_path` or a fabricated file path. Windows letterless volume without a system mount point must refuse rather than infer one.
+4. Remove the USB and repeat; retry after reconnect with a different drive letter/mount location. Only a newly observed, uniquely paired UUID and stable mount across both probes may pass. A failed/incomplete OS scan must return no path, never an offline/connected guess. A duplicated filesystem UUID/clone and an explicitly conflicting binding MUST fail closed.
+5. Use a linked synthetic CTF, externally change only that fixture between initial read and copy. Pinned generation SHA must reject the copy before the OS probe; no stale clipboard write. Switch catalog, selected file or disk before the asynchronous reply; no previous-scope path may copy.
+6. Verify control discoverability at 880px (menu shortcut) and 1366×768 (visible third-pane button), Windows keyboard accessibility and macOS VoiceOver label. Check that selecting a new search/page or stopping an in-flight query never resurrects stale file actions.
+7. Run synthetic Rust service state tests and compiled Windows unit tests, Python dual-native contract tests; then verify exact HEAD Linux/Windows/macOS ARM/Intel CI, offline kit, integration and RC2→RC3 installed upgrade runs separately.
+
+**Safety boundary:** the OS root is an observation of a mounted filesystem after an explicit local user pairing. It is not proof of physical hardware serial, correct sticker, actual file existence, file-content equality or safe deletion. No original/modified/historical private CTF or derivative SQLite is published. Stable 1.0 remains blocked by real modified/historical CTF checks, manual USB/GUI acceptance, signing/notarization and real 3M-row p95 ≤150ms.

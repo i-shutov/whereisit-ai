@@ -204,7 +204,20 @@ pub fn status(request: &Value) -> Result<Value> {
     let known = bindings(path, key, os)?;
     let items: Vec<_> = volumes
         .into_iter()
-        .map(|id| json!({"volume_id":id,"state":classify(id, &known, &seen, probe_ok)}))
+        .map(|id| {
+            let state = classify(id, &known, &seen, probe_ok);
+            // Only an unambiguous, explicitly paired, *currently observed*
+            // OS volume can be resolved to a native mount root. The native
+            // client must still re-probe before copying the mount hint.
+            let verified_physical_id = if state == "connected" {
+                known.iter()
+                    .find(|binding| binding.volume_id == id)
+                    .map(|binding| binding.physical_id.as_str())
+            } else {
+                None
+            };
+            json!({"volume_id":id,"state":state,"verified_physical_id":verified_physical_id})
+        })
         .collect();
     Ok(json!({"items":items,"probe_ok":probe_ok}))
 }
@@ -547,7 +560,12 @@ mod tests {
             request(read.clone())["data"]["items"][0]["state"],
             "connected"
         );
+        assert_eq!(
+            request(read.clone())["data"]["items"][0]["verified_physical_id"],
+            "mac:aaaa-1111"
+        );
         read["observed_ids"] = json!([]);
+        assert!(request(read.clone())["data"]["items"][0]["verified_physical_id"].is_null());
         assert_eq!(
             request(read.clone())["data"]["items"][0]["state"],
             "offline"

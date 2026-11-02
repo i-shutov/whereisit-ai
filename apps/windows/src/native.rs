@@ -55,6 +55,7 @@ const PHYSICAL_CONNECTED_FILTER: usize = 145;
 const PHYSICAL_UNVERIFIED_FILTER: usize = 146;
 const STOP_PAGE_WAIT: usize = 147;
 const RETRY_PAGE: usize = 148;
+const COPY_VERIFIED_OS_ROOT: usize = 149;
 const SEARCH_BOX: usize = 130;
 // Win32 GetDriveTypeW standard result codes; windows-sys 0.61 does not export these here.
 // Unknown/missing roots mean a potentially incomplete OS snapshot, never "offline".
@@ -835,6 +836,9 @@ fn display_size(value: Option<u64>) -> String {
 struct MountedPhysicalVolume {
     id: String,
     description: String,
+    // Collected from the CURRENT native OS mount-manager snapshot only.
+    // No historical catalog root, label or drive letter is used as a path.
+    mount_roots: Vec<String>,
 }
 
 /// A successful live Windows Mount Manager probe provides a host-scoped
@@ -865,14 +869,17 @@ mod physical_mount_picker_tests {
             MountedPhysicalVolume {
                 id: "win:{aaaa}:11111111".into(),
                 description: "first".into(),
+                mount_roots: vec![format!("X:\\\\{description}")],
             },
             MountedPhysicalVolume {
                 id: "win:{aaaa}:11111111".into(),
                 description: "clone".into(),
+                mount_roots: vec![format!("X:\\\\{description}")],
             },
             MountedPhysicalVolume {
                 id: "win:{bbbb}:22222222".into(),
                 description: "unique".into(),
+                mount_roots: vec![format!("X:\\\\{description}")],
             },
         ];
         let offered = unique_pairable_mounts(&mounts);
@@ -1430,6 +1437,7 @@ unsafe fn windows_mounted_volumes() -> Option<Vec<MountedPhysicalVolume>> {
                     };
                     result.push(MountedPhysicalVolume {
                         id: identity,
+                        mount_roots: mounts,
                         description: format!(
                             "{} • current OS volume {location}",
                             if label.is_empty() {
@@ -1457,6 +1465,63 @@ unsafe fn windows_mounted_volumes() -> Option<Vec<MountedPhysicalVolume>> {
         return None;
     }
     probe
+}
+
+// A live OS mount hint is available ONLY after service-side confirmation
+// of an explicitly paired volume identity and a unique current OS observation.
+// This never constructs a path from a recorded catalog drive letter.
+fn verified_mount_root(
+    catalog_id: i64,
+    states: &HashMap<i64, String>,
+    verified_ids: &HashMap<i64, String>,
+    observed: &[MountedPhysicalVolume],
+) -> Option<String> {
+    if states.get(&catalog_id).map(String::as_str) != Some("connected") {
+        return None;
+    }
+    let expected = verified_ids.get(&catalog_id)?;
+    let mut matches = observed.iter().filter(|mount| &mount.id == expected);
+    let mounted = matches.next()?;
+    if matches.next().is_some() {
+        return None; // cloned/colliding identities can never select a path
+    }
+    mounted
+        .mount_roots
+        .iter()
+        .find(|path| !path.is_empty() && !path.contains('\0'))
+        .cloned()
+}
+
+#[cfg(test)]
+mod verified_mount_root_tests {
+    use super::{verified_mount_root, MountedPhysicalVolume};
+    use std::collections::HashMap;
+
+    #[test]
+    fn only_explicit_unique_os_verified_identity_exposes_current_mount_root() {
+        let mounts = vec![MountedPhysicalVolume {
+            id: "win:{physical}:12345678".into(),
+            description: "current OS volume".into(),
+            mount_roots: vec![r"R:\\".into()],
+        }];
+        let mut states = HashMap::from([(42, "connected".into())]);
+        let verified = HashMap::from([(42, "win:{physical}:12345678".into())]);
+        assert_eq!(verified_mount_root(42, &states, &verified, &mounts), Some(r"R:\\".into()));
+        assert_eq!(verified_mount_root(142, &states, &verified, &mounts), None);
+        assert_eq!(verified_mount_root(42, &states, &HashMap::new(), &mounts), None);
+        states.insert(42, "offline".into());
+        assert_eq!(verified_mount_root(42, &states, &verified, &mounts), None);
+        states.insert(42, "conflict".into());
+        assert_eq!(verified_mount_root(42, &states, &verified, &mounts), None);
+        states.insert(42, "connected".into());
+        let duplicates = [mounts.clone(), mounts.clone()].concat();
+        assert_eq!(verified_mount_root(42, &states, &verified, &duplicates), None);
+        let without_mount = vec![MountedPhysicalVolume {
+            mount_roots: vec![],
+            ..mounts[0].clone()
+        }];
+        assert_eq!(verified_mount_root(42, &states, &verified, &without_mount), None);
+    }
 }
 
 fn physical_state_label(state: &str) -> &'static str {
@@ -2598,6 +2663,7 @@ struct App {
     page_sort_descending: bool,
     buttons: Vec<(usize, HWND)>,
     physical_states: HashMap<i64, String>,
+    verified_physical_ids: HashMap<i64, String>,
     mounted_volumes: Vec<MountedPhysicalVolume>,
     physical_probe_ok: bool,
     duplicate_mode: HWND,
@@ -2634,6 +2700,7 @@ struct App {
     page_ready: bool,
     page_awaiting: bool,
     page_retry_available: bool,
+    pending_mount_root: Option<(i64, u64)>,
     generation: u64,
     pending: usize,
     job: Option<String>,
@@ -2666,6 +2733,7 @@ impl App {
             page_sort_descending: false,
             buttons: vec![],
             physical_states: HashMap::new(),
+            verified_physical_ids: HashMap::new(),
             mounted_volumes: Vec::new(),
             physical_probe_ok: false,
             duplicate_mode: null_mut(),
@@ -2702,6 +2770,7 @@ impl App {
             page_ready: false,
             page_awaiting: false,
             page_retry_available: false,
+            pending_mount_root: None,
             generation: 0,
             pending: 0,
             job: None,
@@ -2812,12 +2881,14 @@ impl App {
         self.visible_disk_indices.clear();
         self.text(self.disk_filter, "");
         self.physical_states.clear();
+        self.verified_physical_ids.clear();
         self.mounted_volumes.clear();
         self.physical_probe_ok = false;
         self.entries.clear();
         self.page_ready = false;
         self.page_awaiting = false;
         self.page_retry_available = false;
+        self.pending_mount_root = None;
         self.categories.clear();
         self.total = 0;
         self.has_more = false;
@@ -3010,6 +3081,22 @@ impl App {
                 continue;
             }
             let data = &reply.result["data"];
+            if reply.tag == "mount_root_source" {
+                let pending = self.pending_mount_root.take();
+                if let Some((disk, generation)) = pending {
+                    if generation == reply.generation
+                        && generation == self.generation
+                        && self.selected_physical_catalog_disk() == Some(disk)
+                    {
+                        if reply.result["ok"] == true {
+                            self.copy_verified_os_mount_root(disk);
+                        } else {
+                            self.status("Linked CTF generation could not be verified; OS root NOT copied. Refresh source.");
+                        }
+                    }
+                }
+                continue;
+            }
             if reply.tag == "cancel" {
                 if reply.result["ok"] != true {
                     self.error(&reply.result);
@@ -3608,6 +3695,7 @@ impl App {
         let reply = self.physical_request("physical_status", None, None, None);
         let old_states = self.physical_states.clone();
         self.physical_states.clear();
+        self.verified_physical_ids.clear();
         if reply["ok"] == true {
             if let Some(items) = reply["data"]["items"].as_array() {
                 for item in items {
@@ -3615,6 +3703,11 @@ impl App {
                         (item["volume_id"].as_i64(), item["state"].as_str())
                     {
                         self.physical_states.insert(volume_id, state.to_owned());
+                        if state == "connected" {
+                            if let Some(physical_id) = item["verified_physical_id"].as_str() {
+                                self.verified_physical_ids.insert(volume_id, physical_id.to_owned());
+                            }
+                        }
                     }
                 }
             }
@@ -3627,6 +3720,37 @@ impl App {
             }
             self.update_disk_locator();
         }
+    }
+
+    // Never copy a historical catalog path as a live OS root. Reconfirm the
+    // explicit UUID binding, then independently repeat native OS enumeration
+    // before placing the mount root on the local clipboard.
+    unsafe fn copy_verified_os_mount_root(&mut self, catalog_id: i64) {
+        self.refresh_physical_presence();
+        let from_verified_probe = verified_mount_root(
+            catalog_id,
+            &self.physical_states,
+            &self.verified_physical_ids,
+            &self.mounted_volumes,
+        );
+        let from_fresh_probe = windows_mounted_volumes().and_then(|now| {
+            verified_mount_root(
+                catalog_id,
+                &self.physical_states,
+                &self.verified_physical_ids,
+                &now,
+            )
+        });
+        let Some(root) = from_verified_probe.filter(|root| Some(root) == from_fresh_probe.as_ref()) else {
+            self.status("Current OS mount path NOT verified. Pair the physical disk, refresh and retry; no historical drive letters are used.");
+            return;
+        };
+        self.text(self.locator, &root);
+        SendMessageW(self.locator, EM_SETSEL, 0, -1);
+        SendMessageW(self.locator, WM_COPY, 0, 0);
+        SendMessageW(self.locator, EM_SETSEL, 0, 0);
+        self.update_disk_locator();
+        self.status("CURRENT OS volume root copied locally after a new UUID probe. File existence and bytes NOT verified.");
     }
 
     unsafe fn selected_physical_catalog_disk(&self) -> Option<i64> {
@@ -4529,6 +4653,20 @@ impl App {
                 self.update_disk_locator();
                 self.status("Disk pickup checklist copied locally. OS badges are last observations; file bytes unverified.");
             }
+            COPY_VERIFIED_OS_ROOT => {
+                let Some(catalog_id) = self.selected_physical_catalog_disk() else {
+                    self.status("Select a current file or catalog disk before copying a live OS root.");
+                    return;
+                };
+                if let Some(pinned) = self.linked_request("ctf_volumes_pinned") {
+                    // Revalidate linked CTF generation asynchronously; never
+                    // freeze the Win32 UI waiting for a large source read.
+                    self.pending_mount_root = Some((catalog_id, self.generation));
+                    self.call("mount_root_source", pinned);
+                } else {
+                    self.copy_verified_os_mount_root(catalog_id);
+                }
+            }
             COPY_LOCATOR => {
                 let row = SendMessageW(
                     self.files,
@@ -4897,6 +5035,7 @@ impl App {
             (FILE_COPIES, h - 78),
             (REVEAL_DISK, h - 78),
             (COPY_LOCATOR, h - 48),
+            (COPY_VERIFIED_OS_ROOT, h - 48),
         ] {
             if let Some((_, button)) = self.buttons.iter().find(|(id, _)| *id == command) {
                 if locator_width > 0 {
@@ -4905,6 +5044,8 @@ impl App {
                     let (button_left, button_width) = match command {
                         FILE_COPIES => (left, half),
                         REVEAL_DISK => (left + half + 6, locator_width - half - 6),
+                        COPY_LOCATOR => (left, half),
+                        COPY_VERIFIED_OS_ROOT => (left + half + 6, locator_width - half - 6),
                         _ => (left, locator_width),
                     };
                     MoveWindow(*button, button_left, y, button_width, 26, 1);
@@ -5034,6 +5175,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 (FILE_COPIES, "&Find copies"),
                 (REVEAL_DISK, "&Show disk"),
                 (COPY_LOCATOR, "Copy &locator text"),
+                (COPY_VERIFIED_OS_ROOT, "Copy OS &root"),
                 (COPY_CONNECTED, "&Verified copy"),
                 (COPY_PICKUP_PLAN, "Copy &pickup list"),
                 (COPY_PAGE_MANIFEST, "Copy page &paths"),
@@ -5497,6 +5639,12 @@ pub fn run() {
                 AppendMenuW(
                     view,
                     MF_STRING,
+                    COPY_VERIFIED_OS_ROOT,
+                    wide("Copy freshly verified OS volume root\tCtrl+Shift+H").as_ptr(),
+                );
+                AppendMenuW(
+                    view,
+                    MF_STRING,
                     REVEAL_DISK,
                     wide("Show selected file's disk in register\tCtrl+J").as_ptr(),
                 );
@@ -5607,6 +5755,16 @@ pub fn run() {
                 && message.wParam == b'C' as usize
             {
                 (*app).command(COPY_LOCATOR, 0);
+                continue;
+            }
+            // Ctrl+Shift+H copies ONLY the independently OS-verified mount
+            // root of an explicitly paired catalog disk, never a file path.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && GetKeyState(VK_SHIFT as i32) < 0
+                && message.wParam == b'H' as usize
+            {
+                (*app).command(COPY_VERIFIED_OS_ROOT, 0);
                 continue;
             }
             // Ctrl+Shift+P copies only local catalog metadata, never live
