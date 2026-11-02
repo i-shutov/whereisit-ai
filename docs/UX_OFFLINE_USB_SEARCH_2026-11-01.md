@@ -380,3 +380,6 @@ filesystem UUID do not prove the physical manufacturer serial or file presence.
 No catalog/CTF/SQLite/user pairing writes, no live file read or automatic
 metadata-match deletion. [UX24 manual runbook](qa/UX24_PHYSICAL_DISK_PICKUP_CARD_20261102.md).
 Manual physical hardware/GUI/a11y and real SLO remain unaccepted; draft PR only.
+
+
+UX24 CTF-read consistency: for a linked original CTF, each independent disk pickup card request now rechecks `ctf_volumes_pinned` generation SHA asynchronously before copying. Generation/source/selection changes reject the copy; a stale UI register alone is never proof of source validity. This gate was added after identifying a missing check in the initial implementation, along with fixing a Rustfmt-only CI failure in the same draft PR. Manual hardware acceptance remains open.

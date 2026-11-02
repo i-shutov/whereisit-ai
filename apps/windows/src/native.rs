@@ -1470,7 +1470,6 @@ unsafe fn windows_mounted_volumes() -> Option<Vec<MountedPhysicalVolume>> {
     probe
 }
 
-
 // A disk-only retrieval card is useful when no file result is selected.
 // Label/sticker are catalogue/user metadata, never a live USB root or a proof
 // that any catalogued file is currently present. Keep IDs collision-safe.
@@ -1504,7 +1503,9 @@ fn disk_pickup_card(
     }
     lines.push("Identify the actual disk by its physical sticker; catalog labels and historical paths are NOT live OS identity.".to_owned());
     lines.push("An OS filesystem UUID can be cloned. Mount state is a time-limited observation, not proof that files exist.".to_owned());
-    lines.push("No file bytes or hashes were compared; never auto-delete metadata matches.".to_owned());
+    lines.push(
+        "No file bytes or hashes were compared; never auto-delete metadata matches.".to_owned(),
+    );
     Some(lines.join("\r\n"))
 }
 
@@ -2867,6 +2868,7 @@ struct App {
     page_awaiting: bool,
     page_retry_available: bool,
     pending_mount_root: Option<(i64, u64)>,
+    pending_disk_card: Option<(i64, u64)>,
     generation: u64,
     pending: usize,
     job: Option<String>,
@@ -2938,6 +2940,7 @@ impl App {
             page_awaiting: false,
             page_retry_available: false,
             pending_mount_root: None,
+            pending_disk_card: None,
             generation: 0,
             pending: 0,
             job: None,
@@ -3056,6 +3059,7 @@ impl App {
         self.page_awaiting = false;
         self.page_retry_available = false;
         self.pending_mount_root = None;
+        self.pending_disk_card = None;
         self.categories.clear();
         self.total = 0;
         self.has_more = false;
@@ -3259,6 +3263,22 @@ impl App {
                             self.copy_verified_os_mount_root(disk);
                         } else {
                             self.status("Linked CTF generation could not be verified; OS root NOT copied. Refresh source.");
+                        }
+                    }
+                }
+                continue;
+            }
+            if reply.tag == "disk_card_source" {
+                let pending = self.pending_disk_card.take();
+                if let Some((disk, generation)) = pending {
+                    if generation == reply.generation
+                        && generation == self.generation
+                        && self.selected_physical_catalog_disk() == Some(disk)
+                    {
+                        if reply.result["ok"] == true {
+                            self.copy_disk_pickup_card();
+                        } else {
+                            self.status("Linked CTF generation changed or could not be checked; disk pickup card NOT copied.");
                         }
                     }
                 }
@@ -4912,7 +4932,25 @@ impl App {
                     self.copy_verified_os_mount_root(catalog_id);
                 }
             }
-            COPY_DISK_CARD => self.copy_disk_pickup_card(),
+            COPY_DISK_CARD => {
+                let Some(catalog_id) = self.selected_physical_catalog_disk() else {
+                    self.status("Select a file or catalog disk before copying its pickup card.");
+                    return;
+                };
+                if self.linked_mode() {
+                    if let Some(pinned) = self.linked_request("ctf_volumes_pinned") {
+                        // Every re-use validates the original external CTF generation
+                        // before copying; this avoids trusting a stale disk register.
+                        self.pending_disk_card = Some((catalog_id, self.generation));
+                        self.status("Verifying linked CTF generation before copying physical disk card...");
+                        self.call("disk_card_source", pinned);
+                    } else {
+                        self.status("Linked CTF generation not available; disk pickup card NOT copied.");
+                    }
+                } else {
+                    self.copy_disk_pickup_card();
+                }
+            },
             COPY_LOCATOR => {
                 let row = SendMessageW(
                     self.files,

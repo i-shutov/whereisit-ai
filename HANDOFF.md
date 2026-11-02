@@ -499,3 +499,8 @@ cover focus, keyboard, accessibility and source switch. Exact-HEAD native 4/4,
 integration/offline kit and installed upgrade 3/3 **must be checked** before
 any green claim. Hardware GUI, historic/modified CTF, real p95 150ms, code
 signatures and notarization remain release blockers. Do not merge/publish stable.
+
+
+### UX24 linked CTF generation-check repair (2026-11-02)
+
+UX24 initial commit [5b1c0aed](https://github.com/i-shutov/whereisit-ai/commit/5b1c0aed141885455c12df7af0d7db1f6efe02f1) failed [exact-head offline CI run 41437613128](https://github.com/i-shutov/whereisit-ai/actions/runs/41437613128), **Check integrated Rust contracts → cargo fmt --all -- --check**, due solely to two new Win32 formatting differences. Both are repaired within draft PR #57 without disabling checks. During the same audit we found that the new disk-only clipboard action reused a loaded linked CTF volume register without an independent per-action SHA check. Both native clients now asynchronously call pinned `ctf_volumes_pinned` before copying from a linked CTF; stale generation, selection or scope fails closed and never updates the clipboard. Synthetic SQLite mode copies its current loaded register; there is no source mutation. The dual-native integration regression now checks these pinned gates. Exact new HEAD CI remains required before declaring builds green; no merge or stable release.

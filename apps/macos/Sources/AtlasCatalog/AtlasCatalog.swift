@@ -731,6 +731,30 @@ private struct CopyReturnContext {
             status = "Select a current catalog disk or file before copying its pickup card."
             return
         }
+        let scope = physicalScope
+        let token = generation
+        if let fields = linkedFields() {
+            var pinned = fields
+            pinned["op"] = "ctf_volumes_pinned"
+            status = "Verifying linked CTF generation before copying physical disk card…"
+            request(pinned, as: LinkedCTFResult<[Volume]>.self, generationToken: token) { [weak self] reply in
+                guard let self else { return }
+                guard self.physicalScope == scope,
+                      self.selectedDiskForPairing == diskID,
+                      let verifiedDisk = reply?.result.first(where: { $0.id == diskID }) else {
+                    self.status = "Linked CTF generation or selected disk changed; pickup card NOT copied."
+                    return
+                }
+                self.writeDiskPickupCard(verifiedDisk)
+            }
+        } else {
+            writeDiskPickupCard(disk)
+        }
+    }
+    // Only called after exact source-generation revalidation in linked CTF
+    // mode. The OS badge itself also expires without a fresh native probe.
+    private func writeDiskPickupCard(_ disk: Volume) {
+        let diskID = disk.id
         let clean: (String) -> String = {
             $0.replacingOccurrences(of: "\r", with: " ")
                 .replacingOccurrences(of: "\n", with: " ")

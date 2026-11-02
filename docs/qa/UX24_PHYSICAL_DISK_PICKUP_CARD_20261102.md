@@ -19,7 +19,11 @@ manual acceptance instructions, **not** proof that owner hardware was tested.
    Confirm the card now refers to **that selected result's catalog disk ID**.
    Clear the file selection and choose another disk in the register; repeat.
    No other disk's sticker or OS badge may leak across selections.
-4. Switch CTF generation or switch SQLite catalog, then test the card while
+4. For a linked **read-only** CTF, repeat the card action. Confirm an asynchronous
+   pinned source-generation verification precedes clipboard changes. In a
+   synthetic/private QA copy only, change the backing CTF generation and
+   verify **no stale card is copied**. Never modify an owner original.
+   Switch CTF generation or switch SQLite catalog, then test the card while
    the volume list is loading or absent. A disk ID not in the **current**
    register must result in **no clipboard write**, never a stale card.
 5. Pair an actual external disk **explicitly** and verify its UUID through
@@ -40,9 +44,10 @@ manual acceptance instructions, **not** proof that owner hardware was tested.
 The card is copied to the **local clipboard only**. It neither opens current
 USB files nor writes linked original CTF, SQLite derivative caches, personal
 annotations or OS pairing. It never claims content hashes, equivalence, safe
-deletion or actual catalogued file presence. Historical CTF generation is still
-SHA-pinned for operations that read it, and this card only shows an already
-loaded authoritative catalog volume ID. Tests: compiled Windows Rust helper
+deletion or actual catalogued file presence. Each linked CTF disk card independently verifies the original generation SHA
+before copying (with an async selection/source guard); an already loaded
+volume list alone is insufficient. SQLite cards use their currently loaded
+catalog volume. No source writes or private raw data are required. Tests: compiled Windows Rust helper
 for Cyrillic/duplicate labels/ID collision/failed OS proof; dual-native Python
 source contract; exact-HEAD Linux fmt+Clippy+unit, Windows build, macOS
 ARM64/Intel builds, offline kit, RC2→RC3 installed upgrades.
