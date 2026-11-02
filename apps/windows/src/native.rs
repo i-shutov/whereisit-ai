@@ -3999,7 +3999,7 @@ impl App {
                 disk_pickup_card(
                     disk,
                     self.shelf_labels.get(&catalog_id).map(String::as_str),
-                    shelf_collision_warning(catalog_id, &self.shelf_tag_conflicts),
+                    shelf_collision_warning(catalog_id, &self.shelf_tag_conflicts).as_deref(),
                     state,
                 )
             });
