@@ -16,6 +16,34 @@ PHYSICAL = (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encod
 
 
 class DiskLocatorWiringTests(unittest.TestCase):
+    def test_ux28_candidate_folder_return_is_exact_and_revalidated(self):
+        # Other-disk candidate -> recorded parent -> candidate scope/page ->
+        # original global search. Each return uses a fresh linked CTF request.
+        self.assertIn("struct CandidateFolderReturn {", WIN)
+        self.assertIn("candidate_excursion_restores_exact_source_focus_and_page", WIN)
+        self.assertIn("self.candidate_folder_return = Some(snapshot);", WIN)
+        self.assertIn("if let Some(context) = self.candidate_folder_return.take()", WIN)
+        self.assertIn("self.copy_source = Some(context.source_id);", WIN)
+        self.assertIn("self.copy_focus_volume_id = context.focus_volume_id;", WIN)
+        self.assertIn("self.offset = context.offset;", WIN)
+        self.assertIn("self.load(); // Fresh pinned CTF source SHA", WIN)
+        self.assertIn("private struct CandidateFolderReturnContext", MAC)
+        self.assertIn("candidateFolderReturn = CandidateFolderReturnContext(", MAC)
+        self.assertIn("if let candidate = candidateFolderReturn {", MAC)
+        self.assertIn("copySourceID = candidate.sourceID", MAC)
+        self.assertIn("copyFocusVolumeID = candidate.focusVolumeID", MAC)
+        self.assertIn("offset = candidate.offset; diskFilter = candidate.diskFilter", MAC)
+        folder = MAC.split("func browseSelectedFileFolder() {", 1)[1].split(
+            "// Literal filename match", 1
+        )[0]
+        self.assertNotIn("copySourceID == nil", folder)
+        self.assertIn('args["op"] = "ctf_copy_candidates_pinned"', MAC)
+        self.assertIn('args["op"] = "ctf_children_pinned"', MAC)
+        self.assertIn("let token = generation", MAC)
+        self.assertIn("func back()", MAC)
+        self.assertNotIn("FileManager.default.fileExists", MAC)
+
+
     def test_ux22_second_probe_rejects_new_clone_with_same_uuid_different_mount(self):
         # Source-wiring contract complements the Rust status collision tests
         # and compiled macOS client. Two live observations with the same UUID

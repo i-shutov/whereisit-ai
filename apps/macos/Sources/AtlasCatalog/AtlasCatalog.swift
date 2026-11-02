@@ -210,6 +210,15 @@ private struct CopyReturnContext {
     let appliedDuplicateMode: String
 }
 
+// Candidate-folder excursions retain the original source-search history.
+private struct CandidateFolderReturnContext {
+    let sourceID: Int64
+    let sourceName: String?
+    let focusVolumeID: Int64?
+    let offset: Int
+    let diskFilter: String
+}
+
 @MainActor final class Catalog: ObservableObject {
     @Published var database: String
     @Published var volumes: [Volume] = []
@@ -288,6 +297,7 @@ private struct CopyReturnContext {
     @Published var retryPageAvailable = false
     @Published var copyFocusVolumeID: Int64?
     private var copyReturn: CopyReturnContext?
+    private var candidateFolderReturn: CandidateFolderReturnContext?
     // Both entry ID and catalog generation must remain unchanged during the OS probe.
     private var pendingConnectedCopyFocus: (source: Int64, scope: String)?
     @Published var categories: [Category] = []
@@ -429,7 +439,7 @@ private struct CopyReturnContext {
         linkedCTFPath = nil; linkedGeneration = nil
         resetAnnotationReview()
         generation += 1; candidateClipboardRequestSerial += 1; volumeID = nil; stack = [(nil, "/")]; entries = []; query = ""; appliedQuery = ""; showingDuplicates = false; offset = 0
-        copySourceID = nil; copySourceName = nil; copyReturn = nil
+        copySourceID = nil; copySourceName = nil; copyReturn = nil; candidateFolderReturn = nil
         volumes = []; diskFilter = ""; categories = []; categoryID = nil; selection = nil; total = 0; hasMore = false
         physicalStates = [:]; verifiedPhysicalIDs = [:]; pendingMountCopy = nil
         shelfLabels = [:]; mountedPhysicalVolumes = []; selectedPhysicalID = ""; physicalProbeOK = false
@@ -1175,7 +1185,7 @@ private struct CopyReturnContext {
         request(["op": "assign_category", "entry_id": selection, "category_id": categoryID], as: EmptyReply.self) { [weak self] result in if result != nil { self?.status = "Category assigned to selected entry." } }
     }
     func selectVolume() {
-        copySourceID = nil; copySourceName = nil; copyReturn = nil
+        copySourceID = nil; copySourceName = nil; copyReturn = nil; candidateFolderReturn = nil
         query = ""; appliedQuery = ""
         stack = [(nil, "/")]; offset = 0; showingDuplicates = false; load()
     }
@@ -1197,7 +1207,7 @@ private struct CopyReturnContext {
     }
 
     func browseSelectedFileFolder() {
-        guard pageReady, copySourceID == nil, let entry = selected,
+        guard pageReady, let entry = selected,
               entry.kind == "file", volumes.contains(where: { $0.id == entry.volume_id }),
               let breadcrumb = Self.recordedParentBreadcrumb(entry.relative_path) else {
             status = "Select a current file with a recorded parent on a registered catalog disk."
@@ -1207,9 +1217,15 @@ private struct CopyReturnContext {
             status = "Invalid catalog parent ID; recorded folder navigation refused."
             return
         }
-        copyReturn = CopyReturnContext(volumeID: volumeID, stack: stack,
-            query: query, appliedQuery: appliedQuery, offset: offset,
-            showingDuplicates: showingDuplicates, appliedDuplicateMode: appliedDuplicateMode)
+        if let sourceID = copySourceID {
+            candidateFolderReturn = CandidateFolderReturnContext(
+                sourceID: sourceID, sourceName: copySourceName,
+                focusVolumeID: copyFocusVolumeID, offset: offset, diskFilter: diskFilter)
+        } else if candidateFolderReturn == nil {
+            copyReturn = CopyReturnContext(volumeID: volumeID, stack: stack,
+                query: query, appliedQuery: appliedQuery, offset: offset,
+                showingDuplicates: showingDuplicates, appliedDuplicateMode: appliedDuplicateMode)
+        }
         copySourceID = nil; copySourceName = nil
         copyFocusVolumeID = nil; copyDiskGroups = []
         if diskFilter.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "copies:" {
@@ -1239,6 +1255,7 @@ private struct CopyReturnContext {
             status = "Select a current file outside copy mode; filename must fit 4096 bytes."
             return
         }
+        candidateFolderReturn = nil
         copyReturn = CopyReturnContext(volumeID: volumeID, stack: stack,
             query: query, appliedQuery: appliedQuery, offset: offset,
             showingDuplicates: showingDuplicates, appliedDuplicateMode: appliedDuplicateMode)
@@ -1260,6 +1277,7 @@ private struct CopyReturnContext {
             status = "Select a current file with a positive recorded byte size outside copy mode."
             return
         }
+        candidateFolderReturn = nil
         copyReturn = CopyReturnContext(volumeID: volumeID, stack: stack,
             query: query, appliedQuery: appliedQuery, offset: offset,
             showingDuplicates: showingDuplicates, appliedDuplicateMode: appliedDuplicateMode)
@@ -1273,6 +1291,7 @@ private struct CopyReturnContext {
             status = "Select a file with recorded size to find catalogued metadata copies."
             return
         }
+        candidateFolderReturn = nil
         copyReturn = CopyReturnContext(volumeID: volumeID, stack: stack,
             query: query, appliedQuery: appliedQuery, offset: offset,
             showingDuplicates: showingDuplicates, appliedDuplicateMode: appliedDuplicateMode)
@@ -1284,7 +1303,7 @@ private struct CopyReturnContext {
     }
     // Distinguish browsing the catalogued disk from searching within a scope.
     func browseDisk(_ id: Int64) {
-        copySourceID = nil; copySourceName = nil; copyReturn = nil
+        copySourceID = nil; copySourceName = nil; copyReturn = nil; candidateFolderReturn = nil
         volumeID = id
         query = ""; appliedQuery = ""
         stack = [(nil, "/")]; offset = 0
@@ -1298,7 +1317,7 @@ private struct CopyReturnContext {
             status = "Choose a catalog disk for an explicit disk-only search."
             return
         }
-        copySourceID = nil; copySourceName = nil; copyReturn = nil
+        copySourceID = nil; copySourceName = nil; copyReturn = nil; candidateFolderReturn = nil
         appliedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         showingDuplicates = false; offset = 0; load()
     }
@@ -1420,21 +1439,33 @@ private struct CopyReturnContext {
                 : (showingDuplicates ? " • metadata candidates; content not verified" : ""))
     }
     func search() {
-        copySourceID = nil; copySourceName = nil; copyReturn = nil
+        copySourceID = nil; copySourceName = nil; copyReturn = nil; candidateFolderReturn = nil
         // The primary Search/Enter action is global, even after browsing a disk.
         volumeID = nil; stack = [(nil, "/")]
         appliedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         showingDuplicates = false; offset = 0; load()
     }
     func duplicates() {
-        copySourceID = nil; copySourceName = nil; copyReturn = nil
+        copySourceID = nil; copySourceName = nil; copyReturn = nil; candidateFolderReturn = nil
         volumeID = nil; stack = [(nil, "/")]
         appliedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         appliedDuplicateMode = duplicateMode; showingDuplicates = true; offset = 0; load()
     }
     func back() {
+        if let candidate = candidateFolderReturn {
+            // A fresh pinned candidate query, never replay an old result page.
+            candidateFolderReturn = nil
+            copySourceID = candidate.sourceID
+            copySourceName = candidate.sourceName
+            copyFocusVolumeID = candidate.focusVolumeID
+            copyDiskGroups = []
+            volumeID = nil; stack = [(nil, "/")]
+            query = ""; appliedQuery = ""; showingDuplicates = false
+            offset = candidate.offset; diskFilter = candidate.diskFilter
+            load(); return
+        }
         if let context = copyReturn {
-            copySourceID = nil; copySourceName = nil; copyReturn = nil
+            copySourceID = nil; copySourceName = nil; copyReturn = nil; candidateFolderReturn = nil
             volumeID = context.volumeID; stack = context.stack
             query = context.query; appliedQuery = context.appliedQuery
             offset = context.offset; showingDuplicates = context.showingDuplicates
@@ -1965,9 +1996,9 @@ private struct CopyReturnContext {
                         .accessibilityLabel("Find selected file's exact catalog disk in the left register")
                         .help("Filter register by exact catalog ID; no scope change or USB verification")
                     Button("Browse recorded containing folder") { model.browseSelectedFileFolder() }
-                        .disabled(!model.pageReady || model.copySourceID != nil || entry.kind != "file")
+                        .disabled(!model.pageReady || entry.kind != "file")
                         .accessibilityLabel("Browse selected file's recorded containing catalog folder")
-                        .help("Browse siblings by exact catalog parent ID; never open an OS path. Back restores the previous search.")
+                        .help("Browse siblings by exact catalog parent ID; never open an OS path. Back returns to candidates, then the original search when applicable.")
                     Button("Find same filename (any size)") { model.searchSameFilenameAcrossDisks() }
                         .disabled(!model.pageReady || model.copySourceID != nil || entry.kind != "file")
                         .keyboardShortcut("n", modifiers: [.command, .shift])
@@ -2159,8 +2190,7 @@ private struct CopyReturnContext {
                 // Always visible (including 880px with the inspector collapsed).
                 // Do not attach the only Command-Shift-H handler to a hidden pane.
                 Button("Folder") { model.browseSelectedFileFolder() }
-                    .disabled(!model.pageReady || model.copySourceID != nil
-                        || model.selected?.kind != "file")
+                    .disabled(!model.pageReady || model.selected?.kind != "file")
                     .keyboardShortcut("f", modifiers: [.command, .shift])
                     .accessibilityLabel("Browse recorded parent catalog folder of the selected file")
                     .help("Show related catalogued files in the same directory; Back restores results. No current USB mount access.")

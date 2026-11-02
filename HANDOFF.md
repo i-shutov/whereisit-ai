@@ -1,3 +1,24 @@
+## UX28 — two-level candidate → folder → source-search navigation (2026-11-02)
+
+Draft PR #57: both native clients let a selected **other-disk candidate** file
+open its *recorded catalog parent folder* via Ctrl/Command+Shift+F. First
+Back rebuilds the exact name+recorded-size candidate query with original
+entry ID, disk focus, page offset and optional `copies:` register filter;
+second Back returns to the original global search. Candidate and folder
+pages are independently read through the existing generation-SHA-pinned CTF
+service (or bounded local SQLite). Old rows are never reused. Fresh search
+and disk navigation clear candidate history. No current filesystem, content
+hash or physical-USB claim. Windows unit and dual-native contract tests plus
+[runbook](docs/qa/UX28_CANDIDATE_FOLDER_RETURN_20261102.md) added.
+
+**Status at commit preparation: CI PENDING** for the new exact HEAD; verify
+native 4-platform, offline, integration and installed upgrades before claiming
+PASS. PR remains draft, no merge or stable 1.0. Physical Win10/11 and Mac
+ARM/Intel GUI/hardware, historical CTF inputs, signing and actual search p95
+remain blocked. No private CTF/SQLite, paths or hashes published.
+
+---
+
 ## UX27 Win32 shortcut shadowing repair (2026-11-02; new exact-HEAD CI required)
 
 First UX27 exact HEAD 238ad56be5fe83196aa59cf3506c219aa7c747e8 failed

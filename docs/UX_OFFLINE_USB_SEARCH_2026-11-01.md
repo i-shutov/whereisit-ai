@@ -442,3 +442,21 @@ recorded relative path is a historical breadcrumb, **never** a verified OS
 mount or file existence claim. Linked CTF uses SHA-pinned read-only children
 pages. Synthetic tests plus native builds are necessary but do not replace
 human GUI/USB acceptance; see \`docs/qa/UX27_RECORDED_PARENT_FOLDER_20261102.md\`.
+
+## UX28 — candidate copy to recorded folder with two-level Back (2026-11-02)
+
+A selected file in the **other-catalog-disks name+recorded-size candidate**
+results may now browse its exact recorded containing folder, not just the
+original global search result. Win32 Ctrl+Shift+F and macOS Command-Shift-F
+work on a verified current candidate page, including with the inspector hidden.
+A separate transient candidate-return context preserves the exact source
+entry ID, focused candidate disk, page offset and view-only register filter.
+Back first re-fetches that candidate page (fresh CTF generation SHA), then
+returns to the original global search from the existing source return context.
+The catalog-only folder load is itself SHA-pinned; pending/stale pages,
+non-files and invalid parent/disk IDs refuse navigation. A new explicit search
+or disk navigation clears the transient history. No physical file existence,
+content equality or live OS mount is asserted. Synthetic Windows unit tests,
+dual-native wiring regressions and [UX28 runbook](qa/UX28_CANDIDATE_FOLDER_RETURN_20261102.md)
+accompany this draft vertical. Human USB/GUI and real performance gates remain
+open; no merge or stable 1.0.

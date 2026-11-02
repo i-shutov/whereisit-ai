@@ -121,8 +121,31 @@ fn recorded_parent_folder_context(
 
 #[cfg(test)]
 mod recorded_parent_folder_tests {
-    use super::recorded_parent_folder_context;
+    use super::{recorded_parent_folder_context, CandidateFolderReturn};
     use serde_json::json;
+
+    #[test]
+    fn candidate_excursion_restores_exact_source_focus_and_page() {
+        let context = CandidateFolderReturn::snapshot(
+            Some(701),
+            Some("film.mkv".into()),
+            Some(42),
+            250,
+            "copies:".into(),
+        )
+        .expect("valid selected candidate source");
+        assert_eq!(context.source_id, 701);
+        assert_eq!(context.source_name.as_deref(), Some("film.mkv"));
+        assert_eq!(context.focus_volume_id, Some(42));
+        assert_eq!(context.offset, 250);
+        assert_eq!(context.disk_filter_query, "copies:");
+        assert!(
+            CandidateFolderReturn::snapshot(None, None, Some(42), 0, String::new()).is_none()
+        );
+        assert!(
+            CandidateFolderReturn::snapshot(Some(0), None, None, 0, String::new()).is_none()
+        );
+    }
 
     #[test]
     fn exact_disk_id_and_parent_id_avoid_label_and_prefix_collisions() {
@@ -3013,6 +3036,33 @@ struct CopyReturn {
     duplicates: bool,
     offset: usize,
 }
+
+// An excursion from an other-disk candidate to its recorded catalog folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CandidateFolderReturn {
+    source_id: i64,
+    source_name: Option<String>,
+    focus_volume_id: Option<i64>,
+    offset: usize,
+    disk_filter_query: String,
+}
+impl CandidateFolderReturn {
+    fn snapshot(
+        source_id: Option<i64>,
+        source_name: Option<String>,
+        focus_volume_id: Option<i64>,
+        offset: usize,
+        disk_filter_query: String,
+    ) -> Option<Self> {
+        Some(Self {
+            source_id: source_id.filter(|id| *id > 0)?,
+            source_name,
+            focus_volume_id,
+            offset,
+            disk_filter_query,
+        })
+    }
+}
 struct App {
     hwnd: HWND,
     disks: HWND,
@@ -3052,6 +3102,7 @@ struct App {
     copy_focus_volume_id: Option<i64>,
     copy_disk_groups: Vec<Value>,
     copy_return: Option<CopyReturn>,
+    candidate_folder_return: Option<CandidateFolderReturn>,
     applied_duplicate_mode: &'static str,
     db: String,
     linked_ctf: Option<String>,
@@ -3125,6 +3176,7 @@ impl App {
             copy_focus_volume_id: None,
             copy_disk_groups: vec![],
             copy_return: None,
+            candidate_folder_return: None,
             applied_duplicate_mode: "name_size",
             db: std::env::args().nth(1).unwrap_or_else(default_db),
             linked_ctf: None,
@@ -3283,6 +3335,7 @@ impl App {
         self.copy_source = None;
         self.copy_source_name = None;
         self.copy_return = None;
+        self.candidate_folder_return = None;
         self.text(self.search, "");
         self.status("Opening catalog…");
         self.call("init", json!({"op":"init"}));
@@ -4673,8 +4726,8 @@ impl App {
     // From a verified search result, browse the containing CATALOG folder
     // rather than attempting to open a historical USB filesystem location.
     unsafe fn browse_recorded_parent_folder(&mut self) {
-        if !self.page_ready || self.copy_source.is_some() {
-            self.status("Return to a current search result before browsing its recorded folder.");
+        if !self.page_ready {
+            self.status("Wait for a current search or candidate page before browsing its recorded folder.");
             return;
         }
         let row = SendMessageW(
@@ -4691,13 +4744,29 @@ impl App {
             self.status("Select a current file with a valid parent on an existing catalog disk.");
             return;
         };
-        self.copy_return = Some(CopyReturn {
-            volume: self.volume,
-            stack: self.stack.clone(),
-            query: self.query.clone(),
-            duplicates: self.duplicates,
-            offset: self.offset,
-        });
+        if self.copy_source.is_some() {
+            // Preserve the original global-search return below this candidate
+            // excursion; the candidate itself has a separate exact-ID return.
+            let Some(snapshot) = CandidateFolderReturn::snapshot(
+                self.copy_source,
+                self.copy_source_name.clone(),
+                self.copy_focus_volume_id,
+                self.offset,
+                self.disk_filter_query.clone(),
+            ) else {
+                self.status("Invalid candidate source; recorded folder navigation refused.");
+                return;
+            };
+            self.candidate_folder_return = Some(snapshot);
+        } else if self.candidate_folder_return.is_none() {
+            self.copy_return = Some(CopyReturn {
+                volume: self.volume,
+                stack: self.stack.clone(),
+                query: self.query.clone(),
+                duplicates: self.duplicates,
+                offset: self.offset,
+            });
+        }
         self.copy_source = None;
         self.copy_source_name = None;
         self.copy_focus_volume_id = None;
@@ -4747,6 +4816,7 @@ impl App {
             self.status("Filename is invalid or exceeds the 4096-byte search limit.");
             return;
         };
+        self.candidate_folder_return = None;
         self.copy_return = Some(CopyReturn {
             volume: self.volume,
             stack: self.stack.clone(),
@@ -4791,6 +4861,7 @@ impl App {
             self.status("Recorded size must be positive, known and within signed 64-bit range.");
             return;
         };
+        self.candidate_folder_return = None;
         self.copy_return = Some(CopyReturn {
             volume: self.volume,
             stack: self.stack.clone(),
@@ -4832,6 +4903,7 @@ impl App {
         let Some(source) = id(entry) else {
             return;
         };
+        self.candidate_folder_return = None;
         if self.copy_source.is_none() {
             self.copy_return = Some(CopyReturn {
                 volume: self.volume,
@@ -5101,6 +5173,7 @@ impl App {
                 self.copy_source = None;
                 self.copy_source_name = None;
                 self.copy_return = None;
+                self.candidate_folder_return = None;
                 let index = SendMessageW(self.disks, LB_GETCURSEL, 0, 0);
                 if index < 0 {
                     return;
@@ -5128,6 +5201,7 @@ impl App {
                 self.copy_source = None;
                 self.copy_source_name = None;
                 self.copy_return = None;
+                self.candidate_folder_return = None;
                 let len = GetWindowTextLengthW(self.search);
                 let mut text = vec![0u16; len as usize + 1];
                 GetWindowTextW(self.search, text.as_mut_ptr(), len + 1);
@@ -5149,6 +5223,25 @@ impl App {
                 self.load();
             }
             BACK => {
+                if let Some(context) = self.candidate_folder_return.take() {
+                    // Back once restores the original candidate source/page;
+                    // Back again restores the earlier global search.
+                    self.copy_source = Some(context.source_id);
+                    self.copy_source_name = context.source_name;
+                    self.copy_focus_volume_id = context.focus_volume_id;
+                    self.copy_disk_groups.clear();
+                    self.volume = None;
+                    self.stack = vec![(None, "/".into())];
+                    self.query.clear();
+                    self.duplicates = false;
+                    self.offset = context.offset;
+                    self.disk_filter_query = context.disk_filter_query;
+                    self.text(self.search, "");
+                    self.text(self.disk_filter, &self.disk_filter_query);
+                    self.populate_physical_disk_list();
+                    self.load(); // Fresh pinned CTF source SHA, not cached rows.
+                    return;
+                }
                 if let Some(context) = self.copy_return.take() {
                     self.copy_source = None;
                     self.copy_source_name = None;
