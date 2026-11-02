@@ -692,6 +692,7 @@ class DiskLocatorWiringTests(unittest.TestCase):
         )[0]
         for guard in (
             "physicalCheckGeneration += 1",
+            "physicalMountEventGeneration += 1",
             "physicalVerifiedUptime = nil",
             "physicalStates = [:]",
             "verifiedPhysicalIDs = [:]",
@@ -708,6 +709,8 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("model.invalidatePhysicalPresenceAfterMountEvent()", MAC)
         self.assertIn("model.recheckPhysicalPresenceAfterMountEvent()", MAC)
         self.assertIn('self.physicalCheckGeneration == checkToken', MAC)
+        self.assertIn("let mountEventToken = physicalMountEventGeneration", MAC)
+        self.assertIn("self.physicalMountEventGeneration == mountEventToken", MAC)
 
 if __name__ == "__main__":
     unittest.main()

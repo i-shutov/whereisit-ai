@@ -227,6 +227,9 @@ private struct CopyReturnContext {
     private var physicalVerifiedUptime: TimeInterval?
     private let physicalStateTTL: TimeInterval = 12
     private var physicalCheckGeneration = 0
+    // Separate from periodic probes: mount events revoke outstanding CTF
+    // source checks that would otherwise restart a stale Copy OS root command.
+    private var physicalMountEventGeneration = 0
     private var shelfLabelRequestGeneration = 0
     @Published var entries: [Entry] = []
     @Published var pageSortColumn = "natural"
@@ -942,6 +945,7 @@ private struct CopyReturnContext {
     // so a former connected badge and pending root/candidate copy cannot survive
     // unplugging, while the next complete OS + service scan determines status.
     func invalidatePhysicalPresenceAfterMountEvent() {
+        physicalMountEventGeneration += 1
         physicalCheckGeneration += 1  // discard an older asynchronous status reply
         physicalVerifiedUptime = nil
         physicalStates = [:]
@@ -1036,12 +1040,14 @@ private struct CopyReturnContext {
             return
         }
         let scope = physicalScope
+        let mountEventToken = physicalMountEventGeneration
         if let fields = linkedFields() {
             var pinned = fields
             pinned["op"] = "ctf_volumes_pinned"
             status = "Rechecking linked source generation before copying OS root…"
             request(pinned, as: LinkedCTFResult<[Volume]>.self) { [weak self] reply in
                 guard let self, self.physicalScope == scope,
+                      self.physicalMountEventGeneration == mountEventToken,
                       self.selectedDiskForPairing == disk else { return }
                 guard reply != nil else {
                     self.status = "Linked CTF generation could not be verified; no OS root copied."
