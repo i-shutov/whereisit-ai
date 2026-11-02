@@ -333,7 +333,10 @@ fn reveal_disk_filter_for_row(
 
 #[cfg(test)]
 mod disk_register_filter_tests {
-    use super::{candidate_register_indices, filtered_disk_index_at_row, filtered_disk_indices, reveal_disk_filter_for_row};
+    use super::{
+        candidate_register_indices, filtered_disk_index_at_row, filtered_disk_indices,
+        reveal_disk_filter_for_row,
+    };
     use serde_json::json;
     use std::collections::HashMap;
 
@@ -393,7 +396,9 @@ mod disk_register_filter_tests {
         assert_eq!(filtered_disk_index_at_row(&visible, 2), Some(2));
         assert_eq!(filtered_disk_index_at_row(&visible, 3), None);
         assert!(candidate_register_indices(&volumes, &[]).is_empty());
-        assert!(candidate_register_indices(&volumes, &[json!({"volume_id":-1,"count":1})]).is_empty());
+        assert!(
+            candidate_register_indices(&volumes, &[json!({"volume_id":-1,"count":1})]).is_empty()
+        );
     }
 
     #[test]
@@ -2383,7 +2388,10 @@ impl App {
         // The candidate-only register is a temporary view, not a persistent
         // search scope: restore the full register upon leaving copy mode.
         if self.copy_source.is_none()
-            && self.disk_filter_query.trim().eq_ignore_ascii_case("copies:")
+            && self
+                .disk_filter_query
+                .trim()
+                .eq_ignore_ascii_case("copies:")
         {
             self.disk_filter_query.clear();
             self.text(self.disk_filter, "");
@@ -2955,16 +2963,19 @@ impl App {
     }
 
     unsafe fn populate_physical_disk_list(&mut self) {
-        self.visible_disk_indices =
-            if self.disk_filter_query.trim().eq_ignore_ascii_case("copies:") {
-                if self.copy_source.is_some() {
-                    candidate_register_indices(&self.volumes, &self.copy_disk_groups)
-                } else {
-                    vec![]
-                }
+        self.visible_disk_indices = if self
+            .disk_filter_query
+            .trim()
+            .eq_ignore_ascii_case("copies:")
+        {
+            if self.copy_source.is_some() {
+                candidate_register_indices(&self.volumes, &self.copy_disk_groups)
             } else {
-                filtered_disk_indices(&self.volumes, &self.shelf_labels, &self.disk_filter_query)
-            };
+                vec![]
+            }
+        } else {
+            filtered_disk_indices(&self.volumes, &self.shelf_labels, &self.disk_filter_query)
+        };
         SendMessageW(self.disks, LB_RESETCONTENT, 0, 0);
         let global_label = format!(
             "All disks / global search ({} of {})",
