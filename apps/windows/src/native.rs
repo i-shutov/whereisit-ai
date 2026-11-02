@@ -869,17 +869,17 @@ mod physical_mount_picker_tests {
             MountedPhysicalVolume {
                 id: "win:{aaaa}:11111111".into(),
                 description: "first".into(),
-                mount_roots: vec![format!("X:\\\\{description}")],
+                mount_roots: vec!["X:\\".into()],
             },
             MountedPhysicalVolume {
                 id: "win:{aaaa}:11111111".into(),
                 description: "clone".into(),
-                mount_roots: vec![format!("X:\\\\{description}")],
+                mount_roots: vec!["X:\\".into()],
             },
             MountedPhysicalVolume {
                 id: "win:{bbbb}:22222222".into(),
                 description: "unique".into(),
-                mount_roots: vec![format!("X:\\\\{description}")],
+                mount_roots: vec!["X:\\".into()],
             },
         ];
         let offered = unique_pairable_mounts(&mounts);

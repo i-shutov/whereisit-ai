@@ -1,3 +1,9 @@
+## UX22 Windows exact-HEAD Rust test compiler repair (2026-11-02; recheck required)
+
+Latest UX22 [SHA 69cce5a](https://github.com/i-shutov/whereisit-ai/commit/69cce5ab5dcbf8c059d75c0a2aa60d7f72f8d42b) passed [offline acceptance 41422595264](https://github.com/i-shutov/whereisit-ai/actions/runs/41422595264), but Windows native [job 125202564611](https://github.com/i-shutov/whereisit-ai/actions/runs/41422595309) and installed upgrade [job 125201466691](https://github.com/i-shutov/whereisit-ai/actions/runs/41422595165) failed **E0425** in three new synthetic-only test fixtures: interpolation referenced a missing local variable `description`. Corrected fixtures to an explicit synthetic OS mount path without changing the runtime copy logic or suppressing tests. Reverify the NEW exact-HEAD Linux/Win/Mac Intel+ARM, offline, integration and upgrade results; no green claim until every workflow completes. Owner USB/GUI, historical CTF and release blockers remain.
+
+---
+
 ## UX22 exact-HEAD Rustfmt repair (2026-11-02; rerun mandatory)
 
 Initial UX22 SHA [13a371f](https://github.com/i-shutov/whereisit-ai/commit/13a371f30e36fe11abd62dff75200faf84e91984) failed [offline-kit run 41421963012](https://github.com/i-shutov/whereisit-ai/actions/runs/41421963012) at **Check integrated Rust contracts → cargo fmt --all -- --check**. The job reported only Rustfmt differences in the new Windows root-copy helper, its regression assertions, the new status command, and the service UUID formatter. Applied exactly those changes in the SAME draft PR #57 without suppressing tests. **New exact-HEAD checks must pass** before any green claim. Physical/visual owner hardware, private historical CTF and stable 1.0 gates remain unchanged.
