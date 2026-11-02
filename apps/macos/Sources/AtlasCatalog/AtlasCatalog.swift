@@ -592,18 +592,18 @@ private struct CandidateFolderReturnContext {
     // Canonical, private per-selection text for the inspector AND the
     // context menu. Never infer current file contents from catalog metadata.
     func retrievalNote(for entry: Entry) -> String {
-        let shelf = model.shelfLabel(entry.volume_id)
+        let shelf = self.shelfLabel(entry.volume_id)
         let size = entry.size.map { "\($0) recorded bytes" } ?? "unknown"
         let candidates = entry.duplicate_count.map { "\($0) metadata candidates" } ?? "not calculated"
         return [
             "WhereIsIt AI — catalog retrieval note",
-            "Disk: \(model.volumeLabel(entry.volume_id))",
+            "Disk: \(self.volumeLabel(entry.volume_id))",
             "Catalog disk ID: \(entry.volume_id)",
             "Owner sticker / shelf: \(shelf.isEmpty ? "not assigned" : shelf)",
             "File: \(entry.name)",
             "Recorded relative path: \(entry.relative_path)",
             "Recorded size: \(size)",
-            "Physical: \(model.physicalCaption(entry.volume_id))",
+            "Physical: \(self.physicalCaption(entry.volume_id))",
             "Copies: \(candidates); file contents not compared",
             "OS state is from the last probe and may change; catalog paths are historical.",
         ].joined(separator: "\n")

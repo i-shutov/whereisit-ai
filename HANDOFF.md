@@ -1,3 +1,17 @@
+## UX31 Swift self-scope correction (2026-11-02)
+
+Source review of the shared SwiftUI context/inspector retrieval-note helper found
+an invalid `model` reference after moving the function into `Catalog`.
+Replaced it with explicit `self` lookups for the private shelf label,
+catalog disk title and last OS verification caption, in the SAME draft PR #57.
+Added cross-client source regression to prevent repeating the scope error.
+Rustfmt-only failed exact-HEAD run at 22ddff9 was already corrected within
+the same PR. The new exact HEAD requires native Mac Intel/ARM builds,
+Windows, Linux, offline, integrated and installed upgrade checks before any
+PASS claim. No CTF/user data changes, no merge or stable release.
+
+---
+
 ## UX31 CI fix — exact initial job/step (2026-11-02)
 
 Initial UX31 SHA \`22ddff9c703e96e854636ec68a27d8c738b5a049\`

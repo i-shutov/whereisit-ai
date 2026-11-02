@@ -35,6 +35,13 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("func retrievalNote(for entry: Entry) -> String", MAC)
         self.assertIn("model.retrievalNote(for: row)", MAC)
         self.assertIn("model.retrievalNote(for: entry)", MAC)
+        retrieval_note = MAC.split("func retrievalNote(for entry: Entry) -> String {", 1)[1].split(
+            "func shelfConflictCaption(", 1
+        )[0]
+        self.assertNotIn("model.", retrieval_note)
+        self.assertIn("self.shelfLabel(entry.volume_id)", retrieval_note)
+        self.assertIn("self.volumeLabel(entry.volume_id)", retrieval_note)
+        self.assertIn("self.physicalCaption(entry.volume_id)", retrieval_note)
         self.assertIn('Button("Open verified disk in Finder")', MAC)
         self.assertEqual(MAC.count('.accessibilityLabel("Copy current OS volume root after verifying explicit pairing")'), 1)
         # No direct read of live files or unsafe inferred paths in new actions.
