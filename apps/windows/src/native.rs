@@ -3784,11 +3784,13 @@ impl App {
             self.status("Return to a verified search result before finding same filenames.");
             return;
         }
-        let row = SendMessageW(self.files, LVM_GETNEXTITEM, usize::MAX, LVNI_SELECTED as isize);
-        let Some(entry) = (row >= 0)
-            .then(|| self.entries.get(row as usize))
-            .flatten()
-        else {
+        let row = SendMessageW(
+            self.files,
+            LVM_GETNEXTITEM,
+            usize::MAX,
+            LVNI_SELECTED as isize,
+        );
+        let Some(entry) = (row >= 0).then(|| self.entries.get(row as usize)).flatten() else {
             self.status("Select a current file result to search its filename.");
             return;
         };
