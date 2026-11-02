@@ -654,24 +654,16 @@ mod disk_register_filter_tests {
             json!({"id":142,"label":"Archive"}),
             json!({"id":99,"label":"Other"}),
         ];
-        let shelves = HashMap::from([
-            (42, "Полка А".to_owned()),
-            (142, "Полка А".to_owned()),
-        ]);
-        let shared = HashMap::from([
-            (42, vec![42, 142]),
-            (142, vec![42, 142]),
-        ]);
+        let shelves = HashMap::from([(42, "Полка А".to_owned()), (142, "Полка А".to_owned())]);
+        let shared = HashMap::from([(42, vec![42, 142]), (142, vec![42, 142])]);
         let states = HashMap::from([
             (4, "offline".to_owned()),
             (42, "connected".to_owned()),
             (142, "conflict".to_owned()),
         ]);
         let audit = |probe_ok, filter| {
-            audited_register_filter_indices(
-                &volumes, &shelves, &shared, &states, probe_ok, filter,
-            )
-            .unwrap()
+            audited_register_filter_indices(&volumes, &shelves, &shared, &states, probe_ok, filter)
+                .unwrap()
         };
         // Never match a label containing 42 to the exact observed disk #42.
         assert_eq!(audit(true, "state:connected"), vec![1]);
@@ -682,7 +674,10 @@ mod disk_register_filter_tests {
         assert_eq!(audit(true, "tag:missing"), vec![0, 3]);
         assert_eq!(audit(true, "tag:shared"), vec![1, 2]);
         assert!(audit(true, "tag:not-valid").is_empty());
-        assert_eq!(filtered_disk_index_at_row(&audit(true, "state:connected"), 1), Some(1));
+        assert_eq!(
+            filtered_disk_index_at_row(&audit(true, "state:connected"), 1),
+            Some(1)
+        );
         // Failed/incomplete OS probe must clear every connected/offline claim.
         assert!(audit(false, "state:connected").is_empty());
         assert!(audit(false, "state:offline").is_empty());
@@ -3451,7 +3446,12 @@ impl App {
             "All disks ({}/{}) | OS +{} -{} !{} ?{} | stickers missing {} shared {}",
             self.visible_disk_indices.len(),
             self.volumes.len(),
-            audit[0], audit[1], audit[2], audit[3], audit[4], audit[5],
+            audit[0],
+            audit[1],
+            audit[2],
+            audit[3],
+            audit[4],
+            audit[5],
         );
         SendMessageW(
             self.disks,
