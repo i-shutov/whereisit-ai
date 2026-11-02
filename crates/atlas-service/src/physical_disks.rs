@@ -294,6 +294,34 @@ pub fn unpair(request: &Value) -> Result<Value> {
     Ok(json!({"removed":count > 0}))
 }
 
+// Equal human shelf tags may be intentional, but they make disk retrieval ambiguous.
+// This is an ID-only, generation/platform-scoped warning, not OS mount evidence.
+fn shelf_collisions(stored: &[(i64, String)]) -> Vec<Value> {
+    let mut tags: HashMap<String, Vec<i64>> = HashMap::new();
+    for (disk, tag) in stored {
+        let normalized = tag
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase();
+        if !normalized.is_empty() {
+            tags.entry(normalized).or_default().push(*disk);
+        }
+    }
+    let mut collisions: Vec<Vec<i64>> = tags
+        .into_values()
+        .filter(|ids| ids.len() > 1)
+        .collect();
+    for ids in &mut collisions {
+        ids.sort_unstable();
+    }
+    collisions.sort();
+    collisions
+        .into_iter()
+        .map(|volume_ids| json!({"volume_ids":volume_ids}))
+        .collect()
+}
+
 /// Private, operator-authored shelf hints: never evidence of mounted USB media.
 /// No original CTF or catalog is opened by these operations.
 pub fn shelf_labels(request: &Value) -> Result<Value> {
@@ -316,7 +344,7 @@ pub fn shelf_labels(request: &Value) -> Result<Value> {
         })
         .collect::<Result<_>>()?;
     if !path.exists() {
-        return Ok(json!({"items":[]}));
+        return Ok(json!({"items":[],"collisions":[]}));
     }
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let exists: i64 = conn.query_row(
@@ -325,7 +353,7 @@ pub fn shelf_labels(request: &Value) -> Result<Value> {
         |row| row.get(0),
     )?;
     if exists == 0 {
-        return Ok(json!({"items":[]}));
+        return Ok(json!({"items":[],"collisions":[]}));
     }
     let mut statement = conn.prepare(
         "SELECT volume_id,shelf_label FROM physical_shelf_labels
@@ -336,12 +364,16 @@ pub fn shelf_labels(request: &Value) -> Result<Value> {
             Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    let items: Vec<_> = stored
+    let visible: Vec<_> = stored
         .into_iter()
         .filter(|(id, _)| selected.contains(id))
+        .collect();
+    let collisions = shelf_collisions(&visible);
+    let items: Vec<_> = visible
+        .into_iter()
         .map(|(volume_id, shelf_label)| json!({"volume_id":volume_id,"shelf_label":shelf_label}))
         .collect();
-    Ok(json!({"items":items}))
+    Ok(json!({"items":items,"collisions":collisions}))
 }
 
 /// Explicit Save alone updates the user-side SQLite; empty Save removes tag.
@@ -438,6 +470,49 @@ mod tests {
         assert_eq!(request(save)["data"]["saved"], true);
         list["volume_ids"] = json!([1, 2]);
         assert_eq!(request(list)["data"]["items"], json!([]));
+    }
+
+    #[test]
+    fn repeated_stickers_are_scoped_warnings_not_mount_evidence() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("user.sqlite").to_string_lossy().into_owned();
+        let base = json!({"op":"physical_shelf_labels","user_store":path,
+            "catalog_key":"ctf:synthetic-a","platform":"windows","volume_ids":[1,2,3,4],
+            "observed_ids":[],"probe_ok":true});
+        for (disk, tag) in [(1,"Стеллаж   Б"),(2,"стеллаж б"),(3,"USB-04"),(4,"usb-04")] {
+            let mut save = base.clone();
+            save["op"] = json!("physical_shelf_label_set");
+            save["volume_id"] = json!(disk);
+            save["shelf_label"] = json!(tag);
+            save["confirmed"] = json!(true);
+            assert_eq!(request(save)["data"]["saved"], true);
+        }
+        assert_eq!(
+            request(base.clone())["data"]["collisions"],
+            json!([{"volume_ids":[1,2]},{"volume_ids":[3,4]}])
+        );
+        let mut subset = base.clone();
+        subset["volume_ids"] = json!([1,3]);
+        assert_eq!(request(subset)["data"]["collisions"], json!([]));
+        let mut other = base.clone();
+        other["catalog_key"] = json!("ctf:synthetic-b");
+        assert_eq!(request(other.clone())["data"]["collisions"], json!([]));
+        other["catalog_key"] = json!("ctf:synthetic-a");
+        other["platform"] = json!("macos");
+        assert_eq!(request(other)["data"]["collisions"], json!([]));
+        let mut state = base.clone();
+        state["op"] = json!("physical_status");
+        assert_eq!(request(state)["data"]["items"][0]["state"], "unverified");
+        let mut clear = base.clone();
+        clear["op"] = json!("physical_shelf_label_set");
+        clear["volume_id"] = json!(2);
+        clear["shelf_label"] = json!("");
+        clear["confirmed"] = json!(true);
+        assert_eq!(request(clear)["data"]["saved"], true);
+        assert_eq!(
+            request(base)["data"]["collisions"],
+            json!([{"volume_ids":[3,4]}])
+        );
     }
 
     #[test]

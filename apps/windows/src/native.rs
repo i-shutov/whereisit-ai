@@ -489,6 +489,39 @@ fn candidate_disk_choice_caption(
     )
 }
 
+// Different disks may share a manually entered tag; never infer USB identity.
+fn shelf_collision_warning(disk: i64, groups: &HashMap<i64, Vec<i64>>) -> Option<String> {
+    let others: Vec<_> = groups
+        .get(&disk)?
+        .iter()
+        .copied()
+        .filter(|other| *other != disk)
+        .map(|other| format!("#{other}"))
+        .collect();
+    if others.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "SHARED STICKER also on {}. Check physical labels; this is NOT USB identity.",
+        others.join(", ")
+    ))
+}
+
+#[cfg(test)]
+mod shelf_collision_view_tests {
+    use super::*;
+
+    #[test]
+    fn shared_tag_warns_without_claiming_os_connection() {
+        let groups = HashMap::from([(42, vec![4, 42]), (4, vec![4, 42])]);
+        let warning = shelf_collision_warning(42, &groups).unwrap();
+        assert!(warning.contains("#4"));
+        assert!(warning.contains("SHARED STICKER"));
+        assert!(!warning.contains("OS verified"));
+        assert!(shelf_collision_warning(17, &groups).is_none());
+    }
+}
+
 // Order the physical shortlist by last explicit OS pairing state, metadata
 // candidate count and exact disk ID. Neither shelf tags nor drive letters
 // are USB identity or proof of file contents.
@@ -526,6 +559,7 @@ fn candidate_disk_pickup_list(
     groups: &[Value],
     shelves: &HashMap<i64, String>,
     states: &HashMap<i64, String>,
+    collisions: &HashMap<i64, Vec<i64>>,
 ) -> Option<String> {
     if groups.is_empty() {
         return None;
@@ -543,8 +577,13 @@ fn candidate_disk_pickup_list(
             .to_owned(),
     ];
     for (index, group) in ordered_candidate_disks(groups, states).iter().enumerate() {
+        let warning = group["volume_id"]
+            .as_i64()
+            .and_then(|disk| shelf_collision_warning(disk, collisions))
+            .map(|text| format!(" • {text}"))
+            .unwrap_or_default();
         lines.push(format!(
-            "{}. {}",
+            "{}. {}{warning}",
             index + 1,
             clean(&candidate_disk_choice_caption(group, shelves, states))
         ));
@@ -747,7 +786,7 @@ mod verified_copy_focus_tests {
             (7, "offline".to_owned()),
             (44, "conflict".to_owned()),
         ]);
-        let plan = super::candidate_disk_pickup_list("Movie\r\nspoof.mkv", &groups, &tags, &states)
+        let plan = super::candidate_disk_pickup_list("Movie\r\nspoof.mkv", &groups, &tags, &states, &HashMap::new())
             .unwrap();
         let positions = [42, 7, 142, 44].map(|disk| plan.find(&format!("#{disk} •")).unwrap());
         assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
@@ -759,7 +798,7 @@ mod verified_copy_focus_tests {
         assert!(plan.contains("Movie  spoof.mkv"));
         assert!(!plan.contains("Movie\r\nspoof.mkv"));
         assert!(plan.contains("do NOT auto-delete"));
-        assert!(super::candidate_disk_pickup_list("x", &[], &tags, &states).is_none());
+        assert!(super::candidate_disk_pickup_list("x", &[], &tags, &states, &HashMap::new()).is_none());
     }
 
     #[test]
@@ -2048,6 +2087,7 @@ struct App {
     shelf_edit: HWND,
     shelf_edit_disk: Option<i64>,
     shelf_labels: HashMap<i64, String>,
+    shelf_tag_conflicts: HashMap<i64, Vec<i64>>,
     disk_filter_query: String,
     visible_disk_indices: Vec<usize>,
     files: HWND,
@@ -2113,6 +2153,7 @@ impl App {
             shelf_edit: null_mut(),
             shelf_edit_disk: None,
             shelf_labels: HashMap::new(),
+            shelf_tag_conflicts: HashMap::new(),
             disk_filter_query: String::new(),
             visible_disk_indices: Vec::new(),
             files: null_mut(),
@@ -2243,6 +2284,7 @@ impl App {
         self.volumes.clear();
         self.disk_filter_query.clear();
         self.shelf_labels.clear();
+        self.shelf_tag_conflicts.clear();
         self.shelf_edit_disk = None;
         self.text(self.shelf_edit, "");
         self.visible_disk_indices.clear();
@@ -2555,6 +2597,7 @@ impl App {
                         self.linked_generation = Some(generation);
                         self.physical_states.clear();
                         self.shelf_labels.clear();
+                        self.shelf_tag_conflicts.clear();
                         self.shelf_edit_disk = None;
                         self.text(self.shelf_edit, "");
                         self.annotation_db = None;
@@ -2786,6 +2829,7 @@ impl App {
     unsafe fn refresh_shelf_labels(&mut self) {
         let reply = self.physical_request("physical_shelf_labels", None, None, None);
         self.shelf_labels.clear();
+        self.shelf_tag_conflicts.clear();
         if reply["ok"] == true {
             if let Some(items) = reply["data"]["items"].as_array() {
                 for item in items {
@@ -2793,6 +2837,21 @@ impl App {
                         (item["volume_id"].as_i64(), item["shelf_label"].as_str())
                     {
                         self.shelf_labels.insert(disk, label.to_owned());
+                    }
+                }
+            }
+            if let Some(collisions) = reply["data"]["collisions"].as_array() {
+                for group in collisions {
+                    let members: Vec<i64> = group["volume_ids"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_i64)
+                        .collect();
+                    if members.len() > 1 {
+                        for disk in &members {
+                            self.shelf_tag_conflicts.insert(*disk, members.clone());
+                        }
                     }
                 }
             }
@@ -2822,7 +2881,11 @@ impl App {
             self.physical_request("physical_shelf_label_set", Some(target), None, Some(&label));
         if reply["ok"] == true && reply["data"]["saved"] == true {
             self.refresh_shelf_labels();
-            self.status("Private sticker/shelf tag saved; not proof of USB presence.");
+            if shelf_collision_warning(target, &self.shelf_tag_conflicts).is_some() {
+                self.status("Tag saved, but SHARED STICKER also labels another disk; check physical hardware.");
+            } else {
+                self.status("Private sticker/shelf tag saved; not proof of USB presence.");
+            }
         } else {
             self.status("Sticker/shelf tag not saved (one line, max 80 characters).");
         }
@@ -2859,8 +2922,12 @@ impl App {
                 .and_then(|disk| self.shelf_labels.get(&disk))
                 .map(|label| format!(" • shelf: {label}"))
                 .unwrap_or_default();
+            let warning = id(disk)
+                .and_then(|disk_id| shelf_collision_warning(disk_id, &self.shelf_tag_conflicts))
+                .map(|_| " ! SHARED STICKER")
+                .unwrap_or("");
             let label = format!(
-                "{}{shelf}  ({} items)  {badge}",
+                "{}{shelf}  ({} items)  {badge}{warning}",
                 string(disk, "label"),
                 disk["entry_count"].as_u64().unwrap_or(0)
             );
@@ -3075,11 +3142,16 @@ impl App {
         for group in ordered_candidate_disks(&self.copy_disk_groups, &self.physical_states) {
             let caption =
                 candidate_disk_choice_caption(group, &self.shelf_labels, &self.physical_states);
+            let warning = group["volume_id"]
+                .as_i64()
+                .and_then(|disk| shelf_collision_warning(disk, &self.shelf_tag_conflicts))
+                .map(|_| " ! SHARED STICKER")
+                .unwrap_or("");
             SendMessageW(
                 self.copy_disk_filter,
                 CB_ADDSTRING,
                 0,
-                wide(&caption).as_ptr() as isize,
+                wide(&format!("{caption}{warning}")).as_ptr() as isize,
             );
         }
         let selection = self
@@ -3132,6 +3204,12 @@ impl App {
             ));
         }
 
+        if let Some(warning) = selected
+            .and_then(|row| row["volume_id"].as_i64())
+            .and_then(|disk| shelf_collision_warning(disk, &self.shelf_tag_conflicts))
+        {
+            inspector.push_str(&format!("\r\n\r\n{warning}"));
+        }
         if self.copy_source.is_some() && !self.copy_disk_groups.is_empty() {
             inspector.push_str("\r\n\r\nCOPIES BY CATALOG DISK (metadata only)");
             for group in ordered_candidate_disks(&self.copy_disk_groups, &self.physical_states) {
@@ -3613,6 +3691,7 @@ impl App {
                         &self.copy_disk_groups,
                         &self.shelf_labels,
                         &self.physical_states,
+                        &self.shelf_tag_conflicts,
                     )
                 }) else {
                     self.status("Find copies and wait for catalogued candidate disks first.");

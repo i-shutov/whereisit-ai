@@ -12,6 +12,7 @@ WIN = (ROOT / "apps/windows/src/native.rs").read_text(encoding="utf-8")
 MAC = (ROOT / "apps/macos/Sources/AtlasCatalog/AtlasCatalog.swift").read_text(encoding="utf-8")
 SERVICE = (ROOT / "crates/atlas-service/src/lib.rs").read_text(encoding="utf-8")
 COPIES = (ROOT / "crates/atlas-service/src/copy_candidates.rs").read_text(encoding="utf-8")
+PHYSICAL = (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encoding="utf-8")
 
 
 class DiskLocatorWiringTests(unittest.TestCase):
@@ -344,6 +345,21 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("CURRENT PAGE ONLY", MAC)
         self.assertIn("copying does not recheck source generation", WIN)
         self.assertIn("copying does not recheck source generation", MAC)
+
+    def test_ux12_shared_stickers_are_private_warnings_not_usb_evidence(self):
+        self.assertIn("fn shelf_collisions(", PHYSICAL)
+        self.assertIn("let collisions = shelf_collisions(&visible);", PHYSICAL)
+        self.assertIn('{"items":items,"collisions":collisions}', PHYSICAL)
+        self.assertIn("repeated_stickers_are_scoped_warnings_not_mount_evidence", PHYSICAL)
+        self.assertIn("fn shelf_collision_warning(", WIN)
+        self.assertIn("shelf_collision_view_tests", WIN)
+        self.assertIn("self.shelf_tag_conflicts.clear();", WIN)
+        self.assertIn("&self.shelf_tag_conflicts,", WIN)
+        self.assertIn("struct ShelfCollisionGroup: Decodable", MAC)
+        self.assertIn("@Published var shelfTagConflicts:", MAC)
+        self.assertIn("func shelfConflictCaption(", MAC)
+        self.assertIn(".accessibilityLabel(warning)", MAC)
+        self.assertIn("SHARED STICKER", MAC)
 
     def test_no_unverified_physical_drive_claims_in_locator(self):
         self.assertIn("Physical connection: NOT VERIFIED", WIN)

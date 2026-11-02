@@ -245,3 +245,25 @@ Synthetic compiled Win32 unit tests check page range, disk IDs and newline-safe 
 ## UX11: full native OS-volume scan (2026-11-02)
 
 A physical disk's connected/offline badge must not depend on whether Windows currently assigns it a drive letter. Win32 enumerates all live OS volume GUIDs and reports filesystem serial plus current mount-point hints (including folder-mounted or letterless media). Any incomplete scan fails closed. SwiftUI includes hidden mounted local volumes in its UUID scan; remote mounts do not count and unreadable local UUIDs fail closed. Only explicit per-catalog-generation pairing and a complete live OS check can label a disk connected. No recorded path, user sticker, filename+size candidate count or OS mount proves file bytes or content hash. See [UX11 QA](qa/UX11_ALL_VOLUME_PROBE_20261102.md). Real devices and native GUI still need manual acceptance.
+
+
+## UX12 — ambiguous operator sticker / shelf tags (2026-11-02)
+
+An operator may reuse a physical sticker on multiple registered catalog disks.
+The private physical_shelf_labels response now returns sorted ID-only collision
+groups for the exact catalog generation/platform/requested disk IDs (Unicode
+lowercase, collapsed whitespace). This is a physical retrieval warning, never
+a uniqueness constraint or OS-volume identity statement.
+
+Native Win32 shows SHARED STICKER in the disk register, copy picker, selected
+file locator and copied physical pickup checklist. Native SwiftUI shows the
+same in the register, candidate picker, inspector and shelf editor with
+VoiceOver-accessible exact other disk IDs; Mac reloads server-derived warnings
+after saving a tag and ignores stale scope/token responses. All evidence
+remains distinct from OS pairing, file existence and content equality. No
+source CTF/cache mutation, no hash-equality or deletion claims.
+
+Runbook: qa/UX12_SHELF_COLLISION_AUDIT_20261102.md.
+Run final exact-HEAD Linux/Windows/macOS ARM/Intel, integration, offline and
+installed-upgrade CI; human 1366x768/HiDPI, keyboard, screen reader and real
+USB tests remain open. PR #57 draft; stable release blocked.

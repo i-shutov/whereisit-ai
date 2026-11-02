@@ -68,7 +68,11 @@ struct PhysicalStateReply: Decodable {
 struct PhysicalPairReply: Decodable { let paired: Bool }
 struct PhysicalUnpairReply: Decodable { let removed: Bool }
 struct ShelfLabelRow: Decodable { let volume_id: Int64; let shelf_label: String }
-struct ShelfLabelReply: Decodable { let items: [ShelfLabelRow] }
+struct ShelfCollisionGroup: Decodable { let volume_ids: [Int64] }
+struct ShelfLabelReply: Decodable {
+    let items: [ShelfLabelRow]
+    let collisions: [ShelfCollisionGroup]?
+}
 struct ShelfLabelSaved: Decodable { let saved: Bool; let volume_id: Int64; let shelf_label: String }
 
 struct LinkedExportReceipt: Decodable { let result: LinkedExportSummary }
@@ -212,6 +216,7 @@ private struct CopyReturnContext {
     @Published var volumeID: Int64?
     @Published var physicalStates: [Int64: String] = [:]
     @Published var shelfLabels: [Int64: String] = [:]
+    @Published var shelfTagConflicts: [Int64: [Int64]] = [:]
     @Published var mountedPhysicalVolumes: [LivePhysicalVolume] = []
     @Published var selectedPhysicalID = ""
     @Published var physicalProbeOK = false
@@ -427,6 +432,12 @@ private struct CopyReturnContext {
             }
     }
     func shelfLabel(_ disk: Int64) -> String { shelfLabels[disk] ?? "" }
+    func shelfConflictCaption(_ disk: Int64) -> String? {
+        guard let members = shelfTagConflicts[disk] else { return nil }
+        let others = members.filter { $0 != disk }.map { "#\($0)" }
+        guard !others.isEmpty else { return nil }
+        return "SHARED STICKER also on \(others.joined(separator: ", ")). Check actual physical labels; this is NOT USB identity."
+    }
 
     func refreshShelfLabels() {
         shelfLabelRequestGeneration += 1
@@ -435,6 +446,7 @@ private struct CopyReturnContext {
         let catalogIDs = Set(volumes.map(\.id))
         // A previous catalog's tag must not remain visible while loading another.
         shelfLabels = [:]
+        shelfTagConflicts = [:]
         var args = physicalArguments([], probeOK: false)
         args["op"] = "physical_shelf_labels"
         request(args, as: ShelfLabelReply.self) { [weak self] result in
@@ -445,6 +457,12 @@ private struct CopyReturnContext {
                     catalogIDs.contains(row.volume_id)
                     && self.volumes.contains(where: { $0.id == row.volume_id })
                 }.map { ($0.volume_id, $0.shelf_label) })
+            for collision in result?.collisions ?? [] {
+                let members = collision.volume_ids.filter { catalogIDs.contains($0) }
+                if members.count > 1 {
+                    for disk in members { self.shelfTagConflicts[disk] = members }
+                }
+            }
         }
     }
 
@@ -473,7 +491,8 @@ private struct CopyReturnContext {
             if let saved, saved.saved, saved.volume_id == volume {
                 if saved.shelf_label.isEmpty { self.shelfLabels.removeValue(forKey: volume) }
                 else { self.shelfLabels[volume] = saved.shelf_label }
-                self.status = "Private shelf tag saved; NOT evidence of USB presence."
+                self.refreshShelfLabels()
+                self.status = "Tag saved; shared sticker warnings require manual physical label checks."
             } else { self.status = "Private shelf tag not saved." }
         }
     }
@@ -492,11 +511,12 @@ private struct CopyReturnContext {
     func candidateCopyDiskCaption(_ group: CandidateDiskGroup) -> String {
         let tag = shelfLabel(group.volume_id)
         let sticker = tag.isEmpty ? "no sticker tag" : "sticker: \(tag)"
-        return "#\(group.volume_id) • \(sticker) • \(group.label) • \(group.count) metadata candidates • \(candidateCopyOSCaption(group.volume_id))"
+        let warning = shelfConflictCaption(group.volume_id) == nil ? "" : " • SHARED STICKER"
+        return "#\(group.volume_id) • \(sticker) • \(group.label) • \(group.count) metadata candidates • \(candidateCopyOSCaption(group.volume_id))\(warning)"
     }
     func candidateCopyDiskAccessibility(_ group: CandidateDiskGroup) -> String {
         let tag = shelfLabel(group.volume_id)
-        return "Show \(group.count) name and size metadata candidates on catalog disk number \(group.volume_id), \(group.label). Owner sticker or shelf: \(tag.isEmpty ? "not assigned" : tag). \(candidateCopyOSCaption(group.volume_id)). Content identity not verified."
+        return "Show \(group.count) name and size metadata candidates on catalog disk number \(group.volume_id), \(group.label). Owner sticker or shelf: \(tag.isEmpty ? "not assigned" : tag). \(candidateCopyOSCaption(group.volume_id)). \(shelfConflictCaption(group.volume_id) ?? ""). Content identity not verified."
     }
     // Sort copies by independently checked OS pairing state. The private
     // shelf label is a retrieval hint, never evidence of mounted file bytes.
@@ -1401,6 +1421,11 @@ private struct CopyReturnContext {
                 }
                 .accessibilityLabel("Save private shelf tag for selected catalog disk")
             }.font(.caption)
+            if let warning = model.shelfConflictCaption(diskID) {
+                Label(warning, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption).foregroundStyle(.orange)
+                    .accessibilityLabel(warning)
+            }
             Text("Saved to your private user database, scoped to this catalog generation.")
                 .font(.caption2).foregroundStyle(.secondary)
             Divider()
@@ -1412,7 +1437,12 @@ private struct CopyReturnContext {
                     Label(model.volumeLabel(entry.volume_id), systemImage: "externaldrive")
                         .font(.headline)
                         .textSelection(.enabled)
-                    Text("Catalog disk ID: \(entry.volume_id)")
+                    if let warning = model.shelfConflictCaption(entry.volume_id) {
+                         Label(warning, systemImage: "exclamationmark.triangle.fill")
+                             .font(.caption).foregroundStyle(.orange)
+                             .accessibilityLabel(warning)
+                     }
+                     Text("Catalog disk ID: \(entry.volume_id)")
                         .font(.caption).foregroundStyle(.secondary)
                     Label(model.physicalCaption(entry.volume_id), systemImage: model.physicalSymbol(entry.volume_id))
                         .foregroundStyle(model.physicalState(entry.volume_id) == "connected" ? Color.green : Color.orange)
@@ -1702,6 +1732,10 @@ private struct CopyReturnContext {
                         ForEach(model.visibleVolumes) { disk in
                             VStack(alignment: .leading, spacing: 1) {
                                 Label(disk.label, systemImage: "externaldrive")
+                                if model.shelfConflictCaption(disk.id) != nil {
+                                    Text("SHARED STICKER — check other catalog disk IDs in locator")
+                                        .font(.caption2).foregroundStyle(.orange)
+                                }
                                 Text("\(model.shelfLabel(disk.id).isEmpty ? "" : "Shelf: " + model.shelfLabel(disk.id) + " • ")\(disk.entry_count ?? 0) items • \(model.physicalCaption(disk.id))")
                                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             }.tag(Optional(disk.id)).help(disk.root_path ?? disk.label)

@@ -326,3 +326,19 @@ GUI acceptance. Do not touch FlowBridge.
 
 Branch: draft PR #57, current exact parent 3f31060a96375e3f1f50491c05d1c87a5f15a981; no main merge or stable release.
 Native Win32 and SwiftUI clear old table rows and invalidate selection at each new async search/candidate-page request; latest-page-only readiness gates copy/verified-focus actions. Copy page paths (Ctrl+Shift+M / Command-Shift-M) produces only a bounded current-page manifest with exact catalog disk IDs, historical paths, total/page range and source-verification disclaimers. Matching metadata never means byte equality or permission to delete. Original CTF is read-only, per-page linked SHA pinning preserved. Tests and UX10 runbook added. Final SHA and verified Actions URLs must be recorded in PR #57 after exact-HEAD CI; this commit is not a claim of hardware GUI acceptance. PR stays draft; RC3 remains unsigned prerelease and stable 1.0 is BLOCKED by original modified/historic CTFs, manual GUI/hardware/signing and real p95 target.
+
+
+## 2026-11-02 — UX12 same-sticker ambiguity integrated in draft PR #57
+
+The user-owned shelf/sticker DB now reports ID-only label collisions scoped to
+the current catalog generation, platform and requested disk IDs. Native Win32
+and macOS SwiftUI surface explicit SHARED STICKER warnings throughout the disk
+register, candidate disk selection, locator and local pickup note; macOS
+includes screen-reader labels and scoped post-save recheck. Duplicate labels
+remain legal and are NEVER evidence of a connected USB volume or equal bytes.
+CTF remains read-only and SHA-generation pinned, annotations/caches separate;
+no private tags or sources enter CI. Synthetic service/unit and native wiring
+checks plus manual QA runbook: docs/qa/UX12_SHELF_COLLISION_AUDIT_20261102.md.
+Check final exact-HEAD workflows before PASS claims. No merge or stable 1.0;
+original/historic CTF, real Win10/11/Mac GUI/USB, notarization/signing and
+p95<=150ms remain open.
