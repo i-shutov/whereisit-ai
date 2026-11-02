@@ -137,7 +137,13 @@ fn focusable_result_row(page_ready: bool, rows: &[Value], selected_row: isize) -
 }
 
 const SORT_LABELS: [&str; 7] = [
-    "Name", "Disk", "Kind", "Size", "Modified", "Candidates", "Path",
+    "Name",
+    "Disk",
+    "Kind",
+    "Size",
+    "Modified",
+    "Candidates",
+    "Path",
 ];
 
 fn sort_page_rows(
@@ -245,9 +251,15 @@ mod page_sort_and_layout_tests {
             json!({"id":11,"kind":"archive"}),
         ];
         sort_page_rows(&mut rows, 2, false, &labels);
-        assert_eq!(rows.iter().filter_map(id).collect::<Vec<_>>(), vec![11, 12, 10]);
+        assert_eq!(
+            rows.iter().filter_map(id).collect::<Vec<_>>(),
+            vec![11, 12, 10]
+        );
         sort_page_rows(&mut rows, 2, true, &labels);
-        assert_eq!(rows.iter().filter_map(id).collect::<Vec<_>>(), vec![10, 12, 11]);
+        assert_eq!(
+            rows.iter().filter_map(id).collect::<Vec<_>>(),
+            vec![10, 12, 11]
+        );
     }
 
     #[test]
@@ -1229,7 +1241,15 @@ fn explorer_geometry_for_width(
 // 880px, instead of leaving an unscrollable fixed-width results table.
 fn result_column_widths(file_width: i32, locator_visible: bool) -> [i32; 7] {
     if locator_visible && file_width >= 820 {
-        [220, 112, 68, 83, 110, 65, if file_width >= 840 { 185 } else { 0 }]
+        [
+            220,
+            112,
+            68,
+            83,
+            110,
+            65,
+            if file_width >= 840 { 185 } else { 0 },
+        ]
     } else if locator_visible {
         [210, 95, 64, 75, 95, 61, 0]
     } else if file_width >= 900 {
@@ -3531,7 +3551,12 @@ impl App {
             let mut state: LVITEMW = std::mem::zeroed();
             state.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
             state.state = LVIS_SELECTED | LVIS_FOCUSED;
-            SendMessageW(self.files, LVM_SETITEMSTATE, index, &state as *const _ as isize);
+            SendMessageW(
+                self.files,
+                LVM_SETITEMSTATE,
+                index,
+                &state as *const _ as isize,
+            );
         }
         SetFocus(self.files);
         SendMessageW(self.files, LVM_ENSUREVISIBLE, index, 0);
