@@ -285,22 +285,41 @@ fn filtered_disk_indices(
 
 // A view-only shortcut for the physical pickup workflow: IDs must come from
 // the current catalogued copy groups, never fuzzy labels or historical paths.
-fn candidate_register_indices(volumes: &[Value], groups: &[Value]) -> Vec<usize> {
-    let candidate_ids: std::collections::HashSet<i64> = groups
-        .iter()
-        .filter(|group| group["count"].as_u64().is_some_and(|count| count > 0))
-        .filter_map(|group| group["volume_id"].as_i64())
-        .filter(|disk| *disk > 0)
-        .collect();
-    volumes
+// Candidate-register order is the physical pickup order: last OS observation,
+// then the COMPLETE per-disk metadata count, then exact catalog ID. The
+// returned indices still point into the original volume array.
+fn candidate_register_indices(
+    volumes: &[Value],
+    groups: &[Value],
+    states: &HashMap<i64, String>,
+) -> Vec<usize> {
+    let mut candidates: HashMap<i64, &Value> = HashMap::new();
+    for group in groups {
+        let Some(disk) = group["volume_id"].as_i64().filter(|disk| *disk > 0) else {
+            continue;
+        };
+        let Some(count) = group["count"].as_u64().filter(|count| *count > 0) else {
+            continue;
+        };
+        let incumbent = candidates.entry(disk).or_insert(group);
+        if count > incumbent["count"].as_u64().unwrap_or(0) {
+            *incumbent = group;
+        }
+    }
+    let mut indices: Vec<usize> = volumes
         .iter()
         .enumerate()
         .filter_map(|(index, volume)| {
             id(volume)
-                .filter(|disk| candidate_ids.contains(disk))
+                .filter(|disk| candidates.contains_key(disk))
                 .map(|_| index)
         })
-        .collect()
+        .collect();
+    indices.sort_by_key(|index| {
+        let disk = id(&volumes[*index]).unwrap_or_default();
+        candidate_disk_priority(candidates[&disk], states)
+    });
+    indices
 }
 
 // Row zero always means global browse. Any other row must resolve through
@@ -389,15 +408,56 @@ mod disk_register_filter_tests {
             json!({"volume_id":999,"count":7}),
             json!({"volume_id":42,"count":3}),
         ];
-        let visible = candidate_register_indices(&volumes, &groups);
+        let visible = candidate_register_indices(&volumes, &groups, &HashMap::new());
         assert_eq!(visible, vec![1, 2]);
         assert_eq!(filtered_disk_index_at_row(&visible, 0), None);
         assert_eq!(filtered_disk_index_at_row(&visible, 1), Some(1));
         assert_eq!(filtered_disk_index_at_row(&visible, 2), Some(2));
         assert_eq!(filtered_disk_index_at_row(&visible, 3), None);
-        assert!(candidate_register_indices(&volumes, &[]).is_empty());
+        assert!(candidate_register_indices(&volumes, &[], &HashMap::new()).is_empty());
         assert!(
-            candidate_register_indices(&volumes, &[json!({"volume_id":-1,"count":1})]).is_empty()
+            candidate_register_indices(
+                &volumes,
+                &[json!({"volume_id":-1,"count":1})],
+                &HashMap::new(),
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn candidate_register_prioritizes_os_verified_then_counts_without_fuzzy_ids() {
+        let volumes = vec![
+            json!({"id":4,"label":"Disk 42"}),
+            json!({"id":42,"label":"Archive"}),
+            json!({"id":142,"label":"Archive"}),
+            json!({"id":9,"label":"Other"}),
+        ];
+        let groups = vec![
+            json!({"volume_id":42,"count":30}),
+            json!({"volume_id":142,"count":2}),
+            json!({"volume_id":9,"count":5}),
+            json!({"volume_id":4,"count":0}),
+            json!({"volume_id":142,"count":1}),
+        ];
+        let states = HashMap::from([
+            (42, "offline".to_owned()),
+            (142, "connected".to_owned()),
+            (9, "unverified".to_owned()),
+        ]);
+        let rows = candidate_register_indices(&volumes, &groups, &states);
+        assert_eq!(rows, vec![2, 1, 3]);
+        assert_eq!(filtered_disk_index_at_row(&rows, 1), Some(2));
+        assert_eq!(filtered_disk_index_at_row(&rows, 2), Some(1));
+        assert_eq!(filtered_disk_index_at_row(&rows, 3), Some(3));
+        let ambiguous = HashMap::from([(142, "conflict".to_owned())]);
+        assert_eq!(
+            candidate_register_indices(&volumes, &groups, &ambiguous),
+            vec![1, 3, 2]
+        );
+        assert_eq!(
+            candidate_register_indices(&volumes, &groups, &HashMap::new()),
+            vec![1, 3, 2]
         );
     }
 
@@ -538,6 +598,56 @@ fn candidate_disk_choice_caption(
         "#{disk_id} • {sticker} • {catalog_name} • {} metadata candidates • {badge}",
         group["count"].as_u64().unwrap_or(0)
     )
+}
+
+// Left register is a retrieval shortlist, never a current filesystem view.
+// Keep exact ID and count first so they remain visible in a narrow native pane.
+fn candidate_register_row_caption(
+    volume: &Value,
+    group: &Value,
+    shelves: &HashMap<i64, String>,
+    states: &HashMap<i64, String>,
+    shared_sticker: bool,
+) -> String {
+    let disk = id(volume).unwrap_or_default();
+    let count = group["count"].as_u64().unwrap_or(0);
+    let badge = candidate_mount_badge(states.get(&disk).map(String::as_str));
+    let sticker = shelves
+        .get(&disk)
+        .filter(|tag| !tag.trim().is_empty())
+        .map(|tag| format!("sticker: {}", tag.replace(['\r', '\n', '\t'], " ")))
+        .unwrap_or_else(|| "no sticker".to_owned());
+    let label = string(volume, "label").replace(['\r', '\n', '\t'], " ");
+    let collision = if shared_sticker { " • SHARED STICKER" } else { "" };
+    format!(
+        "#{disk} • {count} name+size metadata candidates • {badge} • {sticker} • {label}{collision}"
+    )
+}
+
+#[cfg(test)]
+mod candidate_register_caption_tests {
+    use super::candidate_register_row_caption;
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    #[test]
+    fn exact_id_count_and_unverified_state_precede_historical_label() {
+        let volume = json!({"id":142,"label":"Film\nShelf 42"});
+        let group = json!({"volume_id":142,"count":6});
+        let shelves = HashMap::from([(142, "Полка Б".to_owned())]);
+        let no_states = HashMap::new();
+        let uncertain =
+            candidate_register_row_caption(&volume, &group, &shelves, &no_states, true);
+        assert!(uncertain.starts_with("#142 • 6 name+size metadata candidates • not verified"));
+        assert!(uncertain.contains("sticker: Полка Б"));
+        assert!(uncertain.contains("SHARED STICKER"));
+        assert!(!uncertain.contains("\nShelf"));
+        let states = HashMap::from([(142, "connected".to_owned())]);
+        let observed =
+            candidate_register_row_caption(&volume, &group, &shelves, &states, false);
+        assert!(observed.contains("OS verified now"));
+        assert!(!observed.contains("SHARED STICKER"));
+    }
 }
 
 // Different disks may share a manually entered tag; never infer USB identity.
@@ -2973,13 +3083,14 @@ impl App {
     }
 
     unsafe fn populate_physical_disk_list(&mut self) {
-        self.visible_disk_indices = if self
-            .disk_filter_query
-            .trim()
-            .eq_ignore_ascii_case("copies:")
-        {
+        let candidate_mode = self.disk_filter_query.trim().eq_ignore_ascii_case("copies:");
+        self.visible_disk_indices = if candidate_mode {
             if self.copy_source.is_some() {
-                candidate_register_indices(&self.volumes, &self.copy_disk_groups)
+                candidate_register_indices(
+                    &self.volumes,
+                    &self.copy_disk_groups,
+                    &self.physical_states,
+                )
             } else {
                 vec![]
             }
@@ -3018,11 +3129,31 @@ impl App {
                 .and_then(|disk_id| shelf_collision_warning(disk_id, &self.shelf_tag_conflicts))
                 .map(|_| " ! SHARED STICKER")
                 .unwrap_or("");
-            let label = format!(
-                "{}{shelf}  ({} items)  {badge}{warning}",
-                string(disk, "label"),
-                disk["entry_count"].as_u64().unwrap_or(0)
-            );
+            let label = if candidate_mode {
+                let disk_id = id(disk).unwrap_or_default();
+                let group = self
+                    .copy_disk_groups
+                    .iter()
+                    .filter(|group| group["volume_id"].as_i64() == Some(disk_id))
+                    .max_by_key(|group| group["count"].as_u64().unwrap_or(0));
+                if let Some(group) = group {
+                    candidate_register_row_caption(
+                        disk,
+                        group,
+                        &self.shelf_labels,
+                        &self.physical_states,
+                        warning != "",
+                    )
+                } else {
+                    format!("#{disk_id} • candidate data unavailable")
+                }
+            } else {
+                format!(
+                    "{}{shelf}  ({} items)  {badge}{warning}",
+                    string(disk, "label"),
+                    disk["entry_count"].as_u64().unwrap_or(0)
+                )
+            };
             SendMessageW(self.disks, LB_ADDSTRING, 0, wide(&label).as_ptr() as isize);
         }
         // Keep the underlying browsing/search scope even when its row is

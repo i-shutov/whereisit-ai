@@ -385,6 +385,22 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn('if copySourceID == nil', MAC)
         self.assertIn("Search, selected file and OS pairing remain unchanged.", MAC)
 
+    def test_ux14_candidate_register_is_prioritized_retrieval_not_content_evidence(self):
+        self.assertIn("fn candidate_register_row_caption(", WIN)
+        self.assertIn("candidate_register_prioritizes_os_verified_then_counts_without_fuzzy_ids", WIN)
+        self.assertIn("candidate_register_caption_tests", WIN)
+        self.assertIn("candidate_disk_priority(candidates[&disk], states)", WIN)
+        self.assertIn("&self.physical_states,", WIN)
+        self.assertIn("if candidate_mode {", WIN)
+        self.assertIn("name+size metadata candidates", WIN)
+        self.assertIn("orderedCopyDiskGroups.compactMap { group -> Volume? in", MAC)
+        self.assertIn("seen.insert(group.volume_id).inserted", MAC)
+        self.assertIn("func candidateRegisterCount(", MAC)
+        self.assertIn("func candidateRegisterAccessibility(", MAC)
+        self.assertIn("model.isCandidateRegisterMode", MAC)
+        self.assertIn(".accessibilityElement(children: .combine)", MAC)
+        self.assertIn("content unverified", MAC)
+
     def test_no_unverified_physical_drive_claims_in_locator(self):
         self.assertIn("Physical connection: NOT VERIFIED", WIN)
         self.assertIn("Physical connection not verified", MAC)

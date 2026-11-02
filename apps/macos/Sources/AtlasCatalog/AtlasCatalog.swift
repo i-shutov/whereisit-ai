@@ -400,8 +400,13 @@ private struct CopyReturnContext {
         // cross-disk metadata candidate groups, never OS mount evidence.
         if needle.lowercased() == "copies:" {
             guard copySourceID != nil else { return [] }
-            let ids = Set(copyDiskGroups.filter { $0.count > 0 }.map(\.volume_id))
-            return volumes.filter { ids.contains($0.id) }
+            // Preserve priority order used by the pickup list, but keep
+            // actual catalog Volume objects and exact IDs for selection.
+            var seen = Set<Int64>()
+            return orderedCopyDiskGroups.compactMap { group -> Volume? in
+                guard group.count > 0, seen.insert(group.volume_id).inserted else { return nil }
+                return volumes.first { $0.id == group.volume_id }
+            }
         }
         // id:42 uses strict catalog identity, not a fuzzy number/label match.
         // This filter never changes search scope or verifies a mounted USB.
@@ -414,6 +419,17 @@ private struct CopyReturnContext {
             $0.label.localizedStandardContains(needle) || String($0.id).contains(needle)
                 || (shelfLabels[$0.id] ?? "").localizedStandardContains(needle)
         }
+    }
+    var isCandidateRegisterMode: Bool {
+        diskFilter.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "copies:"
+            && copySourceID != nil
+    }
+    func candidateRegisterCount(_ disk: Int64) -> Int {
+        copyDiskGroups.filter { $0.volume_id == disk }.map(\.count).max() ?? 0
+    }
+    func candidateRegisterAccessibility(_ disk: Volume) -> String {
+        let tag = shelfLabel(disk.id)
+        return "Catalog disk number \(disk.id), \(disk.label). \(candidateRegisterCount(disk.id)) recorded name and size metadata candidates, not verified file copies. Owner sticker or shelf \(tag.isEmpty ? "not assigned" : tag). Last OS check: \(candidateCopyOSCaption(disk.id)). \(shelfConflictCaption(disk.id) ?? ""). File contents not compared."
     }
     func revealCopyCandidateDisksInRegister() {
         guard copySourceID != nil, !copyDiskGroups.isEmpty else {
@@ -1760,15 +1776,27 @@ private struct CopyReturnContext {
                         Text("All disks / global search").tag(Optional<Int64>.none)
                         ForEach(model.visibleVolumes) { disk in
                             VStack(alignment: .leading, spacing: 1) {
-                                Label(disk.label, systemImage: "externaldrive")
+                                Label(model.isCandidateRegisterMode
+                                      ? "#\(disk.id) • \(model.candidateRegisterCount(disk.id)) name+size candidates • \(disk.label)"
+                                      : disk.label, systemImage: "externaldrive")
                                 if model.shelfConflictCaption(disk.id) != nil {
                                     Text(model.shelfConflictCaption(disk.id) ?? "SHARED STICKER")
                                         .font(.caption2).foregroundStyle(.orange)
                                         .accessibilityLabel(model.shelfConflictCaption(disk.id) ?? "SHARED STICKER")
                                 }
-                                Text("\(model.shelfLabel(disk.id).isEmpty ? "" : "Shelf: " + model.shelfLabel(disk.id) + " • ")\(disk.entry_count ?? 0) items • \(model.physicalCaption(disk.id))")
+                                Text(model.isCandidateRegisterMode
+                                    ? "\(model.shelfLabel(disk.id).isEmpty ? "No sticker" : "Shelf: " + model.shelfLabel(disk.id)) • \(model.candidateCopyOSCaption(disk.id)) • content unverified"
+                                    : "\(model.shelfLabel(disk.id).isEmpty ? "" : "Shelf: " + model.shelfLabel(disk.id) + " • ")\(disk.entry_count ?? 0) items • \(model.physicalCaption(disk.id))")
                                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                            }.tag(Optional(disk.id)).help(disk.root_path ?? disk.label)
+                            }
+                            .tag(Optional(disk.id))
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel(model.isCandidateRegisterMode
+                                ? model.candidateRegisterAccessibility(disk)
+                                : "Catalog disk #\(disk.id), \(disk.label), \(model.physicalCaption(disk.id))")
+                            .help(model.isCandidateRegisterMode
+                                ? "Metadata name+size candidate disk. Last OS check is not proof the file exists."
+                                : (disk.root_path ?? disk.label))
                         }
                     }.listStyle(.sidebar)
                     Divider()

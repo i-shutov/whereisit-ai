@@ -350,3 +350,16 @@ checks plus manual QA runbook: docs/qa/UX12_SHELF_COLLISION_AUDIT_20261102.md.
 Check final exact-HEAD workflows before PASS claims. No merge or stable 1.0;
 original/historic CTF, real Win10/11/Mac GUI/USB, notarization/signing and
 p95<=150ms remain open.
+
+
+## UX14 — ranked candidate register, exact-HEAD check pending (2026-11-02)
+
+New changes remain in draft PR #57, targeting existing main. Candidate-mode
+native disk registers display exact disk ID, per-disk metadata count, private
+sticker, last independent OS pairing status and shared-sticker warnings, ordered
+by the physical pickup priority (verified, offline, unverified, conflict;
+count desc; exact ID). Does not alter global search or evidence of file bytes.
+Rust tests, both-client source wiring checks and manual runbook
+docs/qa/UX14_CANDIDATE_REGISTER_PRIORITY_20261102.md accompany the code.
+Require final exact-head 4-platform native / offline / integration / upgrade CI.
+No stable release or merge without physical/GUI and remaining gates.

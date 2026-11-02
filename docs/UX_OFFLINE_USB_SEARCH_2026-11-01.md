@@ -271,3 +271,26 @@ USB tests remain open. PR #57 draft; stable release blocked.
 ## UX13 — show candidate disks in the physical register (2026-11-02)
 
 Both native shells expose a compact view-only `copies:` disk register mode from the selected file's metadata candidate groups (Windows Ctrl+Shift+K, macOS Command-Shift-K/Candidates). Matching uses exact catalog disk IDs, not shelf strings or historical drive letters; all-disk search and current result selection are preserved. The register returns to its normal filter when copy mode ends. Unit and native-source wiring regressions test 4/42/142 collisions, filtered index mapping and keyboard accessibility. Manual 1366×768/HiDPI, OS mount and actual physical pickup inspection are required before acceptance. See [UX13 runbook](qa/UX13_CANDIDATE_DISK_REGISTER_20261102.md).
+
+
+## UX14 — prioritized physical retrieval in candidate disk register (2026-11-02)
+
+The native candidate-only left register now becomes a usable physical pickup
+shortlist instead of an unsorted list of catalog volume names. Both Win32 and
+SwiftUI order the exact candidate catalog disk IDs by **last OS observation**
+(connected only when explicitly paired and OS-verified, then offline, unverified,
+conflict), descending complete per-disk name+recorded-size candidate count,
+then ascending exact disk ID. Each row visibly leads with the disk ID and the
+candidate count, followed by operator sticker/shelf label and OS state;
+shared-sticker warnings remain visible. This order is independent of the
+current 250-row results page. Filter mode changes only the left register,
+without altering global search, selected result, physical pairing or CTF.
+Source remains read-only and generation-pinned.
+
+Rows explicitly distinguish *name+size metadata candidates* from verified
+content copies. Last OS observations are not a live byte-presence check.
+New compiled Rust ordering/caption tests, dual-native wiring assertions and
+manual Windows/macOS runbook: [UX14 QA](qa/UX14_CANDIDATE_REGISTER_PRIORITY_20261102.md).
+Exact-head CI and actual Win10/11/macOS ARM/Intel accessibility, 1366x768,
+HiDPI and unplug/replug acceptance remain mandatory; draft PR #57 is not a
+stable release.
