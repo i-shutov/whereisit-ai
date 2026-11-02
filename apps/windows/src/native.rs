@@ -173,7 +173,6 @@ mod exact_name_query_tests {
     }
 }
 
-
 // Find potential renamed media by exact recorded *byte count* only.
 // Refuse unknown, zero and non-SQLite signed-64-bit sizes; this is not hashing.
 fn exact_recorded_size_query(size: Option<u64>) -> Option<String> {
@@ -2713,8 +2712,7 @@ impl App {
                     self.stack.last().map(|p| p.1.as_str()).unwrap_or("/")
                 } else if self.volume.is_some() {
                     "Search within selected catalog disk"
-                } else if self.query.starts_with("size:")
-                    && self.query.ends_with(" AND kind:file")
+                } else if self.query.starts_with("size:") && self.query.ends_with(" AND kind:file")
                 {
                     "GLOBAL exact byte-size file candidates (metadata only; contents unverified)"
                 } else {
