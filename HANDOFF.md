@@ -1,3 +1,22 @@
+## UX35 exact-HEAD CI defect and repair (2026-11-03)
+
+At initial UX35 commit `1460dd4dcd48492e6edba47cce4180ff499f8807`,
+[offline acceptance 41530988813](https://github.com/i-shutov/whereisit-ai/actions/runs/41530988813)
+failed **Check integrated Rust contracts**: only Rustfmt diffs in
+`apps/windows/src/native.rs`. [Native Linux test 41530988844](https://github.com/i-shutov/whereisit-ai/actions/runs/41530988844)
+failed earlier at the Python contract `test_ux28_candidate_folder_return_is_exact_and_revalidated`,
+which still expected an obsolete bare `self.load()` call after UX35
+strengthened Back to `load_restoring(context.selected)`. Updated the existing
+test to explicitly require the new re-fetch+exact-selection branch, **not**
+suppressed it. Applied the 13 exact Rustfmt hunks from the logged formatter
+output. [Integration 41530988817](https://github.com/i-shutov/whereisit-ai/actions/runs/41530988817)
+had passed at initial HEAD; this cannot certify the new repair SHA.
+**All four fresh CI families must re-run on the final repair HEAD** before
+green status. No code assertions or release blockers weakened. Same PR #57,
+no merge, no stable 1.0, no user data or other repositories touched.
+
+---
+
 ## UX35 — selected-film and keyboard focus Back restoration (2026-11-03)
 
 The original selected film was lost when navigating search → metadata

@@ -133,7 +133,10 @@ mod recorded_parent_folder_tests {
             Some(42),
             250,
             "copies:".into(),
-            Some(super::ReturnRowFocus { entry_id: 801, disk_id: 42 }),
+            Some(super::ReturnRowFocus {
+                entry_id: 801,
+                disk_id: 42,
+            }),
         )
         .expect("valid selected candidate source");
         assert_eq!(context.source_id, 701);
@@ -142,8 +145,12 @@ mod recorded_parent_folder_tests {
         assert_eq!(context.offset, 250);
         assert_eq!(context.disk_filter_query, "copies:");
         assert_eq!(context.selected.entry_id, 801);
-        assert!(CandidateFolderReturn::snapshot(None, None, Some(42), 0, String::new(), None).is_none());
-        assert!(CandidateFolderReturn::snapshot(Some(0), None, None, 0, String::new(), None).is_none());
+        assert!(
+            CandidateFolderReturn::snapshot(None, None, Some(42), 0, String::new(), None).is_none()
+        );
+        assert!(
+            CandidateFolderReturn::snapshot(Some(0), None, None, 0, String::new(), None).is_none()
+        );
     }
 
     #[test]
@@ -3435,7 +3442,9 @@ fn verified_return_row_index(
         id(row) == Some(focus.entry_id) && row["volume_id"].as_i64() == Some(focus.disk_id)
     });
     let (index, _) = matches.next()?;
-    if matches.next().is_some() { return None; }
+    if matches.next().is_some() {
+        return None;
+    }
     Some(index)
 }
 
@@ -3451,12 +3460,45 @@ mod return_row_focus_tests {
             json!({"id":701, "volume_id":142}),
             json!({"id":701, "volume_id":42}),
         ];
-        let original = ReturnRowFocus { entry_id: 701, disk_id: 42 };
-        assert_eq!(verified_return_row_index(&entries, original, 17, 17, true), Some(2));
-        assert_eq!(verified_return_row_index(&entries, original, 17, 18, true), None);
-        assert_eq!(verified_return_row_index(&entries, original, 17, 17, false), None);
-        assert_eq!(verified_return_row_index(&entries, ReturnRowFocus { entry_id: 701, disk_id: 4 }, 17, 17, true), None);
-        assert_eq!(verified_return_row_index(&[entries[2].clone(), entries[2].clone()], original, 17, 17, true), None);
+        let original = ReturnRowFocus {
+            entry_id: 701,
+            disk_id: 42,
+        };
+        assert_eq!(
+            verified_return_row_index(&entries, original, 17, 17, true),
+            Some(2)
+        );
+        assert_eq!(
+            verified_return_row_index(&entries, original, 17, 18, true),
+            None
+        );
+        assert_eq!(
+            verified_return_row_index(&entries, original, 17, 17, false),
+            None
+        );
+        assert_eq!(
+            verified_return_row_index(
+                &entries,
+                ReturnRowFocus {
+                    entry_id: 701,
+                    disk_id: 4
+                },
+                17,
+                17,
+                true
+            ),
+            None
+        );
+        assert_eq!(
+            verified_return_row_index(
+                &[entries[2].clone(), entries[2].clone()],
+                original,
+                17,
+                17,
+                true
+            ),
+            None
+        );
         assert_eq!(verified_return_row_index(&[], original, 17, 17, true), None);
         assert!(ReturnRowFocus::from_entry(&json!({"id":0,"volume_id":42})).is_none());
         assert!(ReturnRowFocus::from_entry(&json!({"id":701,"volume_id":0})).is_none());
@@ -3866,7 +3908,11 @@ impl App {
             self.populate_physical_disk_list();
         }
         self.generation += 1;
-        if self.pending_selection_restore.as_ref().is_some_and(|(n, _)| *n != self.generation) {
+        if self
+            .pending_selection_restore
+            .as_ref()
+            .is_some_and(|(n, _)| *n != self.generation)
+        {
             self.pending_selection_restore = None;
         }
         self.page_awaiting = false;
@@ -4174,7 +4220,9 @@ impl App {
                 continue;
             }
             if reply.result["ok"] != true {
-                if reply.tag == "rows" { self.pending_selection_restore = None; }
+                if reply.tag == "rows" {
+                    self.pending_selection_restore = None;
+                }
                 if reply.tag == "linked_sync" {
                     self.pending_link_path = None;
                 }
@@ -4366,16 +4414,27 @@ impl App {
                     self.render_rows();
                     if let Some((expected, focus)) = self.pending_selection_restore.take() {
                         if let Some(row) = verified_return_row_index(
-                            &self.entries, focus, expected, self.generation, self.page_ready,
+                            &self.entries,
+                            focus,
+                            expected,
+                            self.generation,
+                            self.page_ready,
                         ) {
                             let mut state: LVITEMW = std::mem::zeroed();
                             state.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
                             state.state = LVIS_SELECTED | LVIS_FOCUSED;
-                            SendMessageW(self.files, LVM_SETITEMSTATE, row, &state as *const _ as isize);
+                            SendMessageW(
+                                self.files,
+                                LVM_SETITEMSTATE,
+                                row,
+                                &state as *const _ as isize,
+                            );
                             SendMessageW(self.files, LVM_ENSUREVISIBLE, row, 0);
                             SetFocus(self.files);
                             self.update_disk_locator();
-                            self.status("Back: exact catalog file restored after fresh page check.");
+                            self.status(
+                                "Back: exact catalog file restored after fresh page check.",
+                            );
                         } else {
                             self.status("Back: original catalog entry missing or ambiguous; no stale selection.");
                         }
@@ -5407,7 +5466,8 @@ impl App {
         let Some(focus) = (row >= 0)
             .then(|| self.entries.get(row as usize))
             .flatten()
-            .and_then(ReturnRowFocus::from_entry) else {
+            .and_then(ReturnRowFocus::from_entry)
+        else {
             self.status("Selected catalog entry lacks a stable ID/disk pair.");
             return;
         };
@@ -5486,7 +5546,8 @@ impl App {
             return;
         };
         let Some(focus) = ReturnRowFocus::from_entry(entry) else {
-            self.status("Selected catalog file has no stable ID/disk pair."); return;
+            self.status("Selected catalog file has no stable ID/disk pair.");
+            return;
         };
         self.candidate_folder_return = None;
         self.copy_return = Some(CopyReturn {
@@ -5535,7 +5596,8 @@ impl App {
             return;
         };
         let Some(focus) = ReturnRowFocus::from_entry(entry) else {
-            self.status("Selected catalog file has no stable ID/disk pair."); return;
+            self.status("Selected catalog file has no stable ID/disk pair.");
+            return;
         };
         self.candidate_folder_return = None;
         self.copy_return = Some(CopyReturn {
@@ -5581,7 +5643,8 @@ impl App {
             return;
         };
         let Some(focus) = ReturnRowFocus::from_entry(entry) else {
-            self.status("Selected catalog file has no stable ID/disk pair."); return;
+            self.status("Selected catalog file has no stable ID/disk pair.");
+            return;
         };
         self.candidate_folder_return = None;
         if self.copy_source.is_none() {

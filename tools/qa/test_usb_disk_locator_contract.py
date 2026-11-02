@@ -211,7 +211,7 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("self.copy_source = Some(context.source_id);", WIN)
         self.assertIn("self.copy_focus_volume_id = context.focus_volume_id;", WIN)
         self.assertIn("self.offset = context.offset;", WIN)
-        self.assertIn("self.load(); // Fresh pinned CTF source SHA", WIN)
+        self.assertIn("self.load_restoring(context.selected); // Re-fetch, then exact row.", WIN)
         self.assertIn("private struct CandidateFolderReturnContext", MAC)
         self.assertIn("candidateFolderReturn = CandidateFolderReturnContext(", MAC)
         self.assertIn("if let candidate = candidateFolderReturn {", MAC)
