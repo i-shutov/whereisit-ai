@@ -600,6 +600,27 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("Linked CTF — read-only", MAC)
         self.assertIn("source read-only; SHA generation pinned", WIN)
 
+    def test_ux23_sleep_resume_monotonic_probe_expiry_and_clone_safe_pairing(self):
+        self.assertIn("fn physical_probe_is_fresh(", WIN)
+        self.assertIn("stale_os_probes_never_authorize_a_connected_badge", WIN)
+        self.assertIn("fn unique_matching_live_mount(", WIN)
+        self.assertIn("second_pairing_probe_rejects_a_new_same_uuid_clone", WIN)
+        self.assertIn("!unique_matching_live_mount(&candidate, &self.mounted_volumes)", WIN)
+        self.assertNotIn("v.id == candidate.id && v.description == candidate.description", WIN)
+        self.assertIn("physical_verified_at: Option<Instant>", WIN)
+        self.assertIn("self.expire_physical_presence_if_stale();", WIN)
+        self.assertIn("WM_ACTIVATEAPP =>", WIN)
+        self.assertIn("app.invalidate_physical_presence();", WIN)
+        self.assertIn('reply["data"]["probe_ok"] == true', WIN)
+        self.assertIn("let scannedAt = ProcessInfo.processInfo.systemUptime", MAC)
+        self.assertIn("private var physicalVerifiedUptime: TimeInterval?", MAC)
+        self.assertIn("now - verifiedAt <= physicalStateTTL", MAC)
+        self.assertIn("self.physicalVerifiedUptime = scannedAt", MAC)
+        self.assertIn("self.physicalVerifiedUptime = nil", MAC)
+        self.assertIn("NSApplication.didBecomeActiveNotification", MAC)
+        self.assertIn("NSWorkspace.didWakeNotification", MAC)
+        self.assertIn('self.physicalState(pending.disk) == "connected"', MAC)
+
 
 if __name__ == "__main__":
     unittest.main()

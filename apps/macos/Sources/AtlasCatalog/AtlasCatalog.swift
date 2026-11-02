@@ -223,6 +223,9 @@ private struct CopyReturnContext {
     @Published var mountedPhysicalVolumes: [LivePhysicalVolume] = []
     @Published var selectedPhysicalID = ""
     @Published var physicalProbeOK = false
+    // Monotonic clock avoids a stale connected badge after suspend.
+    private var physicalVerifiedUptime: TimeInterval?
+    private let physicalStateTTL: TimeInterval = 12
     private var physicalCheckGeneration = 0
     private var shelfLabelRequestGeneration = 0
     @Published var entries: [Entry] = []
@@ -638,7 +641,12 @@ private struct CopyReturnContext {
     }
 
     func physicalState(_ id: Int64) -> String {
-        guard physicalProbeOK else { return "unverified" }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard physicalProbeOK,
+              let verifiedAt = physicalVerifiedUptime,
+              now >= verifiedAt, now - verifiedAt <= physicalStateTTL else {
+            return "unverified"
+        }
         switch physicalStates[id] {
         case "connected": return "connected"
         case "offline": return "offline"
@@ -813,6 +821,8 @@ private struct CopyReturnContext {
         ]
     }
     func refreshPhysicalPresence() {
+        // Start TTL before enumeration, not on a delayed async service reply.
+        let scannedAt = ProcessInfo.processInfo.systemUptime
         physicalCheckGeneration += 1
         let checkToken = physicalCheckGeneration
         let scope = physicalScope
@@ -825,6 +835,7 @@ private struct CopyReturnContext {
         // Do not carry a positive connection claim through a failed or pending probe.
         physicalStates = [:]
         verifiedPhysicalIDs = [:]
+        physicalVerifiedUptime = nil
         var args = physicalArguments(mountedPhysicalVolumes, probeOK: physicalProbeOK)
         args["op"] = "physical_status"
         let observed = mountedPhysicalVolumes.map(\.id)
@@ -833,7 +844,10 @@ private struct CopyReturnContext {
                   self.physicalScope == scope,
                   self.mountedPhysicalVolumes.map(\.id) == observed else { return }
             // No positive status survives a missing/failed service response.
-            if let result, self.physicalProbeOK == result.probe_ok {
+            if let result, self.physicalProbeOK == result.probe_ok,
+               result.probe_ok,
+               ProcessInfo.processInfo.systemUptime - scannedAt <= self.physicalStateTTL {
+                self.physicalVerifiedUptime = scannedAt
                 self.physicalStates = Dictionary(
                     uniqueKeysWithValues: result.items.map { ($0.volume_id, $0.state) }
                 )
@@ -1280,6 +1294,7 @@ private struct CopyReturnContext {
             guard let result else { return }
             self.linkedCTFPath = source; self.linkedGeneration = result.generation
             self.physicalStates = [:]; self.verifiedPhysicalIDs = [:]; self.pendingMountCopy = nil
+            self.physicalVerifiedUptime = nil
             self.shelfLabels = [:]; self.selectedPhysicalID = ""
             if self.exportFormat == "ctf" { self.exportFormat = "csv" }
             self.volumeID = nil; self.stack = [(nil, "/")]; self.entries = []
@@ -2151,6 +2166,12 @@ private struct CopyReturnContext {
             if !ready { resultTableFocused = false }
         }
         .onReceive(Timer.publish(every: 6, on: .main, in: .common).autoconnect()) { _ in
+            model.refreshPhysicalPresence()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            model.refreshPhysicalPresence()
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)) { _ in
             model.refreshPhysicalPresence()
         }
         .sheet(isPresented: $model.showingAnnotationReview) {

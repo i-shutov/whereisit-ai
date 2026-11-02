@@ -460,3 +460,18 @@ This is a source integration checkpoint, **not** hardware/visual acceptance.
 Record final exact-HEAD Actions URLs in draft PR #57 after completion; no
 merge or stable release without the original/historical CTF, GUI/hardware,
 signing/notarization and real p95 <=150ms gates.
+
+
+## 2026-11-02 — UX23 native sleep freshness + Windows same-UUID clone guard
+
+Draft PR #57: both native clients expire connected states after 12 seconds of
+monotonic OS scan age, measured from before enumeration. Windows invalidates
+old checks on foreground and before commands/timer, pairing checks uniqueness
+of the full UUID among fresh mounts rather than UUID+description counts.
+SwiftUI rejects delayed replies and re-probes at wake/foreground. Original
+physical service collision checks are unchanged; CTF stays read-only and
+generation-SHA pinned; user bindings/notes are separate. Compiled Windows
+tests and dual UI source regression + manual docs/qa/UX23_RESUME_FRESHNESS_AND_CLONE_PAIRING_20261102.md
+included. No private bytes or IDs published. Final exact-head Actions must
+be inspected before PASS; GUI/USB/historical CTF/signing/p95 manual acceptance
+still BLOCK stable 1.0; draft only, no merge.

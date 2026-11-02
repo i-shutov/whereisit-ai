@@ -5,7 +5,7 @@ use std::{
     path::PathBuf,
     ptr::{null, null_mut},
     sync::mpsc::{self, Receiver, Sender},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use windows_sys::Win32::{
     Foundation::*,
@@ -56,6 +56,8 @@ const PHYSICAL_UNVERIFIED_FILTER: usize = 146;
 const STOP_PAGE_WAIT: usize = 147;
 const RETRY_PAGE: usize = 148;
 const COPY_VERIFIED_OS_ROOT: usize = 149;
+// Monotonic OS state lifetime: never trust stale green badges after suspend.
+const PHYSICAL_STATE_TTL: Duration = Duration::from_secs(12);
 const SEARCH_BOX: usize = 130;
 // Win32 GetDriveTypeW standard result codes; windows-sys 0.61 does not export these here.
 // Unknown/missing roots mean a potentially incomplete OS snapshot, never "offline".
@@ -1536,6 +1538,79 @@ mod verified_mount_root_tests {
     }
 }
 
+fn physical_probe_is_fresh(checked_at: Option<Instant>, now: Instant) -> bool {
+    checked_at
+        .and_then(|checked| now.checked_duration_since(checked))
+        .is_some_and(|age| age <= PHYSICAL_STATE_TTL)
+}
+
+// Recheck the UUID itself, not the UUID+mount caption combination. A clone can
+// appear during the confirmation dialog without disturbing the original mount.
+fn unique_matching_live_mount(
+    candidate: &MountedPhysicalVolume,
+    fresh: &[MountedPhysicalVolume],
+) -> bool {
+    let mut matches = fresh.iter().filter(|volume| volume.id == candidate.id);
+    let first_matches = matches.next().is_some_and(|found| {
+        found.description == candidate.description && found.mount_roots == candidate.mount_roots
+    });
+    first_matches && matches.next().is_none()
+}
+
+#[cfg(test)]
+mod physical_probe_freshness_and_pairing_tests {
+    use super::{physical_probe_is_fresh, unique_matching_live_mount, MountedPhysicalVolume};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn stale_os_probes_never_authorize_a_connected_badge() {
+        let now = Instant::now();
+        assert!(!physical_probe_is_fresh(None, now));
+        assert!(physical_probe_is_fresh(Some(now), now));
+        assert!(physical_probe_is_fresh(
+            Some(now - Duration::from_secs(6)),
+            now
+        ));
+        assert!(!physical_probe_is_fresh(
+            Some(now - Duration::from_secs(13)),
+            now
+        ));
+        assert!(!physical_probe_is_fresh(
+            Some(now + Duration::from_secs(1)),
+            now
+        ));
+    }
+
+    #[test]
+    fn second_pairing_probe_rejects_a_new_same_uuid_clone() {
+        let candidate = MountedPhysicalVolume {
+            id: "win:synthetic-os-volume".into(),
+            description: "USB at first mount".into(),
+            mount_roots: vec!["first-mount".into()],
+        };
+        assert!(unique_matching_live_mount(&candidate, &[candidate.clone()]));
+        assert!(!unique_matching_live_mount(&candidate, &[]));
+        let clone = MountedPhysicalVolume {
+            description: "clone at second mount".into(),
+            mount_roots: vec!["second-mount".into()],
+            ..candidate.clone()
+        };
+        assert!(!unique_matching_live_mount(
+            &candidate,
+            &[candidate.clone(), clone]
+        ));
+        let replaced = MountedPhysicalVolume {
+            mount_roots: vec!["changed-mount".into()],
+            ..candidate.clone()
+        };
+        assert!(!unique_matching_live_mount(&candidate, &[replaced]));
+        assert!(!unique_matching_live_mount(
+            &candidate,
+            &[candidate.clone(), candidate.clone()]
+        ));
+    }
+}
+
 fn physical_state_label(state: &str) -> &'static str {
     match state {
         "connected" => "Physical connection: CONNECTED — live OS identity matched",
@@ -2678,6 +2753,7 @@ struct App {
     verified_physical_ids: HashMap<i64, String>,
     mounted_volumes: Vec<MountedPhysicalVolume>,
     physical_probe_ok: bool,
+    physical_verified_at: Option<Instant>,
     duplicate_mode: HWND,
     help: HWND,
     copy_disk_filter: HWND,
@@ -2748,6 +2824,7 @@ impl App {
             verified_physical_ids: HashMap::new(),
             mounted_volumes: Vec::new(),
             physical_probe_ok: false,
+            physical_verified_at: None,
             duplicate_mode: null_mut(),
             help: null_mut(),
             copy_disk_filter: null_mut(),
@@ -3699,7 +3776,35 @@ impl App {
         SendMessageW(self.disks, LB_SETCURSEL, selected, 0);
     }
 
+    unsafe fn invalidate_physical_presence(&mut self) {
+        let had_state = self.physical_verified_at.is_some()
+            || !self.physical_states.is_empty()
+            || self.physical_probe_ok;
+        self.physical_verified_at = None;
+        self.physical_probe_ok = false;
+        self.physical_states.clear();
+        self.verified_physical_ids.clear();
+        self.mounted_volumes.clear();
+        if had_state && !self.volumes.is_empty() {
+            self.populate_physical_disk_list();
+            if self.copy_source.is_some() {
+                self.populate_candidate_disk_picker();
+            }
+            self.update_disk_locator();
+        }
+    }
+
+    unsafe fn expire_physical_presence_if_stale(&mut self) {
+        if self.physical_verified_at.is_some()
+            && !physical_probe_is_fresh(self.physical_verified_at, Instant::now())
+        {
+            self.invalidate_physical_presence();
+        }
+    }
+
     unsafe fn refresh_physical_presence(&mut self) {
+        // Count native enumeration and synchronous service validation in TTL.
+        let observed_at = Instant::now();
         let probe = windows_mounted_volumes();
         self.physical_probe_ok = probe.is_some();
         self.mounted_volumes = probe.unwrap_or_default();
@@ -3708,7 +3813,16 @@ impl App {
         let old_states = self.physical_states.clone();
         self.physical_states.clear();
         self.verified_physical_ids.clear();
-        if reply["ok"] == true {
+        let accepted = self.physical_probe_ok
+            && reply["ok"] == true
+            && reply["data"]["probe_ok"] == true
+            && physical_probe_is_fresh(Some(observed_at), Instant::now());
+        self.physical_verified_at = accepted.then_some(observed_at);
+        if !accepted {
+            self.physical_probe_ok = false;
+            self.mounted_volumes.clear();
+        }
+        if accepted {
             if let Some(items) = reply["data"]["items"].as_array() {
                 for item in items {
                     if let (Some(volume_id), Some(state)) =
@@ -3822,12 +3936,7 @@ impl App {
             // operator's confirmation dialog. Probe AGAIN before binding.
             self.refresh_physical_presence();
             if !self.physical_probe_ok
-                || self
-                    .mounted_volumes
-                    .iter()
-                    .filter(|v| v.id == candidate.id && v.description == candidate.description)
-                    .count()
-                    != 1
+                || !unique_matching_live_mount(&candidate, &self.mounted_volumes)
             {
                 self.status("OS volume changed during pairing; no pairing saved. Retry after checking the USB device.");
                 return;
@@ -4374,6 +4483,8 @@ impl App {
         }
     }
     unsafe fn command(&mut self, command: usize, notification: usize) {
+        // A delayed timer after sleep or a long modal cannot preserve green.
+        self.expire_physical_presence_if_stale();
         match command {
             COMPACT_COPY | VALIDATE_CATALOG
                 if self.job.is_none() && self.pending == 0 && !self.linked_mode() =>
@@ -5470,7 +5581,16 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             }
             0
         }
+        WM_ACTIVATEAPP => {
+            // Invalidate first; only a fresh complete probe may re-enable green.
+            if wp != 0 && !app.volumes.is_empty() {
+                app.invalidate_physical_presence();
+                app.refresh_physical_presence();
+            }
+            0
+        }
         WM_TIMER => {
+            app.expire_physical_presence_if_stale();
             if wp == 2 {
                 app.refresh_physical_presence();
             } else {

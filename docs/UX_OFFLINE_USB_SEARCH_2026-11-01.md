@@ -344,3 +344,20 @@ Win32 Ctrl+Shift+X/Y and SwiftUI Command+Shift+X/Y now offer Stop waiting and Re
 ## UX21 — strict other-media copy candidates (2026-11-02)
 
 Native **Find copies on other disks** passes `other_disks_only: true` to the read-only service for both SQLite and generation-SHA-pinned linked CTF. The filter excludes every item on the original catalog volume **before** paging, grouped disk counts and focused pages. `all_total` includes the original disk; `other_total` and the presented page include only other media. Unflagged API requests remain backward compatible and all results are metadata coincidences, never verified file equality. See [UX21 QA](qa/UX21_ONLY_OTHER_DISKS_20261102.md). Exact-HEAD CI and manual owner acceptance remain required; do not merge or publish stable 1.0.
+
+
+## UX23 — sleep/resume OS state freshness and clone-safe Windows pairing (2026-11-02)
+
+Native Win32 and SwiftUI expire independently OS-verified connection states
+after 12 monotonic seconds counted BEFORE OS enumeration, rather than after a
+delayed service response. Expired status becomes unverified; app foreground and
+wake recheck the native OS, and neither a sticker nor historical drive letter
+establishes presence. Windows pairing now rejects a second same-UUID volume
+arriving during the modal confirmation, even if the original UUID+mount still
+exists; the Rust service retains its independent collision rejector.
+
+Compiled Windows expiry/clone tests, both-platform source checks and
+[manual UX23 runbook](qa/UX23_RESUME_FRESHNESS_AND_CLONE_PAIRING_20261102.md)
+are part of draft PR #57. Exact-HEAD CI is required before claiming PASS;
+real Win10/11/Mac ARM/Intel physical sleep/hardware/GUI and p95, signing,
+original/historical CTF acceptance are still open. No merge or stable 1.0.
