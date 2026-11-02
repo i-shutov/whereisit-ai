@@ -16,6 +16,37 @@ PHYSICAL = (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encod
 
 
 class DiskLocatorWiringTests(unittest.TestCase):
+    def test_ux33_live_result_os_badges_are_reactive_and_fail_closed(self):
+        # Test source wiring in addition to compiled synthetic Windows tests.
+        self.assertIn("fn verified_row_os_state<'a>(", WIN)
+        self.assertIn("absent_probe_or_verified_identity_never_looks_connected", WIN)
+        self.assertIn('result_disk_status_caption(&caption, known_disk, state)', WIN)
+        cell = WIN.split("fn result_disk_cell(&self, row: &Value)", 1)[1].split(
+            "unsafe fn refresh_result_disk_cells", 1
+        )[0]
+        for guard in ("physical_probe_is_fresh", "self.physical_probe_ok",
+                      "self.verified_physical_ids", "verified_row_os_state"):
+            self.assertIn(guard, cell)
+        invalidation = WIN.split("unsafe fn invalidate_physical_presence", 1)[1].split(
+            "unsafe fn expire_physical_presence_if_stale", 1
+        )[0]
+        refresh = WIN.split("unsafe fn refresh_physical_presence", 1)[1].split(
+            "unsafe fn operate_verified_os_mount_root", 1
+        )[0]
+        self.assertIn("self.refresh_result_disk_cells();", invalidation)
+        self.assertIn("self.refresh_result_disk_cells();", refresh)
+        self.assertNotIn("LVM_DELETEALLITEMS", WIN.split(
+            "unsafe fn refresh_result_disk_cells", 1
+        )[1].split("fn physical_request(", 1)[0])
+        self.assertIn("func resultDiskOSState(_ disk: Int64)", MAC)
+        self.assertIn("physicalState(disk)", MAC)
+        self.assertIn("verifiedPhysicalIDs[disk]?.isEmpty", MAC)
+        self.assertIn("func resultDiskOSAccessibility(_ disk: Int64)", MAC)
+        self.assertIn("resultDiskOSMarker(disk)", MAC)
+        self.assertIn("resultDiskOSAccessibility(disk)", MAC)
+        self.assertIn("NSWorkspace.willUnmountNotification", MAC)
+        self.assertIn("WM_DEVICECHANGE => {", WIN)
+
     def test_ux32_exact_catalog_id_in_both_native_search_tables(self):
         self.assertIn("fn result_disk_caption(", WIN)
         self.assertIn("dense_results_identify_exact_disk_before_duplicate_labels", WIN)

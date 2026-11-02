@@ -241,6 +241,97 @@ fn result_disk_caption(
     }
 }
 
+// A short Disk-cell badge describes the disk's OS identity, NOT file presence.
+fn result_disk_os_marker(state: &str) -> &'static str {
+    match state {
+        "connected" => "[OS+]",
+        "offline" => "[OFF]",
+        "conflict" => "[ID!]",
+        _ => "[?]",
+    }
+}
+
+fn result_disk_status_caption(base: &str, disk: Option<i64>, state: &str) -> String {
+    let Some(disk) = disk.filter(|id| *id > 0) else {
+        return base.to_owned();
+    };
+    let prefix = format!("#{disk}");
+    let Some(rest) = base.strip_prefix(&prefix) else {
+        return base.to_owned();
+    };
+    format!("{prefix} {}{rest}", result_disk_os_marker(state))
+}
+
+// A service state string alone never proves connection. Require a fresh
+// complete native OS scan and the physical ID matched to explicit pairing.
+fn verified_row_os_state<'a>(
+    disk: Option<i64>,
+    states: &'a HashMap<i64, String>,
+    verified_ids: &HashMap<i64, String>,
+    probe_fresh: bool,
+) -> &'a str {
+    let Some(disk) = disk.filter(|id| *id > 0) else {
+        return "unverified";
+    };
+    let state = audited_physical_state(disk, states, probe_fresh);
+    if state == "connected"
+        && !verified_ids
+            .get(&disk)
+            .is_some_and(|identity| !identity.trim().is_empty())
+    {
+        return "unverified";
+    }
+    state
+}
+
+#[cfg(test)]
+mod result_disk_live_os_tests {
+    use super::{result_disk_caption, result_disk_status_caption, verified_row_os_state};
+    use std::collections::HashMap;
+
+    #[test]
+    fn exact_disk_precedes_os_badge_and_private_sticker() {
+        let base = result_disk_caption(Some(42), "Archive", Some("Полка Б"), true);
+        let states = HashMap::from([(42, "connected".to_owned())]);
+        let paired = HashMap::from([(42, "win:synthetic-volume".to_owned())]);
+        assert_eq!(
+            result_disk_status_caption(
+                &base,
+                Some(42),
+                verified_row_os_state(Some(42), &states, &paired, true)
+            ),
+            "#42 [OS+] • Полка Б [SHARED STICKER] • Archive"
+        );
+        assert_eq!(
+            result_disk_status_caption(&base, Some(42), "offline"),
+            "#42 [OFF] • Полка Б [SHARED STICKER] • Archive"
+        );
+        assert_eq!(
+            result_disk_status_caption(&base, Some(42), "conflict"),
+            "#42 [ID!] • Полка Б [SHARED STICKER] • Archive"
+        );
+    }
+
+    #[test]
+    fn absent_probe_or_verified_identity_never_looks_connected() {
+        let states = HashMap::from([(42, "connected".to_owned())]);
+        let missing = HashMap::new();
+        let paired = HashMap::from([(42, "win:synthetic-volume".to_owned())]);
+        assert_eq!(verified_row_os_state(Some(42), &states, &missing, true), "unverified");
+        assert_eq!(verified_row_os_state(Some(42), &states, &paired, false), "unverified");
+        assert_eq!(verified_row_os_state(Some(4), &states, &paired, true), "unverified");
+        assert_eq!(verified_row_os_state(None, &states, &paired, true), "unverified");
+        assert_eq!(
+            result_disk_status_caption("#42 • Archive", Some(42), "unverified"),
+            "#42 [?] • Archive"
+        );
+        assert_eq!(
+            result_disk_status_caption("UNKNOWN CATALOG DISK", None, "connected"),
+            "UNKNOWN CATALOG DISK"
+        );
+    }
+}
+
 #[cfg(test)]
 mod result_disk_caption_tests {
     use super::result_disk_caption;
@@ -4209,15 +4300,24 @@ impl App {
                 .iter()
                 .any(|volume| id(volume) == Some(*candidate))
         });
-        result_disk_caption(
+        let caption = result_disk_caption(
             known_disk,
             &self.volume_label(volume_id),
             volume_id.and_then(|disk| self.shelf_labels.get(&disk).map(String::as_str)),
             volume_id.is_some_and(|disk| self.shelf_tag_conflicts.contains_key(&disk)),
-        )
+        );
+        let probe_fresh = self.physical_probe_ok
+            && physical_probe_is_fresh(self.physical_verified_at, Instant::now());
+        let state = verified_row_os_state(
+            known_disk,
+            &self.physical_states,
+            &self.verified_physical_ids,
+            probe_fresh,
+        );
+        result_disk_status_caption(&caption, known_disk, state)
     }
 
-    // Refresh only the Disk subitem after private shelf tags change. Rebuilding
+    // Refresh only the Disk subitem after a shelf edit or live OS state change. Rebuilding
     // the ListView would drop current selection/keyboard focus/row context.
     unsafe fn refresh_result_disk_cells(&self) {
         if !self.page_ready || self.page_awaiting {
@@ -4480,6 +4580,7 @@ impl App {
             if self.copy_source.is_some() {
                 self.populate_candidate_disk_picker();
             }
+            self.refresh_result_disk_cells();
             self.update_disk_locator();
         }
     }
@@ -4537,6 +4638,8 @@ impl App {
             }
             self.update_disk_locator();
         }
+        // Only the loaded <=250 rows. Preserve ListView selection and focus.
+        self.refresh_result_disk_cells();
     }
 
     // Both Copy OS root and Open in Explorer use the same fail-closed path.

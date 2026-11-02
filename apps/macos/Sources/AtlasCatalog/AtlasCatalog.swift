@@ -457,6 +457,32 @@ private struct CandidateFolderReturnContext {
         return "Disk #\(id)"
     }
 
+    // The row status is the existing fresh OS+service verified pairing, not
+    // a catalog path, shelf label, file-existence or content-hash check.
+    func resultDiskOSState(_ disk: Int64) -> String {
+        let state = physicalState(disk)
+        if state == "connected" && (verifiedPhysicalIDs[disk]?.isEmpty ?? true) {
+            return "unverified"
+        }
+        return state
+    }
+    func resultDiskOSMarker(_ disk: Int64) -> String {
+        switch resultDiskOSState(disk) {
+        case "connected": return "[OS+]"
+        case "offline": return "[OFF]"
+        case "conflict": return "[ID!]"
+        default: return "[?]"
+        }
+    }
+    func resultDiskOSAccessibility(_ disk: Int64) -> String {
+        switch resultDiskOSState(disk) {
+        case "connected": return "Current OS filesystem UUID matched explicit disk pairing. Catalogued file bytes are NOT verified."
+        case "offline": return "Paired filesystem UUID was absent from a complete OS scan. Catalog remains searchable offline."
+        case "conflict": return "Ambiguous physical filesystem identity. A historical label does not resolve the conflict."
+        default: return "Current physical connection not verified."
+        }
+    }
+
     // The ID-first main-table caption stays unambiguous when the locator is
     // hidden. Private shelf tags and historical labels are NOT USB identities.
     func resultDiskCaption(_ disk: Int64) -> String {
@@ -471,7 +497,8 @@ private struct CandidateFolderReturnContext {
             .replacingOccurrences(of: "\t", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let shared = shelfConflictCaption(disk) == nil ? "" : " [SHARED STICKER]"
-        return sticker.isEmpty ? "#\(disk) • \(label)" : "#\(disk) • \(sticker)\(shared) • \(label)"
+        let badge = resultDiskOSMarker(disk)
+        return sticker.isEmpty ? "#\(disk) \(badge) • \(label)" : "#\(disk) \(badge) • \(sticker)\(shared) • \(label)"
     }
     func resultDiskAccessibility(_ disk: Int64) -> String {
         guard disk > 0, volumes.contains(where: { $0.id == disk }) else {
@@ -480,8 +507,8 @@ private struct CandidateFolderReturnContext {
         let sticker = shelfLabel(disk)
         return "Catalog disk ID \(disk). Recorded label: \(volumeLabel(disk)). "
             + "Owner sticker or shelf: \(sticker.isEmpty ? "not assigned" : sticker). "
-            + "\(shelfConflictCaption(disk) ?? "") Catalog metadata only; "
-            + "check physical pairing independently. File bytes not verified."
+            + "\(shelfConflictCaption(disk) ?? "") \(resultDiskOSAccessibility(disk)) "
+            + "Catalog metadata only; physical pairing is independent of file contents."
     }
 
     // View-only filtering: never change volumeID, query scope or disk pairing.
