@@ -2744,6 +2744,12 @@ impl App {
                     } else {
                         vec![]
                     };
+                    // A new pinned page may carry a different disk-group set.
+                    // Keep the candidate-only register synchronized with the
+                    // current authoritative page, never the previous selection.
+                    if self.disk_filter_query.trim().eq_ignore_ascii_case("copies:") {
+                        self.populate_physical_disk_list();
+                    }
                     self.populate_candidate_disk_picker();
                     self.sort_loaded_page();
                     self.total_known = page["total"].is_u64();
@@ -3495,6 +3501,10 @@ impl App {
         self.copy_source_name = Some(string(entry, "name"));
         self.copy_focus_volume_id = None;
         self.copy_disk_groups.clear();
+        if self.disk_filter_query.trim().eq_ignore_ascii_case("copies:") {
+            // Prevent a prior file's candidate rows remaining in the register.
+            self.populate_physical_disk_list();
+        }
         self.populate_candidate_disk_picker();
         self.volume = None;
         self.offset = 0;

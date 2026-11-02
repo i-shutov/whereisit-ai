@@ -370,6 +370,12 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("(*app).command(COPY_REGISTER_FILTER, 0)", WIN)
         self.assertIn("candidate_register_indices(&self.volumes, &self.copy_disk_groups)", WIN)
         self.assertIn('self.disk_filter_query = "copies:".to_owned();', WIN)
+        rows_handler = WIN.split('"rows" => {', 1)[1].split('"maintenance" => {', 1)[0]
+        self.assertIn('if self.disk_filter_query.trim().eq_ignore_ascii_case("copies:") {', rows_handler)
+        self.assertIn("self.populate_physical_disk_list();", rows_handler)
+        new_copy = WIN.split("unsafe fn show_copies_of_selected(", 1)[1].split("unsafe fn ", 1)[0]
+        self.assertIn("self.copy_disk_groups.clear();", new_copy)
+        self.assertIn("self.populate_physical_disk_list();", new_copy)
         self.assertIn('if self.copy_source.is_none()', WIN)
         self.assertIn('if needle.lowercased() == "copies:"', MAC)
         self.assertIn("guard copySourceID != nil else { return [] }", MAC)
