@@ -487,3 +487,23 @@ manual GUI/USB acceptance remain separate. See
 [UX30 manual QA](qa/UX30_LINKED_SOURCE_CLIPBOARD_FAIL_CLOSED_20261102.md).
 No real CTF or private data is committed, and no content equality or
 physical file presence is inferred. No merge / stable 1.0.
+
+## UX31 — selected-result contextual actions and compact macOS toolbar (2026-11-02)
+
+Both **native** clients expose useful file actions without requiring the
+third locator pane: Windows Win32 result-row right-click / Shift+F10 and
+macOS SwiftUI selected Table context menu. Actions navigate recorded catalog
+parent IDs, compare name+recorded-size metadata candidates on other disks,
+search same filename or size, reveal exact catalog disk IDs and copy a
+generation-rechecked retrieval note / physical disk card. Windows hit-tests
+the clicked current ListView row rather than trusting previous selection;
+stale/incomplete pages and invalid disks cannot authorize a menu. Mac groups
+the previous four top-row Folder/Disk card/OS root/Finder buttons into an
+accessible **File actions** menu, retaining Command-Shift-F/L/H/B while the
+inspector is hidden; corrected mismatched VoiceOver labels for OS-root actions.
+This does **not** read current file contents or prove USB presence. See
+[UX31 manual runbook](qa/UX31_NATIVE_RESULT_CONTEXT_ACTIONS_20261102.md).
+Compiled Rust context tests and cross-platform native source contracts
+accompany the same draft PR #57. Exact-HEAD CI and human Win10/11 /
+macOS ARM64+Intel 880/1366px, HiDPI, keyboard/a11y/hardware checks remain
+required. Stable 1.0 stays blocked, RC3 unsigned prerelease only.

@@ -16,6 +16,28 @@ PHYSICAL = (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encod
 
 
 class DiskLocatorWiringTests(unittest.TestCase):
+    def test_ux31_context_actions_use_current_row_and_preserve_source_checks(self):
+        self.assertIn("fn result_context_actions(", WIN)
+        self.assertIn("current_selected_result_is_authorized_by_exact_row_and_catalog_disk_id", WIN)
+        self.assertIn("WM_CONTEXTMENU if wp == app.files as usize", WIN)
+        self.assertIn("SendMessageW(app.files, LVM_HITTEST", WIN)
+        self.assertIn("if !page_ready || page_awaiting", WIN)
+        self.assertIn("app.command(selected_command as usize, 0)", WIN)
+        self.assertIn("COPY_LOCATOR", WIN)
+        self.assertIn("COPY_DISK_CARD", WIN)
+        self.assertIn('Menu("File actions")', MAC)
+        self.assertIn('Button("Folder") { model.browseSelectedFileFolder() }', MAC)
+        self.assertIn('Button("Finder") { model.openCurrentOSMountRoot() }', MAC)
+        self.assertIn(".contextMenu {", MAC)
+        self.assertIn("if model.pageReady, !model.awaitingPage, let row = model.selected", MAC)
+        self.assertIn('Button("Find name + size candidates on other disks")', MAC)
+        self.assertIn("model.copySelectedMetadata(", MAC)
+        self.assertIn('Button("Open verified disk in Finder")', MAC)
+        self.assertEqual(MAC.count('.accessibilityLabel("Copy current OS volume root after verifying explicit pairing")'), 1)
+        # No direct read of live files or unsafe inferred paths in new actions.
+        self.assertNotIn("FileManager.default.fileExists", MAC)
+
+
     def test_ux30_incomplete_linked_source_never_falls_back_or_writes(self):
         # A source path with no trusted generation is LINKED/READ-ONLY.
         # Both native clients must refuse SQLite search and disk-card fallback.

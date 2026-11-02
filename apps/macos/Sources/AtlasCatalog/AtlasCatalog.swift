@@ -2140,12 +2140,12 @@ private struct CandidateFolderReturnContext {
                 }
                 Button("Copy current OS root") { model.copyCurrentOSMountRoot() }
                     .disabled(model.selectedDiskForPairing == nil)
+                    .accessibilityLabel("Copy current OS volume root after verifying explicit pairing")
+                    .help("Recheck linked CTF SHA, OS UUID and mount; never infer a recorded file path")
                 Button("Open verified disk in Finder") { model.openCurrentOSMountRoot() }
                     .disabled(model.selectedDiskForPairing == nil)
                     .accessibilityLabel("Open the currently OS-verified, explicitly paired disk root in Finder")
                     .help("Fresh CTF-generation and two OS UUID/mount probes; no guessed catalogued file path")
-                    .accessibilityLabel("Copy current OS volume root, only after verifying explicit pairing")
-                    .help("Recheck linked CTF SHA, OS UUID and mount; copies only the current mount root, NOT a file path (Command-Shift-H)")
                 Button("Refresh OS mounts") { model.refreshPhysicalPresence() }
                     .keyboardShortcut("r", modifiers: [.command])
                     .help("Recheck current OS volume identities (Command-R); never use a recorded drive letter")
@@ -2286,28 +2286,34 @@ private struct CandidateFolderReturnContext {
                 .keyboardShortcut("e", modifiers: [.command])
                 .accessibilityLabel("Focus verified loaded search results")
                 .help("Focus the current results page without changing the disk search scope (Command-E)")
-                // Always visible (including 880px with the inspector collapsed).
-                // Do not attach the only Command-Shift-H handler to a hidden pane.
-                Button("Folder") { model.browseSelectedFileFolder() }
-                    .disabled(!model.pageReady || model.selected?.kind != "file")
-                    .keyboardShortcut("f", modifiers: [.command, .shift])
-                    .accessibilityLabel("Browse recorded parent catalog folder of the selected file")
-                    .help("Show related catalogued files in the same directory; Back restores results. No current USB mount access.")
-                Button("Disk card") { model.copySelectedDiskPickupCard() }
-                    .disabled(model.selectedDiskForPairing == nil)
-                    .keyboardShortcut("l", modifiers: [.command, .shift])
-                    .accessibilityLabel("Copy the selected catalog disk physical pickup card")
-                    .help("Exact catalog ID and private sticker, even with no selected file; no file presence claims")
-                Button("OS root") { model.copyCurrentOSMountRoot() }
-                    .disabled(model.selectedDiskForPairing == nil)
-                    .keyboardShortcut("h", modifiers: [.command, .shift])
-                    .accessibilityLabel("Copy freshly OS-verified volume root")
-                    .help("Recheck CTF generation and paired live mount; never infer a historical file path")
-                Button("Finder") { model.openCurrentOSMountRoot() }
-                    .disabled(model.selectedDiskForPairing == nil)
-                    .keyboardShortcut("b", modifiers: [.command, .shift])
-                    .accessibilityLabel("Open OS-verified USB disk root in Finder")
-                    .help("Fresh CTF generation and two UUID/mount probes; catalogued file presence is unknown (Command-Shift-B)")
+                // Always visible in the compact toolbar, including 880px with
+                // the inspector collapsed. Keep every shortcut on its native
+                // menu action, not on a conditionally hidden inspector.
+                Menu("File actions") {
+                    Button("Folder") { model.browseSelectedFileFolder() }
+                        .disabled(!model.pageReady || model.selected?.kind != "file")
+                        .keyboardShortcut("f", modifiers: [.command, .shift])
+                        .accessibilityLabel("Browse recorded parent catalog folder of the selected file")
+                        .help("Recorded catalog parent only; Back returns to search.")
+                    Button("Disk card") { model.copySelectedDiskPickupCard() }
+                        .disabled(model.selectedDiskForPairing == nil)
+                        .keyboardShortcut("l", modifiers: [.command, .shift])
+                        .accessibilityLabel("Copy selected catalog disk physical pickup card")
+                        .help("Exact ID and private sticker, not live file evidence")
+                    Divider()
+                    Button("OS root") { model.copyCurrentOSMountRoot() }
+                        .disabled(model.selectedDiskForPairing == nil)
+                        .keyboardShortcut("h", modifiers: [.command, .shift])
+                        .accessibilityLabel("Copy freshly OS-verified volume root")
+                        .help("Two independent live UUID probes and linked CTF source check")
+                    Button("Finder") { model.openCurrentOSMountRoot() }
+                        .disabled(model.selectedDiskForPairing == nil)
+                        .keyboardShortcut("b", modifiers: [.command, .shift])
+                        .accessibilityLabel("Open OS-verified USB disk root in Finder")
+                        .help("Two UUID/mount probes; catalogued file presence is unknown")
+                }
+                .accessibilityLabel("File and physical disk actions")
+                .help("Contextual catalog folder, disk card and verified OS root actions")
                 Button(locatorVisible ? "Hide locator" : "Show locator") {
                     locatorVisible.toggle()
                 }
@@ -2466,7 +2472,32 @@ private struct CandidateFolderReturnContext {
                     TableColumn("Path", value: \.relative_path).width(min: 115, ideal: 180)
                 }.focused($resultTableFocused)
                 .onTapGesture(count: 2) { model.openSelected() }
-                .contextMenu { Button("Open folder") { model.openSelected() }.disabled(model.selected?.isFolder != true) }
+                .contextMenu {
+                    // The table-level context menu explicitly targets its
+                    // CURRENT selected row; selection is never inferred from
+                    // an old list, a historical drive letter or a mount path.
+                    if model.pageReady, !model.awaitingPage, let row = model.selected {
+                        Button("Open selected catalog folder") { model.openSelected() }
+                            .disabled(!row.isFolder)
+                        Button("Browse selected file's recorded parent") { model.browseSelectedFileFolder() }
+                            .disabled(row.kind != "file")
+                        Button("Find name + size candidates on other disks") { model.copiesOfSelected() }
+                            .disabled(row.kind != "file" || row.size == nil)
+                        Button("Find exact filename across all disks") { model.searchSameFilenameAcrossDisks() }
+                            .disabled(row.kind != "file" || model.copySourceID != nil)
+                        Button("Find same recorded size across disks") { model.searchSameRecordedSizeAcrossDisks() }
+                            .disabled(row.kind != "file" || (row.size ?? 0) <= 0 || model.copySourceID != nil)
+                        Divider()
+                        Button("Show exact catalog disk in register") { model.revealSelectedDiskInRegister() }
+                        Button("Copy catalog retrieval note") {
+                            model.copySelectedMetadata(
+                                "Catalog #\(row.volume_id) • \(model.volumeLabel(row.volume_id))\nRecorded: \(row.relative_path)", entryID: row.id, diskID: row.volume_id)
+                        }
+                        Button("Copy physical disk pickup card") { model.copySelectedDiskPickupCard() }
+                    } else {
+                        Text("Select a verified current result before using file actions")
+                    }
+                }
                 if locatorVisible {
                     DiskLocatorInspector(model: model)
                 }

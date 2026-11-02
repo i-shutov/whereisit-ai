@@ -209,6 +209,86 @@ mod hotplug_invalidation_tests {
         assert_eq!(volume_change_response(0xffff), VolumeChangeResponse::Ignore);
     }
 }
+// Result-context actions are authorized from an exact, verified current page,
+// never a historical row index, visible label, mount path, or unverified USB.
+#[derive(Debug, PartialEq, Eq)]
+struct ResultContextActions {
+    row_index: usize,
+    browse_recorded_folder: bool,
+    find_copies: bool,
+    find_same_name: bool,
+    find_same_size: bool,
+}
+
+fn result_context_actions(
+    rows: &[Value],
+    volumes: &[Value],
+    page_ready: bool,
+    page_awaiting: bool,
+    row: isize,
+) -> Option<ResultContextActions> {
+    if !page_ready || page_awaiting {
+        return None;
+    }
+    let row_index = usize::try_from(row).ok()?;
+    let entry = rows.get(row_index)?;
+    let disk_id = entry["volume_id"].as_i64()?;
+    if !volumes.iter().any(|volume| id(volume) == Some(disk_id)) {
+        return None;
+    }
+    let file = entry["kind"].as_str() == Some("file");
+    let valid_name = entry["name"].as_str().is_some_and(|name| !name.is_empty());
+    let size = entry["size"].as_i64();
+    Some(ResultContextActions {
+        row_index,
+        browse_recorded_folder: recorded_parent_folder_context(entry, volumes).is_some(),
+        find_copies: file && size.is_some(),
+        find_same_name: file && valid_name,
+        find_same_size: file && size.is_some_and(|value| value > 0),
+    })
+}
+
+#[cfg(test)]
+mod result_context_menu_tests {
+    use super::result_context_actions;
+    use serde_json::json;
+
+    #[test]
+    fn current_selected_result_is_authorized_by_exact_row_and_catalog_disk_id() {
+        let disks = vec![
+            json!({"id":4,"label":"Same"}),
+            json!({"id":42,"label":"Same"}),
+            json!({"id":142,"label":"Same"}),
+        ];
+        let rows = vec![
+            json!({"id":12,"volume_id":4,"kind":"directory","name":"Films",
+                "relative_path":"Films","size":null}),
+            json!({"id":13,"volume_id":42,"kind":"file","name":"Film.mkv",
+                "relative_path":"Films/Film.mkv","parent_id":5,"size":12345}),
+            json!({"id":14,"volume_id":142,"kind":"file","name":"zero.bin",
+                "relative_path":"zero.bin","parent_id":null,"size":0}),
+        ];
+        let selected = result_context_actions(&rows, &disks, true, false, 1).unwrap();
+        assert_eq!(selected.row_index, 1);
+        assert!(selected.browse_recorded_folder);
+        assert!(selected.find_copies);
+        assert!(selected.find_same_name);
+        assert!(selected.find_same_size);
+        let folder = result_context_actions(&rows, &disks, true, false, 0).unwrap();
+        assert!(!folder.find_copies);
+        assert!(!folder.browse_recorded_folder);
+        assert!(!folder.find_same_name);
+        let zero = result_context_actions(&rows, &disks, true, false, 2).unwrap();
+        assert!(zero.find_copies);
+        assert!(!zero.find_same_size);
+        assert!(result_context_actions(&rows, &disks, false, false, 1).is_none());
+        assert!(result_context_actions(&rows, &disks, true, true, 1).is_none());
+        assert!(result_context_actions(&rows, &disks, true, false, -1).is_none());
+        assert!(result_context_actions(&rows, &disks, true, false, 3).is_none());
+        assert!(result_context_actions(&rows, &disks[..1], true, false, 1).is_none());
+    }
+}
+
 const SEARCH_BOX: usize = 130;
 // Win32 GetDriveTypeW standard result codes; windows-sys 0.61 does not export these here.
 // Unknown/missing roots mean a potentially incomplete OS snapshot, never "offline".
@@ -6359,6 +6439,136 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 if key.wVKey == VK_RETURN {
                     app.activate();
                 }
+            }
+            0
+        }
+        WM_CONTEXTMENU if wp == app.files as usize => {
+            // Native right-click and Shift+F10 use the CURRENT result row.
+            // Mouse hit testing updates selection first; blank space, stale
+            // pages, or an unknown catalog disk never inherit an old action.
+            if !app.page_ready || app.page_awaiting {
+                return 0;
+            }
+            let screen_x = (lp as u16 as i16) as i32;
+            let screen_y = ((lp >> 16) as u16 as i16) as i32;
+            let keyboard = screen_x == -1 && screen_y == -1;
+            let selected_row = if keyboard {
+                SendMessageW(app.files, LVM_GETNEXTITEM, usize::MAX, LVNI_SELECTED as isize)
+            } else {
+                let mut hit: LVHITTESTINFO = std::mem::zeroed();
+                hit.pt = POINT {
+                    x: screen_x,
+                    y: screen_y,
+                };
+                ScreenToClient(app.files, &mut hit.pt);
+                SendMessageW(app.files, LVM_HITTEST, 0, &mut hit as *mut _ as isize)
+            };
+            let Some(actions) = result_context_actions(
+                &app.entries,
+                &app.volumes,
+                app.page_ready,
+                app.page_awaiting,
+                selected_row,
+            ) else {
+                return 0;
+            };
+            if !keyboard {
+                let mut clear: LVITEMW = std::mem::zeroed();
+                clear.stateMask = LVIS_SELECTED;
+                SendMessageW(
+                    app.files,
+                    LVM_SETITEMSTATE,
+                    usize::MAX,
+                    &clear as *const _ as isize,
+                );
+                let mut select: LVITEMW = std::mem::zeroed();
+                select.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
+                select.state = LVIS_SELECTED | LVIS_FOCUSED;
+                SendMessageW(
+                    app.files,
+                    LVM_SETITEMSTATE,
+                    actions.row_index,
+                    &select as *const _ as isize,
+                );
+                app.update_disk_locator();
+            }
+            let popup = CreatePopupMenu();
+            if popup.is_null() {
+                return 0;
+            }
+            let item_flags = |enabled: bool| {
+                if enabled {
+                    MF_STRING
+                } else {
+                    MF_STRING | MF_GRAYED
+                }
+            };
+            let normal_search = app.copy_source.is_none();
+            AppendMenuW(
+                popup,
+                item_flags(actions.browse_recorded_folder),
+                BROWSE_RECORDED_FOLDER,
+                wide("Browse recorded containing folder").as_ptr(),
+            );
+            AppendMenuW(
+                popup,
+                item_flags(actions.find_copies),
+                FILE_COPIES,
+                wide("Find name + size candidates on other catalog disks").as_ptr(),
+            );
+            AppendMenuW(
+                popup,
+                item_flags(actions.find_same_name && normal_search),
+                SAME_FILENAME,
+                wide("Find exact filename across disks (any size)").as_ptr(),
+            );
+            AppendMenuW(
+                popup,
+                item_flags(actions.find_same_size && normal_search),
+                SAME_RECORDED_SIZE,
+                wide("Find same recorded size (any filename)").as_ptr(),
+            );
+            AppendMenuW(popup, MF_SEPARATOR, 0, null());
+            AppendMenuW(
+                popup,
+                MF_STRING,
+                REVEAL_DISK,
+                wide("Show exact catalog disk in register").as_ptr(),
+            );
+            AppendMenuW(
+                popup,
+                MF_STRING,
+                COPY_LOCATOR,
+                wide("Copy catalog retrieval note (source rechecked)").as_ptr(),
+            );
+            AppendMenuW(
+                popup,
+                MF_STRING,
+                COPY_DISK_CARD,
+                wide("Copy physical disk pickup card (source rechecked)").as_ptr(),
+            );
+            let mut point = POINT {
+                x: screen_x,
+                y: screen_y,
+            };
+            if keyboard {
+                let mut rect: RECT = std::mem::zeroed();
+                GetWindowRect(app.files, &mut rect);
+                point.x = rect.left + 60;
+                point.y = rect.top + 48;
+            }
+            let selected_command = TrackPopupMenu(
+                popup,
+                TPM_RETURNCMD | TPM_RIGHTBUTTON,
+                point.x,
+                point.y,
+                0,
+                hwnd,
+                null(),
+            );
+            DestroyMenu(popup);
+            if selected_command != 0 {
+                app.command(selected_command as usize, 0);
             }
             0
         }

@@ -1,3 +1,26 @@
+## UX31 — native selected-file context actions + compact macOS toolbar (2026-11-02)
+
+In existing draft PR #57, added Win32 right-click / Shift+F10 exact-row
+result context menu with guarded catalog parent browse, cross-disk
+name+size metadata candidates, exact name and size searches, disk register
+reveal, SHA-rechecked locator/disk pickup copies. Empty space, pending
+page, missing volume and invalid row fail closed. Mac SwiftUI selected-row
+context actions use existing generation-pinned service paths, while a compact
+visible File actions menu retains Folder/Disk card/OS root/Finder shortcuts
+when third pane is hidden; fixed conflicting OS-root VoiceOver labels.
+No historical letter/mount inference, live-file or byte-equality claims,
+CTF/cache/annotation mutation or new PR. Windows compiled pure tests and
+both-client source contracts included. [Manual UX31 runbook](docs/qa/UX31_NATIVE_RESULT_CONTEXT_ACTIONS_20261102.md).
+
+**At source integration: exact-HEAD CI unverified.** Check native
+Linux/Win/macOS ARM+Intel, offline, integration, and installed RC2→RC3
+jobs for new SHA. Source real 44-disk CTF acceptance is earlier independent
+evidence; missing historical raw inputs, original modified CTF, manual
+hardware/GUI, signatures and actual p95 <=150ms remain release blockers.
+Draft PR #57 must not merge, stable 1.0 must not publish.
+
+---
+
 ## UX30 — linked-source incomplete generation fails closed; selected clipboard pinned (2026-11-02)
 
 Draft PR #57: audited a real native source-safety gap on BOTH Windows Win32
