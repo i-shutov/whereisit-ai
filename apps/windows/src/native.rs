@@ -5960,7 +5960,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                     }
                 }
             }
-            0
+            // WM_DEVICECHANGE requests (including QUERYREMOVE) must be
+            // granted with TRUE; this observer never vetoes safe eject.
+            1
         }
         WM_ACTIVATEAPP => {
             // Invalidate first; only a fresh complete probe may re-enable green.

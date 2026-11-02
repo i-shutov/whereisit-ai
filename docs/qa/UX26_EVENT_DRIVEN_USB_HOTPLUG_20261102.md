@@ -39,8 +39,8 @@ modified, deleted or read from an external volume by this workflow.
    periodic tick. The will-unmount event immediately invalidates positive
    states and any pending Copy OS root / focus connected-copy intent. After
    did-unmount, the refreshed status should be offline or unverified.
-3. Remount with a different `/Volumes` suffix; did-mount must trigger a fresh
-   UUID/mount check. Test a concurrently mounted clone with the same UUID:
+3. Remount with a different `/Volumes` suffix; did-mount or did-rename must
+   trigger a fresh UUID/mount check. Test a concurrently mounted clone with the same UUID:
    conflict must never be displayed as connected.
 4. If unmount is cancelled or mount events are missed, periodic 6s polling and
    monotonic 12s expiry remain safety fallback. Verify no stale asynchronous
@@ -60,3 +60,8 @@ modified, deleted or read from an external volume by this workflow.
 - Do not commit private physical IDs, CTF bytes, paths, screenshots exposing
   the owner's names, or source SHA. Do not claim stable 1.0 without the remaining
   modified/historical CTF, manual OS/hardware, real p95, signing/notarization gates.
+
+Note: Win32 WM_DEVICECHANGE returns TRUE (does not veto QUERYREMOVE), as required
+by Microsoft's event contract; device notification remains advisory and is not
+used as positive hardware evidence. macOS didRenameVolume also invalidates an
+old current mount path. Both conditions require hardware verification.

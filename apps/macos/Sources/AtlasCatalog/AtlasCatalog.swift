@@ -2327,6 +2327,10 @@ private struct CopyReturnContext {
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didMountNotification)) { _ in
             model.recheckPhysicalPresenceAfterMountEvent()
         }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didRenameVolumeNotification)) { _ in
+            // Current mount path can change without a UUID change.
+            model.recheckPhysicalPresenceAfterMountEvent()
+        }
         .sheet(isPresented: $model.showingAnnotationReview) {
             if model.showingVerifiedOverlay {
                 VStack(alignment: .leading, spacing: 8) {

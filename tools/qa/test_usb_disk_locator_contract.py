@@ -701,8 +701,10 @@ class DiskLocatorWiringTests(unittest.TestCase):
             "pendingConnectedCopyFocus = nil",
         ):
             self.assertIn(guard, reset)
-        for event in ("willUnmountNotification", "didUnmountNotification", "didMountNotification"):
+        for event in ("willUnmountNotification", "didUnmountNotification",
+                      "didMountNotification", "didRenameVolumeNotification"):
             self.assertIn("NSWorkspace." + event, MAC)
+        self.assertIn("this observer never vetoes safe eject.", WIN)
         self.assertIn("model.invalidatePhysicalPresenceAfterMountEvent()", MAC)
         self.assertIn("model.recheckPhysicalPresenceAfterMountEvent()", MAC)
         self.assertIn('self.physicalCheckGeneration == checkToken', MAC)
