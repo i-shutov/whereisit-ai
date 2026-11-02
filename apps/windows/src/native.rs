@@ -1506,21 +1506,33 @@ mod verified_mount_root_tests {
         }];
         let mut states = HashMap::from([(42, "connected".into())]);
         let verified = HashMap::from([(42, "win:{physical}:12345678".into())]);
-        assert_eq!(verified_mount_root(42, &states, &verified, &mounts), Some(r"R:\\".into()));
+        assert_eq!(
+            verified_mount_root(42, &states, &verified, &mounts),
+            Some(r"R:\".into())
+        );
         assert_eq!(verified_mount_root(142, &states, &verified, &mounts), None);
-        assert_eq!(verified_mount_root(42, &states, &HashMap::new(), &mounts), None);
+        assert_eq!(
+            verified_mount_root(42, &states, &HashMap::new(), &mounts),
+            None
+        );
         states.insert(42, "offline".into());
         assert_eq!(verified_mount_root(42, &states, &verified, &mounts), None);
         states.insert(42, "conflict".into());
         assert_eq!(verified_mount_root(42, &states, &verified, &mounts), None);
         states.insert(42, "connected".into());
         let duplicates = [mounts.clone(), mounts.clone()].concat();
-        assert_eq!(verified_mount_root(42, &states, &verified, &duplicates), None);
+        assert_eq!(
+            verified_mount_root(42, &states, &verified, &duplicates),
+            None
+        );
         let without_mount = vec![MountedPhysicalVolume {
             mount_roots: vec![],
             ..mounts[0].clone()
         }];
-        assert_eq!(verified_mount_root(42, &states, &verified, &without_mount), None);
+        assert_eq!(
+            verified_mount_root(42, &states, &verified, &without_mount),
+            None
+        );
     }
 }
 
@@ -3705,7 +3717,8 @@ impl App {
                         self.physical_states.insert(volume_id, state.to_owned());
                         if state == "connected" {
                             if let Some(physical_id) = item["verified_physical_id"].as_str() {
-                                self.verified_physical_ids.insert(volume_id, physical_id.to_owned());
+                                self.verified_physical_ids
+                                    .insert(volume_id, physical_id.to_owned());
                             }
                         }
                     }
@@ -3741,7 +3754,8 @@ impl App {
                 &now,
             )
         });
-        let Some(root) = from_verified_probe.filter(|root| Some(root) == from_fresh_probe.as_ref()) else {
+        let Some(root) = from_verified_probe.filter(|root| Some(root) == from_fresh_probe.as_ref())
+        else {
             self.status("Current OS mount path NOT verified. Pair the physical disk, refresh and retry; no historical drive letters are used.");
             return;
         };
@@ -4655,7 +4669,9 @@ impl App {
             }
             COPY_VERIFIED_OS_ROOT => {
                 let Some(catalog_id) = self.selected_physical_catalog_disk() else {
-                    self.status("Select a current file or catalog disk before copying a live OS root.");
+                    self.status(
+                        "Select a current file or catalog disk before copying a live OS root.",
+                    );
                     return;
                 };
                 if let Some(pinned) = self.linked_request("ctf_volumes_pinned") {

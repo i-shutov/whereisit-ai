@@ -210,7 +210,8 @@ pub fn status(request: &Value) -> Result<Value> {
             // OS volume can be resolved to a native mount root. The native
             // client must still re-probe before copying the mount hint.
             let verified_physical_id = if state == "connected" {
-                known.iter()
+                known
+                    .iter()
                     .find(|binding| binding.volume_id == id)
                     .map(|binding| binding.physical_id.as_str())
             } else {
