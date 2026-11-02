@@ -151,13 +151,19 @@ mod recorded_parent_folder_tests {
         );
         let missing_disk = json!({"id":704,"volume_id":421,"parent_id":9,
             "kind":"file","relative_path":"Films/unknown.mkv"});
-        assert_eq!(recorded_parent_folder_context(&missing_disk, &volumes), None);
+        assert_eq!(
+            recorded_parent_folder_context(&missing_disk, &volumes),
+            None
+        );
         let folder = json!({"id":705,"volume_id":42,"parent_id":700,
             "kind":"directory","relative_path":"Films/Film A"});
         assert_eq!(recorded_parent_folder_context(&folder, &volumes), None);
         let corrupt_parent = json!({"id":706,"volume_id":42,"parent_id":706,
             "kind":"file","relative_path":"Films/film.mkv"});
-        assert_eq!(recorded_parent_folder_context(&corrupt_parent, &volumes), None);
+        assert_eq!(
+            recorded_parent_folder_context(&corrupt_parent, &volumes),
+            None
+        );
     }
 }
 
@@ -4671,7 +4677,12 @@ impl App {
             self.status("Return to a current search result before browsing its recorded folder.");
             return;
         }
-        let row = SendMessageW(self.files, LVM_GETNEXTITEM, usize::MAX, LVNI_SELECTED as isize);
+        let row = SendMessageW(
+            self.files,
+            LVM_GETNEXTITEM,
+            usize::MAX,
+            LVNI_SELECTED as isize,
+        );
         let context = (row >= 0)
             .then(|| self.entries.get(row as usize))
             .flatten()
@@ -4691,7 +4702,11 @@ impl App {
         self.copy_source_name = None;
         self.copy_focus_volume_id = None;
         self.copy_disk_groups.clear();
-        if self.disk_filter_query.trim().eq_ignore_ascii_case("copies:") {
+        if self
+            .disk_filter_query
+            .trim()
+            .eq_ignore_ascii_case("copies:")
+        {
             self.disk_filter_query.clear();
             self.text(self.disk_filter, "");
         }
