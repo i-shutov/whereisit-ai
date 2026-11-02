@@ -53,6 +53,8 @@ const SAME_FILENAME: usize = 143;
 const SAME_RECORDED_SIZE: usize = 144;
 const PHYSICAL_CONNECTED_FILTER: usize = 145;
 const PHYSICAL_UNVERIFIED_FILTER: usize = 146;
+const STOP_PAGE_WAIT: usize = 147;
+const RETRY_PAGE: usize = 148;
 const SEARCH_BOX: usize = 130;
 // Win32 GetDriveTypeW standard result codes; windows-sys 0.61 does not export these here.
 // Unknown/missing roots mean a potentially incomplete OS snapshot, never "offline".
@@ -76,6 +78,27 @@ const CATEGORY_FILTER: usize = 123;
 const CATEGORY_ASSIGN: usize = 124;
 const CATEGORY_CREATE: usize = 125;
 const LIMIT: usize = 250;
+
+// A dismissed asynchronous catalog page must never regain authority, even
+// when the old worker finishes successfully after a new request or a stop.
+fn page_response_current(reply_generation: u64, active_generation: u64, waiting: bool) -> bool {
+    waiting && reply_generation == active_generation
+}
+
+#[cfg(test)]
+mod page_wait_controls_tests {
+    use super::page_response_current;
+
+    #[test]
+    fn stopped_or_superseded_page_can_never_reactivate_old_rows() {
+        assert!(page_response_current(8, 8, true));
+        assert!(!page_response_current(8, 8, false));
+        assert!(!page_response_current(8, 9, true));
+        assert!(!page_response_current(9, 8, true));
+        // Generation wrap after many future requests still rejects the old token.
+        assert!(!page_response_current(u64::MAX, 0, true));
+    }
+}
 
 fn linked_export_allowed(index: isize) -> bool {
     matches!(index, 0 | 1 | 3)
@@ -2609,6 +2632,8 @@ struct App {
     total_known: bool,
     has_more: bool,
     page_ready: bool,
+    page_awaiting: bool,
+    page_retry_available: bool,
     generation: u64,
     pending: usize,
     job: Option<String>,
@@ -2675,6 +2700,8 @@ impl App {
             total_known: true,
             has_more: false,
             page_ready: false,
+            page_awaiting: false,
+            page_retry_available: false,
             generation: 0,
             pending: 0,
             job: None,
@@ -2748,6 +2775,10 @@ impl App {
         let tx = self.tx.clone();
         let generation = self.generation;
         let annotation_session = self.annotation_session;
+        if tag == "rows" {
+            self.page_awaiting = true;
+            self.page_retry_available = false;
+        }
         self.pending += 1;
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(|| atlas_service::dispatch_json(&request.to_string()))
@@ -2785,6 +2816,8 @@ impl App {
         self.physical_probe_ok = false;
         self.entries.clear();
         self.page_ready = false;
+        self.page_awaiting = false;
+        self.page_retry_available = false;
         self.categories.clear();
         self.total = 0;
         self.has_more = false;
@@ -2830,6 +2863,8 @@ impl App {
             self.populate_physical_disk_list();
         }
         self.generation += 1;
+        self.page_awaiting = false;
+        self.page_retry_available = false;
         // Hide all rows from the preceding scope/page before the async reply.
         // Never permit an old selection to masquerade as the new catalog page.
         self.page_ready = false;
@@ -2932,10 +2967,40 @@ impl App {
             self.status("Choose a disk or search all disks.");
         }
     }
+    unsafe fn stop_waiting_for_page(&mut self) {
+        if !self.page_awaiting {
+            self.status("There is no pending catalog page to dismiss.");
+            return;
+        }
+        // This is a UI stop, NOT a core/CTF I/O interrupt. A worker may
+        // finish, but its generation cannot populate or authorize old rows.
+        self.generation = self.generation.wrapping_add(1);
+        self.page_awaiting = false;
+        self.page_retry_available = true;
+        self.page_ready = false;
+        self.entries.clear();
+        self.copy_disk_groups.clear();
+        self.total = 0;
+        self.total_known = false;
+        self.has_more = false;
+        SendMessageW(self.files, LVM_DELETEALLITEMS, 0, 0);
+        self.populate_candidate_disk_picker();
+        if self.disk_filter_query.trim().eq_ignore_ascii_case("copies:") {
+            self.populate_physical_disk_list();
+        }
+        self.update_disk_locator();
+        self.status("Stopped waiting: old page discarded; source read may continue. Retry page rechecks pinned CTF SHA.");
+    }
+
     unsafe fn poll(&mut self) {
         while let Ok(reply) = self.rx.try_recv() {
             self.pending = self.pending.saturating_sub(1);
             if reply.database != self.db {
+                continue;
+            }
+            if reply.tag == "rows"
+                && !page_response_current(reply.generation, self.generation, self.page_awaiting)
+            {
                 continue;
             }
             let data = &reply.result["data"];
@@ -2970,6 +3035,10 @@ impl App {
                 self.annotation_session,
             ) {
                 continue;
+            }
+            if reply.tag == "rows" {
+                self.page_awaiting = false;
+                self.page_retry_available = reply.result["ok"] != true;
             }
             if reply.tag == "annotation_confirm" {
                 if reply.result["ok"] == true {
@@ -3228,7 +3297,11 @@ impl App {
         for (command, hwnd) in &self.buttons {
             EnableWindow(
                 *hwnd,
-                if *command == CANCEL {
+                if *command == STOP_PAGE_WAIT {
+                    self.page_awaiting as i32
+                } else if *command == RETRY_PAGE {
+                    self.page_retry_available as i32
+                } else if *command == CANCEL {
                     self.job.as_ref().is_some_and(|j| j.starts_with("win-")) as i32
                 } else if *command == ANNOTATION_PREVIEW {
                     (self.linked_mode() && self.job.is_none() && self.pending == 0) as i32
@@ -4341,6 +4414,14 @@ impl App {
                 self.offset = 0;
                 self.load();
             }
+            STOP_PAGE_WAIT => self.stop_waiting_for_page(),
+            RETRY_PAGE => {
+                if self.page_retry_available {
+                    self.load(); // New request, new generation and fresh linked CTF SHA check.
+                } else {
+                    self.status("No dismissed or failed page to retry.");
+                }
+            }
             FOCUS_RESULTS => self.focus_current_page_results(),
             FILE_COPIES => self.show_copies_of_selected(),
             SAME_FILENAME => self.search_same_filename(),
@@ -4687,6 +4768,12 @@ impl App {
             if *i == DUPLICATES {
                 MoveWindow(*hwnd, w - 170, 34, 162, 24, 1);
             }
+            if *i == STOP_PAGE_WAIT {
+                MoveWindow(*hwnd, w - 410, h - 32, 100, 24, 1);
+            }
+            if *i == RETRY_PAGE {
+                MoveWindow(*hwnd, w - 305, h - 32, 100, 24, 1);
+            }
             if *i == PREV {
                 MoveWindow(*hwnd, w - 200, h - 32, 90, 24, 1);
             }
@@ -4821,7 +4908,7 @@ impl App {
                 }
             }
         }
-        MoveWindow(self.status, 8, h - 32, (w - 216).max(50), 24, 1);
+        MoveWindow(self.status, 8, h - 32, (w - 426).max(50), 24, 1);
     }
 }
 
@@ -4929,6 +5016,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 (ANNOTATION_PREVIEW, "Review &notes…"),
                 (EXPORT, "&Export…"),
                 (CANCEL, "&Cancel scan"),
+                (STOP_PAGE_WAIT, "Stop &waiting"),
+                (RETRY_PAGE, "&Retry page"),
                 (FIND, "Search &all"),
                 (FIND_DISK, "&This disk"),
                 (BACK, "&Back"),
@@ -5366,6 +5455,18 @@ pub fn run() {
                 AppendMenuW(
                     view,
                     MF_STRING,
+                    STOP_PAGE_WAIT,
+                    wide("Stop waiting for catalog page\tCtrl+Shift+X").as_ptr(),
+                );
+                AppendMenuW(
+                    view,
+                    MF_STRING,
+                    RETRY_PAGE,
+                    wide("Retry dismissed/failed catalog page\tCtrl+Shift+Y").as_ptr(),
+                );
+                AppendMenuW(
+                    view,
+                    MF_STRING,
                     TOGGLE_LOCATOR,
                     wide("Show / hide disk locator\tCtrl+I").as_ptr(),
                 );
@@ -5464,6 +5565,23 @@ pub fn run() {
                 && message.wParam == b'I' as usize
             {
                 (*app).command(TOGGLE_LOCATOR, 0);
+                continue;
+            }
+            // Dismiss only the current page response; the background source
+            // read may still finish, but never restore outdated results.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && GetKeyState(VK_SHIFT as i32) < 0
+                && (message.wParam == b'X' as usize || message.wParam == b'Y' as usize)
+            {
+                (*app).command(
+                    if message.wParam == b'X' as usize {
+                        STOP_PAGE_WAIT
+                    } else {
+                        RETRY_PAGE
+                    },
+                    0,
+                );
                 continue;
             }
             // Ctrl+Shift+V toggles a catalogued-extension global filter, not film recognition.

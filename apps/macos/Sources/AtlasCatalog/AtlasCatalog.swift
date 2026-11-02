@@ -275,6 +275,8 @@ private struct CopyReturnContext {
     @Published var copySourceName: String?
     @Published var copyDiskGroups: [CandidateDiskGroup] = []
     @Published var pageReady = false
+    @Published var awaitingPage = false
+    @Published var retryPageAvailable = false
     @Published var copyFocusVolumeID: Int64?
     private var copyReturn: CopyReturnContext?
     // Both entry ID and catalog generation must remain unchanged during the OS probe.
@@ -1059,6 +1061,7 @@ private struct CopyReturnContext {
     }
     func load() {
         generation += 1; let token = generation
+        awaitingPage = true; retryPageAvailable = false
         // Clear previous-scope rows immediately; an old page must not be actionable.
         selection = nil; entries = []; total = 0; hasMore = false; pageReady = false
         var args: [String: Any] = ["offset": offset, "limit": limit]
@@ -1071,14 +1074,12 @@ private struct CopyReturnContext {
                 args["op"] = "ctf_copy_candidates_pinned"
                 args.merge(fields) { _, newValue in newValue }
                 request(args, as: LinkedCTFResult<EntryPage>.self, generationToken: token) { [weak self] reply in
-                    guard let self, let reply else { return }
-                    self.applyPage(reply.result, token: token)
+                    self?.acceptPage(reply?.result, token: token)
                 }
             } else {
                 args["op"] = "copy_candidates"
                 request(args, as: EntryPage.self, generationToken: token) { [weak self] page in
-                    guard let self, let page else { return }
-                    self.applyPage(page, token: token)
+                    self?.acceptPage(page, token: token)
                 }
             }
             return
@@ -1095,6 +1096,7 @@ private struct CopyReturnContext {
                 args["parent_id"] = stack.last.flatMap { $0.0 }.map { $0 as Any } ?? NSNull()
             } else {
                 entries = []; total = 0; hasMore = false
+                awaitingPage = false
                 status = "Select a linked CTF disk or search all disks."; return
             }
             args.merge(fields) { _, newValue in newValue }
@@ -1102,8 +1104,7 @@ private struct CopyReturnContext {
                 ? "Finding read-only CTF metadata duplicates (may be slow on huge catalogs)…"
                 : "Searching verified linked CTF…"
             request(args, as: LinkedCTFResult<EntryPage>.self, generationToken: token) { [weak self] answer in
-                guard let self, let answer else { return }
-                self.applyPage(answer.result, token: token)
+                self?.acceptPage(answer?.result, token: token)
             }
             return
         }
@@ -1113,16 +1114,41 @@ private struct CopyReturnContext {
             args["op"] = "search_fast"; args["query"] = appliedQuery
         } else if volumeID != nil {
             args["op"] = "children"; args["parent_id"] = stack.last.flatMap { $0.0 }.map { $0 as Any } ?? NSNull()
-        } else { entries = []; total = 0; hasMore = false; status = "Choose a disk or enter an expression to search all disks."; return }
+        } else { entries = []; total = 0; hasMore = false; awaitingPage = false; status = "Choose a disk or enter an expression to search all disks."; return }
         status = showingDuplicates ? "Finding duplicate candidates by metadata…" : "Loading…"
         request(args, as: EntryPage.self, generationToken: token) { [weak self] page in
-            guard let self, let page else { return }
-            self.applyPage(page, token: token)
+            self?.acceptPage(page, token: token)
         }
+    }
+    // Stop-waiting is presentation cancellation, never a CTF or SQLite write.
+    // The core reader may finish; the page generation gates every callback.
+    func stopWaitingForPage() {
+        guard awaitingPage else { return }
+        generation += 1
+        awaitingPage = false
+        retryPageAvailable = true
+        pageReady = false
+        selection = nil; entries = []; copyDiskGroups = []
+        total = 0; hasMore = false
+        status = "Stopped waiting; old results discarded. Background read may finish. Retry rechecks source SHA."
+    }
+    func retryCurrentPage() {
+        guard retryPageAvailable else { return }
+        load() // Keeps the explicit search/copy scope, starts a fresh pinned read.
+    }
+    func acceptPage(_ page: EntryPage?, token: Int) {
+        guard generation == token else { return }
+        awaitingPage = false
+        guard let page else {
+            retryPageAvailable = true // Includes pinned CTF SHA changes or read errors.
+            return
+        }
+        applyPage(page, token: token)
     }
     func applyPage(_ page: EntryPage, token: Int) {
         guard generation == token else { return }
         pageReady = true
+        awaitingPage = false; retryPageAvailable = false
         entries = page.items; total = page.total ?? (offset + page.items.count)
         copyDiskGroups = copySourceID == nil ? [] : (page.disk_groups ?? [])
         hasMore = page.has_more ?? (offset + page.items.count < total)
@@ -2024,6 +2050,20 @@ private struct CopyReturnContext {
             HStack(spacing: 8) {
                 Text(model.status).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
                 Spacer()
+                if model.awaitingPage {
+                    ProgressView().controlSize(.small)
+                        .accessibilityLabel("Catalog page request is still running")
+                }
+                Button("Stop waiting") { model.stopWaitingForPage() }
+                    .disabled(!model.awaitingPage)
+                    .keyboardShortcut("x", modifiers: [.command, .shift])
+                    .accessibilityLabel("Stop waiting and discard the pending catalog page")
+                    .help("Does not interrupt the source reader; its eventual reply is discarded (Command-Shift-X)")
+                Button("Retry page") { model.retryCurrentPage() }
+                    .disabled(!model.retryPageAvailable)
+                    .keyboardShortcut("y", modifiers: [.command, .shift])
+                    .accessibilityLabel("Retry dismissed or failed catalog page in the same scope")
+                    .help("Rechecks linked CTF generation SHA for a new page (Command-Shift-Y)")
                 Button("Previous") { model.offset = max(0, model.offset - model.limit); model.load() }.disabled(model.offset == 0)
                 Button("Next") { model.offset += model.limit; model.load() }.disabled(!model.hasMore)
             }.font(.caption)
