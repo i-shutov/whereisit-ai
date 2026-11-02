@@ -6453,7 +6453,12 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             let screen_y = ((lp >> 16) as u16 as i16) as i32;
             let keyboard = screen_x == -1 && screen_y == -1;
             let selected_row = if keyboard {
-                SendMessageW(app.files, LVM_GETNEXTITEM, usize::MAX, LVNI_SELECTED as isize)
+                SendMessageW(
+                    app.files,
+                    LVM_GETNEXTITEM,
+                    usize::MAX,
+                    LVNI_SELECTED as isize,
+                )
             } else {
                 let mut hit: LVHITTESTINFO = std::mem::zeroed();
                 hit.pt = POINT {

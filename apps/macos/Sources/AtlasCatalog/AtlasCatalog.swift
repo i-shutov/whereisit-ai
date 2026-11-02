@@ -589,6 +589,26 @@ private struct CandidateFolderReturnContext {
             }
     }
     func shelfLabel(_ disk: Int64) -> String { shelfLabels[disk] ?? "" }
+    // Canonical, private per-selection text for the inspector AND the
+    // context menu. Never infer current file contents from catalog metadata.
+    func retrievalNote(for entry: Entry) -> String {
+        let shelf = model.shelfLabel(entry.volume_id)
+        let size = entry.size.map { "\($0) recorded bytes" } ?? "unknown"
+        let candidates = entry.duplicate_count.map { "\($0) metadata candidates" } ?? "not calculated"
+        return [
+            "WhereIsIt AI — catalog retrieval note",
+            "Disk: \(model.volumeLabel(entry.volume_id))",
+            "Catalog disk ID: \(entry.volume_id)",
+            "Owner sticker / shelf: \(shelf.isEmpty ? "not assigned" : shelf)",
+            "File: \(entry.name)",
+            "Recorded relative path: \(entry.relative_path)",
+            "Recorded size: \(size)",
+            "Physical: \(model.physicalCaption(entry.volume_id))",
+            "Copies: \(candidates); file contents not compared",
+            "OS state is from the last probe and may change; catalog paths are historical.",
+        ].joined(separator: "\n")
+    }
+
     func shelfConflictCaption(_ disk: Int64) -> String? {
         guard let members = shelfTagConflicts[disk] else { return nil }
         let others = members.filter { $0 != disk }.map { "#\($0)" }
@@ -1984,24 +2004,6 @@ private struct CandidateFolderReturnContext {
     // checks live selection and original CTF generation before clipboard use.
     // A portable shopping-list-style retrieval note, never a live file path.
     // Physical state is the most recent explicit OS probe, not file existence.
-    private func retrievalNote(for entry: Entry) -> String {
-        let shelf = model.shelfLabel(entry.volume_id)
-        let size = entry.size.map { "\($0) recorded bytes" } ?? "unknown"
-        let candidates = entry.duplicate_count.map { "\($0) metadata candidates" } ?? "not calculated"
-        return [
-            "WhereIsIt AI — catalog retrieval note",
-            "Disk: \(model.volumeLabel(entry.volume_id))",
-            "Catalog disk ID: \(entry.volume_id)",
-            "Owner sticker / shelf: \(shelf.isEmpty ? "not assigned" : shelf)",
-            "File: \(entry.name)",
-            "Recorded relative path: \(entry.relative_path)",
-            "Recorded size: \(size)",
-            "Physical: \(model.physicalCaption(entry.volume_id))",
-            "Copies: \(candidates); file contents not compared",
-            "OS state is from the last probe and may change; catalog paths are historical.",
-        ].joined(separator: "\n")
-    }
-
     // Kept separate from the large file inspector to bound SwiftUI type-checking
     // and allow tagging a selected register disk even without a file result.
     @ViewBuilder private var shelfTagEditor: some View {
@@ -2081,7 +2083,7 @@ private struct CandidateFolderReturnContext {
                         model.copySelectedMetadata(entry.relative_path, entryID: entry.id, diskID: entry.volume_id)
                     }
                     Button("Copy retrieval note") {
-                        model.copySelectedMetadata(retrievalNote(for: entry), entryID: entry.id, diskID: entry.volume_id)
+                        model.copySelectedMetadata(model.retrievalNote(for: entry), entryID: entry.id, diskID: entry.volume_id)
                     }
                         .keyboardShortcut("c", modifiers: [.command, .shift])
                         .accessibilityLabel("Copy catalog disk, shelf and recorded file details")
@@ -2491,7 +2493,7 @@ private struct CandidateFolderReturnContext {
                         Button("Show exact catalog disk in register") { model.revealSelectedDiskInRegister() }
                         Button("Copy catalog retrieval note") {
                             model.copySelectedMetadata(
-                                "Catalog #\(row.volume_id) • \(model.volumeLabel(row.volume_id))\nRecorded: \(row.relative_path)", entryID: row.id, diskID: row.volume_id)
+                                model.retrievalNote(for: row), entryID: row.id, diskID: row.volume_id)
                         }
                         Button("Copy physical disk pickup card") { model.copySelectedDiskPickupCard() }
                     } else {

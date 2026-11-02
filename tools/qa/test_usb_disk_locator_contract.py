@@ -32,6 +32,9 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("if model.pageReady, !model.awaitingPage, let row = model.selected", MAC)
         self.assertIn('Button("Find name + size candidates on other disks")', MAC)
         self.assertIn("model.copySelectedMetadata(", MAC)
+        self.assertIn("func retrievalNote(for entry: Entry) -> String", MAC)
+        self.assertIn("model.retrievalNote(for: row)", MAC)
+        self.assertIn("model.retrievalNote(for: entry)", MAC)
         self.assertIn('Button("Open verified disk in Finder")', MAC)
         self.assertEqual(MAC.count('.accessibilityLabel("Copy current OS volume root after verifying explicit pairing")'), 1)
         # No direct read of live files or unsafe inferred paths in new actions.

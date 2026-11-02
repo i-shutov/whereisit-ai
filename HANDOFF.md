@@ -1,3 +1,20 @@
+## UX31 CI fix — exact initial job/step (2026-11-02)
+
+Initial UX31 SHA \`22ddff9c703e96e854636ec68a27d8c738b5a049\`
+failed the native [Linux job](https://github.com/i-shutov/whereisit-ai/actions/runs/41491419458)
+at \`cargo fmt --all -- --check\`, and
+[offline kit](https://github.com/i-shutov/whereisit-ai/actions/runs/41491419397)
+at \`Check integrated Rust contracts\` for the SAME single multiline
+\`SendMessageW\` formatting diff in \`apps/windows/src/native.rs\`.
+The workspace Rust unit suite and dual-native Python contracts passed.
+Fixed that exact hunk in this same draft PR #57; no test disabled.
+Also unified the macOS context-menu and inspector retrieval-note renderer,
+so both copy the same full disk ID/sticker/path/recorded-size/last-OS-state
+disclaimer, with SHA revalidation. New exact-HEAD CI REQUIRED; old SHA
+Windows/macOS jobs do not establish results for this repair.
+
+---
+
 ## UX31 — native selected-file context actions + compact macOS toolbar (2026-11-02)
 
 In existing draft PR #57, added Win32 right-click / Shift+F10 exact-row
