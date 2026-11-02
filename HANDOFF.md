@@ -1,3 +1,20 @@
+## UX36 exact-HEAD CI defect and same-PR repair (2026-11-03)
+
+Initial UX36 commit [11b443e](https://github.com/i-shutov/whereisit-ai/commit/11b443e65d32c2f3392c6c8a85800e8dee55f0ee)
+failed [offline acceptance 41541708631](https://github.com/i-shutov/whereisit-ai/actions/runs/41541708631)
+at **Check integrated Rust contracts** and
+[native Linux 41541708517](https://github.com/i-shutov/whereisit-ai/actions/runs/41541708517)
+at **Run cargo fmt --all -- --check**. The Rust tests and cross-client
+Python contracts passed before this formatting gate; no functionality
+or CTF checks were disabled. Applied all six exact formatter hunks in
+`apps/windows/src/native.rs` in this SAME draft PR #57. The fresh
+repair HEAD must complete native Linux/Windows/Mac ARM/Intel, offline,
+integration and installed RC2→RC3 upgrade checks before PASS claims.
+Human USB/GUI, historical/original modified CTF, signing and real
+p95<=150ms remain unaccepted. No merge or stable 1.0.
+
+---
+
 ## UX36 — verified keyboard page navigation + fresh row focus (2026-11-03)
 
 On draft PR #57, added a bounded pager to BOTH native clients. Win32

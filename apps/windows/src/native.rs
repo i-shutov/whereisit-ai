@@ -95,19 +95,40 @@ mod verified_page_navigation_tests {
 
     #[test]
     fn only_verified_current_pages_can_navigate() {
-        assert_eq!(verified_page_offset(0, 250, true, true, false, true), Some(250));
-        assert_eq!(verified_page_offset(500, 250, true, true, false, false), Some(250));
+        assert_eq!(
+            verified_page_offset(0, 250, true, true, false, true),
+            Some(250)
+        );
+        assert_eq!(
+            verified_page_offset(500, 250, true, true, false, false),
+            Some(250)
+        );
         assert_eq!(verified_page_offset(0, 250, true, true, false, false), None);
-        assert_eq!(verified_page_offset(500, 250, false, true, false, true), None);
+        assert_eq!(
+            verified_page_offset(500, 250, false, true, false, true),
+            None
+        );
     }
 
     #[test]
     fn pending_cancelled_failed_or_invalid_pages_cannot_be_reused() {
-        assert_eq!(verified_page_offset(500, 250, true, false, false, false), None);
-        assert_eq!(verified_page_offset(500, 250, true, false, true, true), None);
-        assert_eq!(verified_page_offset(500, 250, true, true, true, false), None);
+        assert_eq!(
+            verified_page_offset(500, 250, true, false, false, false),
+            None
+        );
+        assert_eq!(
+            verified_page_offset(500, 250, true, false, true, true),
+            None
+        );
+        assert_eq!(
+            verified_page_offset(500, 250, true, true, true, false),
+            None
+        );
         assert_eq!(verified_page_offset(500, 0, true, true, false, true), None);
-        assert_eq!(verified_page_offset(100, 250, true, true, false, false), Some(0));
+        assert_eq!(
+            verified_page_offset(100, 250, true, true, false, false),
+            Some(0)
+        );
     }
 
     #[test]
@@ -3974,7 +3995,10 @@ impl App {
         {
             self.pending_selection_restore = None;
         }
-        if self.pending_page_focus.is_some_and(|expected| expected != self.generation) {
+        if self
+            .pending_page_focus
+            .is_some_and(|expected| expected != self.generation)
+        {
             self.pending_page_focus = None;
         }
         self.page_awaiting = false;
@@ -4511,7 +4535,11 @@ impl App {
                     if self.pending_page_focus.take() == Some(self.generation)
                         && self.page_ready
                         && self.entries.first().and_then(id).is_some()
-                        && self.entries.first().and_then(|row| row["volume_id"].as_i64()).is_some()
+                        && self
+                            .entries
+                            .first()
+                            .and_then(|row| row["volume_id"].as_i64())
+                            .is_some()
                     {
                         let mut item: LVITEMW = std::mem::zeroed();
                         item.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
@@ -4557,9 +4585,14 @@ impl App {
                     self.job.as_ref().is_some_and(|j| j.starts_with("win-")) as i32
                 } else if *command == PREV || *command == NEXT {
                     verified_page_offset(
-                        self.offset, LIMIT, self.has_more, self.page_ready,
-                        self.page_awaiting, *command == NEXT,
-                    ).is_some() as i32
+                        self.offset,
+                        LIMIT,
+                        self.has_more,
+                        self.page_ready,
+                        self.page_awaiting,
+                        *command == NEXT,
+                    )
+                    .is_some() as i32
                 } else if *command == ANNOTATION_PREVIEW {
                     (self.linked_mode() && self.job.is_none() && self.pending == 0) as i32
                 } else if [OPEN, NEW, SCAN, IMPORT, LINK_CTF, EXPORT].contains(command) {
@@ -7451,7 +7484,14 @@ pub fn run() {
                 && GetKeyState(VK_SHIFT as i32) >= 0
                 && (message.wParam == VK_PRIOR as usize || message.wParam == VK_NEXT as usize)
             {
-                (*app).command(if message.wParam == VK_NEXT as usize { NEXT } else { PREV }, 0);
+                (*app).command(
+                    if message.wParam == VK_NEXT as usize {
+                        NEXT
+                    } else {
+                        PREV
+                    },
+                    0,
+                );
                 continue;
             }
             // Ctrl+E moves to the currently SHA-verified result page; it never
