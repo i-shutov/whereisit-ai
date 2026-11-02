@@ -1046,7 +1046,7 @@ private struct CopyReturnContext {
     }
 
     var resultScopeCaption: String {
-        if copySourceID != nil { return "COPY CANDIDATES • ALL CATALOGUED DISKS" }
+        if copySourceID != nil { return "COPY CANDIDATES • OTHER CATALOG DISKS ONLY" }
         if showingDuplicates { return "METADATA DUPLICATES • ALL CATALOGUED DISKS" }
         if !appliedQuery.isEmpty {
             if volumeID == nil && appliedQuery.hasPrefix("size:")
@@ -1069,7 +1069,8 @@ private struct CopyReturnContext {
         if let copySourceID {
             args["entry_id"] = copySourceID
             if let copyFocusVolumeID { args["candidate_volume_id"] = copyFocusVolumeID }
-            status = "Comparing exact name + size metadata across all catalogued disks…"
+            args["other_disks_only"] = true
+            status = "Finding name+size metadata candidates on OTHER catalog disks…"
             if let fields = linkedFields() {
                 args["op"] = "ctf_copy_candidates_pinned"
                 args.merge(fields) { _, newValue in newValue }
@@ -1155,8 +1156,8 @@ private struct CopyReturnContext {
         status = "\(page.items.isEmpty ? 0 : offset + 1)–\(offset + page.items.count)"
             + (page.total.map { " of \($0) items" } ?? (hasMore ? " items • more available" : " items"))
             + (copySourceID != nil
-                ? " • \(page.distinct_disks ?? 0) catalog disks total"
-                    + (copyFocusVolumeID == nil ? "" : " • focused from \(page.all_total ?? 0) candidates")
+                ? " • \(page.distinct_disks ?? 0) OTHER catalog disks"
+                    + (copyFocusVolumeID == nil ? "" : " • focused from \(page.all_total ?? 0) all-disk candidates")
                     + " • exact name+size metadata, NOT content verified"
                 : (showingDuplicates ? " • metadata candidates; content not verified" : ""))
     }

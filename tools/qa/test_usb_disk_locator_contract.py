@@ -533,6 +533,20 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("Background read may finish", MAC)
         self.assertIn("source read may continue", WIN)
 
+    def test_ux21_other_media_is_service_filtered_before_page_and_sha_pinned(self):
+        self.assertIn('linked["other_disks_only"] = json!(true);', WIN)
+        self.assertIn('"other_disks_only":true,', WIN)
+        self.assertIn('args["other_disks_only"] = true', MAC)
+        self.assertIn('COPY CANDIDATES • OTHER CATALOG DISKS ONLY', MAC)
+        self.assertIn('OTHER catalog disks only', WIN)
+        self.assertIn('scope_clause.push_str(&format!(" AND volume_id<>?', COPIES)
+        self.assertIn('"other_total": other_total', COPIES)
+        self.assertIn('"other_disks_only": other_disks_only', COPIES)
+        self.assertIn('ctf_mirror::read_pinned(request,', COPIES)
+        pinned = (ROOT / "crates/atlas-service/tests/ctf_pinned_duplicates_contract.rs").read_text(encoding="utf-8")
+        self.assertIn('let stale_other = call(json!({', pinned)
+        self.assertIn('assert_eq!(stale_other["error"]["code"], "source_changed");', pinned)
+
     def test_no_unverified_physical_drive_claims_in_locator(self):
         self.assertIn("Physical connection: NOT VERIFIED", WIN)
         self.assertIn("Physical connection not verified", MAC)

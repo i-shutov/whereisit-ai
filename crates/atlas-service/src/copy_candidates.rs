@@ -29,6 +29,12 @@ pub(crate) fn page(catalog: &Catalog, request: &Value) -> Result<Value> {
         )
     })?;
     let candidate_volume_id = optional_id(request, "candidate_volume_id")?;
+    // Native "other media" is opt-in. Existing API callers retain all disks.
+    let other_disks_only = match request.get("other_disks_only") {
+        None => false,
+        Some(Value::Bool(flag)) => *flag,
+        _ => return Err(Error::new("invalid_request", "other_disks_only must be a boolean")),
+    };
     // All-match disk counts are independent of page focus; catalog labels are
     // not evidence that any USB disk is currently connected.
     let mut group_stmt = catalog.conn().prepare(&format!(
@@ -48,34 +54,56 @@ pub(crate) fn page(catalog: &Catalog, request: &Value) -> Result<Value> {
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let all_total: i64 = disk_groups.iter().filter_map(|v| v["count"].as_i64()).sum();
+    let other_total: i64 = disk_groups
+        .iter()
+        .filter(|group| group["volume_id"].as_i64() != Some(source_volume_id))
+        .filter_map(|group| group["count"].as_i64())
+        .sum();
+    let disk_groups: Vec<Value> = if other_disks_only {
+        disk_groups
+            .into_iter()
+            .filter(|group| group["volume_id"].as_i64() != Some(source_volume_id))
+            .collect()
+    } else {
+        disk_groups
+    };
     let distinct_disks = disk_groups.len();
-    let total = candidate_volume_id.map_or(all_total, |focused| {
+    let scoped_total = if other_disks_only {
+        other_total
+    } else {
+        all_total
+    };
+    let total = candidate_volume_id.map_or(scoped_total, |focused| {
         disk_groups
             .iter()
             .find(|group| group["volume_id"] == focused)
             .and_then(|group| group["count"].as_i64())
             .unwrap_or(0)
     });
-    let focus_clause = if candidate_volume_id.is_some() {
-        " AND volume_id=?3"
-    } else {
-        ""
-    };
-    let limit_param = if candidate_volume_id.is_some() { 4 } else { 3 };
-    let offset_param = limit_param + 1;
-    let sql = format!(
-        "SELECT id,volume_id,parent_id,name,relative_path,kind,size,modified_unix,\
-         description,tags FROM entries \
-         WHERE kind='file' AND name_norm=?1 AND size=?2{focus_clause} \
-         ORDER BY volume_id,relative_path,id LIMIT ?{limit_param} OFFSET ?{offset_param}"
-    );
+
+    // Exclude the whole source volume before LIMIT/OFFSET; post-page
+    // filtering would corrupt totals, groups, and pagination.
     let mut parameters = vec![
         rusqlite::types::Value::Text(name_key),
         rusqlite::types::Value::Integer(size),
     ];
+    let mut scope_clause = String::new();
+    if other_disks_only {
+        parameters.push(rusqlite::types::Value::Integer(source_volume_id));
+        scope_clause.push_str(&format!(" AND volume_id<>?{}", parameters.len()));
+    }
     if let Some(volume_id) = candidate_volume_id {
         parameters.push(rusqlite::types::Value::Integer(volume_id));
+        scope_clause.push_str(&format!(" AND volume_id=?{}", parameters.len()));
     }
+    let limit_param = parameters.len() + 1;
+    let offset_param = parameters.len() + 2;
+    let sql = format!(
+        "SELECT id,volume_id,parent_id,name,relative_path,kind,size,modified_unix,\
+         description,tags FROM entries \
+         WHERE kind='file' AND name_norm=?1 AND size=?2{scope_clause} \
+         ORDER BY volume_id,relative_path,id LIMIT ?{limit_param} OFFSET ?{offset_param}"
+    );
     parameters.push(rusqlite::types::Value::Integer(limit as i64));
     parameters.push(rusqlite::types::Value::Integer(offset as i64));
     let mut stmt = catalog.conn().prepare(&sql)?;
@@ -90,6 +118,7 @@ pub(crate) fn page(catalog: &Catalog, request: &Value) -> Result<Value> {
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(json!({
         "items": items, "total": total, "all_total": all_total,
+        "other_total": other_total, "other_disks_only": other_disks_only,
         "offset": offset, "limit": limit,
         "has_more": offset.saturating_add(limit) < total as u64,
         "source_entry_id": entry_id, "source_volume_id": source_volume_id,
@@ -182,6 +211,34 @@ mod tests {
         assert_eq!(focused["has_more"], false);
         assert_eq!(focused["items"][0]["volume_id"], disk_b);
         assert_eq!(focused["items"][0]["duplicate_count"], 3);
+        let elsewhere = page(
+            &catalog,
+            &json!({"entry_id":selected,"offset":0,"limit":1,"other_disks_only":true}),
+        )
+        .unwrap();
+        assert_eq!(elsewhere["total"], 1);
+        assert_eq!(elsewhere["all_total"], 3);
+        assert_eq!(elsewhere["other_total"], 1);
+        assert_eq!(elsewhere["other_disks_only"], true);
+        assert_eq!(elsewhere["distinct_disks"], 1);
+        assert_eq!(elsewhere["disk_groups"][0]["volume_id"], disk_b);
+        assert_eq!(elsewhere["items"][0]["volume_id"], disk_b);
+        assert_eq!(elsewhere["items"][0]["duplicate_count"], 3);
+        assert_eq!(elsewhere["has_more"], false);
+        let source_disk = first["source_volume_id"].as_i64().unwrap();
+        let excluded_focus = page(
+            &catalog,
+            &json!({"entry_id":selected,"other_disks_only":true,
+                     "candidate_volume_id":source_disk}),
+        )
+        .unwrap();
+        assert_eq!(excluded_focus["total"], 0);
+        assert!(excluded_focus["items"].as_array().unwrap().is_empty());
+        assert!(page(
+            &catalog,
+            &json!({"entry_id":selected,"other_disks_only":"true"})
+        )
+        .is_err());
         assert!(page(
             &catalog,
             &json!({"entry_id":selected,

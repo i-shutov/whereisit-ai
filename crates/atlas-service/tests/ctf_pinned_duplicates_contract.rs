@@ -468,6 +468,29 @@ fn selected_copy_navigation_spans_disks_and_rechecks_generation_per_page() {
     assert_eq!(groups[0]["count"], 1);
     assert_eq!(groups[1]["count"], 1);
     assert_eq!(first["data"]["result"]["all_total"], 2);
+    let source_disk = first["data"]["result"]["source_volume_id"]
+        .as_i64()
+        .unwrap();
+    let external_disk = groups
+        .iter()
+        .find(|group| group["volume_id"].as_i64() != Some(source_disk))
+        .unwrap()["volume_id"]
+        .as_i64()
+        .unwrap();
+    let other = call(json!({
+        "op":"ctf_copy_candidates_pinned","path":source,"cache_root":cache,
+        "generation":generation,"entry_id":selected_id,
+        "other_disks_only":true,"offset":0,"limit":1
+    }));
+    assert_eq!(other["ok"], true, "{other}");
+    assert_eq!(other["data"]["source_sha_checked"], true);
+    assert_eq!(other["data"]["read_only"], true);
+    assert_eq!(other["data"]["result"]["total"], 1);
+    assert_eq!(other["data"]["result"]["all_total"], 2);
+    assert_eq!(other["data"]["result"]["other_total"], 1);
+    assert_eq!(other["data"]["result"]["distinct_disks"], 1);
+    assert_eq!(other["data"]["result"]["items"][0]["volume_id"], external_disk);
+    assert_eq!(other["data"]["result"]["verified"], false);
     let focus = groups[1]["volume_id"].as_i64().unwrap();
     let focused = call(json!({
         "op":"ctf_copy_candidates_pinned","path":source,"cache_root":cache,
@@ -506,5 +529,11 @@ fn selected_copy_navigation_spans_disks_and_rechecks_generation_per_page() {
         "candidate_volume_id":focus,"offset":0,"limit":1
     }));
     assert_eq!(stale_focused["error"]["code"], "source_changed");
+    let stale_other = call(json!({
+        "op":"ctf_copy_candidates_pinned","path":source,"cache_root":cache,
+        "generation":generation,"entry_id":selected_id,
+        "other_disks_only":true,"offset":0,"limit":1
+    }));
+    assert_eq!(stale_other["error"]["code"], "source_changed");
     assert_eq!(stale["error"]["code"], "source_changed", "{stale}");
 }

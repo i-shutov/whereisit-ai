@@ -2894,7 +2894,7 @@ impl App {
                 "{}  —  {}",
                 self.linked_ctf.as_deref().unwrap_or(&self.db),
                 if self.copy_source.is_some() {
-                    "Cross-disk metadata candidates (not content-verified)"
+                    "OTHER catalog disks: name+size metadata candidates (not verified)"
                 } else if self.query.is_empty() {
                     self.stack.last().map(|p| p.1.as_str()).unwrap_or("/")
                 } else if self.volume.is_some() {
@@ -2911,6 +2911,7 @@ impl App {
             if let Some(mut linked) = self.linked_request("ctf_copy_candidates_pinned") {
                 linked["entry_id"] = json!(source);
                 linked["candidate_volume_id"] = json!(self.copy_focus_volume_id);
+                linked["other_disks_only"] = json!(true);
                 linked["offset"] = json!(self.offset);
                 linked["limit"] = json!(LIMIT);
                 self.call("rows", linked);
@@ -2919,6 +2920,7 @@ impl App {
                     "rows",
                     json!({"op":"copy_candidates","entry_id":source,
                     "candidate_volume_id":self.copy_focus_volume_id,
+                    "other_disks_only":true,
                     "offset":self.offset,"limit":LIMIT}),
                 );
             }
@@ -4030,7 +4032,7 @@ impl App {
                 if self.copy_focus_volume_id.is_some() {
                     " • selected catalog disk; name+size only; contents not compared"
                 } else {
-                    " • all catalog disks; name+size only; contents not compared"
+                    " • OTHER catalog disks only; name+size; contents not compared"
                 }
             } else if self.duplicates {
                 " • metadata candidates; content not verified"
