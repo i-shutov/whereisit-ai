@@ -460,3 +460,16 @@ content equality or live OS mount is asserted. Synthetic Windows unit tests,
 dual-native wiring regressions and [UX28 runbook](qa/UX28_CANDIDATE_FOLDER_RETURN_20261102.md)
 accompany this draft vertical. Human USB/GUI and real performance gates remain
 open; no merge or stable 1.0.
+
+## UX29 — open the freshly verified physical disk root (2026-11-02)
+
+Windows Win32 and macOS SwiftUI now offer native Explorer/Finder root
+navigation from an exact catalog disk selection (Ctrl/Command-Shift-B).
+This supplements, and never replaces, offline finding by catalog ID and
+owner shelf tag. It checks linked original CTF SHA (including fail-closed
+missing generation), explicit paired OS identity, and **two complete native
+OS probes** with a unique unchanged UUID/mount root. No catalog relative
+path or historical drive letter becomes an executable OS path, and opening
+the root cannot prove a film's presence, contents or hash equality.
+Synthetic tests + native CI are required, manual GUI/USB remains unaccepted.
+See [UX29 runbook](qa/UX29_OS_VERIFIED_ROOT_EXPLORER_FINDER_20261102.md).

@@ -1,3 +1,26 @@
+## UX29 — native Explorer/Finder handoff for OS-verified disk root (2026-11-02)
+
+The existing draft PR #57 adds Windows Ctrl+Shift+B **Open OS root** and
+macOS Command-Shift-B **Finder**, also available through native buttons
+and Windows View menu. Only the explicitly paired, currently OS-observed
+filesystem UUID with an unchanged unique mount root across TWO native
+probes can open; CTF generation SHA is rechecked each time. Fixed a
+source-safety gap shared by both root actions: a partially linked CTF with
+missing generation must fail, never bypass the pin as unlinked SQLite.
+No catalogued file path, historical drive letter or hash is inferred.
+Windows adds a compiled remount/clone regression and both native client
+wiring is checked in Python; see
+[UX29 runbook](docs/qa/UX29_OS_VERIFIED_ROOT_EXPLORER_FINDER_20261102.md).
+
+**CI at commit preparation: NOT YET VERIFIED**; confirm four-platform
+native, integration, offline kit and RC2→RC3 upgrade on exact new SHA.
+PR remains draft/unmerged. Hardware GUI, modified original CTF, two
+provider-blocked historical CTFs, signing and real p95 remain release
+gates; RC3 unsigned prerelease, stable 1.0 blocked. No other repos or
+private data changed.
+
+---
+
 ## UX28 exact-HEAD Rustfmt diagnosis and repair (2026-11-02)
 
 At the first UX28 HEAD `2241c3be121dc41f91dd0af874a73dea5df10190`,

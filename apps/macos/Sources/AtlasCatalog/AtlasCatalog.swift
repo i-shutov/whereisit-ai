@@ -226,7 +226,8 @@ private struct CandidateFolderReturnContext {
     @Published var volumeID: Int64?
     @Published var physicalStates: [Int64: String] = [:]
     @Published var verifiedPhysicalIDs: [Int64: String] = [:]
-    private var pendingMountCopy: (disk: Int64, scope: String)?
+    private var pendingMountCopy: (disk: Int64, scope: String, openInFinder: Bool)?
+    private var mountActionGeneration = 0
     @Published var shelfLabels: [Int64: String] = [:]
     @Published var shelfTagConflicts: [Int64: [Int64]] = [:]
     @Published var mountedPhysicalVolumes: [LivePhysicalVolume] = []
@@ -441,7 +442,7 @@ private struct CandidateFolderReturnContext {
         generation += 1; candidateClipboardRequestSerial += 1; volumeID = nil; stack = [(nil, "/")]; entries = []; query = ""; appliedQuery = ""; showingDuplicates = false; offset = 0
         copySourceID = nil; copySourceName = nil; copyReturn = nil; candidateFolderReturn = nil
         volumes = []; diskFilter = ""; categories = []; categoryID = nil; selection = nil; total = 0; hasMore = false
-        physicalStates = [:]; verifiedPhysicalIDs = [:]; pendingMountCopy = nil
+        physicalStates = [:]; verifiedPhysicalIDs = [:]; pendingMountCopy = nil; mountActionGeneration += 1
         shelfLabels = [:]; mountedPhysicalVolumes = []; selectedPhysicalID = ""; physicalProbeOK = false
         physicalCheckGeneration += 1
         status = "Opening catalog…"
@@ -956,6 +957,7 @@ private struct CandidateFolderReturnContext {
     // unplugging, while the next complete OS + service scan determines status.
     func invalidatePhysicalPresenceAfterMountEvent() {
         physicalMountEventGeneration += 1
+        mountActionGeneration += 1
         physicalCheckGeneration += 1  // discard an older asynchronous status reply
         physicalVerifiedUptime = nil
         physicalStates = [:]
@@ -1023,9 +1025,21 @@ private struct CandidateFolderReturnContext {
                     self.status = "Current OS mount root NOT verified; source, pairing or USB volume changed."
                     return
                 }
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(mounted.currentMount, forType: .string)
-                self.status = "CURRENT OS root copied after two UUID probes; catalogued file presence and bytes unverified."
+                if pending.openInFinder {
+                    // OS root comes ONLY from the latest FileManager mounted-
+                    // volume UUID observation, never a historical catalog path.
+                    let url = URL(fileURLWithPath: mounted.currentMount, isDirectory: true)
+                    guard mounted.currentMount.hasPrefix("/"),
+                          NSWorkspace.shared.open(url) else {
+                        self.status = "Finder could not open the verified OS disk root."
+                        return
+                    }
+                    self.status = "Finder accepted the OS-verified disk root request; catalogued files and bytes UNVERIFIED."
+                } else {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(mounted.currentMount, forType: .string)
+                    self.status = "CURRENT OS root copied after two UUID probes; catalogued file presence and bytes unverified."
+                }
             }
             if let pending = self.pendingConnectedCopyFocus {
                 self.pendingConnectedCopyFocus = nil
@@ -1041,33 +1055,43 @@ private struct CandidateFolderReturnContext {
             }
         }
     }
-    // A current OS mount root, never a path reconstructed from CTF.
-    // Source generation, explicit pair mapping, and native UUID/mount identity
-    // must all be rechecked; an OS mount is NOT proof the catalogued file exists.
-    func copyCurrentOSMountRoot() {
+    // These actions operate ONLY on the presently mounted, explicitly paired
+    // OS volume root, never on a recorded catalog file or historical drive path.
+    func copyCurrentOSMountRoot() { performCurrentOSRootAction(openInFinder: false) }
+    func openCurrentOSMountRoot() { performCurrentOSRootAction(openInFinder: true) }
+
+    private func performCurrentOSRootAction(openInFinder: Bool) {
         guard let disk = selectedDiskForPairing, volumes.contains(where: { $0.id == disk }) else {
-            status = "Select a current file or catalog disk before copying a live OS mount."
+            status = "Select a current file or catalog disk before using its live OS root."
             return
         }
+        mountActionGeneration += 1
+        let actionToken = mountActionGeneration
+        pendingMountCopy = nil
         let scope = physicalScope
         let mountEventToken = physicalMountEventGeneration
-        if let fields = linkedFields() {
-            var pinned = fields
+        // Incomplete linked session is NOT a local SQLite session: fail closed.
+        if linkedCTFPath != nil {
+            guard var pinned = linkedFields() else {
+                status = "Linked CTF generation missing; OS root NOT opened or copied."
+                return
+            }
             pinned["op"] = "ctf_volumes_pinned"
-            status = "Rechecking linked source generation before copying OS root…"
+            status = "Rechecking linked source generation before using OS root…"
             request(pinned, as: LinkedCTFResult<[Volume]>.self) { [weak self] reply in
                 guard let self, self.physicalScope == scope,
+                      self.mountActionGeneration == actionToken,
                       self.physicalMountEventGeneration == mountEventToken,
                       self.selectedDiskForPairing == disk else { return }
                 guard reply != nil else {
-                    self.status = "Linked CTF generation could not be verified; no OS root copied."
+                    self.status = "Linked CTF generation could not be verified; no OS root opened or copied."
                     return
                 }
-                self.pendingMountCopy = (disk, scope)
+                self.pendingMountCopy = (disk, scope, openInFinder)
                 self.refreshPhysicalPresence()
             }
         } else {
-            pendingMountCopy = (disk, scope)
+            pendingMountCopy = (disk, scope, openInFinder)
             refreshPhysicalPresence()
         }
     }
@@ -1505,7 +1529,7 @@ private struct CandidateFolderReturnContext {
             self.job = nil
             guard let result else { return }
             self.linkedCTFPath = source; self.linkedGeneration = result.generation
-            self.physicalStates = [:]; self.verifiedPhysicalIDs = [:]; self.pendingMountCopy = nil
+            self.physicalStates = [:]; self.verifiedPhysicalIDs = [:]; self.pendingMountCopy = nil; self.mountActionGeneration += 1
             self.physicalVerifiedUptime = nil
             self.shelfLabels = [:]; self.selectedPhysicalID = ""
             if self.exportFormat == "ctf" { self.exportFormat = "csv" }
@@ -2045,6 +2069,10 @@ private struct CandidateFolderReturnContext {
                 }
                 Button("Copy current OS root") { model.copyCurrentOSMountRoot() }
                     .disabled(model.selectedDiskForPairing == nil)
+                Button("Open verified disk in Finder") { model.openCurrentOSMountRoot() }
+                    .disabled(model.selectedDiskForPairing == nil)
+                    .accessibilityLabel("Open the currently OS-verified, explicitly paired disk root in Finder")
+                    .help("Fresh CTF-generation and two OS UUID/mount probes; no guessed catalogued file path")
                     .accessibilityLabel("Copy current OS volume root, only after verifying explicit pairing")
                     .help("Recheck linked CTF SHA, OS UUID and mount; copies only the current mount root, NOT a file path (Command-Shift-H)")
                 Button("Refresh OS mounts") { model.refreshPhysicalPresence() }
@@ -2204,6 +2232,11 @@ private struct CandidateFolderReturnContext {
                     .keyboardShortcut("h", modifiers: [.command, .shift])
                     .accessibilityLabel("Copy freshly OS-verified volume root")
                     .help("Recheck CTF generation and paired live mount; never infer a historical file path")
+                Button("Finder") { model.openCurrentOSMountRoot() }
+                    .disabled(model.selectedDiskForPairing == nil)
+                    .keyboardShortcut("b", modifiers: [.command, .shift])
+                    .accessibilityLabel("Open OS-verified USB disk root in Finder")
+                    .help("Fresh CTF generation and two UUID/mount probes; catalogued file presence is unknown (Command-Shift-B)")
                 Button(locatorVisible ? "Hide locator" : "Show locator") {
                     locatorVisible.toggle()
                 }

@@ -101,6 +101,41 @@ class DiskLocatorWiringTests(unittest.TestCase):
         # Do not let the shortcut imply the current USB filesystem has this file.
         self.assertNotIn("FileManager.default.fileExists", MAC)
 
+    def test_ux29_open_verified_native_root_and_refuse_missing_ctf_pin(self):
+        self.assertIn("fn verified_mount_root_across_probes(", WIN)
+        self.assertIn("open_native_root_refuses_changed_mount_or_cloned_uuid", WIN)
+        self.assertIn("OPEN_VERIFIED_OS_ROOT => self.begin_verified_os_root_action(true)", WIN)
+        self.assertIn("COPY_VERIFIED_OS_ROOT => self.begin_verified_os_root_action(false)", WIN)
+        self.assertIn('self.linked_ctf.is_some()', WIN)
+        self.assertIn('self.linked_request("ctf_volumes_pinned")', WIN)
+        self.assertIn("ShellExecuteW(", WIN)
+        self.assertIn("if !PathBuf::from(&root).is_absolute()", WIN)
+        self.assertIn("verified_mount_root_across_probes(", WIN)
+        self.assertIn("message.wParam == b'B' as usize", WIN)
+        win_action = WIN.split("unsafe fn operate_verified_os_mount_root(", 1)[1].split(
+            "// Copy a physical-retrieval instruction", 1
+        )[0]
+        self.assertIn("windows_mounted_volumes()", win_action)
+        self.assertNotIn('entry["relative_path"]', win_action)
+        self.assertIn("func openCurrentOSMountRoot()", MAC)
+        self.assertIn("func copyCurrentOSMountRoot()", MAC)
+        mac_action = MAC.split("private func performCurrentOSRootAction(", 1)[1].split(
+            "func pairSelectedPhysicalDisk()", 1
+        )[0]
+        self.assertIn("if linkedCTFPath != nil", mac_action)
+        self.assertIn("guard var pinned = linkedFields()", mac_action)
+        self.assertIn('pinned["op"] = "ctf_volumes_pinned"', mac_action)
+        self.assertIn("self.mountActionGeneration == actionToken", mac_action)
+        self.assertIn("self.physicalMountEventGeneration == mountEventToken", mac_action)
+        self.assertIn("pendingMountCopy = (disk, scope, openInFinder)", mac_action)
+        self.assertNotIn("relative_path", mac_action)
+        self.assertIn("secondProbe.filter({ $0.id == verifiedID }).count == 1", MAC)
+        self.assertIn("freshMatch.currentMount == mounted.currentMount", MAC)
+        self.assertIn("NSWorkspace.shared.open(url)", MAC)
+        self.assertIn('Button("Open verified disk in Finder")', MAC)
+        self.assertIn('Button("Finder") { model.openCurrentOSMountRoot() }', MAC)
+        self.assertIn('.keyboardShortcut("b", modifiers: [.command, .shift])', MAC)
+
     def test_windows_selection_is_driven_by_current_page(self):
         self.assertIn("fn disk_locator_text(", WIN)
         self.assertIn("entry: Option<&Value>", WIN)

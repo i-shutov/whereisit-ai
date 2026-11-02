@@ -58,6 +58,7 @@ const RETRY_PAGE: usize = 148;
 const COPY_VERIFIED_OS_ROOT: usize = 149;
 const COPY_DISK_CARD: usize = 150;
 const BROWSE_RECORDED_FOLDER: usize = 151;
+const OPEN_VERIFIED_OS_ROOT: usize = 152;
 // Monotonic OS state lifetime: never trust stale green badges after suspend.
 const PHYSICAL_STATE_TTL: Duration = Duration::from_secs(12);
 
@@ -1798,9 +1799,23 @@ fn verified_mount_root(
         .cloned()
 }
 
+// Both native OS observations must resolve to the same unique, explicitly
+// paired filesystem UUID and unchanged live root; never use catalog paths.
+fn verified_mount_root_across_probes(
+    disk: i64,
+    states: &HashMap<i64, String>,
+    verified: &HashMap<i64, String>,
+    first: &[MountedPhysicalVolume],
+    second: &[MountedPhysicalVolume],
+) -> Option<String> {
+    let old = verified_mount_root(disk, states, verified, first)?;
+    let fresh = verified_mount_root(disk, states, verified, second)?;
+    (old == fresh).then_some(old)
+}
+
 #[cfg(test)]
 mod verified_mount_root_tests {
-    use super::{verified_mount_root, MountedPhysicalVolume};
+    use super::{verified_mount_root, verified_mount_root_across_probes, MountedPhysicalVolume};
     use std::collections::HashMap;
 
     #[test]
@@ -1837,6 +1852,43 @@ mod verified_mount_root_tests {
         }];
         assert_eq!(
             verified_mount_root(42, &states, &verified, &without_mount),
+            None
+        );
+    }
+
+    #[test]
+    fn open_native_root_refuses_changed_mount_or_cloned_uuid() {
+        let first = vec![MountedPhysicalVolume {
+            id: "win:{synthetic}:12345678".into(),
+            description: "synthetic mount".into(),
+            mount_roots: vec![r"R:\\".into()],
+        }];
+        let connected = HashMap::from([(42, "connected".into())]);
+        let verified = HashMap::from([(42, "win:{synthetic}:12345678".into())]);
+        assert_eq!(
+            verified_mount_root_across_probes(42, &connected, &verified, &first, &first),
+            Some(r"R:\\".into())
+        );
+        let changed = vec![MountedPhysicalVolume {
+            mount_roots: vec![r"S:\\".into()],
+            ..first[0].clone()
+        }];
+        assert_eq!(
+            verified_mount_root_across_probes(42, &connected, &verified, &first, &changed),
+            None
+        );
+        let clone_collision = [first.clone(), changed].concat();
+        assert_eq!(
+            verified_mount_root_across_probes(42, &connected, &verified, &first, &clone_collision),
+            None
+        );
+        assert_eq!(
+            verified_mount_root_across_probes(142, &connected, &verified, &first, &first),
+            None
+        );
+        let offline = HashMap::from([(42, "offline".into())]);
+        assert_eq!(
+            verified_mount_root_across_probes(42, &offline, &verified, &first, &first),
             None
         );
     }
@@ -3120,7 +3172,7 @@ struct App {
     page_ready: bool,
     page_awaiting: bool,
     page_retry_available: bool,
-    pending_mount_root: Option<(i64, u64)>,
+    pending_mount_root: Option<(i64, u64, bool)>,
     pending_disk_card: Option<(i64, u64)>,
     pending_candidate_clipboard: Option<CandidateClipboardGuard>,
     generation: u64,
@@ -3512,13 +3564,13 @@ impl App {
             let data = &reply.result["data"];
             if reply.tag == "mount_root_source" {
                 let pending = self.pending_mount_root.take();
-                if let Some((disk, generation)) = pending {
+                if let Some((disk, generation, open_in_explorer)) = pending {
                     if generation == reply.generation
                         && generation == self.generation
                         && self.selected_physical_catalog_disk() == Some(disk)
                     {
                         if reply.result["ok"] == true {
-                            self.copy_verified_os_mount_root(disk);
+                            self.operate_verified_os_mount_root(disk, open_in_explorer);
                         } else {
                             self.status("Linked CTF generation could not be verified; OS root NOT copied. Refresh source.");
                         }
@@ -4229,36 +4281,72 @@ impl App {
         }
     }
 
-    // Never copy a historical catalog path as a live OS root. Reconfirm the
-    // explicit UUID binding, then independently repeat native OS enumeration
-    // before placing the mount root on the local clipboard.
-    unsafe fn copy_verified_os_mount_root(&mut self, catalog_id: i64) {
+    // Both Copy OS root and Open in Explorer use the same fail-closed path.
+    // Only CURRENT OS observations and an explicit pairing determine the root.
+    unsafe fn operate_verified_os_mount_root(&mut self, catalog_id: i64, open_in_explorer: bool) {
         self.refresh_physical_presence();
-        let from_verified_probe = verified_mount_root(
-            catalog_id,
-            &self.physical_states,
-            &self.verified_physical_ids,
-            &self.mounted_volumes,
-        );
-        let from_fresh_probe = windows_mounted_volumes().and_then(|now| {
-            verified_mount_root(
+        let from_fresh_probe = windows_mounted_volumes();
+        let root = from_fresh_probe.as_deref().and_then(|fresh| {
+            verified_mount_root_across_probes(
                 catalog_id,
                 &self.physical_states,
                 &self.verified_physical_ids,
-                &now,
+                &self.mounted_volumes,
+                fresh,
             )
         });
-        let Some(root) = from_verified_probe.filter(|root| Some(root) == from_fresh_probe.as_ref())
-        else {
-            self.status("Current OS mount path NOT verified. Pair the physical disk, refresh and retry; no historical drive letters are used.");
+        let Some(root) = root else {
+            self.status("OS volume root NOT verified: two unchanged native UUID/mount probes and explicit pairing are required.");
             return;
         };
-        self.text(self.locator, &root);
-        SendMessageW(self.locator, EM_SETSEL, 0, -1);
-        SendMessageW(self.locator, WM_COPY, 0, 0);
-        SendMessageW(self.locator, EM_SETSEL, 0, 0);
-        self.update_disk_locator();
-        self.status("CURRENT OS volume root copied locally after a new UUID probe. File existence and bytes NOT verified.");
+        if open_in_explorer {
+            // ShellExecuteW receives a path, NOT a command string or
+            // historical catalog relative_path. It never opens file bytes.
+            if !PathBuf::from(&root).is_absolute() {
+                self.status("The OS volume root is not absolute; Explorer was NOT opened.");
+                return;
+            }
+            let result = ShellExecuteW(
+                self.hwnd,
+                wide("open").as_ptr(),
+                wide(&root).as_ptr(),
+                null(),
+                null(),
+                SW_SHOWNORMAL,
+            );
+            if (result as isize) > 32 {
+                self.status("Explorer accepted the OS-verified disk root request; catalogued files and bytes remain UNVERIFIED.");
+            } else {
+                self.status("Explorer could not open the verified disk root. Recheck the physical volume.");
+            }
+        } else {
+            self.text(self.locator, &root);
+            SendMessageW(self.locator, EM_SETSEL, 0, -1);
+            SendMessageW(self.locator, WM_COPY, 0, 0);
+            SendMessageW(self.locator, EM_SETSEL, 0, 0);
+            self.update_disk_locator();
+            self.status("CURRENT OS volume root copied after two UUID probes. File existence and bytes NOT verified.");
+        }
+    }
+
+    unsafe fn begin_verified_os_root_action(&mut self, open_in_explorer: bool) {
+        let Some(disk) = self.selected_physical_catalog_disk() else {
+            self.status("Select a current file or catalog disk before using its live OS root.");
+            return;
+        };
+        // A partially-linked CTF is still linked: missing generation must
+        // never fall through to the unpinned path.
+        if self.linked_ctf.is_some() {
+            if let Some(pinned) = self.linked_request("ctf_volumes_pinned") {
+                self.pending_mount_root = Some((disk, self.generation, open_in_explorer));
+                self.status("Checking linked CTF generation before live OS root action...");
+                self.call("mount_root_source", pinned);
+            } else {
+                self.status("Linked CTF generation not verified; no OS root copied or opened.");
+            }
+        } else {
+            self.operate_verified_os_mount_root(disk, open_in_explorer);
+        }
     }
 
     // Copy a physical-retrieval instruction even for a disk selected only in
@@ -5351,26 +5439,8 @@ impl App {
                     self.write_candidate_clipboard(COPY_PICKUP_PLAN);
                 }
             }
-            COPY_VERIFIED_OS_ROOT => {
-                let Some(catalog_id) = self.selected_physical_catalog_disk() else {
-                    self.status(
-                        "Select a current file or catalog disk before copying a live OS root.",
-                    );
-                    return;
-                };
-                if self.linked_mode() {
-                    if let Some(pinned) = self.linked_request("ctf_volumes_pinned") {
-                        // Revalidate linked CTF generation asynchronously; never
-                        // freeze Win32 while the source reader checks the SHA.
-                        self.pending_mount_root = Some((catalog_id, self.generation));
-                        self.call("mount_root_source", pinned);
-                    } else {
-                        self.status("Linked CTF generation cannot be checked; OS root NOT copied.");
-                    }
-                } else {
-                    self.copy_verified_os_mount_root(catalog_id);
-                }
-            }
+            COPY_VERIFIED_OS_ROOT => self.begin_verified_os_root_action(false),
+            OPEN_VERIFIED_OS_ROOT => self.begin_verified_os_root_action(true),
             COPY_DISK_CARD => {
                 let Some(catalog_id) = self.selected_physical_catalog_disk() else {
                     self.status("Select a file or catalog disk before copying its pickup card.");
@@ -5760,6 +5830,7 @@ impl App {
             (PHYSICAL_PAIR, h - 185),
             (PHYSICAL_UNPAIR, h - 155),
             (BROWSE_RECORDED_FOLDER, h - 108),
+            (OPEN_VERIFIED_OS_ROOT, h - 108),
             (FILE_COPIES, h - 78),
             (REVEAL_DISK, h - 78),
             (COPY_LOCATOR, h - 48),
@@ -5770,6 +5841,8 @@ impl App {
                     let left = 214 + file_width + 8;
                     let half = (locator_width - 6) / 2;
                     let (button_left, button_width) = match command {
+                        BROWSE_RECORDED_FOLDER => (left, half),
+                        OPEN_VERIFIED_OS_ROOT => (left + half + 6, locator_width - half - 6),
                         FILE_COPIES => (left, half),
                         REVEAL_DISK => (left + half + 6, locator_width - half - 6),
                         COPY_LOCATOR => (left, half),
@@ -5905,6 +5978,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 (REVEAL_DISK, "&Show disk"),
                 (COPY_LOCATOR, "Copy &locator text"),
                 (COPY_VERIFIED_OS_ROOT, "Copy OS &root"),
+                (OPEN_VERIFIED_OS_ROOT, "Open OS &root"),
                 (COPY_CONNECTED, "&Verified copy"),
                 (COPY_PICKUP_PLAN, "Copy &pickup list"),
                 (COPY_PAGE_MANIFEST, "Copy page &paths"),
@@ -6413,6 +6487,12 @@ pub fn run() {
                 AppendMenuW(
                     view,
                     MF_STRING,
+                    OPEN_VERIFIED_OS_ROOT,
+                    wide("Open OS-verified disk root in Explorer\tCtrl+Shift+B").as_ptr(),
+                );
+                AppendMenuW(
+                    view,
+                    MF_STRING,
                     REVEAL_DISK,
                     wide("Show selected file's disk in register\tCtrl+J").as_ptr(),
                 );
@@ -6535,6 +6615,15 @@ pub fn run() {
                 && message.wParam == b'H' as usize
             {
                 (*app).command(COPY_VERIFIED_OS_ROOT, 0);
+                continue;
+            }
+            // Ctrl+Shift+B opens only the freshly OS-confirmed physical root.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && GetKeyState(VK_SHIFT as i32) < 0
+                && message.wParam == b'B' as usize
+            {
+                (*app).command(OPEN_VERIFIED_OS_ROOT, 0);
                 continue;
             }
             // Ctrl+Shift+P copies only local catalog metadata, never live
