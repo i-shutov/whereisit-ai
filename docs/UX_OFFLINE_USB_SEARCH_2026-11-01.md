@@ -539,3 +539,15 @@ Windows compiled synthetic tests and dual-native Python contracts added.
 See [UX33 runbook](qa/UX33_LIVE_OS_BADGES_IN_RESULTS_20261102.md).
 Native exact-HEAD CI and human hardware/visual tests remain essential;
 stable 1.0 release gates are unchanged.
+
+## UX34 — consistent live OS status on every retrieval surface (2026-11-02)
+
+Fixed an independent status inconsistency: the search-row badge already
+required an actual verified OS identity, while secondary native disk/copy
+views sometimes trusted only the physical-status service string. Windows
+now reuses one freshly verified ID+TTL state in the native register,
+copy-disk picker, inspector, pickup cards and clipboard, ranking, filtering
+and sole-connected shortcut; macOS central physicalState requires exactly
+one current OS observation of a verified non-empty filesystem UUID.
+Synthetic regression/runbook: [UX34](qa/UX34_CONSISTENT_OS_STATUS_20261102.md).
+Exact new-head CI and real USB/GUI acceptance remain separate release gates.

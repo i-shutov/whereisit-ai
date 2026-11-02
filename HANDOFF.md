@@ -1,3 +1,30 @@
+## UX34 — consistent fail-closed OS status across all retrieval surfaces (2026-11-02)
+
+Draft PR #57, integrated native Windows Win32 + macOS SwiftUI fix. Source
+review after UX33 revealed that the dense result row verified the presence
+of a non-empty OS-matched ID, while other retrieval UI reused only raw
+`connected` service state. Candidate picker, disk register, context inspector,
+pickup clipboard, OS status filter and "sole connected copy" could thus present
+an unverified volume as OS-verified. Windows now uses one audited ID-and-TTL
+state snapshot for all physical retrieval views. Mac central
+`physicalState` additionally requires exactly one fresh OS observation
+of the verified nonempty filesystem UUID. The shared result and candidate
+surfaces must agree; no current file or content-hash assertion is added.
+Repaint when verified identity changes even if the status string is identical.
+
+Synthetic Windows compiled regression and dual-native Python integration
+contracts added; see [UX34 runbook](docs/qa/UX34_CONSISTENT_OS_STATUS_20261102.md).
+**Exact new HEAD CI unverified at source integration:** check native
+Linux/Windows/macOS ARM/Intel, offline, integration and installed RC2→RC3.
+An immediately previous UX33 installed ARM64 upgrade job was cancelled
+before steps and rerun as a transient runner issue; this is NOT evidence
+of a product test failure. PR draft/unmerged, RC3 unsigned prerelease;
+original modified/historical CTF, real USB and GUI, signing/notarization,
+real p95 <=150ms and stable 1.0 remain blocked. No private CTF, cache,
+user annotation, paths, hashes or other repositories touched.
+
+---
+
 ## UX33 exact-HEAD CI diagnosis and Rustfmt correction (2026-11-02)
 
 At first UX33 complete source+docs SHA

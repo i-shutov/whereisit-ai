@@ -284,6 +284,73 @@ fn verified_row_os_state<'a>(
     state
 }
 
+/* One fail-closed OS state for the register, copy picker, locator, clipboard
+ * and result rows. An unpaired raw "connected" service string cannot be
+ * presented as verified without the identity and a fresh complete OS scan.
+ */
+fn verified_physical_state_map(
+    states: &HashMap<i64, String>,
+    verified_ids: &HashMap<i64, String>,
+    probe_fresh: bool,
+) -> HashMap<i64, String> {
+    states
+        .keys()
+        .map(|&disk| {
+            (
+                disk,
+                verified_row_os_state(Some(disk), states, verified_ids, probe_fresh).to_owned(),
+            )
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod ux34_consistent_os_status_tests {
+    use super::{
+        audited_register_filter_indices, candidate_disk_choice_caption,
+        candidate_disk_pickup_list, sole_connected_candidate_disk, verified_physical_state_map,
+    };
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    #[test]
+    fn missing_id_never_promotes_candidate_or_pickup_to_connected() {
+        let raw = HashMap::from([(42, "connected".to_owned()), (142, "offline".to_owned())]);
+        let groups = vec![json!({"volume_id":42,"count":3,"label":"Archive"})];
+        let labels = HashMap::from([(42, "Полка А".to_owned())]);
+        let no_ids = HashMap::new();
+        let safe = verified_physical_state_map(&raw, &no_ids, true);
+        assert_eq!(safe.get(&42).map(String::as_str), Some("unverified"));
+        assert_eq!(safe.get(&142).map(String::as_str), Some("offline"));
+        assert_eq!(sole_connected_candidate_disk(&groups, &safe), None);
+        let picker = candidate_disk_choice_caption(&groups[0], &labels, &safe);
+        assert!(picker.contains("not verified"));
+        assert!(!picker.contains("OS verified now"));
+        let plan = candidate_disk_pickup_list(
+            "movie.mkv", &groups, &labels, &safe, &HashMap::new(),
+        )
+        .unwrap();
+        assert!(plan.contains("not verified"));
+        assert!(!plan.contains("OS verified now"));
+        let disks = vec![json!({"id":42}), json!({"id":142})];
+        assert_eq!(
+            audited_register_filter_indices(
+                &disks, &labels, &HashMap::new(), &safe, true, "state:connected",
+            ),
+            Some(vec![])
+        );
+
+        let ids = HashMap::from([(42, "win:synthetic-unique-uuid".to_owned())]);
+        let verified = verified_physical_state_map(&raw, &ids, true);
+        assert_eq!(sole_connected_candidate_disk(&groups, &verified), Some(42));
+        assert!(candidate_disk_choice_caption(&groups[0], &labels, &verified)
+            .contains("OS verified now"));
+        let stale = verified_physical_state_map(&raw, &ids, false);
+        assert_eq!(sole_connected_candidate_disk(&groups, &stale), None);
+        assert_eq!(stale.get(&142).map(String::as_str), Some("unverified"));
+    }
+}
+
 #[cfg(test)]
 mod result_disk_live_os_tests {
     use super::{result_disk_caption, result_disk_status_caption, verified_row_os_state};
@@ -3459,6 +3526,15 @@ struct App {
     rx: Receiver<Reply>,
 }
 impl App {
+    fn safe_physical_states(&self) -> HashMap<i64, String> {
+        verified_physical_state_map(
+            &self.physical_states,
+            &self.verified_physical_ids,
+            self.physical_probe_ok
+                && physical_probe_is_fresh(self.physical_verified_at, Instant::now()),
+        )
+    }
+
     fn new() -> Self {
         let (tx, rx) = mpsc::channel();
         let (locator_visible, locator_width) = read_ui_layout_preferences();
@@ -4464,6 +4540,7 @@ impl App {
     }
 
     unsafe fn populate_physical_disk_list(&mut self) {
+        let safe_states = self.safe_physical_states();
         let candidate_mode = self
             .disk_filter_query
             .trim()
@@ -4473,7 +4550,7 @@ impl App {
                 candidate_register_indices(
                     &self.volumes,
                     &self.copy_disk_groups,
-                    &self.physical_states,
+                    &safe_states,
                 )
             } else {
                 vec![]
@@ -4482,7 +4559,7 @@ impl App {
             &self.volumes,
             &self.shelf_labels,
             &self.shelf_tag_conflicts,
-            &self.physical_states,
+            &safe_states,
             self.physical_probe_ok,
             &self.disk_filter_query,
         ) {
@@ -4495,7 +4572,7 @@ impl App {
             &self.volumes,
             &self.shelf_labels,
             &self.shelf_tag_conflicts,
-            &self.physical_states,
+            &safe_states,
             self.physical_probe_ok,
         );
         let global_label = format!(
@@ -4517,8 +4594,7 @@ impl App {
         );
         for &volume_index in &self.visible_disk_indices {
             let disk = &self.volumes[volume_index];
-            let badge = match self
-                .physical_states
+            let badge = match safe_states
                 .get(&id(disk).unwrap_or_default())
                 .map(String::as_str)
             {
@@ -4547,7 +4623,7 @@ impl App {
                         disk,
                         group,
                         &self.shelf_labels,
-                        &self.physical_states,
+                        &safe_states,
                         warning != "",
                     )
                 } else {
@@ -4614,6 +4690,7 @@ impl App {
         // Fail closed until the service has checked scope, mappings and collisions.
         let reply = self.physical_request("physical_status", None, None, None);
         let old_states = self.physical_states.clone();
+        let old_verified_ids = self.verified_physical_ids.clone();
         self.physical_states.clear();
         self.verified_physical_ids.clear();
         let accepted = self.physical_probe_ok
@@ -4642,7 +4719,7 @@ impl App {
                 }
             }
         }
-        if old_states != self.physical_states {
+        if old_states != self.physical_states || old_verified_ids != self.verified_physical_ids {
             self.populate_physical_disk_list();
             // USB reconnect/unplug must also repaint current copy disk badges.
             if self.copy_source.is_some() {
@@ -4758,7 +4835,12 @@ impl App {
         };
         let probe_fresh = self.physical_probe_ok
             && physical_probe_is_fresh(self.physical_verified_at, Instant::now());
-        let state = audited_physical_state(catalog_id, &self.physical_states, probe_fresh);
+        let state = verified_row_os_state(
+            Some(catalog_id),
+            &self.physical_states,
+            &self.verified_physical_ids,
+            probe_fresh,
+        );
         let card = self
             .volumes
             .iter()
@@ -4897,7 +4979,7 @@ impl App {
             return;
         }
         let Some(volume) =
-            sole_connected_candidate_disk(&self.copy_disk_groups, &self.physical_states)
+            sole_connected_candidate_disk(&self.copy_disk_groups, &self.safe_physical_states())
         else {
             self.status(
                 "Zero or several candidate disks are OS-verified; choose a specific disk manually.",
@@ -4910,6 +4992,7 @@ impl App {
     }
 
     unsafe fn populate_candidate_disk_picker(&self) {
+        let safe_states = self.safe_physical_states();
         SendMessageW(self.copy_disk_filter, CB_RESETCONTENT, 0, 0);
         if let Some((_, button)) = self.buttons.iter().find(|(id, _)| *id == COPY_CONNECTED) {
             ShowWindow(
@@ -4940,9 +5023,9 @@ impl App {
             0,
             wide(&caption).as_ptr() as isize,
         );
-        for group in ordered_candidate_disks(&self.copy_disk_groups, &self.physical_states) {
+        for group in ordered_candidate_disks(&self.copy_disk_groups, &safe_states) {
             let caption =
-                candidate_disk_choice_caption(group, &self.shelf_labels, &self.physical_states);
+                candidate_disk_choice_caption(group, &self.shelf_labels, &safe_states);
             let warning = group["volume_id"]
                 .as_i64()
                 .and_then(|disk| shelf_collision_warning(disk, &self.shelf_tag_conflicts))
@@ -4958,7 +5041,7 @@ impl App {
         let selection = self
             .copy_focus_volume_id
             .and_then(|focused| {
-                ordered_candidate_disks(&self.copy_disk_groups, &self.physical_states)
+                ordered_candidate_disks(&self.copy_disk_groups, &safe_states)
                     .iter()
                     .position(|group| group["volume_id"].as_i64() == Some(focused))
             })
@@ -4969,6 +5052,7 @@ impl App {
     }
 
     unsafe fn update_disk_locator(&self) {
+        let safe_states = self.safe_physical_states();
         let index = SendMessageW(
             self.files,
             LVM_GETNEXTITEM,
@@ -4987,7 +5071,7 @@ impl App {
             selected,
             &disk,
             self.linked_mode(),
-            self.physical_states
+            safe_states
                 .get(
                     &selected
                         .and_then(|row| row["volume_id"].as_i64())
@@ -5013,14 +5097,14 @@ impl App {
         }
         if self.copy_source.is_some() && !self.copy_disk_groups.is_empty() {
             inspector.push_str("\r\n\r\nCOPIES BY CATALOG DISK (metadata only)");
-            for group in ordered_candidate_disks(&self.copy_disk_groups, &self.physical_states) {
+            for group in ordered_candidate_disks(&self.copy_disk_groups, &safe_states) {
                 let mark = if group["volume_id"].as_i64() == self.copy_focus_volume_id {
                     " [FILTERED]"
                 } else {
                     ""
                 };
                 let caption =
-                    candidate_disk_choice_caption(group, &self.shelf_labels, &self.physical_states);
+                    candidate_disk_choice_caption(group, &self.shelf_labels, &safe_states);
                 inspector.push_str(&format!("\r\n{caption}{mark}"));
             }
         }
@@ -5496,7 +5580,7 @@ impl App {
                         name,
                         &self.copy_disk_groups,
                         &self.shelf_labels,
-                        &self.physical_states,
+                        &self.safe_physical_states(),
                         &self.shelf_tag_conflicts,
                     )
                 }) else {
@@ -5647,7 +5731,7 @@ impl App {
                 self.copy_focus_volume_id = if selected == 0 {
                     None
                 } else {
-                    ordered_candidate_disks(&self.copy_disk_groups, &self.physical_states)
+                    ordered_candidate_disks(&self.copy_disk_groups, &self.safe_physical_states())
                         .get(selected as usize - 1)
                         .and_then(|group| group["volume_id"].as_i64())
                 };

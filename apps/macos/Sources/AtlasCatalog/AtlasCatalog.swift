@@ -736,7 +736,16 @@ private struct CandidateFolderReturnContext {
             return "unverified"
         }
         switch physicalStates[id] {
-        case "connected": return "connected"
+        case "connected":
+            // The connected state is shared by ALL native panels. Neither
+            // a service label alone nor an unobserved/duplicated filesystem
+            // UUID establishes current physical attachment.
+            guard let verifiedID = verifiedPhysicalIDs[id],
+                  !verifiedID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  mountedPhysicalVolumes.filter({ $0.id == verifiedID }).count == 1 else {
+                return "unverified"
+            }
+            return "connected"
         case "offline": return "offline"
         case "conflict": return "conflict"
         default: return "unverified"

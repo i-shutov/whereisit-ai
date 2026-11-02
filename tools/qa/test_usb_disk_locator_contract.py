@@ -16,6 +16,33 @@ PHYSICAL = (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encod
 
 
 class DiskLocatorWiringTests(unittest.TestCase):
+
+    def test_ux34_verified_identity_is_shared_by_all_native_physical_ui(self):
+        self.assertIn("fn verified_physical_state_map(", WIN)
+        self.assertIn("fn safe_physical_states(&self)", WIN)
+        self.assertIn("missing_id_never_promotes_candidate_or_pickup_to_connected", WIN)
+        register = WIN.split("unsafe fn populate_physical_disk_list(", 1)[1].split(
+            "unsafe fn invalidate_physical_presence(", 1)[0]
+        self.assertIn("let safe_states = self.safe_physical_states();", register)
+        self.assertIn("&safe_states", register)
+        self.assertIn("safe_states", register.split("let badge = match", 1)[1])
+        chooser = WIN.split("unsafe fn populate_candidate_disk_picker(", 1)[1].split(
+            "unsafe fn update_disk_locator(", 1)[0]
+        self.assertIn("let safe_states = self.safe_physical_states();", chooser)
+        self.assertIn("candidate_disk_choice_caption(group, &self.shelf_labels, &safe_states)", chooser)
+        focus = WIN.split("unsafe fn focus_sole_connected_copy(", 1)[1].split(
+            "unsafe fn populate_candidate_disk_picker(", 1)[0]
+        self.assertIn("sole_connected_candidate_disk(&self.copy_disk_groups, &self.safe_physical_states())", focus)
+        clipboard = WIN.split("unsafe fn write_candidate_clipboard(", 1)[1].split(
+            "unsafe fn verify_candidate_clipboard(", 1)[0]
+        self.assertIn("&self.safe_physical_states()", clipboard)
+        self.assertIn("old_verified_ids != self.verified_physical_ids", WIN)
+        mac_status = MAC.split("func physicalState(_ id: Int64)", 1)[1].split(
+            "func candidateCopyOSCaption(", 1)[0]
+        self.assertIn("verifiedPhysicalIDs[id]", mac_status)
+        self.assertIn("mountedPhysicalVolumes.filter({ $0.id == verifiedID }).count == 1", mac_status)
+        self.assertIn('case "connected": return "OS verified now"', MAC)
+
     def test_ux33_live_result_os_badges_are_reactive_and_fail_closed(self):
         # Test source wiring in addition to compiled synthetic Windows tests.
         self.assertIn("fn verified_row_os_state<'a>(", WIN)
@@ -538,7 +565,7 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("fn candidate_disk_choice_caption(", WIN)
         self.assertIn("candidate_picker_keeps_exact_disk_sticker_and_uncertain_os_state", WIN)
         picker = WIN.split("unsafe fn populate_candidate_disk_picker(", 1)[1].split("unsafe fn update_disk_locator(", 1)[0]
-        self.assertIn("candidate_disk_choice_caption(group, &self.shelf_labels, &self.physical_states)", picker)
+        self.assertIn("candidate_disk_choice_caption(group, &self.shelf_labels, &safe_states)", picker)
         refresh = WIN.split("unsafe fn refresh_shelf_labels(", 1)[1].split("unsafe fn save_shelf_label(", 1)[0]
         self.assertIn("self.populate_candidate_disk_picker();", refresh)
         self.assertIn("func candidateCopyDiskCaption(_ group: CandidateDiskGroup)", MAC)
@@ -563,7 +590,7 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("SendMessageW(self.locator, WM_COPY, 0, 0)", WIN)
         copy_action = WIN.split("COPY_PICKUP_PLAN => {", 1)[1].split("COPY_LOCATOR => {", 1)[0]
         self.assertIn("self.update_disk_locator();", copy_action)
-        self.assertIn("ordered_candidate_disks(&self.copy_disk_groups, &self.physical_states)", WIN)
+        self.assertIn("ordered_candidate_disks(&self.copy_disk_groups, &safe_states)", WIN)
         self.assertIn("var orderedCopyDiskGroups: [CandidateDiskGroup]", MAC)
         self.assertIn("func copyPickupPlan()", MAC)
         self.assertIn('Button("Copy pickup list") { model.copyPickupPlan() }', MAC)
@@ -622,7 +649,7 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn('eq_ignore_ascii_case("copies:")', WIN)
         self.assertIn("COPY_REGISTER_FILTER => {", WIN)
         self.assertIn("(*app).command(COPY_REGISTER_FILTER, 0)", WIN)
-        self.assertRegex(WIN, r"candidate_register_indices\(\s*&self\.volumes,\s*&self\.copy_disk_groups,\s*&self\.physical_states,")
+        self.assertRegex(WIN, r"candidate_register_indices\(\s*&self\.volumes,\s*&self\.copy_disk_groups,\s*&safe_states,")
         self.assertIn('self.disk_filter_query = "copies:".to_owned();', WIN)
         rows_handler = WIN.split('"rows" => {', 1)[1].split('"maintenance" => {', 1)[0]
         self.assertIn('eq_ignore_ascii_case("copies:")', rows_handler)
