@@ -517,3 +517,25 @@ guessed and SwiftUI supplies complete VoiceOver/Help text. This is catalog
 metadata, not OS-verified presence or byte/hash equality. No CTF/cache/user
 annotation changes. Manual GUI/hardware and exact-HEAD CI are still required.
 See docs/qa/UX32_RESULT_DISK_ID_SHELF_20261102.md.
+
+
+## UX33 — current OS pairing markers in dense search results (2026-11-02)
+
+To answer "which physical disk should I fetch?" without opening the
+inspector, both native result tables place a brief state immediately after
+the exact catalog ID: #42 [OS+] • Shelf • Archive, with shared tags still
+flagged. [OS+] requires an explicit paired disk UUID and fresh complete OS
+scan plus verified identity from the service; [OFF] is a paired UUID
+absent in a complete scan; [ID!] is conflict; [?] is missing, stale or
+unverified. These are *volume presence/identity* markers, never file
+existence, byte/hashing equality or permission to delete.
+
+Windows updates just the loaded 250-row Disk subitems after native
+hotplug, expiry and status refresh without losing ListView focus/selection.
+macOS uses its existing published OS state and gives a full accessible
+description with the no-bytes-verified disclaimer. No filesystem scan per
+file row, no use of historical disk letters, CTF mutations or notes writes.
+Windows compiled synthetic tests and dual-native Python contracts added.
+See [UX33 runbook](qa/UX33_LIVE_OS_BADGES_IN_RESULTS_20261102.md).
+Native exact-HEAD CI and human hardware/visual tests remain essential;
+stable 1.0 release gates are unchanged.

@@ -1,3 +1,42 @@
+## UX33 — OS-paired physical status in ID-first native search results (2026-11-02)
+
+Same draft PR #57: the dense Windows Win32 ListView and macOS SwiftUI Table
+now display a compact current-OS badge directly after the exact catalog
+disk ID, before historical labels and private shelf/sticker tags.
+
+[OS+] means a unique explicitly paired filesystem identity was matched by
+a fresh COMPLETE native OS scan and the physical-status service returned a
+verified identity. [OFF] means the explicitly paired identity was absent
+from a complete scan. [ID!] is identity conflict. [?] means unverified,
+expired, missing identity, unpaired, or incomplete/failed probe.
+NO marker proves that a catalogued movie exists on the current mount,
+matches bytes or hashes, or can be deleted safely.
+
+Windows rechecks monotonic freshness, repaints ONLY the Disk subitem on
+periodic success/failure, USB invalidation and TTL expiry (no ListView
+rebuild, no focus or selection loss). A service state string without a
+verified physical identity cannot produce [OS+]. macOS computes the same
+markers from the existing published TTL-guarded physicalState and checked
+verifiedPhysicalIDs, and gives full VoiceOver/Help descriptions.
+
+Synthetic compiled Windows tests cover exact IDs, shared Cyrillic shelf
+stickers, failed/stale probes, missing physical identity and four states;
+dual-native Python source integration tests cover reactivity, event
+invalidation and accessible captions. No per-row filesystem access, no
+CTF/derived-cache/private-note mutation, no historical mount inference.
+Runbook: docs/qa/UX33_LIVE_OS_BADGES_IN_RESULTS_20261102.md.
+
+**Exact HEAD CI must be independently verified after this commit.**
+Required: native Linux/Windows/macOS ARM64+Intel, offline acceptance,
+integration regressions and installed RC2-to-RC3 upgrades. PR is draft;
+NO merge or stable 1.0. The real 44-disk/3,046,027-record CTF previously
+passed documented private acceptance; this is separate from synthetic CI.
+Original modified/historical CTF bytes, manual Win10/11/Mac Intel/ARM USB
+GUI and accessibility, real p95 <=150 ms, signing/notarization remain
+release blockers. FlowBridge/TikZarium and user files untouched.
+
+---
+
 ## UX32 Windows live shelf-refresh integration correction (2026-11-02)
 
 After adding exact ID/sticker to the result Disk cell, source review found
