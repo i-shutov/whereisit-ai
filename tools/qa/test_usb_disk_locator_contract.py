@@ -454,6 +454,27 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn('.keyboardShortcut("n", modifiers: [.command, .shift])', MAC)
         self.assertIn('copyReturn = CopyReturnContext(volumeID: volumeID, stack: stack,', MAC)
 
+    def test_ux18_renamed_file_size_candidates_are_exact_global_and_read_only(self):
+        parser = (ROOT / "crates/atlas-core/src/query.rs").read_text(encoding="utf-8")
+        catalog = (ROOT / "crates/atlas-core/tests/catalog.rs").read_text(encoding="utf-8")
+        self.assertIn('"kind" if v == "file" =>', parser)
+        self.assertIn('same_recorded_size_search_finds_renamed_files_across_offline_disks_only', catalog)
+        self.assertIn('fn exact_recorded_size_query(size: Option<u64>) -> Option<String>', WIN)
+        self.assertIn('positive_exact_bytes_only_and_overflow_refused', WIN)
+        self.assertIn('if !self.page_ready || self.copy_source.is_some()', WIN)
+        self.assertIn('SAME_RECORDED_SIZE => self.search_same_recorded_size()', WIN)
+        self.assertIn("message.wParam == b'S' as usize", WIN)
+        self.assertIn('GLOBAL exact byte-size file candidates', WIN)
+        self.assertIn('self.copy_return = Some(CopyReturn {', WIN)
+        self.assertIn('func exactRecordedSizeQuery(_ size: Int64?) -> String?', MAC)
+        self.assertIn('func searchSameRecordedSizeAcrossDisks()', MAC)
+        self.assertIn('guard pageReady, copySourceID == nil', MAC)
+        self.assertIn('Button("Find same byte size (any filename)")', MAC)
+        self.assertIn('.keyboardShortcut("s", modifiers: [.command, .shift])', MAC)
+        self.assertIn('EXACT RECORDED SIZE • ALL DISKS • FILE CONTENT UNVERIFIED', MAC)
+        self.assertIn('copyReturn = CopyReturnContext(volumeID: volumeID, stack: stack,', MAC)
+        self.assertIn('load() // source SHA is freshly checked', MAC)
+
     def test_no_unverified_physical_drive_claims_in_locator(self):
         self.assertIn("Physical connection: NOT VERIFIED", WIN)
         self.assertIn("Physical connection not verified", MAC)

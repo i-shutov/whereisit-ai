@@ -446,3 +446,45 @@ fn video_extension_search_across_disconnected_disks_is_metadata_only() {
         0
     );
 }
+
+#[test]
+fn same_recorded_size_search_finds_renamed_files_across_offline_disks_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut catalog = Catalog::open(dir.path().join("same-size.sqlite")).unwrap();
+    let first = catalog
+        .bulk_import("Media A", "offline:a", |writer| {
+            writer.insert(&entry("Фильм.mkv", 1_048_576))?;
+            writer.insert(&entry("unrelated.txt", 100))?;
+            Ok(())
+        })
+        .unwrap();
+    let second = catalog
+        .bulk_import("Media B", "offline:b", |writer| {
+            writer.insert(&entry("Renamed Movie.mp4", 1_048_576))?;
+            writer.insert(&entry("Different.mkv", 1_048_577))?;
+            Ok(())
+        })
+        .unwrap();
+    catalog
+        .bulk_import("Media C", "offline:c", |writer| {
+            writer.insert(&entry("Другое имя.avi", 1_048_576))?;
+            writer.insert(&entry("empty.dat", 0))?;
+            let mut directory = entry("directory-with-size", 1_048_576);
+            directory.kind = "directory".into();
+            writer.insert(&directory)?;
+            Ok(())
+        })
+        .unwrap();
+    let query = "size:1048576 AND kind:file";
+    let page = catalog.search(query, None, 0, 1).unwrap();
+    assert_eq!(page.total, 3);
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(catalog.search(query, None, 1, 1).unwrap().items.len(), 1);
+    assert_eq!(catalog.search(query, None, 2, 1).unwrap().items.len(), 1);
+    assert_eq!(catalog.search(query, None, 3, 1).unwrap().items.len(), 0);
+    assert_eq!(catalog.search(query, Some(first.id), 0, 20).unwrap().total, 1);
+    assert_eq!(catalog.search(query, Some(second.id), 0, 20).unwrap().total, 1);
+    assert_eq!(catalog.search("size:1048577 AND kind:file", None, 0, 20).unwrap().total, 1);
+    assert_eq!(catalog.search("size:0 AND kind:file", None, 0, 20).unwrap().total, 1);
+    assert!(catalog.search("size:1048576 AND kind:movie", None, 0, 20).is_err());
+}

@@ -315,3 +315,17 @@ Win32 Ctrl+Shift+V / SwiftUI Command+Shift+V toggle a visible, reversible `type:
 ## UX17 — exact filename across all disks, irrespective of size (2026-11-02)
 
 A selected real file row can issue an editable, literal `name_exact:"..."` query across the complete offline catalog, irrespective of recorded byte size. Windows Win32 exposes View/Ctrl+Shift+N; macOS SwiftUI provides the locator button and Command+Shift+N. Exact match escapes quotes/backslashes, binds the parameter (no SQL interpolation), rejects query overflow, hides stale rows, and Back restores prior search and page. This complements the stricter same-name+size metadata candidates and can identify alternative file sizes, **not equivalent bytes or actual present USB files**. Linked CTF remains SHA-generation-verified/read-only; no user pairing/annotation writes. [UX17 runbook](qa/UX17_LITERAL_FILENAME_ALL_DISKS_20261102.md). Human hardware/a11y QA and real p95 still pending; draft PR only.
+
+
+## UX18 — renamed-file candidates from exact recorded bytes (2026-11-02)
+
+Both native clients offer a selected-file global query for the **same exact
+positive recorded byte size regardless of filename**, complementary to UX3
+(name+size) and UX17 (literal name/any size). The query is bounded to file-kind
+rows, results page normally, and returns to the prior scope through Back. It
+never reads USB bytes, verifies hashes, infers live mounts, or recommends
+deletion; the match is particularly weak for common file sizes. Disabled for
+stale selection and missing/zero/invalid sizes. Linked original CTF generation
+is SHA-verified per request as before. See
+[UX18 runbook](qa/UX18_SAME_SIZE_RENAMED_CANDIDATES_20261102.md).
+Physical GUI QA and real 3M-row search SLO remain unverified.

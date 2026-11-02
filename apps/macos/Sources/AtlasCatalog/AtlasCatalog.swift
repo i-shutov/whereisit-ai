@@ -925,6 +925,27 @@ private struct CopyReturnContext {
         showingDuplicates = false; query = expression; appliedQuery = expression
         load() // existing pinned CTF search, with generation check on every page.
     }
+    // Size-only search exposes possible renamed files; name, file bytes and
+    // media identity are NOT compared. Limit the key to valid signed bytes.
+    static func exactRecordedSizeQuery(_ size: Int64?) -> String? {
+        guard let size, size > 0 else { return nil }
+        return "size:\(size) AND kind:file"
+    }
+    func searchSameRecordedSizeAcrossDisks() {
+        guard pageReady, copySourceID == nil, let entry = selected,
+              entry.kind == "file",
+              let expression = Self.exactRecordedSizeQuery(entry.size) else {
+            status = "Select a current file with a positive recorded byte size outside copy mode."
+            return
+        }
+        copyReturn = CopyReturnContext(volumeID: volumeID, stack: stack,
+            query: query, appliedQuery: appliedQuery, offset: offset,
+            showingDuplicates: showingDuplicates, appliedDuplicateMode: appliedDuplicateMode)
+        copySourceID = nil; copySourceName = nil
+        volumeID = nil; stack = [(nil, "/")]; offset = 0
+        showingDuplicates = false; query = expression; appliedQuery = expression
+        load() // source SHA is freshly checked by the existing pinned CTF search.
+    }
     func copiesOfSelected() {
         guard let entry = selected, entry.kind == "file", entry.size != nil else {
             status = "Select a file with recorded size to find catalogued metadata copies."
@@ -964,6 +985,10 @@ private struct CopyReturnContext {
         if copySourceID != nil { return "COPY CANDIDATES • ALL CATALOGUED DISKS" }
         if showingDuplicates { return "METADATA DUPLICATES • ALL CATALOGUED DISKS" }
         if !appliedQuery.isEmpty {
+            if volumeID == nil && appliedQuery.hasPrefix("size:")
+                && appliedQuery.hasSuffix(" AND kind:file") {
+                return "EXACT RECORDED SIZE • ALL DISKS • FILE CONTENT UNVERIFIED"
+            }
             return volumeID.map { "SEARCH IN CATALOG DISK: " + volumeLabel($0) }
                 ?? "SEARCH • ALL CATALOGUED DISKS"
         }
@@ -1592,6 +1617,12 @@ private struct CopyReturnContext {
                         .keyboardShortcut("n", modifiers: [.command, .shift])
                         .accessibilityLabel("Search exact catalog filename across all disks, ignoring recorded byte size")
                         .help("Different recorded sizes may be versions or unrelated files; no hash or content equality. Back restores search.")
+                    Button("Find same byte size (any filename)") { model.searchSameRecordedSizeAcrossDisks() }
+                        .disabled(!model.pageReady || model.copySourceID != nil
+                            || entry.kind != "file" || (entry.size ?? 0) <= 0)
+                        .keyboardShortcut("s", modifiers: [.command, .shift])
+                        .accessibilityLabel("Search all catalogued disks for files of identical recorded byte count, including different names")
+                        .help("Potential renamed files by size only, no hashes, USB presence or byte equality. Back restores search.")
                     Button("Find copies on other disks") { model.copiesOfSelected() }
                         .disabled(entry.kind != "file" || entry.size == nil)
                         .keyboardShortcut("d", modifiers: [.command])

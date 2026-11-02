@@ -381,3 +381,20 @@ Rust tests, both-client source wiring checks and manual runbook
 docs/qa/UX14_CANDIDATE_REGISTER_PRIORITY_20261102.md accompany the code.
 Require final exact-head 4-platform native / offline / integration / upgrade CI.
 No stable release or merge without physical/GUI and remaining gates.
+
+
+## 2026-11-02 — UX18 size-only renamed-file candidate search (draft PR #57)
+
+Added an explicit global **same positive recorded byte size, any filename**
+action on the selected current file row in native Win32 (Ctrl+Shift+S) and
+SwiftUI (Command-Shift-S). The bounded, read-only \`size:<bytes> AND kind:file\`
+query finds potential renames across offline catalogued disks; Back preserves
+the prior query/scope/page. Zero/missing/overflow size, folders and stale-page
+actions are refused. It does **not** verify equal bytes, physical presence or
+safe deletion. Existing linked CTF source SHA-generation pinning applies on
+every search page. Synthetic Rust/SQLite multi-disk and both-native wiring
+regressions plus operator QA: docs/qa/UX18_SAME_SIZE_RENAMED_CANDIDATES_20261102.md.
+This is a source integration checkpoint, **not** hardware/visual acceptance.
+Record final exact-HEAD Actions URLs in draft PR #57 after completion; no
+merge or stable release without the original/historical CTF, GUI/hardware,
+signing/notarization and real p95 <=150ms gates.

@@ -50,6 +50,7 @@ const COPY_REGISTER_FILTER: usize = 139;
 const FOCUS_RESULTS: usize = 140;
 const VIDEO_FILTER: usize = 141;
 const SAME_FILENAME: usize = 143;
+const SAME_RECORDED_SIZE: usize = 144;
 const SEARCH_BOX: usize = 130;
 // Win32 GetDriveTypeW standard result codes; windows-sys 0.61 does not export these here.
 // Unknown/missing roots mean a potentially incomplete OS snapshot, never "offline".
@@ -169,6 +170,29 @@ mod exact_name_query_tests {
         assert!(exact_name_query("").is_none());
         assert!(exact_name_query(&"я".repeat(2048)).is_none());
         assert!(exact_name_query("bad\0name").is_none());
+    }
+}
+
+
+// Find potential renamed media by exact recorded *byte count* only.
+// Refuse unknown, zero and non-SQLite signed-64-bit sizes; this is not hashing.
+fn exact_recorded_size_query(size: Option<u64>) -> Option<String> {
+    let bytes = size.filter(|bytes| *bytes > 0 && *bytes <= i64::MAX as u64)?;
+    Some(format!("size:{bytes} AND kind:file"))
+}
+#[cfg(test)]
+mod exact_recorded_size_query_tests {
+    use super::exact_recorded_size_query;
+
+    #[test]
+    fn positive_exact_bytes_only_and_overflow_refused() {
+        assert_eq!(
+            exact_recorded_size_query(Some(1_048_576)).as_deref(),
+            Some("size:1048576 AND kind:file")
+        );
+        assert!(exact_recorded_size_query(None).is_none());
+        assert!(exact_recorded_size_query(Some(0)).is_none());
+        assert!(exact_recorded_size_query(Some(i64::MAX as u64 + 1)).is_none());
     }
 }
 
@@ -2689,6 +2713,10 @@ impl App {
                     self.stack.last().map(|p| p.1.as_str()).unwrap_or("/")
                 } else if self.volume.is_some() {
                     "Search within selected catalog disk"
+                } else if self.query.starts_with("size:")
+                    && self.query.ends_with(" AND kind:file")
+                {
+                    "GLOBAL exact byte-size file candidates (metadata only; contents unverified)"
                 } else {
                     "Global search across all catalogued disks"
                 }
@@ -3820,6 +3848,50 @@ impl App {
         SendMessageW(self.disks, LB_SETCURSEL, 0, 0);
         self.load(); // linked CTF uses its existing fresh source-generation SHA check.
     }
+    unsafe fn search_same_recorded_size(&mut self) {
+        // Follow the current visible file row, never stale asynchronous results
+        // or a candidate sub-page. This is a GLOBAL metadata search, not proof
+        // of renamed-file identity, mounted USB state or matching file bytes.
+        if !self.page_ready || self.copy_source.is_some() {
+            self.status("Return to a current search page before finding same-size files.");
+            return;
+        }
+        let row = SendMessageW(
+            self.files,
+            LVM_GETNEXTITEM,
+            usize::MAX,
+            LVNI_SELECTED as isize,
+        );
+        let Some(entry) = (row >= 0).then(|| self.entries.get(row as usize)).flatten() else {
+            self.status("Select a current file result to search by recorded byte size.");
+            return;
+        };
+        if string(entry, "kind") != "file" {
+            self.status("Select a file, not a folder, for recorded-size comparison.");
+            return;
+        }
+        let Some(query) = exact_recorded_size_query(entry["size"].as_u64()) else {
+            self.status("Recorded size must be positive, known and within signed 64-bit range.");
+            return;
+        };
+        self.copy_return = Some(CopyReturn {
+            volume: self.volume,
+            stack: self.stack.clone(),
+            query: self.query.clone(),
+            duplicates: self.duplicates,
+            offset: self.offset,
+        });
+        self.copy_source = None;
+        self.copy_source_name = None;
+        self.duplicates = false;
+        self.query = query;
+        self.text(self.search, &self.query);
+        self.volume = None;
+        self.stack = vec![(None, "/".into())];
+        self.offset = 0;
+        SendMessageW(self.disks, LB_SETCURSEL, 0, 0);
+        self.load(); // linked CTF rechecks original SHA independently on each page.
+    }
     unsafe fn show_copies_of_selected(&mut self) {
         let index = SendMessageW(
             self.files,
@@ -4100,6 +4172,7 @@ impl App {
             FOCUS_RESULTS => self.focus_current_page_results(),
             FILE_COPIES => self.show_copies_of_selected(),
             SAME_FILENAME => self.search_same_filename(),
+            SAME_RECORDED_SIZE => self.search_same_recorded_size(),
             REVEAL_DISK => {
                 let selected_row = SendMessageW(
                     self.files,
@@ -5106,6 +5179,12 @@ pub fn run() {
                 AppendMenuW(
                     view,
                     MF_STRING,
+                    SAME_RECORDED_SIZE,
+                    wide("Find same recorded byte size (any filename)\tCtrl+Shift+S").as_ptr(),
+                );
+                AppendMenuW(
+                    view,
+                    MF_STRING,
                     COPY_LOCATOR,
                     wide("Copy selected locator text\tCtrl+Shift+C").as_ptr(),
                 );
@@ -5279,6 +5358,15 @@ pub fn run() {
                 && message.wParam == b'N' as usize
             {
                 (*app).command(SAME_FILENAME, 0);
+                continue;
+            }
+            // Ctrl+Shift+S: find renamed-file candidates by exact recorded bytes.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && GetKeyState(VK_SHIFT as i32) < 0
+                && message.wParam == b'S' as usize
+            {
+                (*app).command(SAME_RECORDED_SIZE, 0);
                 continue;
             }
             // Ctrl+D compares selected file metadata across catalogued disks.

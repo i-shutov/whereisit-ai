@@ -162,6 +162,11 @@ impl Parser {
                 self.args.push(Value::Text(v));
                 Ok("name_norm = ?".into())
             }
+            "kind" if v == "file" => Ok("kind = 'file'".into()),
+            "kind" => Err(Error::new(
+                "invalid_query",
+                "Unsupported kind filter; kind:file selects recorded files only",
+            )),
             "type" if v == "video" => Ok(VIDEO_EXTENSION_SQL.into()),
             "type" => Err(Error::new(
                 "invalid_query",
