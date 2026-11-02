@@ -1244,7 +1244,7 @@ mod candidate_page_manifest_tests {
         assert!(!text.contains("\r\nFake row"));
         assert!(!text.contains("\r\nFake header"));
         assert!(text.contains("not all copies"));
-        assert!(text.contains("does not recheck source generation"));
+        assert!(text.contains("Linked CTF SHA independently rechecked at clipboard action"));
         assert!(text.contains("never auto-delete"));
     }
 
