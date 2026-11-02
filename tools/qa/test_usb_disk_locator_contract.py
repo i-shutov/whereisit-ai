@@ -162,7 +162,7 @@ class DiskLocatorWiringTests(unittest.TestCase):
     def test_incomplete_os_probe_fails_closed_on_both_native_platforms(self):
         self.assertIn("fn scannable_windows_drive_type(", WIN)
         self.assertIn("DRIVE_NO_ROOT_DIR => None", WIN)
-        self.assertIn("None => return None,     // transient/inaccessible root: fail closed", WIN)
+        self.assertIn("None => return None, // incomplete OS probe: cannot assert offline", WIN)
         self.assertIn("physical_probe_completeness_tests", WIN)
         self.assertIn("GetLastError() == ERROR_NO_MORE_FILES", WIN)
         self.assertIn("if FindVolumeClose(handle) == 0", WIN)

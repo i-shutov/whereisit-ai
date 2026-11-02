@@ -11,8 +11,8 @@ use windows_sys::Win32::{
     Foundation::*,
     Graphics::Gdi::*,
     Storage::FileSystem::{
-        FileTimeToLocalFileTime, FindFirstVolumeW, FindNextVolumeW, FindVolumeClose,
-        GetDriveTypeW, GetVolumeInformationW, GetVolumePathNamesForVolumeNameW,
+        FileTimeToLocalFileTime, FindFirstVolumeW, FindNextVolumeW, FindVolumeClose, GetDriveTypeW,
+        GetVolumeInformationW, GetVolumePathNamesForVolumeNameW,
     },
     System::{
         Com::*, LibraryLoader::*, SystemServices::SS_PATHELLIPSIS, Time::FileTimeToSystemTime,
@@ -854,7 +854,7 @@ unsafe fn windows_mounted_volumes() -> Option<Vec<MountedPhysicalVolume>> {
             let end = name.iter().position(|unit| *unit == 0)?;
             let volume_path = String::from_utf16_lossy(&name[..end]);
             match scannable_windows_drive_type(GetDriveTypeW(name.as_ptr())) {
-                Some(false) => {} // recognized nonlocal/nonfilesystem volume
+                Some(false) => {}    // recognized nonlocal/nonfilesystem volume
                 None => return None, // incomplete OS probe: cannot assert offline
                 Some(true) => {
                     let mut label_buffer = [0u16; 128];
@@ -868,7 +868,8 @@ unsafe fn windows_mounted_volumes() -> Option<Vec<MountedPhysicalVolume>> {
                         null_mut(),
                         null_mut(),
                         0,
-                    ) == 0 {
+                    ) == 0
+                    {
                         return None;
                     }
                     let identity = windows_volume_guid_identity(&volume_path, serial)?;
@@ -878,10 +879,14 @@ unsafe fn windows_mounted_volumes() -> Option<Vec<MountedPhysicalVolume>> {
                     let mut paths = vec![0u16; 32_768];
                     let mut needed = 0u32;
                     let mount_found = GetVolumePathNamesForVolumeNameW(
-                        name.as_ptr(), paths.as_mut_ptr(), paths.len() as u32, &mut needed,
+                        name.as_ptr(),
+                        paths.as_mut_ptr(),
+                        paths.len() as u32,
+                        &mut needed,
                     ) != 0;
                     let mounts = if mount_found {
-                        paths.split(|unit| *unit == 0)
+                        paths
+                            .split(|unit| *unit == 0)
                             .filter(|units| !units.is_empty())
                             .map(String::from_utf16_lossy)
                             .collect::<Vec<_>>()
@@ -897,7 +902,11 @@ unsafe fn windows_mounted_volumes() -> Option<Vec<MountedPhysicalVolume>> {
                         id: identity,
                         description: format!(
                             "{} • current OS volume {location}",
-                            if label.is_empty() { "(unnamed)" } else { &label },
+                            if label.is_empty() {
+                                "(unnamed)"
+                            } else {
+                                &label
+                            },
                         ),
                     });
                 }
