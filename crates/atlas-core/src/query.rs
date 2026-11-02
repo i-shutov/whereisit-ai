@@ -156,6 +156,12 @@ impl Parser {
                 self.args.push(Value::Integer(size));
                 Ok(format!("size {op} ?"))
             }
+            "name_exact" => {
+                // Case-folded literal equality: any recorded size, any disk.
+                // Bound parameter, never filename interpolation or hash inference.
+                self.args.push(Value::Text(v));
+                Ok("name_norm = ?".into())
+            }
             "type" if v == "video" => Ok(VIDEO_EXTENSION_SQL.into()),
             "type" => Err(Error::new(
                 "invalid_query",

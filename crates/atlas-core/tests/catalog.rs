@@ -364,6 +364,28 @@ fn bulk_import_collects_query_planner_statistics() {
 }
 
 #[test]
+fn literal_filename_lookup_spans_disks_and_ignores_size_without_hash_claims() {
+    let d = tempfile::tempdir().unwrap();
+    let mut c = Catalog::open(d.path().join("same-name.sqlite")).unwrap();
+    let disk_a = c.bulk_import("A", "offline:a", |w| {
+        w.insert(&entry("Фильм [HD].mkv", 100))?;
+        w.insert(&entry("Фильм [HD].mp4", 100))?;
+        Ok(())
+    }).unwrap();
+    c.bulk_import("B", "offline:b", |w| {
+        w.insert(&entry("Фильм [HD].mkv", 200))?;
+        w.insert(&entry("Фильм [HD]-other.mkv", 100))?;
+        Ok(())
+    }).unwrap();
+    let exact = "name_exact:\"Фильм [HD].mkv\"";
+    assert_eq!(c.search(exact, None, 0, 250).unwrap().total, 2);
+    assert_eq!(c.search(exact, Some(disk_a.id), 0, 250).unwrap().total, 1);
+    assert_eq!(c.search("name_exact:\"ФИЛЬМ [hd].mkv\"", None, 0, 250).unwrap().total, 2);
+    assert_eq!(c.search("name_exact:\"Фильм [HD].mp4\"", None, 0, 250).unwrap().total, 1);
+    assert_eq!(c.search("name_exact:\"Фильм [HD]\"", None, 0, 250).unwrap().total, 0);
+}
+
+#[test]
 fn video_extension_search_across_disconnected_disks_is_metadata_only() {
     let d = tempfile::tempdir().unwrap();
     let mut catalog = Catalog::open(d.path().join("video.sqlite")).unwrap();

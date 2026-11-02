@@ -435,6 +435,25 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn('.keyboardShortcut("v", modifiers: [.command, .shift])', MAC)
         self.assertIn('model.videoFilterActive ? "All formats" : "Video files"', MAC)
 
+    def test_ux17_literal_same_filename_across_disks_any_size_with_back(self):
+        query = (ROOT / "crates/atlas-core/src/query.rs").read_text(encoding="utf-8")
+        tests = (ROOT / "crates/atlas-core/tests/catalog.rs").read_text(encoding="utf-8")
+        self.assertIn('"name_exact" => {', query)
+        self.assertIn('Ok("name_norm = ?".into())', query)
+        self.assertIn('literal_filename_lookup_spans_disks_and_ignores_size_without_hash_claims', tests)
+        self.assertIn('fn exact_name_query(name: &str) -> Option<String>', WIN)
+        self.assertIn('fn search_same_filename(', WIN)
+        self.assertIn('if !self.page_ready || self.copy_source.is_some()', WIN)
+        self.assertIn('SAME_FILENAME => self.search_same_filename()', WIN)
+        self.assertIn("message.wParam == b'N' as usize", WIN)
+        self.assertIn('self.copy_return = Some(CopyReturn {', WIN)
+        self.assertIn('func searchSameFilenameAcrossDisks()', MAC)
+        self.assertIn('guard pageReady, copySourceID == nil', MAC)
+        self.assertIn('func exactFilenameQuery(_ name: String) -> String?', MAC)
+        self.assertIn('Button("Find same filename (any size)")', MAC)
+        self.assertIn('.keyboardShortcut("n", modifiers: [.command, .shift])', MAC)
+        self.assertIn('copyReturn = CopyReturnContext(volumeID: volumeID, stack: stack,', MAC)
+
     def test_no_unverified_physical_drive_claims_in_locator(self):
         self.assertIn("Physical connection: NOT VERIFIED", WIN)
         self.assertIn("Physical connection not verified", MAC)

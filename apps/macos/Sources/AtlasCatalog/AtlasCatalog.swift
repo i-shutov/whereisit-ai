@@ -902,6 +902,29 @@ private struct CopyReturnContext {
         offset = 0
         load()
     }
+    // Literal filename match, independent of recorded size; no byte/hash equality.
+    static func exactFilenameQuery(_ name: String) -> String? {
+        guard !name.isEmpty, !name.contains("\0") else { return nil }
+        let escaped = name.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let result = "name_exact:\"\(escaped)\""
+        return result.utf8.count <= 4096 ? result : nil
+    }
+    func searchSameFilenameAcrossDisks() {
+        guard pageReady, copySourceID == nil, let entry = selected,
+              entry.kind == "file",
+              let expression = Self.exactFilenameQuery(entry.name) else {
+            status = "Select a current file outside copy mode; filename must fit 4096 bytes."
+            return
+        }
+        copyReturn = CopyReturnContext(volumeID: volumeID, stack: stack,
+            query: query, appliedQuery: appliedQuery, offset: offset,
+            showingDuplicates: showingDuplicates, appliedDuplicateMode: appliedDuplicateMode)
+        copySourceID = nil; copySourceName = nil
+        volumeID = nil; stack = [(nil, "/")]; offset = 0
+        showingDuplicates = false; query = expression; appliedQuery = expression
+        load() // existing pinned CTF search, with generation check on every page.
+    }
     func copiesOfSelected() {
         guard let entry = selected, entry.kind == "file", entry.size != nil else {
             status = "Select a file with recorded size to find catalogued metadata copies."
@@ -1564,6 +1587,11 @@ private struct CopyReturnContext {
                         .keyboardShortcut("j", modifiers: [.command])
                         .accessibilityLabel("Find selected file's exact catalog disk in the left register")
                         .help("Filter register by exact catalog ID; no scope change or USB verification")
+                    Button("Find same filename (any size)") { model.searchSameFilenameAcrossDisks() }
+                        .disabled(!model.pageReady || model.copySourceID != nil || entry.kind != "file")
+                        .keyboardShortcut("n", modifiers: [.command, .shift])
+                        .accessibilityLabel("Search exact catalog filename across all disks, ignoring recorded byte size")
+                        .help("Different recorded sizes may be versions or unrelated files; no hash or content equality. Back restores search.")
                     Button("Find copies on other disks") { model.copiesOfSelected() }
                         .disabled(entry.kind != "file" || entry.size == nil)
                         .keyboardShortcut("d", modifiers: [.command])

@@ -49,6 +49,7 @@ const COPY_PAGE_MANIFEST: usize = 138;
 const COPY_REGISTER_FILTER: usize = 139;
 const FOCUS_RESULTS: usize = 140;
 const VIDEO_FILTER: usize = 141;
+const SAME_FILENAME: usize = 143;
 const SEARCH_BOX: usize = 130;
 // Win32 GetDriveTypeW standard result codes; windows-sys 0.61 does not export these here.
 // Unknown/missing roots mean a potentially incomplete OS snapshot, never "offline".
@@ -142,6 +143,32 @@ mod video_query_tests {
     fn no_truncation_of_overlong_query() {
         assert!(toggle_video_query(&"я".repeat(2048)).is_none());
         assert!(!video_filter_active("name:video"));
+    }
+}
+
+// Quote the selected catalogued name as a literal (not a glob or SQL fragment).
+// The user can edit the resulting global query; CTF pinning is checked by load().
+fn exact_name_query(name: &str) -> Option<String> {
+    if name.is_empty() || name.contains('\0') {
+        return None;
+    }
+    let escaped = name.replace('\\', "\\\\").replace('"', "\\\"");
+    let result = format!("name_exact:\"{escaped}\"");
+    (result.len() <= 4096).then_some(result)
+}
+#[cfg(test)]
+mod exact_name_query_tests {
+    use super::exact_name_query;
+
+    #[test]
+    fn filename_is_quoted_without_globs_or_truncation() {
+        assert_eq!(
+            exact_name_query("Герой [HD] \"alt\".mkv").as_deref(),
+            Some("name_exact:\"Герой [HD] \\\"alt\\\".mkv\"")
+        );
+        assert!(exact_name_query("").is_none());
+        assert!(exact_name_query(&"я".repeat(2048)).is_none());
+        assert!(exact_name_query("bad\0name").is_none());
     }
 }
 
@@ -3751,6 +3778,46 @@ impl App {
                 .unwrap_or_default()
         ));
     }
+    unsafe fn search_same_filename(&mut self) {
+        // Never act on a stale search page or silently leave the copy inspector.
+        if !self.page_ready || self.copy_source.is_some() {
+            self.status("Return to a verified search result before finding same filenames.");
+            return;
+        }
+        let row = SendMessageW(self.files, LVM_GETNEXTITEM, usize::MAX, LVNI_SELECTED as isize);
+        let Some(entry) = (row >= 0)
+            .then(|| self.entries.get(row as usize))
+            .flatten()
+        else {
+            self.status("Select a current file result to search its filename.");
+            return;
+        };
+        if string(entry, "kind") != "file" {
+            self.status("Select a file, not a folder, for exact filename search.");
+            return;
+        }
+        let Some(query) = exact_name_query(&string(entry, "name")) else {
+            self.status("Filename is invalid or exceeds the 4096-byte search limit.");
+            return;
+        };
+        self.copy_return = Some(CopyReturn {
+            volume: self.volume,
+            stack: self.stack.clone(),
+            query: self.query.clone(),
+            duplicates: self.duplicates,
+            offset: self.offset,
+        });
+        self.copy_source = None;
+        self.copy_source_name = None;
+        self.duplicates = false;
+        self.query = query;
+        self.text(self.search, &self.query);
+        self.volume = None;
+        self.stack = vec![(None, "/".into())];
+        self.offset = 0;
+        SendMessageW(self.disks, LB_SETCURSEL, 0, 0);
+        self.load(); // linked CTF uses its existing fresh source-generation SHA check.
+    }
     unsafe fn show_copies_of_selected(&mut self) {
         let index = SendMessageW(
             self.files,
@@ -4030,6 +4097,7 @@ impl App {
             }
             FOCUS_RESULTS => self.focus_current_page_results(),
             FILE_COPIES => self.show_copies_of_selected(),
+            SAME_FILENAME => self.search_same_filename(),
             REVEAL_DISK => {
                 let selected_row = SendMessageW(
                     self.files,
@@ -5030,6 +5098,12 @@ pub fn run() {
                 AppendMenuW(
                     view,
                     MF_STRING,
+                    SAME_FILENAME,
+                    wide("Find same filename across all disks (any size)\tCtrl+Shift+N").as_ptr(),
+                );
+                AppendMenuW(
+                    view,
+                    MF_STRING,
                     COPY_LOCATOR,
                     wide("Copy selected locator text\tCtrl+Shift+C").as_ptr(),
                 );
@@ -5194,6 +5268,15 @@ pub fn run() {
                 && message.wParam == b'G' as usize
             {
                 (*app).command(COPY_CONNECTED, 0);
+                continue;
+            }
+            // Ctrl+Shift+N: exact filename across all catalog disks, any recorded size.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && GetKeyState(VK_SHIFT as i32) < 0
+                && message.wParam == b'N' as usize
+            {
+                (*app).command(SAME_FILENAME, 0);
                 continue;
             }
             // Ctrl+D compares selected file metadata across catalogued disks.

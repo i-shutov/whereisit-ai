@@ -1,3 +1,9 @@
+## UX17 — literal filename search across offline disks, any size (2026-11-02; CI pending)
+
+Draft PR #57 extends the native inspector with a second, distinct retrieval path: Win32 **Ctrl+Shift+N / View → Find same filename across all disks**, macOS SwiftUI **Command+Shift+N / Find same filename (any size)**. It produces a Unicode case-folded `name_exact:"..."` **bound** query, preserving filename punctuation and spaces, searches all catalogued disks regardless of recorded size, and **Back** restores the prior search/offset/scope. Unlike **Find copies** (same normalized name + recorded size), this may surface alternate versions or entirely unrelated bytes. It does not claim a hash match, actual USB file presence or permission to delete. Pending/stale result selection and malformed/oversized filenames are rejected. Linked CTF reads still check source generation SHA each page. Rust core and Win32 pure tests, dual-native integration contract and [UX17 QA](docs/qa/UX17_LITERAL_FILENAME_ALL_DISKS_20261102.md) use only synthetic fixtures. Full exact-HEAD CI and manual Win10/11 Mac ARM/Intel GUI/USB/VoiceOver remain required. PR stays draft, stable 1.0 blocked.
+
+---
+
 ## UX16 — native video-extension search preset (2026-11-02; exact-HEAD CI required)
 
 Draft PR #57 integrates indexed `type:video` catalog metadata predicate with Win32 Ctrl+Shift+V / SwiftUI Command+Shift+V and native toggle buttons. Global search, grouped OR query semantics, reversible editable text and linked-CTF source generation SHA verification remain intact. Synthetic two-disk Rust and dual-native source regressions plus [UX16 QA runbook](docs/qa/UX16_VIDEO_EXTENSION_SEARCH_20261102.md) added. This is **not** movie recognition, live USB file existence or content/hash equality. Human native UI/hardware acceptance and p95 150ms are unverified; no merge or stable 1.0.
