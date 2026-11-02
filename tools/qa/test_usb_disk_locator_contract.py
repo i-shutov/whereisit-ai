@@ -649,7 +649,7 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn('eq_ignore_ascii_case("copies:")', WIN)
         self.assertIn("COPY_REGISTER_FILTER => {", WIN)
         self.assertIn("(*app).command(COPY_REGISTER_FILTER, 0)", WIN)
-        self.assertRegex(WIN, r"candidate_register_indices\(\s*&self\.volumes,\s*&self\.copy_disk_groups,\s*&safe_states,")
+        self.assertRegex(WIN, r"candidate_register_indices\(\s*&self\.volumes,\s*&self\.copy_disk_groups,\s*&safe_states\)")
         self.assertIn('self.disk_filter_query = "copies:".to_owned();', WIN)
         rows_handler = WIN.split('"rows" => {', 1)[1].split('"maintenance" => {', 1)[0]
         self.assertIn('eq_ignore_ascii_case("copies:")', rows_handler)
