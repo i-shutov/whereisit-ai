@@ -482,9 +482,29 @@ fn same_recorded_size_search_finds_renamed_files_across_offline_disks_only() {
     assert_eq!(catalog.search(query, None, 1, 1).unwrap().items.len(), 1);
     assert_eq!(catalog.search(query, None, 2, 1).unwrap().items.len(), 1);
     assert_eq!(catalog.search(query, None, 3, 1).unwrap().items.len(), 0);
-    assert_eq!(catalog.search(query, Some(first.id), 0, 20).unwrap().total, 1);
-    assert_eq!(catalog.search(query, Some(second.id), 0, 20).unwrap().total, 1);
-    assert_eq!(catalog.search("size:1048577 AND kind:file", None, 0, 20).unwrap().total, 1);
-    assert_eq!(catalog.search("size:0 AND kind:file", None, 0, 20).unwrap().total, 1);
-    assert!(catalog.search("size:1048576 AND kind:movie", None, 0, 20).is_err());
+    assert_eq!(
+        catalog.search(query, Some(first.id), 0, 20).unwrap().total,
+        1
+    );
+    assert_eq!(
+        catalog.search(query, Some(second.id), 0, 20).unwrap().total,
+        1
+    );
+    assert_eq!(
+        catalog
+            .search("size:1048577 AND kind:file", None, 0, 20)
+            .unwrap()
+            .total,
+        1
+    );
+    assert_eq!(
+        catalog
+            .search("size:0 AND kind:file", None, 0, 20)
+            .unwrap()
+            .total,
+        1
+    );
+    assert!(catalog
+        .search("size:1048576 AND kind:movie", None, 0, 20)
+        .is_err());
 }
