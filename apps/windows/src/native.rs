@@ -88,10 +88,16 @@ mod hotplug_invalidation_tests {
     #[test]
     fn physical_usb_mount_changes_fail_closed_before_recheck() {
         for pending in [0x8001, 0x8003] {
-            assert_eq!(volume_change_response(pending), VolumeChangeResponse::Invalidate);
+            assert_eq!(
+                volume_change_response(pending),
+                VolumeChangeResponse::Invalidate
+            );
         }
         for completed in [0x0007, 0x0018, 0x8000, 0x8002, 0x8004] {
-            assert_eq!(volume_change_response(completed), VolumeChangeResponse::Reprobe);
+            assert_eq!(
+                volume_change_response(completed),
+                VolumeChangeResponse::Reprobe
+            );
         }
         assert_eq!(volume_change_response(0), VolumeChangeResponse::Ignore);
         assert_eq!(volume_change_response(0xffff), VolumeChangeResponse::Ignore);
