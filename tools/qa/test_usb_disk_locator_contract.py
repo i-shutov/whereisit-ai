@@ -16,6 +16,27 @@ PHYSICAL = (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encod
 
 
 class DiskLocatorWiringTests(unittest.TestCase):
+    def test_ux22_second_probe_rejects_new_clone_with_same_uuid_different_mount(self):
+        # Source-wiring contract complements the Rust status collision tests
+        # and compiled macOS client. Two live observations with the same UUID
+        # must fail even if only one retains the original mount location.
+        copy = MAC.split("if let pending = self.pendingMountCopy {", 1)[1].split(
+            "if let pending = self.pendingConnectedCopyFocus {", 1
+        )[0]
+        self.assertIn("let secondMatches = secondProbe.filter({ $0.id == verifiedID })", copy)
+        self.assertIn("secondMatches.count == 1", copy)
+        self.assertIn(
+            "secondMatches[0].currentMount == mounted.currentMount", copy
+        )
+        self.assertNotIn("$0.id == verifiedID && $0.currentMount", copy)
+        pair = MAC.split("// Reprobe after the modal", 1)[1].split(
+            "let scope = physicalScope", 1
+        )[0]
+        self.assertIn("let freshMatches = freshProbe.filter({ $0.id == candidate.id })", pair)
+        self.assertIn("freshMatches.count == 1", pair)
+        self.assertIn("freshMatches[0].currentMount == candidate.currentMount", pair)
+
+
     def test_windows_selection_is_driven_by_current_page(self):
         self.assertIn("fn disk_locator_text(", WIN)
         self.assertIn("entry: Option<&Value>", WIN)
