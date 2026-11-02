@@ -509,3 +509,26 @@ UX24 initial commit [5b1c0aed](https://github.com/i-shutov/whereisit-ai/commit/5
 ### UX24 Windows exact-HEAD compiler repair (2026-11-02)
 
 At exact source [35e449fb](https://github.com/i-shutov/whereisit-ai/commit/35e449fb95b68726bdc50ea91fd602cbe2b44770) the Linux Rust/fmt/Clippy job and offline-kit succeeded, but Windows native CI [41438217085](https://github.com/i-shutov/whereisit-ai/actions/runs/41438217085) and installed-upgrade [41438217102](https://github.com/i-shutov/whereisit-ai/actions/runs/41438217102) failed at `cargo test --workspace --locked` / “Build current Windows installer from exact source”: Rust E0308 in `copy_disk_pickup_card`, passing `Option<String>` from `shelf_collision_warning` into `Option<&str>` helper. Apply explicit `.as_deref()` on that temporary inside the same call, in the SAME draft PR without disabling tests. All four final exact-HEAD workflows must be rechecked; an earlier Linux/offline green does not certify the corrected commit. No source CTFS, caches, files or private owner data are touched.
+
+
+
+## UX25 — candidate clipboard generation recheck, draft PR #57 (2026-11-02)
+
+Found a real read-only provenance defect: the physical pickup **list** and
+current-page **candidate paths** could be copied from a previously verified
+linked CTF page without rechecking the original source SHA when the operator
+later pressed Copy. Both native clients now asynchronously re-pin the
+external generation for each such clipboard action. Windows serializes
+the pending check and compares page generation, source ID, offset and disk
+focus; SwiftUI also invalidates superseded clipboard commands, checks
+catalog scope and response generation. Failed, stale or changed source
+responses never write the clipboard. Local SQLite mode uses the current
+ready page and does not claim a source SHA.
+
+Corrected the misleading "selected file included" phrase: UX21's
+cross-disk candidate mode excludes the whole source catalog disk.
+Native Rust guard tests + dual-client regression and operator runbook:
+docs/qa/UX25_CANDIDATE_CLIPBOARD_SHA_RECHECK_20261102.md.
+Linked CTF is read-only; owner data never enters CI or clipboard QA.
+CI and manual USB/GUI/historical-CTF/signing/p95 release gates remain
+separate. PR remains draft/unmerged, stable 1.0 BLOCKED.

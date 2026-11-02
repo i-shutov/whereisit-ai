@@ -383,3 +383,26 @@ Manual physical hardware/GUI/a11y and real SLO remain unaccepted; draft PR only.
 
 
 UX24 CTF-read consistency: for a linked original CTF, each independent disk pickup card request now rechecks `ctf_volumes_pinned` generation SHA asynchronously before copying. Generation/source/selection changes reject the copy; a stale UI register alone is never proof of source validity. This gate was added after identifying a missing check in the initial implementation, along with fixing a Rustfmt-only CI failure in the same draft PR. Manual hardware acceptance remains open.
+
+
+
+## UX25 — candidate clipboard generation recheck, draft PR #57 (2026-11-02)
+
+Found a real read-only provenance defect: the physical pickup **list** and
+current-page **candidate paths** could be copied from a previously verified
+linked CTF page without rechecking the original source SHA when the operator
+later pressed Copy. Both native clients now asynchronously re-pin the
+external generation for each such clipboard action. Windows serializes
+the pending check and compares page generation, source ID, offset and disk
+focus; SwiftUI also invalidates superseded clipboard commands, checks
+catalog scope and response generation. Failed, stale or changed source
+responses never write the clipboard. Local SQLite mode uses the current
+ready page and does not claim a source SHA.
+
+Corrected the misleading "selected file included" phrase: UX21's
+cross-disk candidate mode excludes the whole source catalog disk.
+Native Rust guard tests + dual-client regression and operator runbook:
+docs/qa/UX25_CANDIDATE_CLIPBOARD_SHA_RECHECK_20261102.md.
+Linked CTF is read-only; owner data never enters CI or clipboard QA.
+CI and manual USB/GUI/historical-CTF/signing/p95 release gates remain
+separate. PR remains draft/unmerged, stable 1.0 BLOCKED.

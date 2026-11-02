@@ -425,7 +425,7 @@ private struct CopyReturnContext {
     func initialize() {
         linkedCTFPath = nil; linkedGeneration = nil
         resetAnnotationReview()
-        generation += 1; volumeID = nil; stack = [(nil, "/")]; entries = []; query = ""; appliedQuery = ""; showingDuplicates = false; offset = 0
+        generation += 1; candidateClipboardRequestSerial += 1; volumeID = nil; stack = [(nil, "/")]; entries = []; query = ""; appliedQuery = ""; showingDuplicates = false; offset = 0
         copySourceID = nil; copySourceName = nil; copyReturn = nil
         volumes = []; diskFilter = ""; categories = []; categoryID = nil; selection = nil; total = 0; hasMore = false
         physicalStates = [:]; verifiedPhysicalIDs = [:]; pendingMountCopy = nil
@@ -693,7 +693,61 @@ private struct CopyReturnContext {
             return $0.volume_id < $1.volume_id
         }
     }
+    private enum CandidateClipboardAction { case pickupList, pagePaths }
+    private var candidateClipboardRequestSerial = 0
+
+    // A loaded page is not authorization to copy historical linked CTF data
+    // later. Verify the original SHA on EVERY clipboard action, then reject a
+    // late reply if search source, page, focus, or latest action changed.
+    private func verifyCandidateClipboardThen(_ action: CandidateClipboardAction) {
+        guard pageReady, !awaitingPage, let source = copySourceID else {
+            status = "Current metadata candidate page is not ready; clipboard unchanged."
+            return
+        }
+        candidateClipboardRequestSerial += 1
+        let serial = candidateClipboardRequestSerial
+        let token = generation
+        let scope = physicalScope
+        let page = offset
+        let focus = copyFocusVolumeID
+        let count = entries.count
+        if linkedCTFPath != nil {
+            guard var pinned = linkedFields() else {
+                status = "Linked CTF generation unavailable; clipboard unchanged."
+                return
+            }
+            pinned["op"] = "ctf_volumes_pinned"
+            status = "Rechecking original CTF generation before local clipboard copy…"
+            request(pinned, as: LinkedCTFResult<[Volume]>.self, generationToken: token) { [weak self] reply in
+                guard let self else { return }
+                guard self.candidateClipboardRequestSerial == serial,
+                      self.physicalScope == scope,
+                      self.generation == token,
+                      self.pageReady, !self.awaitingPage,
+                      self.copySourceID == source,
+                      self.copyFocusVolumeID == focus,
+                      self.offset == page, self.entries.count == count,
+                      reply?.generation == self.linkedGeneration else {
+                    self.status = "Linked CTF or candidate page changed; clipboard NOT updated."
+                    return
+                }
+                self.finishCandidateClipboard(action)
+            }
+        } else {
+            finishCandidateClipboard(action)
+        }
+    }
+    private func finishCandidateClipboard(_ action: CandidateClipboardAction) {
+        switch action {
+        case .pickupList: writePickupPlan()
+        case .pagePaths: writeCandidatePagePaths()
+        }
+    }
+
     func copyPickupPlan() {
+        verifyCandidateClipboardThen(.pickupList)
+    }
+    private func writePickupPlan() {
         guard pageReady, copySourceID != nil, let file = copySourceName,
               !copyDiskGroups.isEmpty else {
             status = "Find copies and wait for catalogued candidate disks first."
@@ -706,7 +760,7 @@ private struct CopyReturnContext {
         let header = [
             "WhereIsIt AI — offline USB pickup list",
             "File (recorded catalog name): \(clean(file))",
-            "\(total) name+size metadata candidates on \(copyDiskGroups.count) catalog disks; selected file included.",
+            "\(total) name+size metadata candidates on \(copyDiskGroups.count) OTHER catalog disks; source catalog disk excluded.",
             "Order: last OS pairing check, then candidate count; exact disk IDs are authoritative.",
         ]
         let rows = orderedCopyDiskGroups.enumerated().map { index, group in
@@ -786,6 +840,9 @@ private struct CopyReturnContext {
     // No disk I/O: this is a clipboard manifest from exactly one completed
     // generation-pinned candidate page, NOT an export of every catalog copy.
     func copyCandidatePagePaths() {
+        verifyCandidateClipboardThen(.pagePaths)
+    }
+    private func writeCandidatePagePaths() {
         guard pageReady, copySourceID != nil, let file = copySourceName else {
             status = "Candidate page is loading or source verification failed; paths not copied."
             return
@@ -810,7 +867,7 @@ private struct CopyReturnContext {
         }
         let caution = [
             "Paths are HISTORICAL catalog metadata, not current mounted file locations.",
-            "Linked CTF SHA was checked when the page loaded; copying does not recheck source generation.",
+            "Linked CTF SHA independently rechecked at clipboard action (if linked); no file bytes verified.",
             "Matching filename+size does NOT verify file contents or hashes; never auto-delete."
         ]
         NSPasteboard.general.clearContents()

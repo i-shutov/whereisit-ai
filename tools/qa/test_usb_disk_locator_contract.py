@@ -366,8 +366,8 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn(".disabled(!model.pageReady)", MAC)
         self.assertIn("CURRENT PAGE ONLY", WIN)
         self.assertIn("CURRENT PAGE ONLY", MAC)
-        self.assertIn("copying does not recheck source generation", WIN)
-        self.assertIn("copying does not recheck source generation", MAC)
+        self.assertIn("Linked CTF SHA independently rechecked at clipboard action", WIN)
+        self.assertIn("Linked CTF SHA independently rechecked at clipboard action", MAC)
 
     def test_ux12_shared_stickers_are_private_warnings_not_usb_evidence(self):
         self.assertIn("fn shelf_collisions(", PHYSICAL)
@@ -648,6 +648,35 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn('"#\\(disk.id) • \\(disk.label)"', MAC)
         self.assertIn('never auto-delete metadata matches', WIN)
         self.assertIn('never auto-delete metadata matches', MAC)
+
+    def test_ux25_candidate_clipboard_repins_linked_source_and_rejects_late_reply(self):
+        self.assertIn("struct CandidateClipboardGuard {", WIN)
+        self.assertIn("fn candidate_clipboard_reply_current(", WIN)
+        self.assertIn("stale_ctf_verification_never_authorizes_a_new_clipboard_page", WIN)
+        self.assertIn('self.call("candidate_clipboard_source", pinned);', WIN)
+        self.assertIn('self.linked_request("ctf_volumes_pinned")', WIN)
+        self.assertIn('reply.result["data"]["generation"].as_str()', WIN)
+        self.assertIn("self.pending_candidate_clipboard.take()", WIN)
+        self.assertIn("self.write_candidate_clipboard(guard.command);", WIN)
+        self.assertIn("source_id == Some(guard.source_id)", WIN)
+        self.assertIn("offset == guard.offset", WIN)
+        self.assertIn("focus_disk == guard.focus_disk", WIN)
+        for action in ("COPY_PAGE_MANIFEST", "COPY_PICKUP_PLAN"):
+            self.assertIn("self.verify_candidate_clipboard(" + action + ");", WIN)
+        self.assertIn("private func verifyCandidateClipboardThen(", MAC)
+        self.assertIn('pinned["op"] = "ctf_volumes_pinned"', MAC)
+        self.assertIn("self.candidateClipboardRequestSerial == serial", MAC)
+        self.assertIn("self.physicalScope == scope", MAC)
+        self.assertIn("self.copySourceID == source", MAC)
+        self.assertIn("self.copyFocusVolumeID == focus", MAC)
+        self.assertIn("self.offset == page", MAC)
+        self.assertIn("reply?.generation == self.linkedGeneration", MAC)
+        self.assertIn("verifyCandidateClipboardThen(.pickupList)", MAC)
+        self.assertIn("verifyCandidateClipboardThen(.pagePaths)", MAC)
+        self.assertIn("source catalog disk excluded", WIN)
+        self.assertIn("source catalog disk excluded", MAC)
+        self.assertNotIn("selected file included.", WIN)
+        self.assertNotIn("selected file included.", MAC)
 
 
 if __name__ == "__main__":

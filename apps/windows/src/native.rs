@@ -1063,7 +1063,7 @@ fn candidate_disk_pickup_list(
         "WhereIsIt AI — offline USB pickup list".to_owned(),
         format!("File (recorded catalog name): {}", clean(file_name)),
         format!(
-            "{total} name+size metadata candidates on {} catalog disks; selected file included.",
+            "{total} name+size metadata candidates on {} OTHER catalog disks; source catalog disk excluded.",
             groups.len()
         ),
         "Order: last OS pairing check, then candidate count; exact disk IDs are authoritative."
@@ -1095,9 +1095,70 @@ fn candidate_disk_pickup_list(
     Some(lines.join("\r\n"))
 }
 
+// One in-flight pinned verification per Windows candidate clipboard action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CandidateClipboardGuard {
+    command: usize,
+    page_generation: u64,
+    source_id: i64,
+    offset: usize,
+    focus_disk: Option<i64>,
+}
+
+fn candidate_clipboard_reply_current(
+    guard: &CandidateClipboardGuard,
+    reply_generation: u64,
+    current_generation: u64,
+    page_ready: bool,
+    source_id: Option<i64>,
+    offset: usize,
+    focus_disk: Option<i64>,
+) -> bool {
+    matches!(guard.command, COPY_PAGE_MANIFEST | COPY_PICKUP_PLAN)
+        && page_ready
+        && guard.page_generation == reply_generation
+        && reply_generation == current_generation
+        && source_id == Some(guard.source_id)
+        && offset == guard.offset
+        && focus_disk == guard.focus_disk
+}
+
+#[cfg(test)]
+mod candidate_clipboard_guard_tests {
+    use super::*;
+
+    #[test]
+    fn stale_ctf_verification_never_authorizes_a_new_clipboard_page() {
+        let guard = CandidateClipboardGuard {
+            command: COPY_PAGE_MANIFEST,
+            page_generation: 9,
+            source_id: 71,
+            offset: 250,
+            focus_disk: Some(42),
+        };
+        let current = |reply, page, source, offset, focus| {
+            candidate_clipboard_reply_current(&guard, reply, 9, page, source, offset, focus)
+        };
+        assert!(current(9, true, Some(71), 250, Some(42)));
+        assert!(!current(8, true, Some(71), 250, Some(42)));
+        assert!(!current(9, false, Some(71), 250, Some(42)));
+        assert!(!current(9, true, Some(72), 250, Some(42)));
+        assert!(!current(9, true, Some(71), 0, Some(42)));
+        assert!(!current(9, true, Some(71), 250, Some(43)));
+        assert!(!current(9, true, Some(71), 250, None));
+        assert!(!candidate_clipboard_reply_current(
+            &guard, 9, 10, true, Some(71), 250, Some(42)
+        ));
+        let invalid = CandidateClipboardGuard { command: COPY_LOCATOR, ..guard };
+        assert!(!candidate_clipboard_reply_current(
+            &invalid, 9, 9, true, Some(71), 250, Some(42)
+        ));
+    }
+}
+
 // Clipboard-only manifest for the CURRENT, already-loaded page. Never claim
 // this is the complete set across the catalogue, or that any bytes were read.
-// Linked CTF generation is checked by the page request, not by clipboard copy.
+// Linked CTF generation is also independently rechecked before clipboard copy.
 fn candidate_page_manifest(
     file_name: &str,
     entries: &[Value],
@@ -1139,7 +1200,7 @@ fn candidate_page_manifest(
     lines.push(
         "Paths are HISTORICAL catalog metadata, not current mounted file locations.".to_owned(),
     );
-    lines.push("Linked CTF SHA was checked when the page loaded; copying does not recheck source generation.".to_owned());
+    lines.push("Linked CTF SHA independently rechecked at clipboard action (if linked); no file bytes verified.".to_owned());
     lines.push(
         "Matching filename+size does NOT verify file contents or hashes; never auto-delete."
             .to_owned(),
@@ -2869,6 +2930,7 @@ struct App {
     page_retry_available: bool,
     pending_mount_root: Option<(i64, u64)>,
     pending_disk_card: Option<(i64, u64)>,
+    pending_candidate_clipboard: Option<CandidateClipboardGuard>,
     generation: u64,
     pending: usize,
     job: Option<String>,
@@ -2941,6 +3003,7 @@ impl App {
             page_retry_available: false,
             pending_mount_root: None,
             pending_disk_card: None,
+            pending_candidate_clipboard: None,
             generation: 0,
             pending: 0,
             job: None,
@@ -3060,6 +3123,7 @@ impl App {
         self.page_retry_available = false;
         self.pending_mount_root = None;
         self.pending_disk_card = None;
+        self.pending_candidate_clipboard = None;
         self.categories.clear();
         self.total = 0;
         self.has_more = false;
@@ -3263,6 +3327,29 @@ impl App {
                             self.copy_verified_os_mount_root(disk);
                         } else {
                             self.status("Linked CTF generation could not be verified; OS root NOT copied. Refresh source.");
+                        }
+                    }
+                }
+                continue;
+            }
+            if reply.tag == "candidate_clipboard_source" {
+                if let Some(guard) = self.pending_candidate_clipboard.take() {
+                    if candidate_clipboard_reply_current(
+                        &guard,
+                        reply.generation,
+                        self.generation,
+                        self.page_ready,
+                        self.copy_source,
+                        self.offset,
+                        self.copy_focus_volume_id,
+                    ) {
+                        if reply.result["ok"] == true
+                            && reply.result["data"]["generation"].as_str()
+                                == self.linked_generation.as_deref()
+                        {
+                            self.write_candidate_clipboard(guard.command);
+                        } else {
+                            self.status("Original linked CTF SHA changed or could not be checked; clipboard NOT updated.");
                         }
                     }
                 }
@@ -4616,6 +4703,88 @@ impl App {
             _ => "name_size",
         }
     }
+    // Clipboard text is generated only from the still-current, bounded page.
+    // In linked CTF mode a separate source-generation verification must have
+    // completed successfully before this helper is called.
+    unsafe fn write_candidate_clipboard(&mut self, command: usize) {
+        match command {
+            COPY_PAGE_MANIFEST => {
+                if !self.page_ready || self.copy_source.is_none() {
+                    self.status("Wait for the current candidate page to finish verifying before copying paths.");
+                    return;
+                }
+                let Some(name) = self.copy_source_name.as_deref() else {
+                    self.status("No current catalogued file for the page manifest.");
+                    return;
+                };
+                let manifest = candidate_page_manifest(
+                    name,
+                    &self.entries,
+                    self.offset,
+                    self.total,
+                    self.copy_focus_volume_id,
+                );
+                self.text(self.locator, &manifest);
+                SendMessageW(self.locator, EM_SETSEL, 0, -1);
+                SendMessageW(self.locator, WM_COPY, 0, 0);
+                SendMessageW(self.locator, EM_SETSEL, 0, 0);
+                self.update_disk_locator();
+                self.status("Current candidate PAGE paths copied locally. Other pages, physical presence and file bytes remain unverified.");
+            }
+            COPY_PICKUP_PLAN => {
+                if !self.page_ready {
+                    self.status("Candidate page still loading or source verification failed; nothing copied.");
+                    return;
+                }
+                let Some(plan) = self.copy_source_name.as_deref().and_then(|name| {
+                    candidate_disk_pickup_list(
+                        name,
+                        &self.copy_disk_groups,
+                        &self.shelf_labels,
+                        &self.physical_states,
+                        &self.shelf_tag_conflicts,
+                    )
+                }) else {
+                    self.status("Find copies and wait for catalogued candidate disks first.");
+                    return;
+                };
+                // Existing native EDIT is a transient clipboard source; restore
+                // the live inspector immediately, without disk/catalog writes.
+                self.text(self.locator, &plan);
+                SendMessageW(self.locator, EM_SETSEL, 0, -1);
+                SendMessageW(self.locator, WM_COPY, 0, 0);
+                SendMessageW(self.locator, EM_SETSEL, 0, 0);
+                self.update_disk_locator();
+                self.status("Disk pickup checklist copied locally. OS badges are last observations; file bytes unverified.");
+            }
+            _ => {}
+        }
+    }
+
+    unsafe fn verify_candidate_clipboard(&mut self, command: usize) {
+        if self.pending_candidate_clipboard.is_some() {
+            self.status("A linked CTF clipboard verification is already running. No stale text copied.");
+            return;
+        }
+        let Some(source_id) = self.copy_source else {
+            self.status("No current candidate file; clipboard unchanged.");
+            return;
+        };
+        let Some(pinned) = self.linked_request("ctf_volumes_pinned") else {
+            self.status("Linked CTF generation unavailable; clipboard unchanged.");
+            return;
+        };
+        self.pending_candidate_clipboard = Some(CandidateClipboardGuard {
+            command,
+            page_generation: self.generation,
+            source_id,
+            offset: self.offset,
+            focus_disk: self.copy_focus_volume_id,
+        });
+        self.status("Rechecking original CTF generation before local candidate clipboard copy...");
+        self.call("candidate_clipboard_source", pinned);
+    }
+
     unsafe fn command(&mut self, command: usize, notification: usize) {
         // A delayed timer after sleep or a long modal cannot preserve green.
         self.expire_physical_presence_if_stale();
@@ -4868,49 +5037,22 @@ impl App {
                     self.status("Wait for the current candidate page to finish verifying before copying paths.");
                     return;
                 }
-                let Some(name) = self.copy_source_name.as_deref() else {
-                    self.status("No current catalogued file for the page manifest.");
-                    return;
-                };
-                let manifest = candidate_page_manifest(
-                    name,
-                    &self.entries,
-                    self.offset,
-                    self.total,
-                    self.copy_focus_volume_id,
-                );
-                self.text(self.locator, &manifest);
-                SendMessageW(self.locator, EM_SETSEL, 0, -1);
-                SendMessageW(self.locator, WM_COPY, 0, 0);
-                SendMessageW(self.locator, EM_SETSEL, 0, 0);
-                self.update_disk_locator();
-                self.status("Current candidate PAGE paths copied locally. Other pages, physical presence and file bytes remain unverified.");
+                if self.linked_ctf.is_some() {
+                    self.verify_candidate_clipboard(COPY_PAGE_MANIFEST);
+                } else {
+                    self.write_candidate_clipboard(COPY_PAGE_MANIFEST);
+                }
             }
             COPY_PICKUP_PLAN => {
-                if !self.page_ready {
-                    self.status("Candidate page still loading or source verification failed; nothing copied.");
+                if !self.page_ready || self.copy_source.is_none() || self.copy_disk_groups.is_empty() {
+                    self.status("Wait for catalogued candidate disks before copying the pickup list.");
                     return;
                 }
-                let Some(plan) = self.copy_source_name.as_deref().and_then(|name| {
-                    candidate_disk_pickup_list(
-                        name,
-                        &self.copy_disk_groups,
-                        &self.shelf_labels,
-                        &self.physical_states,
-                        &self.shelf_tag_conflicts,
-                    )
-                }) else {
-                    self.status("Find copies and wait for catalogued candidate disks first.");
-                    return;
-                };
-                // Existing native EDIT is a transient clipboard source; restore
-                // the live inspector immediately, without disk/catalog writes.
-                self.text(self.locator, &plan);
-                SendMessageW(self.locator, EM_SETSEL, 0, -1);
-                SendMessageW(self.locator, WM_COPY, 0, 0);
-                SendMessageW(self.locator, EM_SETSEL, 0, 0);
-                self.update_disk_locator();
-                self.status("Disk pickup checklist copied locally. OS badges are last observations; file bytes unverified.");
+                if self.linked_ctf.is_some() {
+                    self.verify_candidate_clipboard(COPY_PICKUP_PLAN);
+                } else {
+                    self.write_candidate_clipboard(COPY_PICKUP_PLAN);
+                }
             }
             COPY_VERIFIED_OS_ROOT => {
                 let Some(catalog_id) = self.selected_physical_catalog_disk() else {
