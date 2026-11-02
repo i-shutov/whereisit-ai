@@ -46,6 +46,7 @@ const COPY_LOCATOR: usize = 135;
 const REVEAL_DISK: usize = 136;
 const COPY_PICKUP_PLAN: usize = 137;
 const COPY_PAGE_MANIFEST: usize = 138;
+const COPY_REGISTER_FILTER: usize = 139;
 // Win32 GetDriveTypeW standard result codes; windows-sys 0.61 does not export these here.
 // Unknown/missing roots mean a potentially incomplete OS snapshot, never "offline".
 const DRIVE_UNKNOWN: u32 = 0;
@@ -282,6 +283,26 @@ fn filtered_disk_indices(
         .collect()
 }
 
+// A view-only shortcut for the physical pickup workflow: IDs must come from
+// the current catalogued copy groups, never fuzzy labels or historical paths.
+fn candidate_register_indices(volumes: &[Value], groups: &[Value]) -> Vec<usize> {
+    let candidate_ids: std::collections::HashSet<i64> = groups
+        .iter()
+        .filter(|group| group["count"].as_u64().is_some_and(|count| count > 0))
+        .filter_map(|group| group["volume_id"].as_i64())
+        .filter(|disk| *disk > 0)
+        .collect();
+    volumes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, volume)| {
+            id(volume)
+                .filter(|disk| candidate_ids.contains(disk))
+                .map(|_| index)
+        })
+        .collect()
+}
+
 // Row zero always means global browse. Any other row must resolve through
 // the *filtered* mapping, never through the original volume array.
 fn filtered_disk_index_at_row(indices: &[usize], row: isize) -> Option<usize> {
@@ -312,7 +333,7 @@ fn reveal_disk_filter_for_row(
 
 #[cfg(test)]
 mod disk_register_filter_tests {
-    use super::{filtered_disk_index_at_row, filtered_disk_indices, reveal_disk_filter_for_row};
+    use super::{candidate_register_indices, filtered_disk_index_at_row, filtered_disk_indices, reveal_disk_filter_for_row};
     use serde_json::json;
     use std::collections::HashMap;
 
@@ -350,6 +371,31 @@ mod disk_register_filter_tests {
         assert_eq!(filtered_disk_index_at_row(&visible, 3), None);
         assert_eq!(filtered_disk_index_at_row(&visible, -1), None);
     }
+    #[test]
+    fn candidate_only_register_uses_exact_ids_and_preserves_original_row_mapping() {
+        let volumes = vec![
+            json!({"id":4,"label":"Disk #42 archive"}),
+            json!({"id":42,"label":"Archive"}),
+            json!({"id":142,"label":"Archive #42 clone label"}),
+            json!({"id":9,"label":"Other"}),
+        ];
+        let groups = vec![
+            json!({"volume_id":42,"count":3}),
+            json!({"volume_id":142,"count":1}),
+            json!({"volume_id":4,"count":0}),
+            json!({"volume_id":999,"count":7}),
+            json!({"volume_id":42,"count":3}),
+        ];
+        let visible = candidate_register_indices(&volumes, &groups);
+        assert_eq!(visible, vec![1, 2]);
+        assert_eq!(filtered_disk_index_at_row(&visible, 0), None);
+        assert_eq!(filtered_disk_index_at_row(&visible, 1), Some(1));
+        assert_eq!(filtered_disk_index_at_row(&visible, 2), Some(2));
+        assert_eq!(filtered_disk_index_at_row(&visible, 3), None);
+        assert!(candidate_register_indices(&volumes, &[]).is_empty());
+        assert!(candidate_register_indices(&volumes, &[json!({"volume_id":-1,"count":1})]).is_empty());
+    }
+
     #[test]
     fn selected_file_reveals_only_its_exact_existing_catalog_disk() {
         let volumes = vec![
@@ -2334,6 +2380,15 @@ impl App {
         self.load();
     }
     unsafe fn load(&mut self) {
+        // The candidate-only register is a temporary view, not a persistent
+        // search scope: restore the full register upon leaving copy mode.
+        if self.copy_source.is_none()
+            && self.disk_filter_query.trim().eq_ignore_ascii_case("copies:")
+        {
+            self.disk_filter_query.clear();
+            self.text(self.disk_filter, "");
+            self.populate_physical_disk_list();
+        }
         self.generation += 1;
         // Hide all rows from the preceding scope/page before the async reply.
         // Never permit an old selection to masquerade as the new catalog page.
@@ -2901,7 +2956,15 @@ impl App {
 
     unsafe fn populate_physical_disk_list(&mut self) {
         self.visible_disk_indices =
-            filtered_disk_indices(&self.volumes, &self.shelf_labels, &self.disk_filter_query);
+            if self.disk_filter_query.trim().eq_ignore_ascii_case("copies:") {
+                if self.copy_source.is_some() {
+                    candidate_register_indices(&self.volumes, &self.copy_disk_groups)
+                } else {
+                    vec![]
+                }
+            } else {
+                filtered_disk_indices(&self.volumes, &self.shelf_labels, &self.disk_filter_query)
+            };
         SendMessageW(self.disks, LB_RESETCONTENT, 0, 0);
         let global_label = format!(
             "All disks / global search ({} of {})",
@@ -3663,6 +3726,17 @@ impl App {
                 self.populate_physical_disk_list();
                 SetFocus(self.disk_filter);
                 self.status("Showing selected file's exact disk in register. Search scope and OS pairing unchanged; click disk to browse.");
+            }
+            COPY_REGISTER_FILTER => {
+                if self.copy_source.is_none() || self.copy_disk_groups.is_empty() {
+                    self.status("Find metadata copies of a file first (Ctrl+D).");
+                    return;
+                }
+                self.disk_filter_query = "copies:".to_owned();
+                self.text(self.disk_filter, "copies:");
+                self.populate_physical_disk_list();
+                SetFocus(self.disks);
+                self.status("Register shows exact IDs of candidate disks only. Search, selected file and OS pairing are unchanged; Ctrl+L clears filter.");
             }
             COPY_CONNECTED => self.focus_sole_connected_copy(),
             COPY_PAGE_MANIFEST => {
@@ -4630,6 +4704,12 @@ pub fn run() {
                 AppendMenuW(
                     view,
                     MF_STRING,
+                    COPY_REGISTER_FILTER,
+                    wide("Show candidate disks in register\tCtrl+Shift+K").as_ptr(),
+                );
+                AppendMenuW(
+                    view,
+                    MF_STRING,
                     COPY_PICKUP_PLAN,
                     wide("Copy all candidate disks pickup list\tCtrl+Shift+P").as_ptr(),
                 );
@@ -4691,6 +4771,16 @@ pub fn run() {
                 && message.wParam == b'P' as usize
             {
                 (*app).command(COPY_PICKUP_PLAN, 0);
+                continue;
+            }
+            // Ctrl+Shift+K filters the left disk register by EXACT copy IDs.
+            // It never changes search scope or claims physical USB presence.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && GetKeyState(VK_SHIFT as i32) < 0
+                && message.wParam == b'K' as usize
+            {
+                (*app).command(COPY_REGISTER_FILTER, 0);
                 continue;
             }
             // Ctrl+Shift+M copies only the verified loaded candidate page,

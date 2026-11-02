@@ -361,6 +361,24 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn(".accessibilityLabel(warning)", MAC)
         self.assertIn("SHARED STICKER", MAC)
 
+    def test_ux13_candidate_register_is_view_only_and_exact_id_on_both_clients(self):
+        self.assertIn("const COPY_REGISTER_FILTER: usize = 139", WIN)
+        self.assertIn("fn candidate_register_indices(", WIN)
+        self.assertIn("candidate_only_register_uses_exact_ids_and_preserves_original_row_mapping", WIN)
+        self.assertIn('eq_ignore_ascii_case("copies:")', WIN)
+        self.assertIn("COPY_REGISTER_FILTER => {", WIN)
+        self.assertIn("(*app).command(COPY_REGISTER_FILTER, 0)", WIN)
+        self.assertIn("candidate_register_indices(&self.volumes, &self.copy_disk_groups)", WIN)
+        self.assertIn('self.disk_filter_query = "copies:".to_owned();', WIN)
+        self.assertIn('if self.copy_source.is_none()', WIN)
+        self.assertIn('if needle.lowercased() == "copies:"', MAC)
+        self.assertIn("guard copySourceID != nil else { return [] }", MAC)
+        self.assertIn("func revealCopyCandidateDisksInRegister()", MAC)
+        self.assertIn('Button("Candidates")', MAC)
+        self.assertIn('.keyboardShortcut("k", modifiers: [.command, .shift])', MAC)
+        self.assertIn('if copySourceID == nil', MAC)
+        self.assertIn("Search, selected file and OS pairing remain unchanged.", MAC)
+
     def test_no_unverified_physical_drive_claims_in_locator(self):
         self.assertIn("Physical connection: NOT VERIFIED", WIN)
         self.assertIn("Physical connection not verified", MAC)

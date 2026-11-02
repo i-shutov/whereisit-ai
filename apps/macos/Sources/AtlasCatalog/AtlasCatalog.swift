@@ -235,7 +235,14 @@ private struct CopyReturnContext {
     @Published var duplicateMode = "name_size"
     var appliedDuplicateMode = "name_size"
     @Published var showingDuplicates = false
-    @Published var copySourceID: Int64?
+    @Published var copySourceID: Int64? {
+        didSet {
+            if copySourceID == nil
+                && diskFilter.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "copies:" {
+                diskFilter = ""
+            }
+        }
+    }
     @Published var copySourceName: String?
     @Published var copyDiskGroups: [CandidateDiskGroup] = []
     @Published var pageReady = false
@@ -389,6 +396,13 @@ private struct CopyReturnContext {
     var visibleVolumes: [Volume] {
         let needle = diskFilter.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !needle.isEmpty else { return volumes }
+        // copies: is a temporary, view-only exact ID match from the active
+        // cross-disk metadata candidate groups, never OS mount evidence.
+        if needle.lowercased() == "copies:" {
+            guard copySourceID != nil else { return [] }
+            let ids = Set(copyDiskGroups.filter { $0.count > 0 }.map(\.volume_id))
+            return volumes.filter { ids.contains($0.id) }
+        }
         // id:42 uses strict catalog identity, not a fuzzy number/label match.
         // This filter never changes search scope or verifies a mounted USB.
         if needle.lowercased().hasPrefix("id:") {
@@ -400,6 +414,14 @@ private struct CopyReturnContext {
             $0.label.localizedStandardContains(needle) || String($0.id).contains(needle)
                 || (shelfLabels[$0.id] ?? "").localizedStandardContains(needle)
         }
+    }
+    func revealCopyCandidateDisksInRegister() {
+        guard copySourceID != nil, !copyDiskGroups.isEmpty else {
+            status = "Find metadata copies of a file before filtering the disk register."
+            return
+        }
+        diskFilter = "copies:"
+        status = "Showing exact candidate catalog disk IDs in the register. Search, selected file and OS pairing remain unchanged."
     }
     func revealSelectedDiskInRegister() {
         guard let entry = selected,
@@ -1696,6 +1718,13 @@ private struct CopyReturnContext {
                         Text("DISKS • \(model.visibleVolumes.count)/\(model.volumes.count)")
                             .font(.caption.bold()).foregroundStyle(.secondary)
                         Spacer(minLength: 0)
+                        Button("Candidates") {
+                            model.revealCopyCandidateDisksInRegister()
+                        }
+                        .disabled(model.copySourceID == nil || model.copyDiskGroups.isEmpty)
+                        .keyboardShortcut("k", modifiers: [.command, .shift])
+                        .accessibilityLabel("Show only catalog disks containing name and size copy candidates")
+                        .help("View-only exact disk ID filter; no USB mount or file content verification (Command-Shift-K)")
                         Button {
                             diskFilterFocused = true
                         } label: {
@@ -1709,7 +1738,7 @@ private struct CopyReturnContext {
                         TextField("Filter disk label / ID", text: $model.diskFilter)
                             .focused($diskFilterFocused)
                             .accessibilityLabel("Filter catalog disk register")
-                            .help("Filter only left register; id:42 isolates exact catalog disk 42. Global file search unchanged.")
+                            .help("Filter only left register; id:42 isolates exact disk 42; copies: shows current candidate disks. Global search unchanged.")
                         if !model.diskFilter.isEmpty {
                             Button {
                                 model.diskFilter = ""

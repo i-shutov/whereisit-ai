@@ -267,3 +267,7 @@ Runbook: qa/UX12_SHELF_COLLISION_AUDIT_20261102.md.
 Run final exact-HEAD Linux/Windows/macOS ARM/Intel, integration, offline and
 installed-upgrade CI; human 1366x768/HiDPI, keyboard, screen reader and real
 USB tests remain open. PR #57 draft; stable release blocked.
+
+## UX13 — show candidate disks in the physical register (2026-11-02)
+
+Both native shells expose a compact view-only `copies:` disk register mode from the selected file's metadata candidate groups (Windows Ctrl+Shift+K, macOS Command-Shift-K/Candidates). Matching uses exact catalog disk IDs, not shelf strings or historical drive letters; all-disk search and current result selection are preserved. The register returns to its normal filter when copy mode ends. Unit and native-source wiring regressions test 4/42/142 collisions, filtered index mapping and keyboard accessibility. Manual 1366×768/HiDPI, OS mount and actual physical pickup inspection are required before acceptance. See [UX13 runbook](qa/UX13_CANDIDATE_DISK_REGISTER_20261102.md).
