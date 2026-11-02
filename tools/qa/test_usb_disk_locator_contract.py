@@ -449,8 +449,8 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn('func retrievalNote(for entry: Entry) -> String', MAC)
         self.assertIn('Button("Copy retrieval note")', MAC)
         self.assertIn('.keyboardShortcut("c", modifiers: [.command, .shift])', MAC)
-        self.assertIn("model.shelfLabel(entry.volume_id)", MAC)
-        self.assertIn("model.physicalCaption(entry.volume_id)", MAC)
+        self.assertIn("self.shelfLabel(entry.volume_id)", MAC)
+        self.assertIn("self.physicalCaption(entry.volume_id)", MAC)
         self.assertIn("file contents not compared", MAC)
         self.assertIn("physical_shelf_labels", SERVICE)
 
