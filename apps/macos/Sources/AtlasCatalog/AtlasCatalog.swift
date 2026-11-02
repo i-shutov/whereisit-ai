@@ -337,7 +337,7 @@ private struct CandidateFolderReturnContext {
         return Int64(verifiedOverlayOffset + page.items.count) < page.total
     }
     var linkedGeneration: String?
-    var linkedMode: Bool { linkedCTFPath != nil && linkedGeneration != nil }
+    var linkedMode: Bool { linkedCTFPath != nil } // Read-only even when generation is missing.
     var editableAllowed: Bool { mutationAllowed && !linkedMode }
     var linkedCacheRoot: String {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -709,6 +709,7 @@ private struct CandidateFolderReturnContext {
     }
     private enum CandidateClipboardAction { case pickupList, pagePaths }
     private var candidateClipboardRequestSerial = 0
+    private var selectedMetadataClipboardSerial = 0
 
     // A loaded page is not authorization to copy historical linked CTF data
     // later. Verify the original SHA on EVERY clipboard action, then reject a
@@ -801,14 +802,19 @@ private struct CandidateFolderReturnContext {
         }
         let scope = physicalScope
         let token = generation
-        if let fields = linkedFields() {
+        if linkedMode {
+            guard let fields = linkedFields() else {
+                status = "Linked CTF generation missing; physical disk card NOT copied."
+                return
+            }
             var pinned = fields
             pinned["op"] = "ctf_volumes_pinned"
             status = "Verifying linked CTF generation before copying physical disk card…"
             request(pinned, as: LinkedCTFResult<[Volume]>.self, generationToken: token) { [weak self] reply in
                 guard let self else { return }
-                guard self.physicalScope == scope,
+                guard self.physicalScope == scope, self.generation == token,
                       self.selectedDiskForPairing == diskID,
+                      reply?.generation == self.linkedGeneration,
                       let verifiedDisk = reply?.result.first(where: { $0.id == diskID }) else {
                     self.status = "Linked CTF generation or selected disk changed; pickup card NOT copied."
                     return
@@ -819,6 +825,48 @@ private struct CandidateFolderReturnContext {
             writeDiskPickupCard(disk)
         }
     }
+    // Do not reuse a loaded linked CTF page for local clipboard actions:
+    // independently revalidate its original generation and current selection.
+    func copySelectedMetadata(_ text: String, entryID: Int64, diskID: Int64) {
+        selectedMetadataClipboardSerial += 1
+        let serial = selectedMetadataClipboardSerial
+        guard pageReady, !awaitingPage, let row = selected,
+              row.id == entryID, row.volume_id == diskID else {
+            status = "Current file selection is stale; clipboard NOT updated."
+            return
+        }
+        let token = generation
+        let scope = physicalScope
+        if linkedMode {
+            guard var pinned = linkedFields() else {
+                status = "Linked CTF generation missing; clipboard NOT updated."
+                return
+            }
+            pinned["op"] = "ctf_volumes_pinned"
+            status = "Rechecking linked CTF generation before copying selected metadata…"
+            request(pinned, as: LinkedCTFResult<[Volume]>.self, generationToken: token) { [weak self] reply in
+                guard let self else { return }
+                guard self.selectedMetadataClipboardSerial == serial,
+                      self.generation == token, self.physicalScope == scope,
+                      self.pageReady, !self.awaitingPage,
+                      self.selected?.id == entryID, self.selected?.volume_id == diskID,
+                      reply?.generation == self.linkedGeneration,
+                      reply?.result.contains(where: { $0.id == diskID }) == true else {
+                    self.status = "Selected file or linked source changed; clipboard NOT updated."
+                    return
+                }
+                self.writeSelectedMetadata(text)
+            }
+        } else {
+            writeSelectedMetadata(text)
+        }
+    }
+    private func writeSelectedMetadata(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        status = "Current catalog metadata copied locally; physical file bytes NOT verified."
+    }
+
     // Only called after exact source-generation revalidation in linked CTF
     // mode. The OS badge itself also expires without a fresh native probe.
     private func writeDiskPickupCard(_ disk: Volume) {
@@ -1167,11 +1215,24 @@ private struct CandidateFolderReturnContext {
 
     func refreshVolumes() {
         refreshCategories()
-        if let fields = linkedFields() {
+        if linkedMode {
+            guard let fields = linkedFields() else {
+                generation += 1
+                volumes = []; entries = []; selection = nil
+                pageReady = false; awaitingPage = false; retryPageAvailable = true
+                copyDiskGroups = []; physicalStates = [:]; verifiedPhysicalIDs = [:]
+                physicalVerifiedUptime = nil
+                status = "Linked CTF generation missing; no SQLite catalog fallback."
+                return
+            }
+            let token = generation
+            let scope = physicalScope
             var requestData: [String: Any] = ["op": "ctf_volumes_pinned"]
             requestData.merge(fields) { _, newValue in newValue }
             request(requestData, as: LinkedCTFResult<[Volume]>.self) { [weak self] response in
-                guard let self, let response else { return }
+                guard let self, let response, self.generation == token,
+                      self.physicalScope == scope,
+                      response.generation == self.linkedGeneration else { return }
                 self.volumes = response.result
                 self.refreshPhysicalPresence()
                 self.refreshShelfLabels()
@@ -1365,6 +1426,13 @@ private struct CandidateFolderReturnContext {
         awaitingPage = true; retryPageAvailable = false
         // Clear previous-scope rows immediately; an old page must not be actionable.
         selection = nil; entries = []; total = 0; hasMore = false; pageReady = false
+        if linkedMode && linkedFields() == nil {
+            awaitingPage = false
+            retryPageAvailable = true
+            copyDiskGroups = []
+            status = "Linked CTF generation missing; SQLite search fallback refused."
+            return
+        }
         var args: [String: Any] = ["offset": offset, "limit": limit]
         if let volumeID { args["volume_id"] = volumeID }
         if let copySourceID {
@@ -1912,11 +1980,8 @@ private struct CandidateFolderReturnContext {
     @State private var shelfDraft = ""
     @State private var shelfDraftDiskID: Int64?
 
-    private func copy(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-    }
-
+    // Selected-file copy actions are handled by the observable model, which
+    // checks live selection and original CTF generation before clipboard use.
     // A portable shopping-list-style retrieval note, never a live file path.
     // Physical state is the most recent explicit OS probe, not file existence.
     private func retrievalNote(for entry: Entry) -> String {
@@ -2009,9 +2074,15 @@ private struct CandidateFolderReturnContext {
                         Text("Duplicate count not calculated")
                             .font(.caption).foregroundStyle(.secondary)
                     }
-                    Button("Copy disk label") { copy(model.volumeLabel(entry.volume_id)) }
-                    Button("Copy recorded path") { copy(entry.relative_path) }
-                    Button("Copy retrieval note") { copy(retrievalNote(for: entry)) }
+                    Button("Copy disk label") {
+                        model.copySelectedMetadata(model.volumeLabel(entry.volume_id), entryID: entry.id, diskID: entry.volume_id)
+                    }
+                    Button("Copy recorded path") {
+                        model.copySelectedMetadata(entry.relative_path, entryID: entry.id, diskID: entry.volume_id)
+                    }
+                    Button("Copy retrieval note") {
+                        model.copySelectedMetadata(retrievalNote(for: entry), entryID: entry.id, diskID: entry.volume_id)
+                    }
                         .keyboardShortcut("c", modifiers: [.command, .shift])
                         .accessibilityLabel("Copy catalog disk, shelf and recorded file details")
                         .help("Copy only catalog metadata and last OS probe state; no file-content verification")

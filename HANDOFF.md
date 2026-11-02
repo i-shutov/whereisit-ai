@@ -1,3 +1,30 @@
+## UX30 — linked-source incomplete generation fails closed; selected clipboard pinned (2026-11-02)
+
+Draft PR #57: audited a real native source-safety gap on BOTH Windows Win32
+and macOS SwiftUI. When an external CTF path existed but its generation
+token was unavailable, local SQLite search/candidates could be selected
+instead of refusing, and native mutation controls could treat the session
+as writable. Also selected locator / path clipboard actions reused an
+already loaded linked page without a fresh source SHA check. This integrated
+repair makes external-source presence sufficient for read-only mode, refuses
+un-pinned volume/search/candidate fallback, clears stale register/page state,
+and independently revalidates external generation and current selection
+before Win32 locator and SwiftUI label/path/retrieval clipboard operations.
+Mac disk pickup card also refuses missing generation and verifies its
+current generation. No source/cache/user SQLite writes; no historical
+drive-letter or content hash claims.
+
+Compiled Windows pure regression + dual-native Python source contracts,
+manual [UX30 runbook](docs/qa/UX30_LINKED_SOURCE_CLIPBOARD_FAIL_CLOSED_20261102.md).
+**Exact-HEAD CI pending until ALL four native builds, offline acceptance,
+integration regressions and three installed upgrades complete.**
+PR stays draft, no merge; RC3 unsigned prerelease. Real 44-disk CTF results
+are earlier separate evidence. Historical raw inputs, original modified CTF,
+Win10/11/Mac ARM/Intel manual hardware+GUI, real p95 150 ms and
+signing/notarization remain blocked. No other repositories modified.
+
+---
+
 ## UX29 — native Explorer/Finder handoff for OS-verified disk root (2026-11-02)
 
 The existing draft PR #57 adds Windows Ctrl+Shift+B **Open OS root** and

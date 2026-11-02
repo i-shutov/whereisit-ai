@@ -16,6 +16,48 @@ PHYSICAL = (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encod
 
 
 class DiskLocatorWiringTests(unittest.TestCase):
+    def test_ux30_incomplete_linked_source_never_falls_back_or_writes(self):
+        # A source path with no trusted generation is LINKED/READ-ONLY.
+        # Both native clients must refuse SQLite search and disk-card fallback.
+        self.assertIn("fn incomplete_linked_ctf(", WIN)
+        self.assertIn("missing_generation_never_authorizes_local_fallback", WIN)
+        self.assertIn("self.linked_ctf.is_some()\n    }", WIN)
+        refresh = WIN.split("unsafe fn refresh(&mut self) {", 1)[1].split(
+            "unsafe fn load(&mut self)", 1
+        )[0]
+        self.assertIn("incomplete_linked_ctf(", refresh)
+        self.assertIn("self.volumes.clear();", refresh)
+        load = WIN.split("unsafe fn load(&mut self) {", 1)[1].split(
+            "unsafe fn ", 1
+        )[0]
+        self.assertIn("Linked CTF generation unavailable; no local SQLite search", load)
+        self.assertIn("self.pending_locator_copy = Some((entry_id, self.generation));", WIN)
+        self.assertIn('self.call("locator_source", pinned);', WIN)
+        self.assertIn('if reply.tag == "locator_source" {', WIN)
+        self.assertIn("self.copy_current_locator_selection(entry_id);", WIN)
+        self.assertIn("self.entries.get(row as usize).and_then(id) != Some(entry_id)", WIN)
+        self.assertIn("var linkedMode: Bool { linkedCTFPath != nil }", MAC)
+        self.assertIn("if linkedMode && linkedFields() == nil {", MAC)
+        self.assertIn("Linked CTF generation missing; no SQLite catalog fallback.", MAC)
+        disk = MAC.split("func copySelectedDiskPickupCard() {", 1)[1].split(
+            "func copySelectedMetadata(", 1
+        )[0]
+        self.assertIn("if linkedMode {", disk)
+        self.assertIn("guard let fields = linkedFields() else {", disk)
+        self.assertIn("reply?.generation == self.linkedGeneration", disk)
+
+    def test_ux30_selected_file_clipboard_is_generation_and_page_pinned(self):
+        self.assertIn("func copySelectedMetadata(", MAC)
+        self.assertIn("selectedMetadataClipboardSerial == serial", MAC)
+        self.assertIn("self.pageReady, !self.awaitingPage", MAC)
+        self.assertIn("self.selected?.id == entryID, self.selected?.volume_id == diskID", MAC)
+        self.assertIn('pinned["op"] = "ctf_volumes_pinned"', MAC)
+        self.assertIn("reply?.generation == self.linkedGeneration", MAC)
+        self.assertIn("model.copySelectedMetadata(model.volumeLabel(entry.volume_id)", MAC)
+        self.assertIn("model.copySelectedMetadata(entry.relative_path", MAC)
+        self.assertIn("model.copySelectedMetadata(retrievalNote(for: entry)", MAC)
+        self.assertNotIn('Button("Copy recorded path") { copy(', MAC)
+
     def test_ux28_candidate_folder_return_is_exact_and_revalidated(self):
         # Other-disk candidate -> recorded parent -> candidate scope/page ->
         # original global search. Each return uses a fresh linked CTF request.

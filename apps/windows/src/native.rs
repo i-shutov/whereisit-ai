@@ -3111,6 +3111,24 @@ impl CandidateFolderReturn {
         })
     }
 }
+// A selected external source without a trusted generation is never SQLite.
+fn incomplete_linked_ctf(source: Option<&str>, generation: Option<&str>) -> bool {
+    source.is_some() && generation.is_none()
+}
+
+#[cfg(test)]
+mod incomplete_linked_ctf_tests {
+    use super::incomplete_linked_ctf;
+
+    #[test]
+    fn missing_generation_never_authorizes_local_fallback() {
+        assert!(incomplete_linked_ctf(Some("synthetic.ctf"), None));
+        assert!(!incomplete_linked_ctf(Some("synthetic.ctf"), Some("sha-token")));
+        assert!(!incomplete_linked_ctf(None, None));
+        assert!(!incomplete_linked_ctf(None, Some("sha-token")));
+    }
+}
+
 struct App {
     hwnd: HWND,
     disks: HWND,
@@ -3174,6 +3192,7 @@ struct App {
     page_retry_available: bool,
     pending_mount_root: Option<(i64, u64, bool)>,
     pending_disk_card: Option<(i64, u64)>,
+    pending_locator_copy: Option<(i64, u64)>,
     pending_candidate_clipboard: Option<CandidateClipboardGuard>,
     generation: u64,
     pending: usize,
@@ -3248,6 +3267,7 @@ impl App {
             page_retry_available: false,
             pending_mount_root: None,
             pending_disk_card: None,
+            pending_locator_copy: None,
             pending_candidate_clipboard: None,
             generation: 0,
             pending: 0,
@@ -3290,7 +3310,9 @@ impl App {
         Some(json!({"op":operation,"path":source,"cache_root":cache,"generation":generation}))
     }
     fn linked_mode(&self) -> bool {
-        self.linked_ctf.is_some() && self.linked_generation.is_some()
+        // Source presence defines read-only mode, even before a SHA is known.
+        // Missing generation must not silently enable SQLite mutations.
+        self.linked_ctf.is_some()
     }
     fn request_annotation_page(&mut self) {
         let Some(store) = self.annotation_db.as_ref().cloned() else {
@@ -3368,6 +3390,7 @@ impl App {
         self.page_retry_available = false;
         self.pending_mount_root = None;
         self.pending_disk_card = None;
+        self.pending_locator_copy = None;
         self.pending_candidate_clipboard = None;
         self.categories.clear();
         self.total = 0;
@@ -3390,6 +3413,22 @@ impl App {
     }
     unsafe fn refresh(&mut self) {
         self.generation += 1;
+        if incomplete_linked_ctf(self.linked_ctf.as_deref(), self.linked_generation.as_deref()) {
+            self.volumes.clear();
+            self.categories.clear();
+            self.physical_states.clear();
+            self.verified_physical_ids.clear();
+            self.physical_verified_at = None;
+            self.physical_probe_ok = false;
+            self.mounted_volumes.clear();
+            self.pending_disk_card = None;
+            self.pending_locator_copy = None;
+            SendMessageW(self.disks, LB_RESETCONTENT, 0, 0);
+            SendMessageW(self.category_list, LB_RESETCONTENT, 0, 0);
+            self.load();
+            self.status("Linked CTF generation missing: no SQLite fallback. Reopen source.");
+            return;
+        }
         if let Some(linked) = self.linked_request("ctf_volumes_pinned") {
             self.categories.clear();
             SendMessageW(self.category_list, LB_RESETCONTENT, 0, 0);
@@ -3459,6 +3498,12 @@ impl App {
                 }
             ),
         );
+        if incomplete_linked_ctf(self.linked_ctf.as_deref(), self.linked_generation.as_deref()) {
+            self.copy_disk_groups.clear();
+            self.page_retry_available = true;
+            self.status("Linked CTF generation unavailable; no local SQLite search or copy fallback.");
+            return;
+        }
         if let Some(source) = self.copy_source {
             if let Some(mut linked) = self.linked_request("ctf_copy_candidates_pinned") {
                 linked["entry_id"] = json!(source);
@@ -3596,6 +3641,19 @@ impl App {
                             self.write_candidate_clipboard(guard.command);
                         } else {
                             self.status("Original linked CTF SHA changed or could not be checked; clipboard NOT updated.");
+                        }
+                    }
+                }
+                continue;
+            }
+            if reply.tag == "locator_source" {
+                let pending = self.pending_locator_copy.take();
+                if let Some((entry_id, generation)) = pending {
+                    if generation == reply.generation && generation == self.generation {
+                        if reply.result["ok"] == true {
+                            self.copy_current_locator_selection(entry_id);
+                        } else {
+                            self.status("Linked CTF generation changed; selected locator NOT copied.");
                         }
                     }
                 }
@@ -4349,6 +4407,25 @@ impl App {
         } else {
             self.operate_verified_os_mount_root(disk, open_in_explorer);
         }
+    }
+
+    // A current-page locator becomes clipboard material only after a fresh
+    // external generation check; selection changes invalidate pending requests.
+    unsafe fn copy_current_locator_selection(&mut self, entry_id: i64) {
+        let row = SendMessageW(self.files, LVM_GETNEXTITEM, usize::MAX, LVNI_SELECTED as isize);
+        if !self.page_ready
+            || self.page_awaiting
+            || row < 0
+            || self.entries.get(row as usize).and_then(id) != Some(entry_id)
+        {
+            self.status("Selected locator changed or page is stale; clipboard NOT updated.");
+            return;
+        }
+        self.update_disk_locator();
+        SendMessageW(self.locator, EM_SETSEL, 0, -1);
+        SendMessageW(self.locator, WM_COPY, 0, 0);
+        SendMessageW(self.locator, EM_SETSEL, 0, 0);
+        self.status("Selected catalog locator copied after source check; file bytes NOT verified.");
     }
 
     // Copy a physical-retrieval instruction even for a disk selected only in
@@ -5467,24 +5544,29 @@ impl App {
                 }
             }
             COPY_LOCATOR => {
-                let row = SendMessageW(
-                    self.files,
-                    LVM_GETNEXTITEM,
-                    usize::MAX,
-                    LVNI_SELECTED as isize,
-                );
-                if row < 0 || self.entries.get(row as usize).is_none() {
-                    self.status("Select a catalogued file before copying its retrieval note.");
+                let row = SendMessageW(self.files, LVM_GETNEXTITEM, usize::MAX, LVNI_SELECTED as isize);
+                let selected_id = (row >= 0)
+                    .then(|| self.entries.get(row as usize).and_then(id))
+                    .flatten();
+                let Some(entry_id) = selected_id.filter(|entry_id| *entry_id > 0) else {
+                    self.status("Select a current catalogued file before copying its retrieval note.");
+                    return;
+                };
+                if !self.page_ready || self.page_awaiting {
+                    self.status("Current catalog page not ready; clipboard unchanged.");
                     return;
                 }
-                // Copy only the selected row's current read-only inspector text.
-                // The Win32 EDIT owns local clipboard handling; no CTF, cache or
-                // annotation write, network request or historical path probe.
-                self.update_disk_locator();
-                SendMessageW(self.locator, EM_SETSEL, 0, -1);
-                SendMessageW(self.locator, WM_COPY, 0, 0);
-                SendMessageW(self.locator, EM_SETSEL, 0, 0);
-                self.status("Locator text sent to the local clipboard. Mount status can change; file contents were not checked.");
+                if self.linked_mode() {
+                    let Some(pinned) = self.linked_request("ctf_volumes_pinned") else {
+                        self.status("Linked CTF generation missing; locator NOT copied.");
+                        return;
+                    };
+                    self.pending_locator_copy = Some((entry_id, self.generation));
+                    self.status("Rechecking original CTF generation before copying locator...");
+                    self.call("locator_source", pinned);
+                } else {
+                    self.copy_current_locator_selection(entry_id);
+                }
             }
             TOGGLE_LOCATOR => {
                 self.locator_visible = !self.locator_visible;

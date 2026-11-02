@@ -473,3 +473,17 @@ path or historical drive letter becomes an executable OS path, and opening
 the root cannot prove a film's presence, contents or hash equality.
 Synthetic tests + native CI are required, manual GUI/USB remains unaccepted.
 See [UX29 runbook](qa/UX29_OS_VERIFIED_ROOT_EXPLORER_FINDER_20261102.md).
+
+## UX30 — fail-closed incomplete linked source + selected metadata copies (2026-11-02)
+
+Cross-platform native safety/ergonomics repair in draft PR #57: a linked CTF
+path without generation SHA stays read-only, never falls back to the ordinary
+SQLite search, candidate or disk register. Windows selected locator and macOS
+selected label/path/retrieval note independently recheck source SHA before
+local clipboard copying, rejecting selection/page/source changes. The macOS
+physical disk pickup card also refuses partial linked sessions. Synthetic
+Windows unit and dual-client integration tests; both native targets and
+manual GUI/USB acceptance remain separate. See
+[UX30 manual QA](qa/UX30_LINKED_SOURCE_CLIPBOARD_FAIL_CLOSED_20261102.md).
+No real CTF or private data is committed, and no content equality or
+physical file presence is inferred. No merge / stable 1.0.
