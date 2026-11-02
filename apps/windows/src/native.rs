@@ -4697,7 +4697,13 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 COPY_DISK_FILTER,
             );
             ShowWindow(app.copy_disk_filter, SW_HIDE);
-            app.help=control(hwnd,"STATIC","AND  OR  NOT  ( )   name: path: ext: type:video size: category:",0,142);
+            app.help = control(
+                hwnd,
+                "STATIC",
+                "AND  OR  NOT  ( )   name: path: ext: type:video size: category:",
+                0,
+                142,
+            );
             MoveWindow(app.help, 8, 62, 700, 18, 1);
             app.disk_filter = control(
                 hwnd,
