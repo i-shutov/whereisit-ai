@@ -3123,7 +3123,10 @@ mod incomplete_linked_ctf_tests {
     #[test]
     fn missing_generation_never_authorizes_local_fallback() {
         assert!(incomplete_linked_ctf(Some("synthetic.ctf"), None));
-        assert!(!incomplete_linked_ctf(Some("synthetic.ctf"), Some("sha-token")));
+        assert!(!incomplete_linked_ctf(
+            Some("synthetic.ctf"),
+            Some("sha-token")
+        ));
         assert!(!incomplete_linked_ctf(None, None));
         assert!(!incomplete_linked_ctf(None, Some("sha-token")));
     }
@@ -3413,7 +3416,10 @@ impl App {
     }
     unsafe fn refresh(&mut self) {
         self.generation += 1;
-        if incomplete_linked_ctf(self.linked_ctf.as_deref(), self.linked_generation.as_deref()) {
+        if incomplete_linked_ctf(
+            self.linked_ctf.as_deref(),
+            self.linked_generation.as_deref(),
+        ) {
             self.volumes.clear();
             self.categories.clear();
             self.physical_states.clear();
@@ -3498,10 +3504,15 @@ impl App {
                 }
             ),
         );
-        if incomplete_linked_ctf(self.linked_ctf.as_deref(), self.linked_generation.as_deref()) {
+        if incomplete_linked_ctf(
+            self.linked_ctf.as_deref(),
+            self.linked_generation.as_deref(),
+        ) {
             self.copy_disk_groups.clear();
             self.page_retry_available = true;
-            self.status("Linked CTF generation unavailable; no local SQLite search or copy fallback.");
+            self.status(
+                "Linked CTF generation unavailable; no local SQLite search or copy fallback.",
+            );
             return;
         }
         if let Some(source) = self.copy_source {
@@ -3653,7 +3664,9 @@ impl App {
                         if reply.result["ok"] == true {
                             self.copy_current_locator_selection(entry_id);
                         } else {
-                            self.status("Linked CTF generation changed; selected locator NOT copied.");
+                            self.status(
+                                "Linked CTF generation changed; selected locator NOT copied.",
+                            );
                         }
                     }
                 }
@@ -4412,7 +4425,12 @@ impl App {
     // A current-page locator becomes clipboard material only after a fresh
     // external generation check; selection changes invalidate pending requests.
     unsafe fn copy_current_locator_selection(&mut self, entry_id: i64) {
-        let row = SendMessageW(self.files, LVM_GETNEXTITEM, usize::MAX, LVNI_SELECTED as isize);
+        let row = SendMessageW(
+            self.files,
+            LVM_GETNEXTITEM,
+            usize::MAX,
+            LVNI_SELECTED as isize,
+        );
         if !self.page_ready
             || self.page_awaiting
             || row < 0
@@ -5544,12 +5562,19 @@ impl App {
                 }
             }
             COPY_LOCATOR => {
-                let row = SendMessageW(self.files, LVM_GETNEXTITEM, usize::MAX, LVNI_SELECTED as isize);
+                let row = SendMessageW(
+                    self.files,
+                    LVM_GETNEXTITEM,
+                    usize::MAX,
+                    LVNI_SELECTED as isize,
+                );
                 let selected_id = (row >= 0)
                     .then(|| self.entries.get(row as usize).and_then(id))
                     .flatten();
                 let Some(entry_id) = selected_id.filter(|entry_id| *entry_id > 0) else {
-                    self.status("Select a current catalogued file before copying its retrieval note.");
+                    self.status(
+                        "Select a current catalogued file before copying its retrieval note.",
+                    );
                     return;
                 };
                 if !self.page_ready || self.page_awaiting {
