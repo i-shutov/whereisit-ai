@@ -1,3 +1,20 @@
+## UX32 — exact catalog disk ID + private shelf in native result rows (2026-11-02)
+
+Same draft PR #57: both native main result tables show the exact catalog
+disk ID first, followed by a separate user shelf sticker and recorded label.
+Duplicate stickers are explicitly flagged and unknown IDs never guessed.
+Win32 pure Rust unit tests cover Cyrillic, conflicts, invalid IDs and line
+breaks; SwiftUI has VoiceOver full text and Help. Python native-wiring checks
+cover both platforms. This changes no CTF, cached data, user annotations,
+physical OS state, hashes or file bytes.
+
+Runbook: docs/qa/UX32_RESULT_DISK_ID_SHELF_20261102.md.
+Exact-HEAD CI for this commit is PENDING. Older successful CI is not proof
+for the new SHA. Manual 880/1366px GUI/HiDPI, OS USB checks, private historic
+CTF access, signing and p95 remain open. PR draft, stable 1.0 blocked.
+
+---
+
 ## UX31 Swift self-scope correction (2026-11-02)
 
 Source review of the shared SwiftUI context/inspector retrieval-note helper found

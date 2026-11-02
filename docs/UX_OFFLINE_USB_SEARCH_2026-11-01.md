@@ -507,3 +507,13 @@ Compiled Rust context tests and cross-platform native source contracts
 accompany the same draft PR #57. Exact-HEAD CI and human Win10/11 /
 macOS ARM64+Intel 880/1366px, HiDPI, keyboard/a11y/hardware checks remain
 required. Stable 1.0 stays blocked, RC3 unsigned prerelease only.
+
+## UX32 — exact physical retrieval identifiers in global results (2026-11-02)
+
+Both native search tables show exact catalog ID before user shelf sticker and
+recorded disk label. This helps identify one of ~40 unplugged drives without
+opening the inspector. Shared stickers remain ambiguous, unknown IDs are not
+guessed and SwiftUI supplies complete VoiceOver/Help text. This is catalog
+metadata, not OS-verified presence or byte/hash equality. No CTF/cache/user
+annotation changes. Manual GUI/hardware and exact-HEAD CI are still required.
+See docs/qa/UX32_RESULT_DISK_ID_SHELF_20261102.md.

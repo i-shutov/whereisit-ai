@@ -16,6 +16,24 @@ PHYSICAL = (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encod
 
 
 class DiskLocatorWiringTests(unittest.TestCase):
+    def test_ux32_exact_catalog_id_in_both_native_search_tables(self):
+        self.assertIn("fn result_disk_caption(", WIN)
+        self.assertIn("dense_results_identify_exact_disk_before_duplicate_labels", WIN)
+        self.assertIn("no_sticker_unknown_disk_and_untrusted_newlines_do_not_mislead", WIN)
+        renderer = WIN.split("unsafe fn render_rows(&self)", 1)[1].split("unsafe fn", 1)[0]
+        self.assertIn("let known_disk = volume_id.filter(", renderer)
+        self.assertIn("result_disk_caption(", renderer)
+        self.assertIn("self.shelf_labels.get(&disk)", renderer)
+        self.assertIn("self.shelf_tag_conflicts.contains_key(&disk)", renderer)
+        self.assertIn("func resultDiskCaption(_ disk: Int64)", MAC)
+        self.assertIn("func resultDiskAccessibility(_ disk: Int64)", MAC)
+        table = MAC.split('TableColumn("Disk") { entry in', 1)[1].split('TableColumn("Kind")', 1)[0]
+        self.assertIn("model.resultDiskCaption(entry.volume_id)", table)
+        self.assertIn("model.resultDiskAccessibility(entry.volume_id)", table)
+        self.assertIn(".accessibilityLabel(", table)
+        self.assertIn("UNKNOWN CATALOG DISK", WIN)
+        self.assertIn("UNKNOWN CATALOG DISK", MAC)
+
     def test_ux31_context_actions_use_current_row_and_preserve_source_checks(self):
         self.assertIn("fn result_context_actions(", WIN)
         self.assertIn("current_selected_result_is_authorized_by_exact_row_and_catalog_disk_id", WIN)

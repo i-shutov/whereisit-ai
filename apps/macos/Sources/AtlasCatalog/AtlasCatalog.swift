@@ -457,6 +457,33 @@ private struct CandidateFolderReturnContext {
         return "Disk #\(id)"
     }
 
+    // The ID-first main-table caption stays unambiguous when the locator is
+    // hidden. Private shelf tags and historical labels are NOT USB identities.
+    func resultDiskCaption(_ disk: Int64) -> String {
+        guard disk > 0, volumes.contains(where: { $0.id == disk }) else {
+            return "UNKNOWN CATALOG DISK"
+        }
+        let label = volumeLabel(disk).replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\t", with: " ")
+        let sticker = shelfLabel(disk).replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\t", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let shared = shelfConflictCaption(disk) == nil ? "" : " [SHARED STICKER]"
+        return sticker.isEmpty ? "#\(disk) • \(label)" : "#\(disk) • \(sticker)\(shared) • \(label)"
+    }
+    func resultDiskAccessibility(_ disk: Int64) -> String {
+        guard disk > 0, volumes.contains(where: { $0.id == disk }) else {
+            return "Unknown catalog disk. Physical identity not verified."
+        }
+        let sticker = shelfLabel(disk)
+        return "Catalog disk ID \(disk). Recorded label: \(volumeLabel(disk)). "
+            + "Owner sticker or shelf: \(sticker.isEmpty ? "not assigned" : sticker). "
+            + "\(shelfConflictCaption(disk) ?? "") Catalog metadata only; "
+            + "check physical pairing independently. File bytes not verified."
+    }
+
     // View-only filtering: never change volumeID, query scope or disk pairing.
     var visibleVolumes: [Volume] {
         let needle = diskFilter.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2466,7 +2493,12 @@ private struct CandidateFolderReturnContext {
                 }.frame(minWidth: 170, idealWidth: 220, maxWidth: 320)
                 Table(model.displayEntries, selection: $model.selection) {
                     TableColumn("Name") { entry in Label(entry.name, systemImage: entry.isFolder ? "folder" : "doc").lineLimit(1) }.width(min: 145, ideal: 230)
-                    TableColumn("Disk") { entry in Text(model.volumeLabel(entry.volume_id)) }.width(min: 90, ideal: 130)
+                    TableColumn("Disk") { entry in
+                        Text(model.resultDiskCaption(entry.volume_id))
+                            .lineLimit(1)
+                            .help(model.resultDiskAccessibility(entry.volume_id))
+                            .accessibilityLabel(model.resultDiskAccessibility(entry.volume_id))
+                    }.width(min: 90, ideal: 155)
                     TableColumn("Kind") { Text($0.kind) }.width(66)
                     TableColumn("Size") { Text($0.sizeText).monospacedDigit() }.width(83)
                     TableColumn("Modified") { Text($0.dateText) }.width(108)

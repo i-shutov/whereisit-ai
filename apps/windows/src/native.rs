@@ -209,6 +209,78 @@ mod hotplug_invalidation_tests {
         assert_eq!(volume_change_response(0xffff), VolumeChangeResponse::Ignore);
     }
 }
+// In a search result show the exact CATALOG disk ID before any duplicate
+// human label or private shelf sticker. Neither is evidence of OS presence.
+fn result_disk_caption(
+    disk_id: Option<i64>,
+    catalog_label: &str,
+    sticker: Option<&str>,
+    shared_sticker: bool,
+) -> String {
+    let Some(disk_id) = disk_id.filter(|value| *value > 0) else {
+        return "UNKNOWN CATALOG DISK".to_owned();
+    };
+    let clean = |value: &str| value.replace(['\r', '\n', '\t'], " ");
+    let label = clean(catalog_label);
+    let label = label.trim();
+    let label = if label.is_empty() {
+        "unnamed catalog disk"
+    } else {
+        label
+    };
+    match sticker.map(clean) {
+        Some(tag) if !tag.trim().is_empty() => {
+            let shared = if shared_sticker {
+                " [SHARED STICKER]"
+            } else {
+                ""
+            };
+            format!("#{disk_id} • {}{shared} • {label}", tag.trim())
+        }
+        _ => format!("#{disk_id} • {label}"),
+    }
+}
+
+#[cfg(test)]
+mod result_disk_caption_tests {
+    use super::result_disk_caption;
+
+    #[test]
+    fn dense_results_identify_exact_disk_before_duplicate_labels() {
+        let first = result_disk_caption(Some(4), "Archive", Some("Полка Б"), false);
+        let second = result_disk_caption(Some(42), "Archive", Some("Полка Б"), true);
+        assert_eq!(first, "#4 • Полка Б • Archive");
+        assert_eq!(second, "#42 • Полка Б [SHARED STICKER] • Archive");
+        assert_ne!(first, second);
+        assert!(!second.contains("connected"));
+        assert!(!second.contains("verified"));
+    }
+
+    #[test]
+    fn no_sticker_unknown_disk_and_untrusted_newlines_do_not_mislead() {
+        assert_eq!(
+            result_disk_caption(Some(142), "Archive", None, false),
+            "#142 • Archive"
+        );
+        assert_eq!(
+            result_disk_caption(Some(142), "Archive\nE:", Some("Shelf\t3"), false),
+            "#142 • Shelf 3 • Archive E:"
+        );
+        assert_eq!(
+            result_disk_caption(Some(142), " ", Some("  "), false),
+            "#142 • unnamed catalog disk"
+        );
+        assert_eq!(
+            result_disk_caption(None, "Archive", Some("Shelf"), true),
+            "UNKNOWN CATALOG DISK"
+        );
+        assert_eq!(
+            result_disk_caption(Some(-1), "Archive", None, false),
+            "UNKNOWN CATALOG DISK"
+        );
+    }
+}
+
 // Result-context actions are authorized from an exact, verified current page,
 // never a historical row index, visible label, mount path, or unverified USB.
 #[derive(Debug, PartialEq, Eq)]
@@ -4909,9 +4981,19 @@ impl App {
     unsafe fn render_rows(&self) {
         SendMessageW(self.files, LVM_DELETEALLITEMS, 0, 0);
         for (row, e) in self.entries.iter().enumerate() {
+            let volume_id = e["volume_id"].as_i64();
+            let known_disk = volume_id.filter(|candidate| {
+                self.volumes.iter().any(|volume| id(volume) == Some(*candidate))
+            });
+            let disk_cell = result_disk_caption(
+                known_disk,
+                &self.volume_label(volume_id),
+                volume_id.and_then(|disk| self.shelf_labels.get(&disk).map(String::as_str)),
+                volume_id.is_some_and(|disk| self.shelf_tag_conflicts.contains_key(&disk)),
+            );
             let cols = [
                 string(e, "name"),
-                self.volume_label(e["volume_id"].as_i64()),
+                disk_cell,
                 string(e, "kind"),
                 display_size(e["size"].as_u64()),
                 e.get("modified_local")
