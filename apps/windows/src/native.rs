@@ -1147,11 +1147,26 @@ mod candidate_clipboard_guard_tests {
         assert!(!current(9, true, Some(71), 250, Some(43)));
         assert!(!current(9, true, Some(71), 250, None));
         assert!(!candidate_clipboard_reply_current(
-            &guard, 9, 10, true, Some(71), 250, Some(42)
+            &guard,
+            9,
+            10,
+            true,
+            Some(71),
+            250,
+            Some(42)
         ));
-        let invalid = CandidateClipboardGuard { command: COPY_LOCATOR, ..guard };
+        let invalid = CandidateClipboardGuard {
+            command: COPY_LOCATOR,
+            ..guard
+        };
         assert!(!candidate_clipboard_reply_current(
-            &invalid, 9, 9, true, Some(71), 250, Some(42)
+            &invalid,
+            9,
+            9,
+            true,
+            Some(71),
+            250,
+            Some(42)
         ));
     }
 }
@@ -4763,7 +4778,9 @@ impl App {
 
     unsafe fn verify_candidate_clipboard(&mut self, command: usize) {
         if self.pending_candidate_clipboard.is_some() {
-            self.status("A linked CTF clipboard verification is already running. No stale text copied.");
+            self.status(
+                "A linked CTF clipboard verification is already running. No stale text copied.",
+            );
             return;
         }
         let Some(source_id) = self.copy_source else {
@@ -5044,8 +5061,13 @@ impl App {
                 }
             }
             COPY_PICKUP_PLAN => {
-                if !self.page_ready || self.copy_source.is_none() || self.copy_disk_groups.is_empty() {
-                    self.status("Wait for catalogued candidate disks before copying the pickup list.");
+                if !self.page_ready
+                    || self.copy_source.is_none()
+                    || self.copy_disk_groups.is_empty()
+                {
+                    self.status(
+                        "Wait for catalogued candidate disks before copying the pickup list.",
+                    );
                     return;
                 }
                 if self.linked_ctf.is_some() {
