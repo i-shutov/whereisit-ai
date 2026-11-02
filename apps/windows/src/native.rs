@@ -415,14 +415,12 @@ mod disk_register_filter_tests {
         assert_eq!(filtered_disk_index_at_row(&visible, 2), Some(2));
         assert_eq!(filtered_disk_index_at_row(&visible, 3), None);
         assert!(candidate_register_indices(&volumes, &[], &HashMap::new()).is_empty());
-        assert!(
-            candidate_register_indices(
-                &volumes,
-                &[json!({"volume_id":-1,"count":1})],
-                &HashMap::new(),
-            )
-            .is_empty()
-        );
+        assert!(candidate_register_indices(
+            &volumes,
+            &[json!({"volume_id":-1,"count":1})],
+            &HashMap::new(),
+        )
+        .is_empty());
     }
 
     #[test]
@@ -618,7 +616,11 @@ fn candidate_register_row_caption(
         .map(|tag| format!("sticker: {}", tag.replace(['\r', '\n', '\t'], " ")))
         .unwrap_or_else(|| "no sticker".to_owned());
     let label = string(volume, "label").replace(['\r', '\n', '\t'], " ");
-    let collision = if shared_sticker { " • SHARED STICKER" } else { "" };
+    let collision = if shared_sticker {
+        " • SHARED STICKER"
+    } else {
+        ""
+    };
     format!(
         "#{disk} • {count} name+size metadata candidates • {badge} • {sticker} • {label}{collision}"
     )
@@ -636,15 +638,13 @@ mod candidate_register_caption_tests {
         let group = json!({"volume_id":142,"count":6});
         let shelves = HashMap::from([(142, "Полка Б".to_owned())]);
         let no_states = HashMap::new();
-        let uncertain =
-            candidate_register_row_caption(&volume, &group, &shelves, &no_states, true);
+        let uncertain = candidate_register_row_caption(&volume, &group, &shelves, &no_states, true);
         assert!(uncertain.starts_with("#142 • 6 name+size metadata candidates • not verified"));
         assert!(uncertain.contains("sticker: Полка Б"));
         assert!(uncertain.contains("SHARED STICKER"));
         assert!(!uncertain.contains("\nShelf"));
         let states = HashMap::from([(142, "connected".to_owned())]);
-        let observed =
-            candidate_register_row_caption(&volume, &group, &shelves, &states, false);
+        let observed = candidate_register_row_caption(&volume, &group, &shelves, &states, false);
         assert!(observed.contains("OS verified now"));
         assert!(!observed.contains("SHARED STICKER"));
     }
@@ -3083,7 +3083,10 @@ impl App {
     }
 
     unsafe fn populate_physical_disk_list(&mut self) {
-        let candidate_mode = self.disk_filter_query.trim().eq_ignore_ascii_case("copies:");
+        let candidate_mode = self
+            .disk_filter_query
+            .trim()
+            .eq_ignore_ascii_case("copies:");
         self.visible_disk_indices = if candidate_mode {
             if self.copy_source.is_some() {
                 candidate_register_indices(
