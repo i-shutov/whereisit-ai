@@ -2985,7 +2985,11 @@ impl App {
         self.has_more = false;
         SendMessageW(self.files, LVM_DELETEALLITEMS, 0, 0);
         self.populate_candidate_disk_picker();
-        if self.disk_filter_query.trim().eq_ignore_ascii_case("copies:") {
+        if self
+            .disk_filter_query
+            .trim()
+            .eq_ignore_ascii_case("copies:")
+        {
             self.populate_physical_disk_list();
         }
         self.update_disk_locator();
