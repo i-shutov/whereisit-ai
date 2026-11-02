@@ -1508,7 +1508,7 @@ mod verified_mount_root_tests {
         let verified = HashMap::from([(42, "win:{physical}:12345678".into())]);
         assert_eq!(
             verified_mount_root(42, &states, &verified, &mounts),
-            Some(r"R:\".into())
+            Some(r"R:\\".into())
         );
         assert_eq!(verified_mount_root(142, &states, &verified, &mounts), None);
         assert_eq!(
