@@ -4983,7 +4983,9 @@ impl App {
         for (row, e) in self.entries.iter().enumerate() {
             let volume_id = e["volume_id"].as_i64();
             let known_disk = volume_id.filter(|candidate| {
-                self.volumes.iter().any(|volume| id(volume) == Some(*candidate))
+                self.volumes
+                    .iter()
+                    .any(|volume| id(volume) == Some(*candidate))
             });
             let disk_cell = result_disk_caption(
                 known_disk,
