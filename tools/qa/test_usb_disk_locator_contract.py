@@ -401,6 +401,25 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn(".accessibilityElement(children: .combine)", MAC)
         self.assertIn("content unverified", MAC)
 
+    def test_ux15_dense_kind_column_and_safe_keyboard_results_focus(self):
+        self.assertIn('const SORT_LABELS: [&str; 7]', WIN)
+        self.assertIn('("Kind", 70)', WIN)
+        self.assertIn('string(e, "kind")', WIN)
+        self.assertIn('fn kind_page_sort_distinguishes_catalog_entry_kinds_without_content_probing()', WIN)
+        self.assertIn('fn results_focus_rejects_pending_or_empty_page_and_ignores_stale_row()', WIN)
+        self.assertIn('fn focusable_result_row(', WIN)
+        self.assertIn('FOCUS_RESULTS => self.focus_current_page_results()', WIN)
+        self.assertIn('message.wParam == b\'E\' as usize', WIN)
+        self.assertIn('LVM_ENSUREVISIBLE', WIN)
+        self.assertIn('case "kind":', MAC)
+        self.assertIn('TableColumn("Kind")', MAC)
+        self.assertIn('Text("Kind").tag("kind")', MAC)
+        self.assertIn('func focusCurrentPageResults() -> Bool', MAC)
+        self.assertIn('guard pageReady, let first = displayEntries.first', MAC)
+        self.assertIn('.focused($resultTableFocused)', MAC)
+        self.assertIn('.keyboardShortcut("e", modifiers: [.command])', MAC)
+        self.assertIn('if !ready { resultTableFocused = false }', MAC)
+
     def test_no_unverified_physical_drive_claims_in_locator(self):
         self.assertIn("Physical connection: NOT VERIFIED", WIN)
         self.assertIn("Physical connection not verified", MAC)

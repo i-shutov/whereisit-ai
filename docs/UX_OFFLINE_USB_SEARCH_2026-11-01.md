@@ -294,3 +294,15 @@ manual Windows/macOS runbook: [UX14 QA](qa/UX14_CANDIDATE_REGISTER_PRIORITY_2026
 Exact-head CI and actual Win10/11/macOS ARM/Intel accessibility, 1366x768,
 HiDPI and unplug/replug acceptance remain mandatory; draft PR #57 is not a
 stable release.
+
+## UX15 — dense loaded-page Kind + results keyboard focus (2026-11-02)
+
+Both native search tables now show the catalogue **Kind** of a row (file,
+directory, archive) without an extra filesystem probe. Kind can sort ONLY the
+current <=250-row page; Windows maintains exact column/sort indices in its
+7-column adaptive layout, macOS uses native Table columns. Ctrl+E / Command+E
+focuses a verified current page, selecting its first row only when no valid
+selection exists; a pending/empty page cannot reactivate historical rows.
+See [manual UX15 runbook](qa/UX15_DENSE_RESULTS_AND_FOCUS_20261102.md).
+Build CI is not visual, accessibility, USB hardware or owner-performance QA;
+linked source stays read-only and generation pinned, stable 1.0 blocked.

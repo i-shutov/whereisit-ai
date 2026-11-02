@@ -318,6 +318,17 @@ private struct CopyReturnContext {
         }
     }
 
+    func focusCurrentPageResults() -> Bool {
+        guard pageReady, let first = displayEntries.first else {
+            status = "No verified current result page to focus."
+            return false
+        }
+        if selected == nil || !entries.contains(where: { $0.id == selection }) {
+            selection = first.id
+        }
+        return true
+    }
+
     var displayEntries: [Entry] {
         guard pageSortColumn != "natural" else { return entries }
         return entries.sorted { left, right in
@@ -327,6 +338,8 @@ private struct CopyReturnContext {
                 comparison = left.name.localizedStandardCompare(right.name).rawValue
             case "disk":
                 comparison = volumeLabel(left.volume_id).localizedStandardCompare(volumeLabel(right.volume_id)).rawValue
+            case "kind":
+                comparison = left.kind.localizedStandardCompare(right.kind).rawValue
             case "size":
                 comparison = optionalSortNumber(left.size, right.size)
             case "modified":
@@ -1611,6 +1624,7 @@ private struct CopyReturnContext {
     @StateObject private var model = Catalog()
     @FocusState private var searchFieldFocused: Bool
     @FocusState private var diskFilterFocused: Bool
+    @FocusState private var resultTableFocused: Bool
     @AppStorage("AtlasCatalog.locatorVisible") private var locatorVisible = true
     var body: some View {
         VStack(spacing: 4) {
@@ -1666,6 +1680,7 @@ private struct CopyReturnContext {
                     Text("Source order").tag("natural")
                     Text("Name").tag("name")
                     Text("Disk").tag("disk")
+                    Text("Kind").tag("kind")
                     Text("Size").tag("size")
                     Text("Modified").tag("modified")
                     Text("Candidates").tag("candidates")
@@ -1680,6 +1695,13 @@ private struct CopyReturnContext {
                 .disabled(model.pageSortColumn == "natural")
                 .accessibilityLabel(model.pageSortDescending ? "Descending page sort" : "Ascending page sort")
                 Text("PAGE ONLY").font(.caption2).foregroundStyle(.secondary)
+                Button("Results") {
+                    if model.focusCurrentPageResults() { resultTableFocused = true }
+                }
+                .disabled(!model.pageReady || model.entries.isEmpty)
+                .keyboardShortcut("e", modifiers: [.command])
+                .accessibilityLabel("Focus verified loaded search results")
+                .help("Focus the current results page without changing the disk search scope (Command-E)")
                 Button(locatorVisible ? "Hide locator" : "Show locator") {
                     locatorVisible.toggle()
                 }
@@ -1812,13 +1834,15 @@ private struct CopyReturnContext {
                     }.padding(.horizontal, 5)
                 }.frame(minWidth: 170, idealWidth: 220, maxWidth: 320)
                 Table(model.displayEntries, selection: $model.selection) {
-                    TableColumn("Name") { entry in Label(entry.name, systemImage: entry.isFolder ? "folder" : "doc").lineLimit(1) }.width(min: 160, ideal: 250)
-                    TableColumn("Disk") { entry in Text(model.volumeLabel(entry.volume_id)) }.width(min: 100, ideal: 150)
-                    TableColumn("Size") { Text($0.sizeText).monospacedDigit() }.width(95)
-                    TableColumn("Modified") { Text($0.dateText) }.width(140)
-                    TableColumn("Matches") { Text($0.duplicate_count.map(String.init) ?? "") }.width(65)
-                    TableColumn("Path", value: \.relative_path).width(min: 140, ideal: 210)
-                }.onTapGesture(count: 2) { model.openSelected() }
+                    TableColumn("Name") { entry in Label(entry.name, systemImage: entry.isFolder ? "folder" : "doc").lineLimit(1) }.width(min: 145, ideal: 230)
+                    TableColumn("Disk") { entry in Text(model.volumeLabel(entry.volume_id)) }.width(min: 90, ideal: 130)
+                    TableColumn("Kind") { Text($0.kind) }.width(66)
+                    TableColumn("Size") { Text($0.sizeText).monospacedDigit() }.width(83)
+                    TableColumn("Modified") { Text($0.dateText) }.width(108)
+                    TableColumn("Matches") { Text($0.duplicate_count.map(String.init) ?? "") }.width(60)
+                    TableColumn("Path", value: \.relative_path).width(min: 115, ideal: 180)
+                }.focused($resultTableFocused)
+                .onTapGesture(count: 2) { model.openSelected() }
                 .contextMenu { Button("Open folder") { model.openSelected() }.disabled(model.selected?.isFolder != true) }
                 if locatorVisible {
                     DiskLocatorInspector(model: model)
@@ -1834,6 +1858,9 @@ private struct CopyReturnContext {
         }
         .padding(7).controlSize(.small).frame(minWidth: locatorVisible ? 1100 : 880, minHeight: 550)
         .onAppear { searchFieldFocused = true; model.refreshPhysicalPresence() }
+        .onChange(of: model.pageReady) { ready in
+            if !ready { resultTableFocused = false }
+        }
         .onReceive(Timer.publish(every: 6, on: .main, in: .common).autoconnect()) { _ in
             model.refreshPhysicalPresence()
         }

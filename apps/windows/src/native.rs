@@ -47,6 +47,7 @@ const REVEAL_DISK: usize = 136;
 const COPY_PICKUP_PLAN: usize = 137;
 const COPY_PAGE_MANIFEST: usize = 138;
 const COPY_REGISTER_FILTER: usize = 139;
+const FOCUS_RESULTS: usize = 140;
 // Win32 GetDriveTypeW standard result codes; windows-sys 0.61 does not export these here.
 // Unknown/missing roots mean a potentially incomplete OS snapshot, never "offline".
 const DRIVE_UNKNOWN: u32 = 0;
@@ -124,7 +125,20 @@ fn cmp_present<T: Ord>(left: Option<T>, right: Option<T>, descending: bool) -> O
     }
 }
 
-const SORT_LABELS: [&str; 6] = ["Name", "Disk", "Size", "Modified", "Candidates", "Path"];
+// Never focus a stale ListView row while a page or linked CTF SHA check is pending.
+fn focusable_result_row(page_ready: bool, rows: &[Value], selected_row: isize) -> Option<usize> {
+    if !page_ready || rows.is_empty() {
+        return None;
+    }
+    usize::try_from(selected_row)
+        .ok()
+        .filter(|index| *index < rows.len())
+        .or(Some(0))
+}
+
+const SORT_LABELS: [&str; 7] = [
+    "Name", "Disk", "Kind", "Size", "Modified", "Candidates", "Path",
+];
 
 fn sort_page_rows(
     rows: &mut [Value],
@@ -144,18 +158,19 @@ fn sort_page_rows(
                 };
                 cmp_text(label(a), label(b), descending)
             }
-            2 => cmp_present(a["size"].as_u64(), b["size"].as_u64(), descending),
-            3 => cmp_present(
+            2 => cmp_text(&string(a, "kind"), &string(b, "kind"), descending),
+            3 => cmp_present(a["size"].as_u64(), b["size"].as_u64(), descending),
+            4 => cmp_present(
                 a["modified_unix"].as_i64(),
                 b["modified_unix"].as_i64(),
                 descending,
             ),
-            4 => cmp_present(
+            5 => cmp_present(
                 a["duplicate_count"].as_u64(),
                 b["duplicate_count"].as_u64(),
                 descending,
             ),
-            5 => cmp_text(
+            6 => cmp_text(
                 &string(a, "relative_path"),
                 &string(b, "relative_path"),
                 descending,
@@ -191,7 +206,7 @@ fn read_ui_layout_preferences() -> (bool, i32) {
 
 #[cfg(test)]
 mod page_sort_and_layout_tests {
-    use super::{parse_ui_layout_preferences, sort_page_rows};
+    use super::{focusable_result_row, id, parse_ui_layout_preferences, sort_page_rows};
     use serde_json::json;
     use std::collections::HashMap;
 
@@ -203,14 +218,14 @@ mod page_sort_and_layout_tests {
             json!({"id":2,"name":"movie","volume_id":8,"size":500}),
             json!({"id":1,"name":"Other","volume_id":7,"size":300}),
         ];
-        sort_page_rows(&mut rows, 2, true, &labels);
+        sort_page_rows(&mut rows, 3, true, &labels);
         assert_eq!(
             rows.iter()
                 .map(|e| e["id"].as_i64().unwrap())
                 .collect::<Vec<_>>(),
             vec![2, 1, 3]
         );
-        sort_page_rows(&mut rows, 2, false, &labels);
+        sort_page_rows(&mut rows, 3, false, &labels);
         assert_eq!(
             rows.iter()
                 .map(|e| e["id"].as_i64().unwrap())
@@ -219,6 +234,30 @@ mod page_sort_and_layout_tests {
         );
         sort_page_rows(&mut rows, 1, false, &labels);
         assert_eq!(rows[0]["id"], 2);
+    }
+
+    #[test]
+    fn kind_page_sort_distinguishes_catalog_entry_kinds_without_content_probing() {
+        let labels = HashMap::new();
+        let mut rows = vec![
+            json!({"id":10,"kind":"file"}),
+            json!({"id":12,"kind":"directory"}),
+            json!({"id":11,"kind":"archive"}),
+        ];
+        sort_page_rows(&mut rows, 2, false, &labels);
+        assert_eq!(rows.iter().filter_map(id).collect::<Vec<_>>(), vec![11, 12, 10]);
+        sort_page_rows(&mut rows, 2, true, &labels);
+        assert_eq!(rows.iter().filter_map(id).collect::<Vec<_>>(), vec![10, 12, 11]);
+    }
+
+    #[test]
+    fn results_focus_rejects_pending_or_empty_page_and_ignores_stale_row() {
+        let rows = vec![json!({"id":42}), json!({"id":142})];
+        assert_eq!(focusable_result_row(false, &rows, 0), None);
+        assert_eq!(focusable_result_row(true, &[], -1), None);
+        assert_eq!(focusable_result_row(true, &rows, -1), Some(0));
+        assert_eq!(focusable_result_row(true, &rows, 90), Some(0));
+        assert_eq!(focusable_result_row(true, &rows, 1), Some(1));
     }
 
     #[test]
@@ -1188,22 +1227,17 @@ fn explorer_geometry_for_width(
 
 // Keep the historical path visible when the locator cannot fit, even at
 // 880px, instead of leaving an unscrollable fixed-width results table.
-fn result_column_widths(file_width: i32, locator_visible: bool) -> [i32; 6] {
-    if locator_visible && file_width >= 630 {
-        [
-            230,
-            120,
-            90,
-            120,
-            70,
-            if file_width >= 840 { 185 } else { 0 },
-        ]
+fn result_column_widths(file_width: i32, locator_visible: bool) -> [i32; 7] {
+    if locator_visible && file_width >= 820 {
+        [220, 112, 68, 83, 110, 65, if file_width >= 840 { 185 } else { 0 }]
     } else if locator_visible {
-        [205, 100, 75, 95, 65, 0]
+        [210, 95, 64, 75, 95, 61, 0]
+    } else if file_width >= 900 {
+        [220, 118, 70, 87, 115, 65, 185]
     } else if file_width >= 815 {
-        [230, 120, 90, 120, 70, 185]
+        [205, 100, 65, 80, 100, 65, file_width - 615]
     } else {
-        [190, 106, 78, 98, 65, (file_width - 537).max(104)]
+        [170, 86, 56, 74, 86, 60, (file_width - 532).max(104)]
     }
 }
 
@@ -1255,10 +1289,12 @@ mod locator_splitter_tests {
     #[test]
     fn narrow_result_columns_keep_recorded_path_legible() {
         let narrow = result_column_widths(658, false);
-        assert_eq!(narrow, [190, 106, 78, 98, 65, 121]);
+        assert_eq!(narrow, [170, 86, 56, 74, 86, 60, 126]);
         assert_eq!(narrow.iter().sum::<i32>(), 658);
-        assert_eq!(result_column_widths(600, true)[5], 0);
-        assert_eq!(result_column_widths(854, true)[5], 185);
+        assert_eq!(result_column_widths(600, true)[6], 0);
+        assert_eq!(result_column_widths(854, true)[6], 185);
+        assert_eq!(result_column_widths(815, false).iter().sum::<i32>(), 815);
+        assert_eq!(result_column_widths(608, true)[6], 0);
     }
 }
 
@@ -3480,6 +3516,28 @@ impl App {
         }
     }
 
+    unsafe fn focus_current_page_results(&mut self) {
+        let selected = SendMessageW(
+            self.files,
+            LVM_GETNEXTITEM,
+            usize::MAX,
+            LVNI_SELECTED as isize,
+        );
+        let Some(index) = focusable_result_row(self.page_ready, &self.entries, selected) else {
+            self.status("No verified current result page to focus. Search or wait for loading.");
+            return;
+        };
+        if selected != index as isize {
+            let mut state: LVITEMW = std::mem::zeroed();
+            state.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
+            state.state = LVIS_SELECTED | LVIS_FOCUSED;
+            SendMessageW(self.files, LVM_SETITEMSTATE, index, &state as *const _ as isize);
+        }
+        SetFocus(self.files);
+        SendMessageW(self.files, LVM_ENSUREVISIBLE, index, 0);
+        self.update_disk_locator();
+    }
+
     unsafe fn sort_current_page_by(&mut self, column: i32) {
         let Ok(column) = usize::try_from(column) else {
             return;
@@ -3532,6 +3590,7 @@ impl App {
             let cols = [
                 string(e, "name"),
                 self.volume_label(e["volume_id"].as_i64()),
+                string(e, "kind"),
                 display_size(e["size"].as_u64()),
                 e.get("modified_local")
                     .and_then(Value::as_str)
@@ -3868,6 +3927,7 @@ impl App {
                 self.offset = 0;
                 self.load();
             }
+            FOCUS_RESULTS => self.focus_current_page_results(),
             FILE_COPIES => self.show_copies_of_selected(),
             REVEAL_DISK => {
                 let selected_row = SendMessageW(
@@ -4575,6 +4635,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             for (i, (name, width)) in [
                 ("Name", 230),
                 ("Disk", 120),
+                ("Kind", 70),
                 ("Size", 90),
                 ("Modified", 120),
                 ("Candidates", 70),
@@ -4837,6 +4898,12 @@ pub fn run() {
                 AppendMenuW(
                     view,
                     MF_STRING,
+                    FOCUS_RESULTS,
+                    wide("Focus loaded results\tCtrl+E").as_ptr(),
+                );
+                AppendMenuW(
+                    view,
+                    MF_STRING,
                     TOGGLE_LOCATOR,
                     wide("Show / hide disk locator\tCtrl+I").as_ptr(),
                 );
@@ -4897,6 +4964,15 @@ pub fn run() {
             {
                 SetFocus((*app).search);
                 SendMessageW((*app).search, EM_SETSEL, 0, -1);
+                continue;
+            }
+            // Ctrl+E moves to the currently SHA-verified result page; it never
+            // selects rows remaining from a previous asynchronous search.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && message.wParam == b'E' as usize
+            {
+                (*app).command(FOCUS_RESULTS, 0);
                 continue;
             }
             // Ctrl+R explicitly rechecks OS volume identities from anywhere in
