@@ -475,3 +475,27 @@ tests and dual UI source regression + manual docs/qa/UX23_RESUME_FRESHNESS_AND_C
 included. No private bytes or IDs published. Final exact-head Actions must
 be inspected before PASS; GUI/USB/historical CTF/signing/p95 manual acceptance
 still BLOCK stable 1.0; draft only, no merge.
+
+
+---
+
+## UX24 — disk-only physical pickup card (2026-11-02; exact-HEAD CI pending)
+
+The same **draft PR #57** adds a retrieval aid for the case where the operator
+has selected one of ~40 offline catalog disks **without any file result**.
+Windows native View menu/Ctrl+Shift+L and macOS SwiftUI accessible toolbar
+Command-Shift-L plus inspector button copy a local physical disk pickup card:
+**exact catalog disk ID first**, recorded disk label, private owner-entered
+sticker/shelf tag, catalogued entry count, shared-sticker warning and the last
+independently time-bounded OS pairing state. Normal register rows on both
+platforms now visibly include the exact catalog ID to disambiguate identical
+labels. A stale/incomplete OS scan means **NOT VERIFIED**, not connected.
+All clipboard data stays local. No historical mount letter/path is treated as
+current; no live file I/O, CTF/SQLite/annotation write, hash match or auto-delete.
+Windows compiled Rust card tests cover ID/Cyrillic/shared labels and failed
+OS proof, and dual-client source contracts and
+[UX24 manual runbook](docs/qa/UX24_PHYSICAL_DISK_PICKUP_CARD_20261102.md)
+cover focus, keyboard, accessibility and source switch. Exact-HEAD native 4/4,
+integration/offline kit and installed upgrade 3/3 **must be checked** before
+any green claim. Hardware GUI, historic/modified CTF, real p95 150ms, code
+signatures and notarization remain release blockers. Do not merge/publish stable.

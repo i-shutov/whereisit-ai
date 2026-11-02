@@ -56,6 +56,7 @@ const PHYSICAL_UNVERIFIED_FILTER: usize = 146;
 const STOP_PAGE_WAIT: usize = 147;
 const RETRY_PAGE: usize = 148;
 const COPY_VERIFIED_OS_ROOT: usize = 149;
+const COPY_DISK_CARD: usize = 150;
 // Monotonic OS state lifetime: never trust stale green badges after suspend.
 const PHYSICAL_STATE_TTL: Duration = Duration::from_secs(12);
 const SEARCH_BOX: usize = 130;
@@ -1467,6 +1468,83 @@ unsafe fn windows_mounted_volumes() -> Option<Vec<MountedPhysicalVolume>> {
         return None;
     }
     probe
+}
+
+
+// A disk-only retrieval card is useful when no file result is selected.
+// Label/sticker are catalogue/user metadata, never a live USB root or a proof
+// that any catalogued file is currently present. Keep IDs collision-safe.
+fn disk_pickup_card(
+    disk: &Value,
+    shelf: Option<&str>,
+    shared_sticker_warning: Option<&str>,
+    physical_state: &str,
+) -> Option<String> {
+    let disk_id = id(disk).filter(|id| *id > 0)?;
+    let clean = |text: &str| text.replace(['\r', '\n', '\t'], " ");
+    let label = clean(&string(disk, "label"));
+    let sticker = shelf
+        .filter(|value| !value.trim().is_empty())
+        .map(clean)
+        .unwrap_or_else(|| "not assigned".to_owned());
+    let count = disk["entry_count"]
+        .as_u64()
+        .map(|entries| format!("{entries} historical catalogue entries"))
+        .unwrap_or_else(|| "not reported".to_owned());
+    let mut lines = vec![
+        "WhereIsIt AI — physical disk pickup card".to_owned(),
+        format!("Catalog disk ID: #{disk_id}"),
+        format!("Recorded label: {label}"),
+        format!("Owner sticker/shelf: {sticker}"),
+        format!("Recorded entries: {count}"),
+        format!("Physical: {}", physical_state_label(physical_state)),
+    ];
+    if let Some(warning) = shared_sticker_warning {
+        lines.push(format!("WARNING: {}", clean(warning)));
+    }
+    lines.push("Identify the actual disk by its physical sticker; catalog labels and historical paths are NOT live OS identity.".to_owned());
+    lines.push("An OS filesystem UUID can be cloned. Mount state is a time-limited observation, not proof that files exist.".to_owned());
+    lines.push("No file bytes or hashes were compared; never auto-delete metadata matches.".to_owned());
+    Some(lines.join("\r\n"))
+}
+
+#[cfg(test)]
+mod disk_pickup_card_tests {
+    use super::{audited_physical_state, disk_pickup_card};
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    #[test]
+    fn exact_disk_id_and_cyrillic_sticker_survive_duplicate_labels() {
+        let card = disk_pickup_card(
+            &json!({"id":42,"label":"Архив","entry_count":123}),
+            Some("Стеллаж Б / USB-42"),
+            Some("SHARED STICKER also on disk #142"),
+            "unverified",
+        )
+        .unwrap();
+        assert!(card.contains("Catalog disk ID: #42"));
+        assert!(card.contains("Recorded label: Архив"));
+        assert!(card.contains("Стеллаж Б / USB-42"));
+        assert!(card.contains("SHARED STICKER also on disk #142"));
+        assert!(card.contains("Physical connection: NOT VERIFIED"));
+        assert!(card.contains("never auto-delete"));
+        assert!(!card.contains("R:\\"));
+        assert_eq!(
+            disk_pickup_card(&json!({"id":0,"label":"Archive"}), None, None, "connected"),
+            None
+        );
+    }
+
+    #[test]
+    fn stale_or_failed_os_probe_cannot_claim_connected_on_pickup_card() {
+        let states = HashMap::from([(42, "connected".to_owned())]);
+        let disk = json!({"id":42,"label":"Same label"});
+        let failed = audited_physical_state(42, &states, false);
+        let card = disk_pickup_card(&disk, None, None, failed).unwrap();
+        assert!(card.contains("Physical connection: NOT VERIFIED"));
+        assert!(!card.contains("Physical connection: CONNECTED"));
+    }
 }
 
 // A live OS mount hint is available ONLY after service-side confirmation
@@ -3754,7 +3832,8 @@ impl App {
                 }
             } else {
                 format!(
-                    "{}{shelf}  ({} items)  {badge}{warning}",
+                    "#{} • {}{shelf}  ({} items)  {badge}{warning}",
+                    id(disk).unwrap_or_default(),
                     string(disk, "label"),
                     disk["entry_count"].as_u64().unwrap_or(0)
                 )
@@ -3879,6 +3958,41 @@ impl App {
         SendMessageW(self.locator, EM_SETSEL, 0, 0);
         self.update_disk_locator();
         self.status("CURRENT OS volume root copied locally after a new UUID probe. File existence and bytes NOT verified.");
+    }
+
+    // Copy a physical-retrieval instruction even for a disk selected only in
+    // the register. This reads a known catalog ID and private shelf tag, never
+    // asks the OS to open a catalogued path and never writes the source.
+    unsafe fn copy_disk_pickup_card(&mut self) {
+        let Some(catalog_id) = self.selected_physical_catalog_disk() else {
+            self.status("Select a file or a catalog disk before copying a disk pickup card.");
+            return;
+        };
+        let probe_fresh = self.physical_probe_ok
+            && physical_probe_is_fresh(self.physical_verified_at, Instant::now());
+        let state = audited_physical_state(catalog_id, &self.physical_states, probe_fresh);
+        let card = self
+            .volumes
+            .iter()
+            .find(|disk| id(disk) == Some(catalog_id))
+            .and_then(|disk| {
+                disk_pickup_card(
+                    disk,
+                    self.shelf_labels.get(&catalog_id).map(String::as_str),
+                    shelf_collision_warning(catalog_id, &self.shelf_tag_conflicts),
+                    state,
+                )
+            });
+        let Some(card) = card else {
+            self.status("Catalog disk ID is no longer present; pickup card NOT copied.");
+            return;
+        };
+        self.text(self.locator, &card);
+        SendMessageW(self.locator, EM_SETSEL, 0, -1);
+        SendMessageW(self.locator, WM_COPY, 0, 0);
+        SendMessageW(self.locator, EM_SETSEL, 0, 0);
+        self.update_disk_locator();
+        self.status("Exact catalog disk pickup card copied locally; historical label/sticker and last OS state are NOT file or hardware proof.");
     }
 
     unsafe fn selected_physical_catalog_disk(&self) -> Option<i64> {
@@ -4798,6 +4912,7 @@ impl App {
                     self.copy_verified_os_mount_root(catalog_id);
                 }
             }
+            COPY_DISK_CARD => self.copy_disk_pickup_card(),
             COPY_LOCATOR => {
                 let row = SendMessageW(
                     self.files,
@@ -5779,6 +5894,12 @@ pub fn run() {
                 AppendMenuW(
                     view,
                     MF_STRING,
+                    COPY_DISK_CARD,
+                    wide("Copy selected PHYSICAL disk pickup card\tCtrl+Shift+L").as_ptr(),
+                );
+                AppendMenuW(
+                    view,
+                    MF_STRING,
                     COPY_VERIFIED_OS_ROOT,
                     wide("Copy freshly verified OS volume root\tCtrl+Shift+H").as_ptr(),
                 );
@@ -5953,6 +6074,16 @@ pub fn run() {
                     },
                     0,
                 );
+                continue;
+            }
+            // Ctrl+Shift+L copies an exact catalog disk pickup card, including
+            // a user sticker and an explicitly time-bounded OS state.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && GetKeyState(VK_SHIFT as i32) < 0
+                && message.wParam == b'L' as usize
+            {
+                (*app).command(COPY_DISK_CARD, 0);
                 continue;
             }
             // Ctrl+L filters the disk register, including private shelf tags,

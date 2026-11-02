@@ -361,3 +361,22 @@ Compiled Windows expiry/clone tests, both-platform source checks and
 are part of draft PR #57. Exact-HEAD CI is required before claiming PASS;
 real Win10/11/Mac ARM/Intel physical sleep/hardware/GUI and p95, signing,
 original/historical CTF acceptance are still open. No merge or stable 1.0.
+
+
+## UX24 — physical disk-only pickup card (2026-11-02)
+
+A catalog disk chosen directly in the left register may need retrieval even
+without a file selected. Both native frontends now provide a locally copied
+physical pickup card with **exact catalog disk ID ahead of the recorded label**,
+manual private shelf/sticker tag, catalogued entry count, shared-tag warnings
+and independently checked last OS pairing state. Windows View/Ctrl+Shift+L;
+macOS SwiftUI inspector button and always-visible compact toolbar
+Command-Shift-L (also works when inspector collapsed). Normal register rows
+show exact catalog IDs to distinguish repeated labels.
+
+Only a previously explicit paired UUID confirmed by a complete fresh OS scan
+can display connected; stale/incomplete means **not verified**. A tag and OS
+filesystem UUID do not prove the physical manufacturer serial or file presence.
+No catalog/CTF/SQLite/user pairing writes, no live file read or automatic
+metadata-match deletion. [UX24 manual runbook](qa/UX24_PHYSICAL_DISK_PICKUP_CARD_20261102.md).
+Manual physical hardware/GUI/a11y and real SLO remain unaccepted; draft PR only.

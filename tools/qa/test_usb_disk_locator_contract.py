@@ -622,6 +622,23 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("NSApplication.didBecomeActiveNotification", MAC)
         self.assertIn("NSWorkspace.didWakeNotification", MAC)
         self.assertIn('self.physicalState(pending.disk) == "connected"', MAC)
+    def test_ux24_disk_only_pickup_card_exact_id_stale_os_state_and_native_shortcut(self):
+        self.assertIn("fn disk_pickup_card(", WIN)
+        self.assertIn("exact_disk_id_and_cyrillic_sticker_survive_duplicate_labels", WIN)
+        self.assertIn("stale_or_failed_os_probe_cannot_claim_connected_on_pickup_card", WIN)
+        self.assertIn("COPY_DISK_CARD => self.copy_disk_pickup_card()", WIN)
+        self.assertIn("physical_probe_is_fresh(self.physical_verified_at, Instant::now())", WIN)
+        self.assertIn('message.wParam == b\'L\' as usize', WIN)
+        self.assertIn('Copy selected PHYSICAL disk pickup card', WIN)
+        self.assertIn('format!("Catalog disk ID: #{disk_id}")', WIN)
+        self.assertIn('func copySelectedDiskPickupCard()', MAC)
+        self.assertIn('physicalCaption(diskID)', MAC)
+        self.assertIn('Button("Copy disk pickup card")', MAC)
+        self.assertIn('Button("Disk card")', MAC)
+        self.assertIn('.keyboardShortcut("l", modifiers: [.command, .shift])', MAC)
+        self.assertIn('"#\\(disk.id) • \\(disk.label)"', MAC)
+        self.assertIn('never auto-delete metadata matches', WIN)
+        self.assertIn('never auto-delete metadata matches', MAC)
 
 
 if __name__ == "__main__":

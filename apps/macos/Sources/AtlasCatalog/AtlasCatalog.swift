@@ -722,6 +722,43 @@ private struct CopyReturnContext {
         NSPasteboard.general.setString(text, forType: .string)
         status = "Disk pickup checklist copied locally. OS badges are last observations; file bytes unverified."
     }
+    // Disk-only physical pickup card: the operator may have chosen a disk in
+    // the left register without selecting any file. Never use historical
+    // mount letters or claim a file is present from an OS filesystem UUID.
+    func copySelectedDiskPickupCard() {
+        guard let diskID = selectedDiskForPairing,
+              let disk = volumes.first(where: { $0.id == diskID }) else {
+            status = "Select a current catalog disk or file before copying its pickup card."
+            return
+        }
+        let clean: (String) -> String = {
+            $0.replacingOccurrences(of: "\r", with: " ")
+                .replacingOccurrences(of: "\n", with: " ")
+                .replacingOccurrences(of: "\t", with: " ")
+        }
+        let sticker = shelfLabel(diskID)
+        let count = disk.entry_count.map { "\($0) historical catalogue entries" } ?? "not reported"
+        var lines = [
+            "WhereIsIt AI — physical disk pickup card",
+            "Catalog disk ID: #\(diskID)",
+            "Recorded label: \(clean(disk.label))",
+            "Owner sticker/shelf: \(sticker.isEmpty ? "not assigned" : clean(sticker))",
+            "Recorded entries: \(count)",
+            "Physical: \(physicalCaption(diskID))",
+        ]
+        if let warning = shelfConflictCaption(diskID) {
+            lines.append("WARNING: \(clean(warning))")
+        }
+        lines += [
+            "Identify the actual disk by its physical sticker; catalog labels and historical paths are NOT live OS identity.",
+            "An OS filesystem UUID can be cloned. Mount state is a time-limited observation, not proof that files exist.",
+            "No file bytes or hashes were compared; never auto-delete metadata matches."
+        ]
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
+        status = "Exact catalog disk pickup card copied locally; neither actual file bytes nor a hardware serial were verified."
+    }
+
     // No disk I/O: this is a clipboard manifest from exactly one completed
     // generation-pinned candidate page, NOT an export of every catalog copy.
     func copyCandidatePagePaths() {
@@ -1724,6 +1761,9 @@ private struct CopyReturnContext {
             }
             Text("Saved to your private user database, scoped to this catalog generation.")
                 .font(.caption2).foregroundStyle(.secondary)
+            Button("Copy disk pickup card") { model.copySelectedDiskPickupCard() }
+                .accessibilityLabel("Copy physical disk pickup card using the exact catalog ID and optional private sticker")
+                .help("Works without a file selection. OS UUID state can expire; no live file proof.")
             Divider()
         }
     }
@@ -1970,6 +2010,11 @@ private struct CopyReturnContext {
                 .help("Focus the current results page without changing the disk search scope (Command-E)")
                 // Always visible (including 880px with the inspector collapsed).
                 // Do not attach the only Command-Shift-H handler to a hidden pane.
+                Button("Disk card") { model.copySelectedDiskPickupCard() }
+                    .disabled(model.selectedDiskForPairing == nil)
+                    .keyboardShortcut("l", modifiers: [.command, .shift])
+                    .accessibilityLabel("Copy the selected catalog disk physical pickup card")
+                    .help("Exact catalog ID and private sticker, even with no selected file; no file presence claims")
                 Button("OS root") { model.copyCurrentOSMountRoot() }
                     .disabled(model.selectedDiskForPairing == nil)
                     .keyboardShortcut("h", modifiers: [.command, .shift])
@@ -2090,7 +2135,7 @@ private struct CopyReturnContext {
                             VStack(alignment: .leading, spacing: 1) {
                                 Label(model.isCandidateRegisterMode
                                       ? "#\(disk.id) • \(model.candidateRegisterCount(disk.id)) name+size candidates • \(disk.label)"
-                                      : disk.label, systemImage: "externaldrive")
+                                      : "#\(disk.id) • \(disk.label)", systemImage: "externaldrive")
                                 if model.shelfConflictCaption(disk.id) != nil {
                                     Text(model.shelfConflictCaption(disk.id) ?? "SHARED STICKER")
                                         .font(.caption2).foregroundStyle(.orange)
