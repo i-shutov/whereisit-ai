@@ -21,10 +21,21 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("dense_results_identify_exact_disk_before_duplicate_labels", WIN)
         self.assertIn("no_sticker_unknown_disk_and_untrusted_newlines_do_not_mislead", WIN)
         renderer = WIN.split("unsafe fn render_rows(&self)", 1)[1].split("unsafe fn", 1)[0]
-        self.assertIn("let known_disk = volume_id.filter(", renderer)
-        self.assertIn("result_disk_caption(", renderer)
-        self.assertIn("self.shelf_labels.get(&disk)", renderer)
-        self.assertIn("self.shelf_tag_conflicts.contains_key(&disk)", renderer)
+        self.assertIn("self.result_disk_cell(e)", renderer)
+        disk_cell = WIN.split("fn result_disk_cell(&self, row: &Value)", 1)[1].split(
+            "unsafe fn refresh_result_disk_cells", 1
+        )[0]
+        self.assertIn("let known_disk = volume_id.filter(", disk_cell)
+        self.assertIn("result_disk_caption(", disk_cell)
+        self.assertIn("self.shelf_labels.get(&disk)", disk_cell)
+        self.assertIn("self.shelf_tag_conflicts.contains_key(&disk)", disk_cell)
+        live_refresh = WIN.split("unsafe fn refresh_result_disk_cells(&self)", 1)[1].split(
+            "fn physical_request(", 1
+        )[0]
+        self.assertIn("item.iSubItem = 1;", live_refresh)
+        self.assertIn("LVM_SETITEMW", live_refresh)
+        self.assertNotIn("LVM_DELETEALLITEMS", live_refresh)
+        self.assertIn("self.refresh_result_disk_cells();", WIN)
         self.assertIn("func resultDiskCaption(_ disk: Int64)", MAC)
         self.assertIn("func resultDiskAccessibility(_ disk: Int64)", MAC)
         table = MAC.split('TableColumn("Disk") { entry in', 1)[1].split('TableColumn("Kind")', 1)[0]

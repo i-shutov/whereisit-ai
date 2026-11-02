@@ -4200,6 +4200,40 @@ impl App {
             .unwrap_or_else(|| format!("Disk #{volume_id}"))
     }
 
+    // Read-only native Disk cell; authoritative catalog ID is distinct from
+    // the user's sticker and from independently verified OS volume presence.
+    fn result_disk_cell(&self, row: &Value) -> String {
+        let volume_id = row["volume_id"].as_i64();
+        let known_disk = volume_id.filter(|candidate| {
+            self.volumes
+                .iter()
+                .any(|volume| id(volume) == Some(*candidate))
+        });
+        result_disk_caption(
+            known_disk,
+            &self.volume_label(volume_id),
+            volume_id.and_then(|disk| self.shelf_labels.get(&disk).map(String::as_str)),
+            volume_id.is_some_and(|disk| self.shelf_tag_conflicts.contains_key(&disk)),
+        )
+    }
+
+    // Refresh only the Disk subitem after private shelf tags change. Rebuilding
+    // the ListView would drop current selection/keyboard focus/row context.
+    unsafe fn refresh_result_disk_cells(&self) {
+        if !self.page_ready || self.page_awaiting {
+            return;
+        }
+        for (row, entry) in self.entries.iter().enumerate() {
+            let mut caption = wide(&self.result_disk_cell(entry));
+            let mut item: LVITEMW = std::mem::zeroed();
+            item.mask = LVIF_TEXT;
+            item.iItem = row as i32;
+            item.iSubItem = 1;
+            item.pszText = caption.as_mut_ptr();
+            SendMessageW(self.files, LVM_SETITEMW, 0, &item as *const _ as isize);
+        }
+    }
+
     fn physical_request(
         &self,
         op: &str,
@@ -4284,6 +4318,7 @@ impl App {
         self.shelf_edit_disk = None;
         self.populate_physical_disk_list();
         self.populate_candidate_disk_picker();
+        self.refresh_result_disk_cells();
         self.sync_shelf_editor();
         self.update_disk_locator();
     }
@@ -4981,21 +5016,9 @@ impl App {
     unsafe fn render_rows(&self) {
         SendMessageW(self.files, LVM_DELETEALLITEMS, 0, 0);
         for (row, e) in self.entries.iter().enumerate() {
-            let volume_id = e["volume_id"].as_i64();
-            let known_disk = volume_id.filter(|candidate| {
-                self.volumes
-                    .iter()
-                    .any(|volume| id(volume) == Some(*candidate))
-            });
-            let disk_cell = result_disk_caption(
-                known_disk,
-                &self.volume_label(volume_id),
-                volume_id.and_then(|disk| self.shelf_labels.get(&disk).map(String::as_str)),
-                volume_id.is_some_and(|disk| self.shelf_tag_conflicts.contains_key(&disk)),
-            );
             let cols = [
                 string(e, "name"),
-                disk_cell,
+                self.result_disk_cell(e),
                 string(e, "kind"),
                 display_size(e["size"].as_u64()),
                 e.get("modified_local")

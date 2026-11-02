@@ -1,3 +1,17 @@
+## UX32 Windows live shelf-refresh integration correction (2026-11-02)
+
+After adding exact ID/sticker to the result Disk cell, source review found
+that saving a private sticker refreshed the register and inspector but not
+the existing Win32 ListView cells. The same draft PR #57 now refreshes only
+the Disk subitem after shelf-tag reload, preserving selected entry, keyboard
+focus and current page. Shared-sticker conflict captions update immediately.
+The Python native wiring regression verifies this behavior. macOS already
+uses published shelf values to trigger SwiftUI Table updates. This changes
+no CTF or user data storage and makes no physical OS/content claim.
+Final exact-HEAD CI must be re-evaluated on the new SHA.
+
+---
+
 ## UX32 — exact catalog disk ID + private shelf in native result rows (2026-11-02)
 
 Same draft PR #57: both native main result tables show the exact catalog
