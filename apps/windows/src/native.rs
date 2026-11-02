@@ -4942,15 +4942,19 @@ impl App {
                         // Every re-use validates the original external CTF generation
                         // before copying; this avoids trusting a stale disk register.
                         self.pending_disk_card = Some((catalog_id, self.generation));
-                        self.status("Verifying linked CTF generation before copying physical disk card...");
+                        self.status(
+                            "Verifying linked CTF generation before copying physical disk card...",
+                        );
                         self.call("disk_card_source", pinned);
                     } else {
-                        self.status("Linked CTF generation not available; disk pickup card NOT copied.");
+                        self.status(
+                            "Linked CTF generation not available; disk pickup card NOT copied.",
+                        );
                     }
                 } else {
                     self.copy_disk_pickup_card();
                 }
-            },
+            }
             COPY_LOCATOR => {
                 let row = SendMessageW(
                     self.files,
