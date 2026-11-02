@@ -307,8 +307,8 @@ fn verified_physical_state_map(
 #[cfg(test)]
 mod ux34_consistent_os_status_tests {
     use super::{
-        audited_register_filter_indices, candidate_disk_choice_caption,
-        candidate_disk_pickup_list, sole_connected_candidate_disk, verified_physical_state_map,
+        audited_register_filter_indices, candidate_disk_choice_caption, candidate_disk_pickup_list,
+        sole_connected_candidate_disk, verified_physical_state_map,
     };
     use serde_json::json;
     use std::collections::HashMap;
@@ -326,16 +326,20 @@ mod ux34_consistent_os_status_tests {
         let picker = candidate_disk_choice_caption(&groups[0], &labels, &safe);
         assert!(picker.contains("not verified"));
         assert!(!picker.contains("OS verified now"));
-        let plan = candidate_disk_pickup_list(
-            "movie.mkv", &groups, &labels, &safe, &HashMap::new(),
-        )
-        .unwrap();
+        let plan =
+            candidate_disk_pickup_list("movie.mkv", &groups, &labels, &safe, &HashMap::new())
+                .unwrap();
         assert!(plan.contains("not verified"));
         assert!(!plan.contains("OS verified now"));
         let disks = vec![json!({"id":42}), json!({"id":142})];
         assert_eq!(
             audited_register_filter_indices(
-                &disks, &labels, &HashMap::new(), &safe, true, "state:connected",
+                &disks,
+                &labels,
+                &HashMap::new(),
+                &safe,
+                true,
+                "state:connected",
             ),
             Some(vec![])
         );
@@ -343,8 +347,10 @@ mod ux34_consistent_os_status_tests {
         let ids = HashMap::from([(42, "win:synthetic-unique-uuid".to_owned())]);
         let verified = verified_physical_state_map(&raw, &ids, true);
         assert_eq!(sole_connected_candidate_disk(&groups, &verified), Some(42));
-        assert!(candidate_disk_choice_caption(&groups[0], &labels, &verified)
-            .contains("OS verified now"));
+        assert!(
+            candidate_disk_choice_caption(&groups[0], &labels, &verified)
+                .contains("OS verified now")
+        );
         let stale = verified_physical_state_map(&raw, &ids, false);
         assert_eq!(sole_connected_candidate_disk(&groups, &stale), None);
         assert_eq!(stale.get(&142).map(String::as_str), Some("unverified"));
@@ -4547,11 +4553,7 @@ impl App {
             .eq_ignore_ascii_case("copies:");
         self.visible_disk_indices = if candidate_mode {
             if self.copy_source.is_some() {
-                candidate_register_indices(
-                    &self.volumes,
-                    &self.copy_disk_groups,
-                    &safe_states,
-                )
+                candidate_register_indices(&self.volumes, &self.copy_disk_groups, &safe_states)
             } else {
                 vec![]
             }
@@ -5024,8 +5026,7 @@ impl App {
             wide(&caption).as_ptr() as isize,
         );
         for group in ordered_candidate_disks(&self.copy_disk_groups, &safe_states) {
-            let caption =
-                candidate_disk_choice_caption(group, &self.shelf_labels, &safe_states);
+            let caption = candidate_disk_choice_caption(group, &self.shelf_labels, &safe_states);
             let warning = group["volume_id"]
                 .as_i64()
                 .and_then(|disk| shelf_collision_warning(disk, &self.shelf_tag_conflicts))

@@ -1,3 +1,19 @@
+## UX34 exact-HEAD CI repair — Rustfmt-only gate (2026-11-02)
+
+At original integrated UX34 source SHA
+`5a33ad3b17e362fb2b44eadce0b72bb03e1af12b`, the
+[offline acceptance job](https://github.com/i-shutov/whereisit-ai/actions/runs/41523878738)
+failed specifically at **Check integrated Rust contracts** on six reported
+formatting-only hunks in the new Windows synthetic tests and two safe-state
+call sites. The native integration workflow
+[41523878647](https://github.com/i-shutov/whereisit-ai/actions/runs/41523878647)
+passed. Applied precisely the Rustfmt diff in the **same draft PR #57**
+without disabling or weakening tests. **New exact-HEAD CI must finish** before
+any all-green assertion. macOS/Windows human USB and GUI, private CTF,
+signing and real search p95 remain release blockers.
+
+---
+
 ## UX34 — consistent fail-closed OS status across all retrieval surfaces (2026-11-02)
 
 Draft PR #57, integrated native Windows Win32 + macOS SwiftUI fix. Source
