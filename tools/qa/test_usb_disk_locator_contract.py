@@ -40,6 +40,15 @@ class DiskLocatorWiringTests(unittest.TestCase):
 
 
     def test_ux27_recorded_parent_folder_navigation_is_exact_native_and_pinned(self):
+        # A plain Ctrl+F handler must NOT intercept Ctrl+Shift+F first.
+        focus = WIN.split("// Ctrl+F focuses global search.", 1)[1].split(
+            "// Ctrl+E moves", 1
+        )[0]
+        self.assertIn("GetKeyState(VK_SHIFT as i32) >= 0", focus)
+        folder_shortcut = WIN.split("// Ctrl+Shift+F browses", 1)[1].split(
+            "// Ctrl+Shift+N", 1
+        )[0]
+        self.assertIn("GetKeyState(VK_SHIFT as i32) < 0", folder_shortcut)
         self.assertIn("fn recorded_parent_folder_context(", WIN)
         self.assertIn("fn browse_recorded_parent_folder(&mut self)", WIN)
         self.assertIn("recorded_parent_folder_tests", WIN)

@@ -6363,9 +6363,11 @@ pub fn run() {
         SetFocus((*app).search);
         let mut message: MSG = std::mem::zeroed();
         while GetMessageW(&mut message, null_mut(), 0, 0) > 0 {
-            // Ctrl+F focuses global search from disk list, file results and inspector.
+            // Ctrl+F focuses global search. Without the Shift guard,
+            // Ctrl+Shift+F would be swallowed before recorded-folder browse.
             if message.message == WM_KEYDOWN
                 && GetKeyState(VK_CONTROL as i32) < 0
+                && GetKeyState(VK_SHIFT as i32) >= 0
                 && message.wParam == b'F' as usize
             {
                 SetFocus((*app).search);

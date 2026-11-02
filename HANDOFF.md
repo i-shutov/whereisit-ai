@@ -1,3 +1,18 @@
+## UX27 Win32 shortcut shadowing repair (2026-11-02; new exact-HEAD CI required)
+
+First UX27 exact HEAD 238ad56be5fe83196aa59cf3506c219aa7c747e8 failed
+Linux native and offline-kit **cargo fmt --all -- --check** on four
+Windows-only formatting hunks; corrected without suppressing tests at
+418048a79e2435edcc7af26dc752ee847f7eb519. Additional pre-acceptance
+source inspection found Win32's preexisting Ctrl+F handler also consumed
+Ctrl+Shift+F (no Shift guard), so the new recorded-folder command could not
+fire from the keyboard. Added a negative-Shift guard to ordinary Ctrl+F and a
+dual-native source contract regression, in the SAME draft PR #57. Exact-HEAD
+Linux/Windows/macOS ARM+Intel and all upgrade/offline jobs must be rerun
+before describing UX27 as fully green; real USB/visual QA remains outstanding.
+
+---
+
 ## UX27 — selected file to containing CATALOG folder (2026-11-02; exact-HEAD CI required)
 
 In existing draft PR #57, add a direct context navigation path from a verified

@@ -14,7 +14,10 @@ on Mac (always-visible toolbar even with locator collapsed, inspector link,
 \`volume_id\` and \`parent_id\` match the selected file's exact recorded catalog
 location. The breadcrumb is historical, never a current OS path.
 
-1. Synthetic disks #4, #42 and #142 have deliberately identical labels.
+1. Synthetic disks #4, #42 and #142 have deliberately identical labels. Verify
+   **Ctrl+F** still focuses ordinary search, while **Ctrl+Shift+F** reaches
+   recorded-folder navigation instead of being swallowed by Ctrl+F.
+
    Search globally for a file on #42 within \`Films/Feature\`. Press the
    shortcut; confirm the catalog browser shows other entries from **#42** and
    that parent only, not matching labels or path prefixes on #4/#142.
