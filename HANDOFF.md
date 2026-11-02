@@ -1,3 +1,27 @@
+## UX33 exact-HEAD CI diagnosis and Rustfmt correction (2026-11-02)
+
+At first UX33 complete source+docs SHA
+9d21156e0bac1bfd2c67905e41646cd5d4dc4de7,
+[offline-kit 41511960752](https://github.com/i-shutov/whereisit-ai/actions/runs/41511960752)
+failed specifically in the "Check integrated Rust contracts" step:
+cargo fmt --all -- --check reported only four assert_eq! wrapping
+differences in the NEW Windows synthetic result badge regression tests
+(apps/windows/src/native.rs, around line 317). Native Linux
+[41511960636](https://github.com/i-shutov/whereisit-ai/actions/runs/41511960636)
+passed Python dual-native contract tests and the workspace Rust tests,
+then failed its cargo fmt step for the same exact diff; Windows and macOS
+native jobs were skipped due to that gate. Integration wiring
+[41511960747](https://github.com/i-shutov/whereisit-ai/actions/runs/41511960747)
+passed.
+
+Applied only the four reported Rustfmt changes in the SAME draft
+PR #57; no tests disabled or weakened. Entire new exact-HEAD
+native Linux/Windows/macOS ARM+Intel, offline, integration and installed
+RC2-to-RC3 upgrade CI must be re-evaluated. Real USB/GUI/manual acceptance
+and stable 1.0 blockers remain unchanged.
+
+---
+
 ## UX33 — OS-paired physical status in ID-first native search results (2026-11-02)
 
 Same draft PR #57: the dense Windows Win32 ListView and macOS SwiftUI Table

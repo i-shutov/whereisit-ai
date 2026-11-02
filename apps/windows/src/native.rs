@@ -317,10 +317,22 @@ mod result_disk_live_os_tests {
         let states = HashMap::from([(42, "connected".to_owned())]);
         let missing = HashMap::new();
         let paired = HashMap::from([(42, "win:synthetic-volume".to_owned())]);
-        assert_eq!(verified_row_os_state(Some(42), &states, &missing, true), "unverified");
-        assert_eq!(verified_row_os_state(Some(42), &states, &paired, false), "unverified");
-        assert_eq!(verified_row_os_state(Some(4), &states, &paired, true), "unverified");
-        assert_eq!(verified_row_os_state(None, &states, &paired, true), "unverified");
+        assert_eq!(
+            verified_row_os_state(Some(42), &states, &missing, true),
+            "unverified"
+        );
+        assert_eq!(
+            verified_row_os_state(Some(42), &states, &paired, false),
+            "unverified"
+        );
+        assert_eq!(
+            verified_row_os_state(Some(4), &states, &paired, true),
+            "unverified"
+        );
+        assert_eq!(
+            verified_row_os_state(None, &states, &paired, true),
+            "unverified"
+        );
         assert_eq!(
             result_disk_status_caption("#42 • Archive", Some(42), "unverified"),
             "#42 [?] • Archive"
