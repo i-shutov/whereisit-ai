@@ -57,6 +57,7 @@ const STOP_PAGE_WAIT: usize = 147;
 const RETRY_PAGE: usize = 148;
 const COPY_VERIFIED_OS_ROOT: usize = 149;
 const COPY_DISK_CARD: usize = 150;
+const BROWSE_RECORDED_FOLDER: usize = 151;
 // Monotonic OS state lifetime: never trust stale green badges after suspend.
 const PHYSICAL_STATE_TTL: Duration = Duration::from_secs(12);
 
@@ -78,6 +79,85 @@ fn volume_change_response(event: usize) -> VolumeChangeResponse {
             VolumeChangeResponse::Reprobe
         }
         _ => VolumeChangeResponse::Ignore,
+    }
+}
+
+// Only catalog parent IDs navigate. The printed path is a historical breadcrumb,
+// never an OS mount or proof the selected file still exists on a USB disk.
+fn recorded_parent_folder_context(
+    entry: &Value,
+    volumes: &[Value],
+) -> Option<(i64, Option<i64>, String)> {
+    if entry["kind"].as_str() != Some("file") {
+        return None;
+    }
+    let volume_id = entry["volume_id"].as_i64()?;
+    if !volumes.iter().any(|volume| id(volume) == Some(volume_id)) {
+        return None;
+    }
+    let parent_id = match entry.get("parent_id") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(value.as_i64().filter(|value| *value > 0)?),
+    };
+    if parent_id.is_some() && parent_id == id(entry) {
+        return None;
+    }
+    let recorded = entry["relative_path"].as_str()?;
+    if recorded.is_empty()
+        || recorded.contains('\0')
+        || recorded.ends_with('/')
+        || recorded.ends_with('\\')
+    {
+        return None;
+    }
+    let normalized = recorded.replace('\\', "/");
+    let breadcrumb = normalized
+        .rsplit_once('/')
+        .map(|(parent, _)| if parent.is_empty() { "/" } else { parent })
+        .unwrap_or("/")
+        .to_owned();
+    Some((volume_id, parent_id, breadcrumb))
+}
+
+#[cfg(test)]
+mod recorded_parent_folder_tests {
+    use super::recorded_parent_folder_context;
+    use serde_json::json;
+
+    #[test]
+    fn exact_disk_id_and_parent_id_avoid_label_and_prefix_collisions() {
+        let volumes = vec![
+            json!({"id":4,"label":"Media"}),
+            json!({"id":42,"label":"Media"}),
+            json!({"id":142,"label":"Media"}),
+        ];
+        let file = json!({"id":701,"volume_id":42,"parent_id":700,
+            "kind":"file","relative_path":"/Films/Film A/film.mkv"});
+        assert_eq!(
+            recorded_parent_folder_context(&file, &volumes),
+            Some((42, Some(700), "/Films/Film A".into()))
+        );
+        let root_file = json!({"id":702,"volume_id":4,"parent_id":null,
+            "kind":"file","relative_path":"trailer.mp4"});
+        assert_eq!(
+            recorded_parent_folder_context(&root_file, &volumes),
+            Some((4, None, "/".into()))
+        );
+        let win_separators = json!({"id":703,"volume_id":142,"parent_id":9,
+            "kind":"file","relative_path":"Films\\Subtitles\\subtitle.srt"});
+        assert_eq!(
+            recorded_parent_folder_context(&win_separators, &volumes),
+            Some((142, Some(9), "Films/Subtitles".into()))
+        );
+        let missing_disk = json!({"id":704,"volume_id":421,"parent_id":9,
+            "kind":"file","relative_path":"Films/unknown.mkv"});
+        assert_eq!(recorded_parent_folder_context(&missing_disk, &volumes), None);
+        let folder = json!({"id":705,"volume_id":42,"parent_id":700,
+            "kind":"directory","relative_path":"Films/Film A"});
+        assert_eq!(recorded_parent_folder_context(&folder, &volumes), None);
+        let corrupt_parent = json!({"id":706,"volume_id":42,"parent_id":706,
+            "kind":"file","relative_path":"Films/film.mkv"});
+        assert_eq!(recorded_parent_folder_context(&corrupt_parent, &volumes), None);
     }
 }
 
@@ -4584,6 +4664,50 @@ impl App {
                 .unwrap_or_default()
         ));
     }
+    // From a verified search result, browse the containing CATALOG folder
+    // rather than attempting to open a historical USB filesystem location.
+    unsafe fn browse_recorded_parent_folder(&mut self) {
+        if !self.page_ready || self.copy_source.is_some() {
+            self.status("Return to a current search result before browsing its recorded folder.");
+            return;
+        }
+        let row = SendMessageW(self.files, LVM_GETNEXTITEM, usize::MAX, LVNI_SELECTED as isize);
+        let context = (row >= 0)
+            .then(|| self.entries.get(row as usize))
+            .flatten()
+            .and_then(|entry| recorded_parent_folder_context(entry, &self.volumes));
+        let Some((volume_id, parent_id, breadcrumb)) = context else {
+            self.status("Select a current file with a valid parent on an existing catalog disk.");
+            return;
+        };
+        self.copy_return = Some(CopyReturn {
+            volume: self.volume,
+            stack: self.stack.clone(),
+            query: self.query.clone(),
+            duplicates: self.duplicates,
+            offset: self.offset,
+        });
+        self.copy_source = None;
+        self.copy_source_name = None;
+        self.copy_focus_volume_id = None;
+        self.copy_disk_groups.clear();
+        if self.disk_filter_query.trim().eq_ignore_ascii_case("copies:") {
+            self.disk_filter_query.clear();
+            self.text(self.disk_filter, "");
+        }
+        self.volume = Some(volume_id);
+        self.stack = vec![(None, "/".into())];
+        if let Some(parent_id) = parent_id {
+            self.stack.push((Some(parent_id), breadcrumb));
+        }
+        self.query.clear();
+        self.text(self.search, "");
+        self.duplicates = false;
+        self.offset = 0;
+        self.populate_physical_disk_list();
+        self.load(); // children or ctf_children_pinned; generation SHA on every page.
+    }
+
     unsafe fn search_same_filename(&mut self) {
         // Never act on a stale search page or silently leave the copy inspector.
         if !self.page_ready || self.copy_source.is_some() {
@@ -5043,6 +5167,7 @@ impl App {
             }
             FOCUS_RESULTS => self.focus_current_page_results(),
             FILE_COPIES => self.show_copies_of_selected(),
+            BROWSE_RECORDED_FOLDER => self.browse_recorded_parent_folder(),
             SAME_FILENAME => self.search_same_filename(),
             SAME_RECORDED_SIZE => self.search_same_recorded_size(),
             REVEAL_DISK => {
@@ -5517,7 +5642,7 @@ impl App {
                 214 + file_width + 8,
                 106,
                 locator_width,
-                (h - 306).max(60),
+                (h - 336).max(60),
                 1,
             );
             ShowWindow(self.locator, SW_SHOW);
@@ -5525,9 +5650,10 @@ impl App {
             ShowWindow(self.locator, SW_HIDE);
         }
         for (command, y) in [
-            (PHYSICAL_CHECK, h - 185),
-            (PHYSICAL_PAIR, h - 155),
-            (PHYSICAL_UNPAIR, h - 125),
+            (PHYSICAL_CHECK, h - 215),
+            (PHYSICAL_PAIR, h - 185),
+            (PHYSICAL_UNPAIR, h - 155),
+            (BROWSE_RECORDED_FOLDER, h - 108),
             (FILE_COPIES, h - 78),
             (REVEAL_DISK, h - 78),
             (COPY_LOCATOR, h - 48),
@@ -5669,6 +5795,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 (DUPLICATES, "&Duplicates"),
                 (VIDEO_FILTER, "&Video files"),
                 (FILE_COPIES, "&Find copies"),
+                (BROWSE_RECORDED_FOLDER, "&Recorded folder"),
                 (REVEAL_DISK, "&Show disk"),
                 (COPY_LOCATOR, "Copy &locator text"),
                 (COPY_VERIFIED_OS_ROOT, "Copy OS &root"),
@@ -6144,6 +6271,12 @@ pub fn run() {
                 AppendMenuW(
                     view,
                     MF_STRING,
+                    BROWSE_RECORDED_FOLDER,
+                    wide("Browse selected file's RECORDED folder\tCtrl+Shift+F").as_ptr(),
+                );
+                AppendMenuW(
+                    view,
+                    MF_STRING,
                     SAME_FILENAME,
                     wide("Find same filename across all disks (any size)\tCtrl+Shift+N").as_ptr(),
                 );
@@ -6387,6 +6520,16 @@ pub fn run() {
                 && message.wParam == b'G' as usize
             {
                 (*app).command(COPY_CONNECTED, 0);
+                continue;
+            }
+            // Ctrl+Shift+F browses only catalogued parent_id on the exact
+            // recorded disk. It never opens the current OS mount or file bytes.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && GetKeyState(VK_SHIFT as i32) < 0
+                && message.wParam == b'F' as usize
+            {
+                (*app).command(BROWSE_RECORDED_FOLDER, 0);
                 continue;
             }
             // Ctrl+Shift+N: exact filename across all catalog disks, any recorded size.

@@ -39,6 +39,31 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("freshMatch.currentMount == candidate.currentMount", pair)
 
 
+    def test_ux27_recorded_parent_folder_navigation_is_exact_native_and_pinned(self):
+        self.assertIn("fn recorded_parent_folder_context(", WIN)
+        self.assertIn("fn browse_recorded_parent_folder(&mut self)", WIN)
+        self.assertIn("recorded_parent_folder_tests", WIN)
+        self.assertIn("BROWSE_RECORDED_FOLDER => self.browse_recorded_parent_folder()", WIN)
+        self.assertIn("message.wParam == b'F' as usize", WIN)
+        self.assertIn("self.copy_return = Some(CopyReturn {", WIN)
+        self.assertIn("self.stack.push((Some(parent_id), breadcrumb));", WIN)
+        self.assertIn("self.populate_physical_disk_list();", WIN)
+        self.assertIn('"ctf_children_pinned"', WIN)
+        self.assertIn("self.linked_request(if self.duplicates {", WIN)
+        self.assertIn('"op":"children"', WIN)
+        self.assertIn("func browseSelectedFileFolder()", MAC)
+        self.assertIn("static func recordedParentBreadcrumb(", MAC)
+        self.assertIn("volumes.contains(where: { $0.id == entry.volume_id })", MAC)
+        self.assertIn("stack.append((parentID, breadcrumb))", MAC)
+        self.assertIn("let context = copyReturn", MAC)
+        self.assertIn('args["op"] = "ctf_children_pinned"', MAC)
+        self.assertIn('args["op"] = "children"', MAC)
+        self.assertIn('Button("Folder") { model.browseSelectedFileFolder() }', MAC)
+        self.assertIn('Button("Browse recorded containing folder") { model.browseSelectedFileFolder() }', MAC)
+        self.assertIn('.keyboardShortcut("f", modifiers: [.command, .shift])', MAC)
+        # Do not let the shortcut imply the current USB filesystem has this file.
+        self.assertNotIn("FileManager.default.fileExists", MAC)
+
     def test_windows_selection_is_driven_by_current_page(self):
         self.assertIn("fn disk_locator_text(", WIN)
         self.assertIn("entry: Option<&Value>", WIN)

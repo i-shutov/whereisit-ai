@@ -1185,6 +1185,45 @@ private struct CopyReturnContext {
         offset = 0
         load()
     }
+    // Historical path is only a breadcrumb: parent_id and disk ID, not a
+    // guessed OS mount, decide which catalogued directory to browse.
+    static func recordedParentBreadcrumb(_ relativePath: String) -> String? {
+        guard !relativePath.isEmpty, !relativePath.contains("\0"),
+              !relativePath.hasSuffix("/"), !relativePath.hasSuffix("\\") else { return nil }
+        let normalized = relativePath.replacingOccurrences(of: "\\", with: "/")
+        guard let slash = normalized.lastIndex(of: "/") else { return "/" }
+        let parent = String(normalized[..<slash])
+        return parent.isEmpty ? "/" : parent
+    }
+
+    func browseSelectedFileFolder() {
+        guard pageReady, copySourceID == nil, let entry = selected,
+              entry.kind == "file", volumes.contains(where: { $0.id == entry.volume_id }),
+              let breadcrumb = Self.recordedParentBreadcrumb(entry.relative_path) else {
+            status = "Select a current file with a recorded parent on a registered catalog disk."
+            return
+        }
+        if let parentID = entry.parent_id, parentID <= 0 || parentID == entry.id {
+            status = "Invalid catalog parent ID; recorded folder navigation refused."
+            return
+        }
+        copyReturn = CopyReturnContext(volumeID: volumeID, stack: stack,
+            query: query, appliedQuery: appliedQuery, offset: offset,
+            showingDuplicates: showingDuplicates, appliedDuplicateMode: appliedDuplicateMode)
+        copySourceID = nil; copySourceName = nil
+        copyFocusVolumeID = nil; copyDiskGroups = []
+        if diskFilter.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "copies:" {
+            diskFilter = ""
+        }
+        volumeID = entry.volume_id
+        stack = [(nil, "/")]
+        if let parentID = entry.parent_id {
+            stack.append((parentID, breadcrumb))
+        }
+        query = ""; appliedQuery = ""; showingDuplicates = false; offset = 0
+        load() // ctf_children_pinned/children; linked source SHA checked per page.
+    }
+
     // Literal filename match, independent of recorded size; no byte/hash equality.
     static func exactFilenameQuery(_ name: String) -> String? {
         guard !name.isEmpty, !name.contains("\0") else { return nil }
@@ -1925,6 +1964,10 @@ private struct CopyReturnContext {
                         .keyboardShortcut("j", modifiers: [.command])
                         .accessibilityLabel("Find selected file's exact catalog disk in the left register")
                         .help("Filter register by exact catalog ID; no scope change or USB verification")
+                    Button("Browse recorded containing folder") { model.browseSelectedFileFolder() }
+                        .disabled(!model.pageReady || model.copySourceID != nil || entry.kind != "file")
+                        .accessibilityLabel("Browse selected file's recorded containing catalog folder")
+                        .help("Browse siblings by exact catalog parent ID; never open an OS path. Back restores the previous search.")
                     Button("Find same filename (any size)") { model.searchSameFilenameAcrossDisks() }
                         .disabled(!model.pageReady || model.copySourceID != nil || entry.kind != "file")
                         .keyboardShortcut("n", modifiers: [.command, .shift])
@@ -2115,6 +2158,12 @@ private struct CopyReturnContext {
                 .help("Focus the current results page without changing the disk search scope (Command-E)")
                 // Always visible (including 880px with the inspector collapsed).
                 // Do not attach the only Command-Shift-H handler to a hidden pane.
+                Button("Folder") { model.browseSelectedFileFolder() }
+                    .disabled(!model.pageReady || model.copySourceID != nil
+                        || model.selected?.kind != "file")
+                    .keyboardShortcut("f", modifiers: [.command, .shift])
+                    .accessibilityLabel("Browse recorded parent catalog folder of the selected file")
+                    .help("Show related catalogued files in the same directory; Back restores results. No current USB mount access.")
                 Button("Disk card") { model.copySelectedDiskPickupCard() }
                     .disabled(model.selectedDiskForPairing == nil)
                     .keyboardShortcut("l", modifiers: [.command, .shift])

@@ -1,3 +1,26 @@
+## UX27 — selected file to containing CATALOG folder (2026-11-02; exact-HEAD CI required)
+
+In existing draft PR #57, add a direct context navigation path from a verified
+global/duplicate results row to the file's recorded *parent_id* on the same
+exact catalog disk. Win32: native locator button / View menu / Ctrl+Shift+F;
+macOS SwiftUI: inspector button plus always-visible Folder action /
+Command-Shift-F even when the locator is collapsed. Back restores the search,
+offset and previous scope. Root files browse the exact disk's catalog root;
+unknown disk, stale page, non-file, invalid/self parent, copy-mode or missing
+recorded path refuse navigation. A recorded breadcrumb is **not** a live mount.
+SQLite uses bounded \`children\`, linked CTF \`ctf_children_pinned\` revalidates
+original generation SHA per page. A source-change failure is never bypassed.
+
+Synthetic Windows compiled exact-ID/parent/path cases, dual-native contract,
+and [UX27 manual runbook](docs/qa/UX27_RECORDED_PARENT_FOLDER_20261102.md)
+cover 4/42/142 disk ID collision, page/Back, root and Mac collapsed view.
+New exact-HEAD Linux+Windows+Mac ARM/Intel, offline and RC2→RC3 upgrade CI
+MUST be verified; human screen-reader, 880/1366px, hardware, historical CTF,
+signing and real p95 gates remain open. No user data or source SHA released.
+PR draft/unmerged; stable 1.0 blocked.
+
+---
+
 ## UX22 exact-HEAD SwiftUI compiler repair (2026-11-02; rerun required)
 
 The initial UUID-clone race repair [f1ba21c](https://github.com/i-shutov/whereisit-ai/commit/f1ba21ce8e5b96612e419d29c1cef4db36ee9fa3) passed [integration](https://github.com/i-shutov/whereisit-ai/actions/runs/41425403204) and [offline kit](https://github.com/i-shutov/whereisit-ai/actions/runs/41425403218), but [macOS ARM64 installed upgrade job](https://github.com/i-shutov/whereisit-ai/actions/runs/41425403188) failed Swift compiler conditional binding at AtlasCatalog.swift lines 856 and 932: `let ... = filter(...)` binds a non-optional array inside `guard`. Replaced these with genuine optional `first(where:)` bindings plus an independent `filter(...).count == 1` UUID uniqueness check. The safety predicate and clone-race regression are preserved; no tests suppressed. Recheck ALL new exact-head workflows, including native Mac ARM/Intel and installed upgrades; do not call earlier green jobs evidence for the new SHA.

@@ -429,3 +429,16 @@ are supplied in the same draft PR #57. Exact-HEAD four-platform native,
 integration, offline acceptance and upgrade CI must pass; physical Win10/11,
 Mac ARM/Intel plug/unplug, cloned volume, pending unmount and VoiceOver/
 keyboard/HiDPI acceptance remain unverified. Stable 1.0 blocked.
+
+
+## UX27 — containing catalog folder from a selected search result (2026-11-02)
+
+Native Win32 and SwiftUI users may inspect related catalogued files next to
+a selected movie by browsing its exact \`parent_id\` on its exact \`volume_id\`,
+including the root for files with a null parent. The previous bounded search,
+page offset and scope are restored by Back. Windows Ctrl+Shift+F or a locator
+button/View menu; macOS Command-Shift-F or Folder toolbar/inspector. The
+recorded relative path is a historical breadcrumb, **never** a verified OS
+mount or file existence claim. Linked CTF uses SHA-pinned read-only children
+pages. Synthetic tests plus native builds are necessary but do not replace
+human GUI/USB acceptance; see \`docs/qa/UX27_RECORDED_PARENT_FOLDER_20261102.md\`.
