@@ -87,7 +87,7 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("reply?.generation == self.linkedGeneration", MAC)
         self.assertIn("model.copySelectedMetadata(model.volumeLabel(entry.volume_id)", MAC)
         self.assertIn("model.copySelectedMetadata(entry.relative_path", MAC)
-        self.assertIn("model.copySelectedMetadata(retrievalNote(for: entry)", MAC)
+        self.assertIn("model.copySelectedMetadata(model.retrievalNote(for: entry)", MAC)
         self.assertNotIn('Button("Copy recorded path") { copy(', MAC)
 
     def test_ux28_candidate_folder_return_is_exact_and_revalidated(self):
@@ -446,7 +446,7 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("GetKeyState(VK_SHIFT as i32) < 0", WIN)
         self.assertIn("filtered_disk_indices(&self.volumes, &self.shelf_labels, &self.disk_filter_query)", WIN)
         self.assertIn('wide("Filter labels, IDs, shelf tags • Ctrl+L")', WIN)
-        self.assertIn('private func retrievalNote(for entry: Entry) -> String', MAC)
+        self.assertIn('func retrievalNote(for entry: Entry) -> String', MAC)
         self.assertIn('Button("Copy retrieval note")', MAC)
         self.assertIn('.keyboardShortcut("c", modifiers: [.command, .shift])', MAC)
         self.assertIn("model.shelfLabel(entry.volume_id)", MAC)
