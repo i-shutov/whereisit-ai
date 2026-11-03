@@ -57,6 +57,11 @@ struct LivePhysicalVolume: Identifiable, Hashable {
     let name: String
     let currentMount: String
 }
+// These are OS-reserved live mountpoints, not offline USB disks.
+// Keep them in the FULL observation set for UUID-collision detection.
+func isMacOSReservedMount(_ path: String) -> Bool {
+    path == "/" || path == "/System/Volumes" || path.hasPrefix("/System/Volumes/")
+}
 struct PhysicalStateRow: Decodable {
     let volume_id: Int64
     let state: String
@@ -818,7 +823,7 @@ private struct CandidateFolderReturnContext {
     // only displays UUIDs observed exactly once in the current scan.
     var pairablePhysicalVolumes: [LivePhysicalVolume] {
         let counts = Dictionary(mountedPhysicalVolumes.map { ($0.id, 1) }, uniquingKeysWith: +)
-        return mountedPhysicalVolumes.filter { counts[$0.id] == 1 && $0.currentMount != "/" }
+        return mountedPhysicalVolumes.filter { counts[$0.id] == 1 && !isMacOSReservedMount($0.currentMount) }
             .sorted {
                 let order = $0.name.localizedStandardCompare($1.name)
                 return order == .orderedSame ? $0.currentMount < $1.currentMount : order == .orderedAscending
@@ -924,7 +929,10 @@ private struct CandidateFolderReturnContext {
             // UUID establishes current physical attachment.
             guard let verifiedID = verifiedPhysicalIDs[id],
                   !verifiedID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  mountedPhysicalVolumes.filter({ $0.id == verifiedID && $0.currentMount != "/" }).count == 1 else {
+                  mountedPhysicalVolumes.filter({ $0.id == verifiedID }).count == 1,
+                  mountedPhysicalVolumes.first(where: { $0.id == verifiedID }).map({
+                      !isMacOSReservedMount($0.currentMount)
+                  }) == true else {
                 return "unverified"
             }
             return "connected"
@@ -1394,7 +1402,8 @@ private struct CandidateFolderReturnContext {
                       // appear at another mount between the two OS probes.
                       let freshMatch = secondProbe.first(where: { $0.id == verifiedID }),
                       secondProbe.filter({ $0.id == verifiedID }).count == 1,
-                      freshMatch.currentMount == mounted.currentMount else {
+                      freshMatch.currentMount == mounted.currentMount,
+                      !isMacOSReservedMount(freshMatch.currentMount) else {
                     self.status = "Current OS mount root NOT verified; source, pairing or USB volume changed."
                     return
                 }
@@ -1499,7 +1508,8 @@ private struct CandidateFolderReturnContext {
               // originally selected UUID+path still matches exactly once.
               let freshMatch = freshProbe.first(where: { $0.id == candidate.id }),
               freshProbe.filter({ $0.id == candidate.id }).count == 1,
-              freshMatch.currentMount == candidate.currentMount else {
+              freshMatch.currentMount == candidate.currentMount,
+              !isMacOSReservedMount(freshMatch.currentMount) else {
             physicalStates = [:]
             status = "OS volume changed during confirmation; pairing refused. Refresh mounts."
             return

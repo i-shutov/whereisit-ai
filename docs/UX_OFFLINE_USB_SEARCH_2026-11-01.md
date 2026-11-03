@@ -662,3 +662,25 @@ Same draft PR #57 adds an ALL-DISKS offline retrieval inventory (native Win32 Ct
 ## UX47 — one-step native OS mount selection and pairing guards (2026-11-03)
 
 Windows no longer walks each local OS mount through repeated Yes/No dialogs. An actual Win32 popup allows arrow-key selection from current unambiguous OS UUIDs, followed by one explicit confirmation; the native mount list and exact catalog scope/ID are rechecked after the popup and confirmation. macOS's existing SwiftUI picker rejects the OS startup root for pairing/green states and checks catalog scope/ID after NSAlert, while still observing the root for clone detection. This is physical **volume** identity, not a verified USB hardware serial or file-byte equality. See [UX47 manual QA](qa/UX47_NATIVE_PHYSICAL_PAIR_PICKER_20261103.md). Exact new-HEAD CI and human Win10/11/Mac ARM/Intel UI, USB clone, unplug and accessibility acceptance remain required; same draft PR #57, no merge/stable release.
+
+## UX48 — fail-closed OS installation volume exclusion (2026-11-03)
+
+The offline USB locator is not allowed to pair or mark the **running OS
+installation volume** as a catalog USB drive. Win32 obtains the current
+Windows directory and volume root through the live Kernel32 APIs, excludes
+the matching Mount Manager volume from its native picker, refuses to pair
+if the startup root cannot be verified in a complete OS scan, checks the
+root again after dialogs, and suppresses previously stored OS+ badges
+and Explorer/root-copy operations for the installation volume. It does
+NOT guess that C: is always the system drive.
+
+macOS excludes the live startup root and macOS-reserved
+`/System/Volumes/*` mountpoints from pairing and positive connected badges;
+both first and second probes must still count all observed UUID collisions.
+All raw observations (including system volumes) remain in the backend
+collision detector. OS mount roots are live observations, never catalog
+historical paths. Files/CTF remain unmodified, and non-ejectable USB HDDs
+remain eligible if independently verified; no DRIVE_FIXED blanket exclusion.
+See [UX48 QA](qa/UX48_RESERVED_SYSTEM_VOLUMES_20261103.md).
+Synthetic compiled Win32 tests and dual-native source contracts accompany
+the implementation, not proof of hardware or manual GUI acceptance.

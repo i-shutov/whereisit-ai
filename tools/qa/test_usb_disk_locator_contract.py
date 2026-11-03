@@ -16,6 +16,24 @@ PHYSICAL = (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encod
 
 
 class DiskLocatorWiringTests(unittest.TestCase):
+    def test_ux48_current_os_installation_mount_is_never_a_usb_disk(self):
+        self.assertIn("fn windows_system_volume_root() -> Option<String>", WIN)
+        self.assertIn("GetSystemWindowsDirectoryW(", WIN)
+        self.assertIn("GetVolumePathNameW(", WIN)
+        self.assertIn("mod windows_startup_volume_pairing_tests", WIN)
+        self.assertIn("eligible_windows_connected_identity(", WIN)
+        win_pair = WIN.split("unsafe fn pair_selected_physical_disk(", 1)[1].split(
+            "unsafe fn unpair_selected_physical_disk(", 1
+        )[0]
+        self.assertIn("let Some(system_root) = windows_system_volume_root()", win_pair)
+        self.assertIn("!is_current_windows_system_mount(volume, &system_root)", win_pair)
+        self.assertIn("windows_system_volume_root().as_deref() != Some(system_root.as_str())", win_pair)
+        self.assertIn("isMacOSReservedMount(_ path: String)", MAC)
+        self.assertIn('path.hasPrefix("/System/Volumes/")', MAC)
+        self.assertIn("!isMacOSReservedMount($0.currentMount)", MAC)
+        self.assertIn("mountedPhysicalVolumes.filter({ $0.id == verifiedID }).count == 1", MAC)
+        self.assertIn("!isMacOSReservedMount(freshMatch.currentMount)", MAC)
+
     def test_ux47_native_single_mount_choice_fails_closed_during_pairing(self):
         self.assertIn("fn physical_pairing_menu_caption(", WIN)
         self.assertIn("mod physical_pairing_menu_tests", WIN)
@@ -30,8 +48,8 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("self.physical_scope() != pairing_scope", pairing)
         self.assertIn("unique_matching_live_mount(&candidate, &self.mounted_volumes)", pairing)
         self.assertIn('self.physical_request("physical_pair"', pairing)
-        self.assertIn('counts[$0.id] == 1 && $0.currentMount != "/"', MAC)
-        self.assertIn('mountedPhysicalVolumes.filter({ $0.id == verifiedID && $0.currentMount != "/" }).count == 1', MAC)
+        self.assertIn('counts[$0.id] == 1 && !isMacOSReservedMount($0.currentMount)', MAC)
+        self.assertIn('mountedPhysicalVolumes.filter({ $0.id == verifiedID }).count == 1', MAC)
         mac_pair = MAC.split("func pairSelectedPhysicalDisk() {", 1)[1].split(
             "func unpairSelectedPhysicalDisk()", 1
         )[0]

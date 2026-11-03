@@ -1155,3 +1155,20 @@ Same draft PR #57 adds an ALL-DISKS offline retrieval inventory (native Win32 Ct
 ## UX47 — native physical pairing picker and startup-root guard (2026-11-03)
 
 In the existing **draft PR #57**, Windows replaces the sequential Yes/No loop over OS mounts with one native keyboard popup, current UUID + serial disambiguation, and one explicit confirmation; both before and after the confirmation the *live OS mount* is rechecked. The popup's catalog generation and exact selected catalog disk are guarded. Mac SwiftUI excludes the OS startup root from pairable candidates and connected claims (but keeps the root in complete OS observation), and revalidates disk/scope after its modal. Pure Win32 Rust unit tests and both-native source wiring regression are included; see `docs/qa/UX47_NATIVE_PHYSICAL_PAIR_PICKER_20261103.md`. This does not prove physical manufacturer identity, file bytes or user hardware QA. Linked CTF remains read-only and SHA-pinned, annotations and physical pairings separate, RC3 unsigned prerelease, stable 1.0 blocked. **Exact-head CI not yet checked for this commit.**
+
+
+## UX48 — OS installation volumes are never USB retrieval targets (2026-11-03)
+
+Same draft PR #57 adds an explicit fail-closed guard to the native
+physical-disk identity vertical: Windows derives its actual startup volume
+from Kernel32 and refuses system-volume picker entries, stale stored OS+
+connection claims and OS-root actions; macOS excludes reserved live OS
+mountpoints in its picker/status/second-probe actions, retaining the full
+unfiltered UUID collision observations. No historical CTF letter or label
+is trusted, no source/SQLite/catalog bytes are changed. Source tests:
+Win32 compiled `windows_startup_volume_pairing_tests`,
+`tools/qa/test_usb_disk_locator_contract.py`, and
+`docs/qa/UX48_RESERVED_SYSTEM_VOLUMES_20261103.md`.
+**CI results must be verified on the final exact new PR HEAD; native GUI
+Win10/11/Mac ARM/Intel and real USB clones remain unaccepted.**
+RC3 unsigned prerelease, stable 1.0 still blocked, no merge.
