@@ -1,3 +1,26 @@
+## UX40 — disk register takes priority over secondary category tools (2026-11-03)
+
+One integrated vertical in SAME draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57):
+Windows Win32 and macOS SwiftUI now **collapse category administration by
+default** so the left pane can show many more of the owner's ~40 catalog disks,
+without removing existing category creation/filter/assignment. Windows uses
+View → Show/hide category tools and Ctrl+Shift+A, with UI-only persisted
+preference, focus rescue from hidden controls and pure geometry/preference Rust
+tests; macOS has a compact keyboard/VoiceOver-labelled disclosure, persistent
+AppStorage and unchanged category actions. Dual-native Python contract and
+[UX40 manual GUI/USB runbook](docs/qa/UX40_DISK_REGISTER_CATEGORY_DISCLOSURE_20261103.md)
+included. Showing more catalog disks is NOT evidence of live media presence.
+
+This commit's **exact-HEAD CI is not yet verified**. Recheck latest PR SHA,
+Linux/Windows/macOS ARM+Intel, offline kit, integration and installed RC2→RC3
+workflow before reporting pass; diagnose failed job/step, repair in this SAME
+draft PR without disabling tests. Windows 10/11 and macOS ARM/Intel manual
+category UI/keyboard/VoiceOver, real USB/unplug/clone identity, historical and
+modified original CTF, signing/notarization and real p95 <=150ms remain blocked.
+No stable publication/merge, no CTF modifications or other repository changes.
+
+---
+
 ## UX39 initial exact-HEAD CI defects and repair (2026-11-03)
 
 At initial source SHA [4c5d3c8](https://github.com/i-shutov/whereisit-ai/commit/4c5d3c8b0d88a7e8917af1d7a344076f369202be),
