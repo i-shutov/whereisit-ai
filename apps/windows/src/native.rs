@@ -3902,7 +3902,6 @@ fn annotation_reply_current(tag: &str, request_session: u64, active_session: u64
     ) || request_session == active_session
 }
 
-
 const GLOBAL_SEARCH_LATENCY_WINDOW: usize = 128;
 const GLOBAL_SEARCH_LATENCY_MIN: usize = 30;
 
@@ -3923,24 +3922,34 @@ struct GlobalSearchLatencySession {
     samples_ms: Vec<u64>,
 }
 impl GlobalSearchLatencySession {
-    fn reset(&mut self) { self.samples_ms.clear(); }
+    fn reset(&mut self) {
+        self.samples_ms.clear();
+    }
     fn observe(&mut self, eligible: bool, ms: u64) {
-        if !eligible { return; }
+        if !eligible {
+            return;
+        }
         if self.samples_ms.len() == GLOBAL_SEARCH_LATENCY_WINDOW {
             self.samples_ms.remove(0);
         }
         self.samples_ms.push(ms);
     }
     fn percentile(&self, percent: usize) -> Option<u64> {
-        if self.samples_ms.is_empty() || percent == 0 || percent > 100 { return None; }
+        if self.samples_ms.is_empty() || percent == 0 || percent > 100 {
+            return None;
+        }
         let mut sorted = self.samples_ms.clone();
         sorted.sort_unstable();
-        sorted.get((sorted.len() * percent).div_ceil(100) - 1).copied()
+        sorted
+            .get((sorted.len() * percent).div_ceil(100) - 1)
+            .copied()
     }
     fn summary(&self) -> String {
         let n = self.samples_ms.len();
         if n < GLOBAL_SEARCH_LATENCY_MIN {
-            return format!("Global search: {n}/30 fresh verified pages; no p95 yet. Local-only diagnostic.");
+            return format!(
+                "Global search: {n}/30 fresh verified pages; no p95 yet. Local-only diagnostic."
+            );
         }
         format!("Global search: {n} fresh pages; session p50={} ms, p95={} ms (nearest-rank, last 128). NOT hardware/release acceptance.",
             self.percentile(50).unwrap_or_default(), self.percentile(95).unwrap_or_default())
@@ -3959,16 +3968,25 @@ mod global_search_latency_tests {
             (true, true, Some(3), "film", false, false),
             (true, true, None, "", false, false),
             (true, true, None, "film", true, false),
-            (true, true, None, "film", false, true)
+            (true, true, None, "film", false, true),
         ] {
-            session.observe(global_search_latency_eligible(ready, sha, disk, query, dup, copies), 1);
+            session.observe(
+                global_search_latency_eligible(ready, sha, disk, query, dup, copies),
+                1,
+            );
         }
         assert!(session.samples_ms.is_empty());
-        for ms in 1..=40 { session.observe(true, ms); }
+        for ms in 1..=40 {
+            session.observe(true, ms);
+        }
         assert_eq!(session.percentile(50), Some(20));
         assert_eq!(session.percentile(95), Some(38));
-        assert!(session.summary().contains("NOT hardware/release acceptance"));
-        for ms in 41..=200 { session.observe(true, ms); }
+        assert!(session
+            .summary()
+            .contains("NOT hardware/release acceptance"));
+        for ms in 41..=200 {
+            session.observe(true, ms);
+        }
         assert_eq!(session.samples_ms.len(), GLOBAL_SEARCH_LATENCY_WINDOW);
         assert_eq!(session.percentile(95), Some(194));
         session.reset();
@@ -5040,17 +5058,16 @@ impl App {
                     };
                     self.entries = page["items"].as_array().cloned().unwrap_or_default();
                     self.page_ready = true;
-                    self.global_search_latency.observe(
-                        global_search_latency_eligible(
-                            self.page_ready,
-                            !self.linked_mode() || data["source_sha_checked"] == true,
-                            self.volume,
-                            &self.query,
-                            self.duplicates,
-                            self.copy_source.is_some(),
-                        ),
-                        reply.elapsed_ms,
+                    let eligible_for_latency = global_search_latency_eligible(
+                        self.page_ready,
+                        !self.linked_mode() || data["source_sha_checked"] == true,
+                        self.volume,
+                        &self.query,
+                        self.duplicates,
+                        self.copy_source.is_some(),
                     );
+                    self.global_search_latency
+                        .observe(eligible_for_latency, reply.elapsed_ms);
                     self.copy_disk_groups = if self.copy_source.is_some() {
                         page["disk_groups"].as_array().cloned().unwrap_or_default()
                     } else {
@@ -8345,7 +8362,11 @@ pub fn run() {
                 && (message.wParam == b'8' as usize || message.wParam == b'7' as usize)
             {
                 (*app).command(
-                    if message.wParam == b'8' as usize { SHOW_SEARCH_LATENCY } else { RESET_SEARCH_LATENCY },
+                    if message.wParam == b'8' as usize {
+                        SHOW_SEARCH_LATENCY
+                    } else {
+                        RESET_SEARCH_LATENCY
+                    },
                     0,
                 );
                 continue;
