@@ -62,6 +62,59 @@ const OPEN_VERIFIED_OS_ROOT: usize = 152;
 // Monotonic OS state lifetime: never trust stale green badges after suspend.
 const PHYSICAL_STATE_TTL: Duration = Duration::from_secs(12);
 
+// Only unambiguous plain filenames are submitted while typing. Full Boolean,
+// field and path expressions are deliberately explicit Enter-only operations.
+const LIVE_FILENAME_SEARCH_TIMER: usize = 3;
+const LIVE_FILENAME_SEARCH_DELAY_MS: u32 = 450;
+
+fn live_filename_search_query(raw: &str) -> Option<String> {
+    let query = raw.trim();
+    if query.chars().count() < 2 || query.len() > 256 {
+        return None;
+    }
+    if !query
+        .chars()
+        .all(|ch| ch.is_alphanumeric() || ch.is_whitespace() || matches!(ch, '.' | '-' | '_' | '\''))
+    {
+        return None;
+    }
+    if query
+        .split_whitespace()
+        .any(|part| matches!(part.to_ascii_uppercase().as_str(), "AND" | "OR" | "NOT"))
+    {
+        return None;
+    }
+    Some(query.to_owned())
+}
+
+#[cfg(test)]
+mod live_filename_search_tests {
+    use super::live_filename_search_query;
+
+    #[test]
+    fn plain_unicode_film_names_are_searchable_and_trimmed() {
+        assert_eq!(
+            live_filename_search_query("  Ирония судьбы 1975.mkv  "),
+            Some("Ирония судьбы 1975.mkv".to_owned())
+        );
+        assert_eq!(
+            live_filename_search_query("Star-Wars_1977"),
+            Some("Star-Wars_1977".to_owned())
+        );
+    }
+
+    #[test]
+    fn boolean_fields_paths_partial_and_excessive_inputs_stay_enter_only() {
+        for expression in [
+            "", " ", "x", "name:movie", "type:video", "a OR b", "a and b",
+            "NOT movie", "(movie)", "films/2026", "foo\\bar", "size:100",
+        ] {
+            assert_eq!(live_filename_search_query(expression), None);
+        }
+        assert_eq!(live_filename_search_query(&"a".repeat(257)), None);
+    }
+}
+
 // Pagination is only allowed from a successfully decoded current page. A
 // pending/stopped/failed CTF or SQLite request is never navigation evidence.
 // In particular, has_more must come from the fresh page, not a remembered total.
@@ -3654,6 +3707,8 @@ struct App {
     visible_disk_indices: Vec<usize>,
     files: HWND,
     search: HWND,
+    setting_search_edit: bool,
+    pending_live_search: Option<String>,
     status: HWND,
     location: HWND,
     locator: HWND,
@@ -3740,6 +3795,8 @@ impl App {
             visible_disk_indices: Vec::new(),
             files: null_mut(),
             search: null_mut(),
+            setting_search_edit: false,
+            pending_live_search: None,
             status: null_mut(),
             location: null_mut(),
             locator: null_mut(),
@@ -3813,6 +3870,49 @@ impl App {
         let mut buffer = vec![0u16; len as usize + 1];
         GetWindowTextW(self.search, buffer.as_mut_ptr(), len + 1);
         String::from_utf16_lossy(&buffer[..len as usize])
+    }
+    unsafe fn cancel_live_filename_search(&mut self) {
+        self.pending_live_search = None;
+        if !self.hwnd.is_null() {
+            KillTimer(self.hwnd, LIVE_FILENAME_SEARCH_TIMER);
+        }
+    }
+    unsafe fn set_search_edit(&mut self, value: &str) {
+        // SetWindowTextW synchronously emits EN_CHANGE; programmatic Back,
+        // category, disk and CTF changes must never arm an old query timer.
+        self.cancel_live_filename_search();
+        self.setting_search_edit = true;
+        self.text(self.search, value);
+        self.setting_search_edit = false;
+    }
+    unsafe fn on_search_edit_changed(&mut self) {
+        self.update_video_filter_caption();
+        if self.setting_search_edit {
+            return;
+        }
+        self.cancel_live_filename_search();
+        let raw = self.search_edit_text();
+        if let Some(query) = live_filename_search_query(&raw) {
+            if self.copy_source.is_none()
+                && !self.duplicates
+                && self.volume.is_none()
+                && self.query == query
+            {
+                return;
+            }
+            self.pending_live_search = Some(query);
+            SetTimer(
+                self.hwnd,
+                LIVE_FILENAME_SEARCH_TIMER,
+                LIVE_FILENAME_SEARCH_DELAY_MS,
+                None,
+            );
+            self.status("Plain filename: all-disk search runs after typing pauses; Enter runs full expressions.");
+        } else if !raw.trim().is_empty() {
+            self.status("Advanced query: press Enter. Visible results still belong to the last applied expression.");
+        } else {
+            self.status("Search edit cleared; press Enter to clear the previous result page.");
+        }
     }
     unsafe fn update_video_filter_caption(&self) {
         if let Some((_, button)) = self.buttons.iter().find(|(id, _)| *id == VIDEO_FILTER) {
@@ -3933,7 +4033,7 @@ impl App {
         self.copy_source_name = None;
         self.copy_return = None;
         self.candidate_folder_return = None;
-        self.text(self.search, "");
+        self.set_search_edit("");
         self.status("Opening catalog…");
         self.call("init", json!({"op":"init"}));
     }
@@ -3987,6 +4087,7 @@ impl App {
             self.text(self.disk_filter, "");
             self.populate_physical_disk_list();
         }
+        self.cancel_live_filename_search();
         self.generation += 1;
         if self
             .pending_selection_restore
@@ -4420,7 +4521,7 @@ impl App {
                         self.offset = 0;
                         self.duplicates = false;
                         self.entries.clear();
-                        self.text(self.search, "");
+                        self.set_search_edit("");
                         self.status("External CTF verified; original kept read-only.");
                         self.refresh();
                     } else {
@@ -5634,7 +5735,7 @@ impl App {
             self.stack.push((Some(parent_id), breadcrumb));
         }
         self.query.clear();
-        self.text(self.search, "");
+        self.set_search_edit("");
         self.duplicates = false;
         self.offset = 0;
         self.populate_physical_disk_list();
@@ -5682,7 +5783,7 @@ impl App {
         self.copy_source_name = None;
         self.duplicates = false;
         self.query = query;
-        self.text(self.search, &self.query);
+        self.set_search_edit(&self.query.clone());
         self.volume = None;
         self.stack = vec![(None, "/".into())];
         self.offset = 0;
@@ -5732,7 +5833,7 @@ impl App {
         self.copy_source_name = None;
         self.duplicates = false;
         self.query = query;
-        self.text(self.search, &self.query);
+        self.set_search_edit(&self.query.clone());
         self.volume = None;
         self.stack = vec![(None, "/".into())];
         self.offset = 0;
@@ -5812,7 +5913,7 @@ impl App {
                 self.stack.push((id(&e), string(&e, "relative_path")));
                 self.query.clear();
                 self.duplicates = false;
-                self.text(self.search, "");
+                self.set_search_edit("");
                 self.offset = 0;
                 self.load();
             } else {
@@ -5960,7 +6061,7 @@ impl App {
                             .replace('\\', "\\\\")
                             .replace('"', "\\\"")
                     );
-                    self.text(self.search, &self.query);
+                    self.set_search_edit(&self.query.clone());
                     self.duplicates = false;
                     self.offset = 0;
                     self.load();
@@ -5998,11 +6099,11 @@ impl App {
             }
             SHELF_SAVE => self.save_shelf_label(),
             SEARCH_BOX if notification == EN_CHANGE as usize => {
-                self.update_video_filter_caption();
+                self.on_search_edit_changed();
             }
             VIDEO_FILTER => {
                 if let Some(next) = toggle_video_query(&self.search_edit_text()) {
-                    self.text(self.search, &next);
+                    self.set_search_edit(&next);
                     self.update_video_filter_caption();
                     self.command(FIND, 0);
                 } else {
@@ -6052,7 +6153,7 @@ impl App {
                 self.stack = vec![(None, "/".into())];
                 self.query.clear();
                 self.duplicates = false;
-                self.text(self.search, "");
+                self.set_search_edit("");
                 self.offset = 0;
                 self.load();
                 self.sync_shelf_editor();
@@ -6100,7 +6201,7 @@ impl App {
                     self.duplicates = false;
                     self.offset = context.offset;
                     self.disk_filter_query = context.disk_filter_query;
-                    self.text(self.search, "");
+                    self.set_search_edit("");
                     self.text(self.disk_filter, &self.disk_filter_query);
                     self.populate_physical_disk_list();
                     self.load_restoring(context.selected); // Re-fetch, then exact row.
@@ -6114,7 +6215,7 @@ impl App {
                     self.query = context.query;
                     self.duplicates = context.duplicates;
                     self.offset = context.offset;
-                    self.text(self.search, &self.query);
+                    self.set_search_edit(&self.query.clone());
                     self.populate_physical_disk_list();
                     self.load_restoring(context.selected);
                     return;
@@ -6122,7 +6223,7 @@ impl App {
                 if !self.query.is_empty() || self.duplicates {
                     self.query.clear();
                     self.duplicates = false;
-                    self.text(self.search, "");
+                    self.set_search_edit("");
                 } else if self.stack.len() > 1 {
                     self.stack.pop();
                 }
@@ -7212,7 +7313,22 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
         }
         WM_TIMER => {
             app.expire_physical_presence_if_stale();
-            if wp == 2 {
+            if wp == LIVE_FILENAME_SEARCH_TIMER {
+                KillTimer(hwnd, LIVE_FILENAME_SEARCH_TIMER);
+                if let Some(expected) = app.pending_live_search.take() {
+                    if live_filename_search_query(&app.search_edit_text()).as_deref()
+                        == Some(expected.as_str())
+                        && (app.query != expected
+                            || app.copy_source.is_some()
+                            || app.volume.is_some()
+                            || app.duplicates)
+                    {
+                        // Enter and typeahead share the existing generation-
+                        // guarded, SHA-pinned asynchronous global search.
+                        app.command(FIND, 0);
+                    }
+                }
+            } else if wp == 2 {
                 app.refresh_physical_presence();
             } else {
                 app.poll();
@@ -7245,6 +7361,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             app.save_ui_layout_preferences();
             KillTimer(hwnd, 1);
             KillTimer(hwnd, 2);
+            KillTimer(hwnd, LIVE_FILENAME_SEARCH_TIMER);
             PostQuitMessage(0);
             0
         }

@@ -17,6 +17,32 @@ PHYSICAL = (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encod
 
 class DiskLocatorWiringTests(unittest.TestCase):
 
+    def test_ux37_debounced_filename_lookup_is_global_and_source_pinned(self):
+        # Synthetic source-wiring regression, NOT a UI p95 benchmark.
+        self.assertIn("fn live_filename_search_query(raw: &str)", WIN)
+        self.assertIn("mod live_filename_search_tests", WIN)
+        self.assertIn("const LIVE_FILENAME_SEARCH_DELAY_MS: u32 = 450;", WIN)
+        self.assertIn("pending_live_search: Option<String>", WIN)
+        self.assertIn("self.setting_search_edit = true;", WIN)
+        self.assertIn("self.cancel_live_filename_search();", WIN)
+        self.assertIn("SEARCH_BOX if notification == EN_CHANGE as usize", WIN)
+        self.assertIn("self.on_search_edit_changed();", WIN)
+        self.assertIn("if wp == LIVE_FILENAME_SEARCH_TIMER", WIN)
+        self.assertIn("live_filename_search_query(&app.search_edit_text()).as_deref()", WIN)
+        self.assertIn("app.command(FIND, 0);", WIN)
+        self.assertIn('"ctf_search_pinned"', WIN)
+        self.assertIn("static func liveFilenameSearchQuery(_ raw: String)", MAC)
+        self.assertIn("func runLiveFilenameSearchIfCurrent(_ expected: String)", MAC)
+        self.assertIn(".task(id: model.query)", MAC)
+        self.assertIn("try await Task.sleep(nanoseconds: 450_000_000)", MAC)
+        self.assertIn("guard !Task.isCancelled else { return }", MAC)
+        self.assertIn("model.runLiveFilenameSearchIfCurrent(candidate)", MAC)
+        self.assertIn('args["op"] = "ctf_search_pinned"', MAC)
+        # Every programmatic edit in Windows uses the suppression wrapper;
+        # its one deliberate SetWindowText helper is allowed.
+        self.assertEqual(WIN.count("self.text(self.search,"), 1)
+
+
     def test_ux36_verified_keyboard_paging_and_fresh_page_focus_both_native_clients(self):
         # Only a returned, decoded current page authorizes navigation.
         # The backend is re-queried for each new page with pinned CTF SHA.

@@ -257,6 +257,29 @@ private struct CandidateFolderReturnContext {
     // Fresh page focus is requested by a paging action, never a stale response.
     private var pendingPageFocusToken: Int?
     @Published var query = ""
+    // Plain filename typeahead; partially typed Boolean and field queries
+    // must wait for an explicit Return and never rewrite the query.
+    static func liveFilenameSearchQuery(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2, trimmed.utf8.count <= 256 else { return nil }
+        let accepted = CharacterSet.alphanumerics
+            .union(.whitespacesAndNewlines)
+            .union(CharacterSet(charactersIn: "._-'"))
+        guard trimmed.unicodeScalars.allSatisfy({ accepted.contains($0) }) else { return nil }
+        let operators: Set<String> = ["AND", "OR", "NOT"]
+        guard !trimmed.split(whereSeparator: { $0.isWhitespace })
+            .contains(where: { operators.contains($0.uppercased()) }) else { return nil }
+        return trimmed
+    }
+    func runLiveFilenameSearchIfCurrent(_ expected: String) {
+        guard Self.liveFilenameSearchQuery(query) == expected else { return }
+        if appliedQuery == expected && !showingDuplicates && volumeID == nil && copySourceID == nil {
+            return
+        }
+        // Search/Return already supplies all-disk scope, bounded pages,
+        // generation checks and original linked CTF SHA re-verification.
+        search()
+    }
     // This preset uses catalogued extensions; no movie identification or hash.
     var videoFilterActive: Bool {
         let current = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2362,6 +2385,23 @@ private struct CandidateFolderReturnContext {
                     .focused($searchFieldFocused)
                     .onSubmit { model.search() }
                     .accessibilityLabel("Search catalogued files")
+                    .accessibilityHint("Plain filenames search every disk after a short pause. Press Return for fields or Boolean expressions.")
+                    .help("Live all-disk filename lookup after 450 ms and 2 characters; Return executes full Boolean or field queries")
+                    .task(id: model.query) {
+                        let candidate = await MainActor.run {
+                            Catalog.liveFilenameSearchQuery(model.query)
+                        }
+                        guard let candidate else { return }
+                        do {
+                            try await Task.sleep(nanoseconds: 450_000_000)
+                        } catch {
+                            return // New typing cancels this old task.
+                        }
+                        guard !Task.isCancelled else { return }
+                        await MainActor.run {
+                            model.runLiveFilenameSearchIfCurrent(candidate)
+                        }
+                    }
                 Button { searchFieldFocused = true } label: { Image(systemName: "magnifyingglass") }
                     .keyboardShortcut("f", modifiers: [.command])
                     .help("Focus file search (Command-F)")

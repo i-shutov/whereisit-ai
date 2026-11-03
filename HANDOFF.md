@@ -1,3 +1,31 @@
+## UX37 — debounced native global filename typeahead (2026-11-03; exact-HEAD CI pending)
+
+Draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57) now implements
+search-as-you-type for **plain filename phrases** in real Win32 and SwiftUI
+(native, no web runtime): 450 ms idle, 2+ Unicode characters, maximum
+256 UTF-8 bytes, always **all catalog disks**. Win32 guards all
+programmatic search-text changes so Back, linked source, disk browsing and
+Find copies cannot fire an obsolete timer. SwiftUI uses cancellable
+`.task(id: model.query)` and checks the current exact phrase after sleeping.
+Both reuse the existing asynchronous 250-row service and stale-generation
+reply gates; linked CTF pages retain **independent original SHA verification**.
+Field queries, Boolean keywords, path expressions and one-character searches
+remain explicit Enter/Return operations. User annotations/pairings remain
+separate, source CTF read-only, no actual-media presence/content-hash claims.
+
+Source integration has pure Rust Windows tests and a dual-client Python
+contract plus [UX37 manual runbook](docs/qa/UX37_LIVE_FILENAME_SEARCH_20261103.md).
+Do not report CI PASS until all new exact-HEAD Linux, Windows x64, macOS
+ARM64/Intel, offline acceptance, integration and installed RC2->RC3 upgrades
+finish. CI builds are not native human GUI, real USB or performance acceptance;
+real source-search p95 <=150 ms, modified original/historical CTF,
+Win10/11/Mac ARM+Intel, Authenticode/notarization still block stable 1.0.
+The genuine prior 44-volume/3,046,027-entry CTF checks remain distinct
+historical evidence. No private CTF/SQLite/path/hash or other repo touched.
+PR stays draft and unmerged; RC3 unsigned prerelease only.
+
+---
+
 ## UX36 exact-HEAD CI defect and same-PR repair (2026-11-03)
 
 Initial UX36 commit [11b443e](https://github.com/i-shutov/whereisit-ai/commit/11b443e65d32c2f3392c6c8a85800e8dee55f0ee)

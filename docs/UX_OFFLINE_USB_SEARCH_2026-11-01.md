@@ -578,3 +578,31 @@ state for accessibility. See
 [UX36 runbook](qa/UX36_VERIFIED_KEYBOARD_PAGING_20261103.md).
 Physical file presence, hash equality and safe deletion are NOT implied.
 Synthetic native tests are not hardware/GUI acceptance; stable 1.0 remains blocked.
+
+## UX37 — native debounced filename preview (2026-11-03)
+
+Integrated implementation candidate in the existing **draft PR #57**:
+the Windows search field uses a native one-shot `EN_CHANGE` 450 ms timer;
+macOS SwiftUI uses a cancellable query-keyed task. Pausing after a
+2+ character plain Unicode filename phrase automatically searches
+**all catalogued disks** through the existing bounded asynchronous query
+and current-generation response guards. Each linked CTF page still rechecks
+original generation SHA; typeahead never accesses a physical movie file.
+
+Boolean operators, `name:`, `ext:`, `type:video`, `size:`, path
+punctuation, and single characters are not previewed; Enter/Return
+submits those expressions explicitly. Win32 programmatic text updates
+cancel pending timers, preventing stale search from overriding recorded
+folder/Back and disk/copy navigation. Mac revalidates the query immediately
+before dispatch. Users do not need to mount a catalog disk to search it.
+No query is persisted, no CTF/SQLite writes, and no connectivity, hash,
+file-presence or duplicate-equality claims. Physical pairing stays verified
+only by a separate complete, fresh OS probe.
+
+[UX37 manual acceptance protocol](qa/UX37_LIVE_FILENAME_SEARCH_20261103.md).
+Exact-HEAD native 4/4 + integration/offline/upgrades are required before
+calling the implementation build-validated. Human 880/1366px/HiDPI,
+Win10/11 and Mac ARM/Intel GUI/keyboard/VoiceOver/USB, modified original
+and provider-blocked historical CTF checks, signatures/notarization and
+measured real p95 <=150 ms remain open. RC3 unsigned prerelease;
+stable 1.0 blocked, draft PR unmerged.
