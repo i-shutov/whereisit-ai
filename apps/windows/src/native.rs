@@ -2860,8 +2860,8 @@ mod locator_splitter_tests {
         let (side, locator, files, _) =
             explorer_geometry_with_sidebar(1366, 370, 282, true);
         assert_eq!(side, 370);
-        assert_eq!(locator, 220);
-        assert_eq!(files, 754);
+        assert_eq!(locator, 282);
+        assert_eq!(files, 684);
         assert!(sidebar_splitter_hit_test(1366, 740, 370, 378, 300));
         assert!(!sidebar_splitter_hit_test(1366, 740, 370, 600, 300));
         assert!(!sidebar_splitter_hit_test(1366, 740, 370, 378, 80));
@@ -7640,8 +7640,9 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             let dc = BeginPaint(hwnd, &mut paint);
             let mut rect: RECT = std::mem::zeroed();
             GetClientRect(hwnd, &mut rect);
-            let (locator_width, _, _) = explorer_geometry_for_width(
+            let (_, locator_width, _, _) = explorer_geometry_with_sidebar(
                 rect.right,
+                app.sidebar_requested_width,
                 app.locator_requested_width,
                 app.locator_visible,
             );
