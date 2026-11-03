@@ -1831,7 +1831,8 @@ fn unique_pairable_mounts(volumes: &[MountedPhysicalVolume]) -> Vec<MountedPhysi
 // GetVolumePathNameW handles a Windows directory on a mounted folder volume.
 unsafe fn windows_system_volume_root() -> Option<String> {
     let mut directory = [0u16; 4096];
-    let copied = GetSystemWindowsDirectoryW(directory.as_mut_ptr(), directory.len() as u32) as usize;
+    let copied =
+        GetSystemWindowsDirectoryW(directory.as_mut_ptr(), directory.len() as u32) as usize;
     if copied == 0 || copied >= directory.len() {
         return None;
     }
@@ -1849,7 +1850,9 @@ fn is_current_windows_system_mount(volume: &MountedPhysicalVolume, system_root: 
     let root = system_root.trim_end_matches(['\\', '/']);
     !root.is_empty()
         && volume.mount_roots.iter().any(|candidate| {
-            candidate.trim_end_matches(['\\', '/']).eq_ignore_ascii_case(root)
+            candidate
+                .trim_end_matches(['\\', '/'])
+                .eq_ignore_ascii_case(root)
         })
 }
 
@@ -1860,7 +1863,9 @@ fn eligible_windows_connected_identity(
     mounts: &[MountedPhysicalVolume],
     system_root: Option<&str>,
 ) -> bool {
-    let Some(root) = system_root else { return false };
+    let Some(root) = system_root else {
+        return false;
+    };
     let mut found = mounts.iter().filter(|volume| volume.id == id);
     match (found.next(), found.next()) {
         (Some(volume), None) => !is_current_windows_system_mount(volume, root),
@@ -1890,14 +1895,34 @@ mod windows_startup_volume_pairing_tests {
         let observations = vec![system.clone(), usb.clone()];
         assert!(is_current_windows_system_mount(&system, r"c:\"));
         assert!(!is_current_windows_system_mount(&usb, r"C:\"));
-        assert!(!eligible_windows_connected_identity(&system.id, &observations, Some(r"C:\")));
-        assert!(eligible_windows_connected_identity(&usb.id, &observations, Some(r"C:\")));
-        assert!(!eligible_windows_connected_identity(&usb.id, &observations, None));
-        assert!(!eligible_windows_connected_identity("unknown", &observations, Some(r"C:\")));
+        assert!(!eligible_windows_connected_identity(
+            &system.id,
+            &observations,
+            Some(r"C:\")
+        ));
+        assert!(eligible_windows_connected_identity(
+            &usb.id,
+            &observations,
+            Some(r"C:\")
+        ));
+        assert!(!eligible_windows_connected_identity(
+            &usb.id,
+            &observations,
+            None
+        ));
+        assert!(!eligible_windows_connected_identity(
+            "unknown",
+            &observations,
+            Some(r"C:\")
+        ));
         // A second same-UUID observation cannot be promoted to connected.
         let mut collided = observations;
         collided.push(usb.clone());
-        assert!(!eligible_windows_connected_identity(&usb.id, &collided, Some(r"C:\")));
+        assert!(!eligible_windows_connected_identity(
+            &usb.id,
+            &collided,
+            Some(r"C:\")
+        ));
         // The existing picker also refuses collision candidates.
         assert_eq!(unique_pairable_mounts(&collided).len(), 1);
     }
@@ -5982,10 +6007,13 @@ impl App {
             self.status("OS volume root NOT verified: two unchanged native UUID/mount probes and explicit pairing are required.");
             return;
         };
-        if windows_system_volume_root().as_deref().is_none_or(|system| {
-            root.trim_end_matches(['\\', '/'])
-                .eq_ignore_ascii_case(system.trim_end_matches(['\\', '/']))
-        }) {
+        if windows_system_volume_root()
+            .as_deref()
+            .is_none_or(|system| {
+                root.trim_end_matches(['\\', '/'])
+                    .eq_ignore_ascii_case(system.trim_end_matches(['\\', '/']))
+            })
+        {
             self.status("OS installation volume or unknown startup root: Explorer/copy refused.");
             return;
         }
@@ -6160,9 +6188,11 @@ impl App {
             self.status("Cannot verify the current Windows installation volume; pairing refused.");
             return;
         };
-        if !self.mounted_volumes.iter().any(|volume| {
-            is_current_windows_system_mount(volume, &system_root)
-        }) {
+        if !self
+            .mounted_volumes
+            .iter()
+            .any(|volume| is_current_windows_system_mount(volume, &system_root))
+        {
             self.status("Windows installation mount missing from OS scan; pairing refused.");
             return;
         }
