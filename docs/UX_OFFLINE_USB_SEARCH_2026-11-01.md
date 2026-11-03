@@ -610,3 +610,12 @@ stable 1.0 blocked, draft PR unmerged.
 ## UX38 — live search intent and explicit scope isolation (2026-11-03)
 
 Both native applications distinguish an actual user edit from a programmatic search-text change. Explicit **This disk**, **Duplicates**, Back and page navigation cancel pending 450 ms typeahead; invalid disk-only actions do not later run all-disk search. SwiftUI is keyed to a user-edit revision (not the query string), and Win32 cancels at the command boundary as well as page load. This protects deliberate scope, current selection and original CTF generation-pinned queries without changing any catalog bytes. See [UX38 source/integration QA](qa/UX38_LIVE_SEARCH_INTENT_20261103.md). Manual hardware/GUI acceptance and exact-HEAD CI remain separate gates.
+
+## UX39 — native search-first toolbar integration (2026-11-03)
+
+Windows Win32 consolidates secondary catalog/CTF/export/maintenance actions
+in a native popup, preserving existing guards; macOS SwiftUI uses compact
+Catalog and Export menus rather than a row of administration buttons. The
+actual search, exact disk register and locator remain native; no current USB
+or file-content assertions are introduced. See the [UX39 runbook](qa/UX39_COMPACT_NATIVE_CATALOG_TOOLBARS_20261103.md).
+Manual GUI acceptance and stable 1.0 hard gates remain outstanding.

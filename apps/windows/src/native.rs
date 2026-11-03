@@ -59,6 +59,37 @@ const COPY_VERIFIED_OS_ROOT: usize = 149;
 const COPY_DISK_CARD: usize = 150;
 const BROWSE_RECORDED_FOLDER: usize = 151;
 const OPEN_VERIFIED_OS_ROOT: usize = 152;
+const CATALOG_TOOLS: usize = 153;
+const EXPORT_MENU_CSV: usize = 154;
+const EXPORT_MENU_PARQUET: usize = 155;
+const EXPORT_MENU_CTF: usize = 156;
+const EXPORT_MENU_JSON: usize = 157;
+
+fn export_menu_format_selection(command: usize) -> Option<usize> {
+    match command {
+        EXPORT_MENU_CSV => Some(0),
+        EXPORT_MENU_PARQUET => Some(1),
+        EXPORT_MENU_CTF => Some(2),
+        EXPORT_MENU_JSON => Some(3),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod compact_catalog_toolbar_tests {
+    use super::*;
+
+    #[test]
+    fn export_actions_route_to_explicit_existing_export_formats() {
+        assert_eq!(export_menu_format_selection(EXPORT_MENU_CSV), Some(0));
+        assert_eq!(export_menu_format_selection(EXPORT_MENU_PARQUET), Some(1));
+        assert_eq!(export_menu_format_selection(EXPORT_MENU_CTF), Some(2));
+        assert_eq!(export_menu_format_selection(EXPORT_MENU_JSON), Some(3));
+        for command in [OPEN, IMPORT, LINK_CTF, CANCEL, 0] {
+            assert_eq!(export_menu_format_selection(command), None);
+        }
+    }
+}
 // Monotonic OS state lifetime: never trust stale green badges after suspend.
 const PHYSICAL_STATE_TTL: Duration = Duration::from_secs(12);
 
@@ -3716,6 +3747,7 @@ struct App {
     visible_disk_indices: Vec<usize>,
     files: HWND,
     search: HWND,
+    header: HWND,
     setting_search_edit: bool,
     pending_live_search: Option<String>,
     status: HWND,
@@ -3804,6 +3836,7 @@ impl App {
             visible_disk_indices: Vec::new(),
             files: null_mut(),
             search: null_mut(),
+            header: null_mut(),
             setting_search_edit: false,
             pending_live_search: None,
             status: null_mut(),
@@ -6107,6 +6140,7 @@ impl App {
                 }
             }
             SHELF_SAVE => self.save_shelf_label(),
+            CATALOG_TOOLS => self.show_catalog_tools_menu(),
             SEARCH_BOX if notification == EN_CHANGE as usize => {
                 self.on_search_edit_changed();
             }
@@ -6579,19 +6613,81 @@ impl App {
         )
     }
 
+    unsafe fn show_catalog_tools_menu(&mut self) {
+        let Some((_, button)) = self.buttons.iter().find(|(id, _)| *id == CATALOG_TOOLS)
+        else {
+            return;
+        };
+        let mut rect: RECT = std::mem::zeroed();
+        if GetWindowRect(*button, &mut rect) == 0 {
+            return;
+        }
+        let menu = CreatePopupMenu();
+        if menu.is_null() {
+            self.status("Unable to open native catalog tools menu.");
+            return;
+        }
+        let busy = self.job.is_some() || self.pending > 0;
+        for (id, label, enabled) in [
+            (OPEN, "Open catalog...", !busy),
+            (NEW, "New catalog...", !busy),
+            (SCAN, "Add disk (scan)...", !busy && !self.linked_mode()),
+            (LINK_CTF, "Link CTF read-only...", !busy),
+            (IMPORT, "Import CTF into SQLite...", !busy && !self.linked_mode()),
+        ] {
+            AppendMenuW(menu, MF_STRING | if enabled { 0 } else { MF_GRAYED }, id, wide(label).as_ptr());
+        }
+        AppendMenuW(menu, MF_SEPARATOR, 0, null());
+        let export_menu = CreatePopupMenu();
+        if !export_menu.is_null() {
+            for (id, label, enabled) in [
+                (EXPORT_MENU_CSV, "CSV - current scope", !busy),
+                (EXPORT_MENU_PARQUET, "Parquet - current scope", !busy),
+                (EXPORT_MENU_CTF, "CTF - entire catalog", !busy && !self.linked_mode()),
+                (EXPORT_MENU_JSON, "JSON - current scope", !busy),
+            ] {
+                AppendMenuW(export_menu, MF_STRING | if enabled { 0 } else { MF_GRAYED }, id, wide(label).as_ptr());
+            }
+            AppendMenuW(menu, MF_POPUP, export_menu as usize, wide("Export...").as_ptr());
+        }
+        AppendMenuW(menu, MF_SEPARATOR, 0, null());
+        for (id, label, enabled) in [
+            (VALIDATE_CATALOG, "Check catalog integrity", !busy && !self.linked_mode()),
+            (COMPACT_COPY, "Make compact SQLite copy...", !busy && !self.linked_mode()),
+            (ANNOTATION_PREVIEW, "Review linked CTF notes...", !busy && self.linked_mode()),
+            (CANCEL, "Cancel current scan", self.job.is_some()),
+        ] {
+            AppendMenuW(menu, MF_STRING | if enabled { 0 } else { MF_GRAYED }, id, wide(label).as_ptr());
+        }
+        let selected = TrackPopupMenu(
+            menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, rect.left, rect.bottom,
+            0, self.hwnd, null(),
+        ) as usize;
+        DestroyMenu(menu); // Destroys the attached Export submenu.
+        if let Some(format) = export_menu_format_selection(selected) {
+            SendMessageW(self.export_format, CB_SETCURSEL, format, 0);
+            self.command(EXPORT, 0); // Keep the original CTF generation safety gates.
+        } else if selected != 0 {
+            self.command(selected, 0);
+        }
+    }
+
     unsafe fn layout(&self) {
         let mut rect: RECT = std::mem::zeroed();
         GetClientRect(self.hwnd, &mut rect);
         let w = rect.right;
         let h = rect.bottom;
-        let mut x = 8;
+        // Native search-first toolbar; the administrative actions live in
+        // one real Win32 popup and keep all original command handlers.
         for (i, hwnd) in &self.buttons {
-            if [OPEN, NEW, SCAN, IMPORT, LINK_CTF, EXPORT, CANCEL].contains(i) {
-                MoveWindow(*hwnd, x, 6, 86, 24, 1);
-                x += 90;
+            if *i == CATALOG_TOOLS {
+                MoveWindow(*hwnd, 8, 6, 146, 24, 1);
+            } else if [OPEN, NEW, SCAN, IMPORT, LINK_CTF, EXPORT, CANCEL].contains(i) {
+                ShowWindow(*hwnd, SW_HIDE);
             }
         }
-        MoveWindow(self.export_format, 648, 6, 188, 200, 1);
+        ShowWindow(self.export_format, SW_HIDE);
+        MoveWindow(self.header, 168, 6, (w - 176).max(80), 24, 1);
         // Search occupies the dominant space; scope is explicit on small laptops.
         MoveWindow(self.search, 8, 34, (w - 618).max(100), 24, 1);
         MoveWindow(self.duplicate_mode, w - 312, 34, 136, 200, 1);
@@ -6865,6 +6961,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
         WM_CREATE => {
             app.hwnd = hwnd;
             for (id, text) in [
+                (CATALOG_TOOLS, "&Catalog tools..."),
                 (OPEN, "&Open catalog"),
                 (NEW, "&New catalog"),
                 (SCAN, "&Add disk"),
@@ -6904,6 +7001,13 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                     control(hwnd, "BUTTON", text, WS_TABSTOP | BS_PUSHBUTTON as u32, id),
                 ));
             }
+            app.header = control(
+                hwnd,
+                "STATIC",
+                "OFFLINE USB SEARCH  |  all catalogued disks by default  |  physical presence requires OS identity",
+                0,
+                178,
+            );
             app.search = control(
                 hwnd,
                 "EDIT",

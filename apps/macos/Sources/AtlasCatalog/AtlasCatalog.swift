@@ -2385,24 +2385,53 @@ private struct CandidateFolderReturnContext {
     var body: some View {
         VStack(spacing: 4) {
             HStack(spacing: 6) {
-                Button("Open…") { model.chooseCatalog(create: false) }.disabled(!model.mutationAllowed)
-                Button("New…") { model.chooseCatalog(create: true) }.disabled(!model.mutationAllowed)
-                Button("Check") { model.verifyCatalog() }.disabled(!model.editableAllowed)
-                Button("Compact copy…") { model.compactCopy() }.disabled(!model.editableAllowed)
-                Divider().frame(height: 16)
-                Button("Add disk…") { model.addDisk() }.disabled(!model.editableAllowed)
-                Menu("CTF") {
-                    Button("Link read-only CTF…") { model.linkCTF() }
-                    Button("Refresh linked CTF") { model.refreshLinkedCTF() }.disabled(!model.linkedMode)
-                    Button("Review notes and overlays…") { model.reviewAnnotations() }.disabled(!model.linkedMode)
-                    Divider()
-                    Button("Import CTF copy into SQLite…") { model.importCTF() }.disabled(!model.editableAllowed)
-                }.disabled(!model.mutationAllowed)
-                Picker("Export format", selection: $model.exportFormat) {
-                    Text("CSV • current scope").tag("csv"); Text("Parquet • current scope").tag("parquet"); Text("CTF • entire catalog").tag("ctf"); Text("JSON • current scope").tag("json")
-                }.labelsHidden().frame(width: 174).accessibilityLabel("Export format and scope")
-                Button("Export…") { model.export() }.disabled(!model.mutationAllowed || (model.linkedMode && model.exportFormat == "ctf"))
+                Label("OFFLINE USB CATALOG", systemImage: "externaldrive")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Offline search; physical disk identity requires an OS probe")
                 Spacer(minLength: 4)
+                Menu("Catalog") {
+                    Button("Open catalog…") { model.chooseCatalog(create: false) }
+                        .disabled(!model.mutationAllowed)
+                    Button("New catalog…") { model.chooseCatalog(create: true) }
+                        .disabled(!model.mutationAllowed)
+                    Divider()
+                    Button("Add disk (scan)…") { model.addDisk() }
+                        .disabled(!model.editableAllowed)
+                    Menu("CTF sources") {
+                        Button("Link read-only CTF…") { model.linkCTF() }
+                        Button("Refresh linked CTF") { model.refreshLinkedCTF() }
+                            .disabled(!model.linkedMode)
+                        Button("Review notes and overlays…") { model.reviewAnnotations() }
+                            .disabled(!model.linkedMode)
+                        Divider()
+                        Button("Import CTF copy into SQLite…") { model.importCTF() }
+                            .disabled(!model.editableAllowed)
+                    }
+                    Divider()
+                    Button("Check catalog integrity") { model.verifyCatalog() }
+                        .disabled(!model.editableAllowed)
+                    Button("Compact SQLite copy…") { model.compactCopy() }
+                        .disabled(!model.editableAllowed)
+                }
+                .accessibilityLabel("Catalog tools, imports and maintenance")
+                .help("Secondary operations; search defaults to all catalogued disks.")
+                Menu("Export") {
+                    Button("CSV • current scope") {
+                        model.exportFormat = "csv"; model.export()
+                    }.disabled(!model.mutationAllowed)
+                    Button("Parquet • current scope") {
+                        model.exportFormat = "parquet"; model.export()
+                    }.disabled(!model.mutationAllowed)
+                    Button("CTF • entire catalog") {
+                        model.exportFormat = "ctf"; model.export()
+                    }.disabled(!model.mutationAllowed || model.linkedMode)
+                    Button("JSON • current scope") {
+                        model.exportFormat = "json"; model.export()
+                    }.disabled(!model.mutationAllowed)
+                }
+                .accessibilityLabel("Export recorded catalog metadata")
+                .help("Explicit export format; linked original CTF stays read-only")
                 if model.pending > 0 { ProgressView().controlSize(.small) }
                 Button("Cancel scan") { model.cancel() }.disabled(!model.canCancel)
             }

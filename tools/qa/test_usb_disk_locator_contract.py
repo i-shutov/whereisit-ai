@@ -17,6 +17,25 @@ PHYSICAL = (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encod
 
 class DiskLocatorWiringTests(unittest.TestCase):
 
+    def test_ux39_compact_native_search_first_toolbars(self):
+        self.assertIn("CATALOG_TOOLS => self.show_catalog_tools_menu()", WIN)
+        self.assertIn("CreatePopupMenu()", WIN)
+        self.assertIn("TrackPopupMenu(", WIN)
+        self.assertIn("export_menu_format_selection(selected)", WIN)
+        self.assertIn("self.command(EXPORT, 0)", WIN)
+        self.assertIn("self.command(selected, 0)", WIN)
+        self.assertIn("ShowWindow(self.export_format, SW_HIDE)", WIN)
+        self.assertIn("MoveWindow(self.header, 168, 6,", WIN)
+        self.assertIn('Menu("Catalog")', MAC)
+        self.assertIn('Menu("Export")', MAC)
+        self.assertIn('Button("Link read-only CTF…")', MAC)
+        self.assertIn('Button("Cancel scan")', MAC)
+        for fmt in ("csv", "parquet", "ctf", "json"):
+            self.assertIn('model.exportFormat = "' + fmt + '"; model.export()', MAC)
+        self.assertIn('.disabled(!model.mutationAllowed || model.linkedMode)', MAC)
+        self.assertIn('TextField("Find file or film', MAC)
+        self.assertIn('Table(model.displayEntries', MAC)
+
     def test_ux38_explicit_search_intent_preempts_live_filename_timer(self):
         # Scope/duplicate/back must not be overwritten by a pending typing task.
         # Windows previously cancelled on load, but a rejected This disk did
