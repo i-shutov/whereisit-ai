@@ -1195,9 +1195,7 @@ fn parse_disk_register_order_preference(raw: &str) -> DiskRegisterOrder {
     if value["version"].as_u64() != Some(1) {
         return DiskRegisterOrder::Catalog;
     }
-    DiskRegisterOrder::from_preference(
-        value["disk_register_order"].as_str().unwrap_or("catalog"),
-    )
+    DiskRegisterOrder::from_preference(value["disk_register_order"].as_str().unwrap_or("catalog"))
 }
 fn read_disk_register_order_preference() -> DiskRegisterOrder {
     std::fs::read_to_string(config_dir().join("ui-layout.json"))
@@ -1452,22 +1450,58 @@ mod disk_register_filter_tests {
             (4, "conflict".to_owned()),
         ]);
         let mut rows = vec![0, 1, 2, 3];
-        sort_disk_register_indices(&mut rows, &volumes, &shelves, &states, DiskRegisterOrder::Shelf);
+        sort_disk_register_indices(
+            &mut rows,
+            &volumes,
+            &shelves,
+            &states,
+            DiskRegisterOrder::Shelf,
+        );
         assert_eq!(rows, vec![2, 1, 0, 3]); // missing sticker last; duplicate tags use ID
         assert_eq!(filtered_disk_index_at_row(&rows, 1), Some(2));
-        sort_disk_register_indices(&mut rows, &volumes, &shelves, &states, DiskRegisterOrder::Os);
+        sort_disk_register_indices(
+            &mut rows,
+            &volumes,
+            &shelves,
+            &states,
+            DiskRegisterOrder::Os,
+        );
         assert_eq!(rows, vec![0, 1, 2, 3]); // ONLY caller-supplied verified state
-        sort_disk_register_indices(&mut rows, &volumes, &shelves, &HashMap::new(), DiskRegisterOrder::Os);
+        sort_disk_register_indices(
+            &mut rows,
+            &volumes,
+            &shelves,
+            &HashMap::new(),
+            DiskRegisterOrder::Os,
+        );
         assert_eq!(rows, vec![2, 3, 0, 1]); // all are unverified, exact IDs only
-        sort_disk_register_indices(&mut rows, &volumes, &shelves, &states, DiskRegisterOrder::Catalog);
+        sort_disk_register_indices(
+            &mut rows,
+            &volumes,
+            &shelves,
+            &states,
+            DiskRegisterOrder::Catalog,
+        );
         assert_eq!(rows, vec![2, 3, 0, 1]); // original order handled by filtering, not sorting
         assert_eq!(DiskRegisterOrder::Catalog.next(), DiskRegisterOrder::Shelf);
         assert_eq!(DiskRegisterOrder::Shelf.next(), DiskRegisterOrder::Os);
         assert_eq!(DiskRegisterOrder::Os.next(), DiskRegisterOrder::Catalog);
-        assert_eq!(parse_disk_register_order_preference("bad"), DiskRegisterOrder::Catalog);
-        assert_eq!(parse_disk_register_order_preference(r#"{"version":1,"disk_register_order":"shelf"}"#), DiskRegisterOrder::Shelf);
-        assert_eq!(parse_disk_register_order_preference(r#"{"version":1,"disk_register_order":"os"}"#), DiskRegisterOrder::Os);
-        assert_eq!(parse_disk_register_order_preference(r#"{"version":2,"disk_register_order":"os"}"#), DiskRegisterOrder::Catalog);
+        assert_eq!(
+            parse_disk_register_order_preference("bad"),
+            DiskRegisterOrder::Catalog
+        );
+        assert_eq!(
+            parse_disk_register_order_preference(r#"{"version":1,"disk_register_order":"shelf"}"#),
+            DiskRegisterOrder::Shelf
+        );
+        assert_eq!(
+            parse_disk_register_order_preference(r#"{"version":1,"disk_register_order":"os"}"#),
+            DiskRegisterOrder::Os
+        );
+        assert_eq!(
+            parse_disk_register_order_preference(r#"{"version":2,"disk_register_order":"os"}"#),
+            DiskRegisterOrder::Catalog
+        );
     }
 
     #[test]
