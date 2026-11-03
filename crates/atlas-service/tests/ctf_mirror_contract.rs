@@ -351,3 +351,31 @@ fn pinned_folder_browse_rejects_external_rewrite_of_original_ctf() {
     assert_eq!(rejected["error"]["code"], "source_changed");
     assert_eq!(fs::read(&source).unwrap(), changed);
 }
+
+#[test]
+fn pinned_original_can_be_restored_after_rejected_same_size_source_tamper() {
+    // Synthetic data. A failed query must neither reveal cache rows from a
+    // mismatched original nor require re-import when identical bytes return.
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("restore.ctf");
+    let root = dir.path().join("cache");
+    let old_bytes = write_original(&source, "audio.mp3");
+    let sync = service(json!({"op":"ctf_sync","path":source,"cache_root":root}));
+    assert_eq!(sync["ok"], true, "{sync}");
+    let generation = sync["data"]["generation"].as_str().unwrap().to_owned();
+    let changed_bytes = write_original(&source, "other.mp3");
+    assert_eq!(old_bytes.len(), changed_bytes.len());
+
+    let stale = service(json!({"op":"ctf_search_pinned","path":source,
+        "cache_root":root,"generation":generation,"query":"ext:mp3"}));
+    assert_eq!(stale["ok"], false, "{stale}");
+    assert_eq!(stale["error"]["code"], "source_changed");
+    fs::write(&source, &old_bytes).unwrap();
+
+    let restored = service(json!({"op":"ctf_search_pinned","path":source,
+        "cache_root":root,"generation":generation,"query":"ext:mp3"}));
+    assert_eq!(restored["ok"], true, "{restored}");
+    assert_eq!(restored["data"]["source_sha_checked"], true);
+    assert_eq!(restored["data"]["result"]["items"][0]["name"], "audio.mp3");
+    assert_eq!(fs::read(source).unwrap(), old_bytes);
+}

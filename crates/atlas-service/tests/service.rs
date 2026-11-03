@@ -253,3 +253,45 @@ fn ctf_export_rejects_native_tags_unless_loss_is_explicit() {
     assert!(tags.contains("watchlist"));
     assert!(tags.contains("priority"));
 }
+
+#[test]
+fn other_disk_copy_candidates_dispatch_excludes_source_volume_before_paging() {
+    let t = tempfile::tempdir().unwrap();
+    let db = t.path().join("test.sqlite");
+    fixture(&db);
+    let catalog = Catalog::open(&db).unwrap();
+    let (selected_id, source_volume): (i64, i64) = catalog
+        .conn()
+        .query_row(
+            "SELECT id,volume_id FROM entries WHERE name='track.flac' LIMIT 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    let legacy = call(json!({"op":"copy_candidates","db":db,"entry_id":selected_id}));
+    assert_eq!(legacy["ok"], true, "{legacy}");
+    assert_eq!(legacy["data"]["total"], 2);
+    assert_eq!(legacy["data"]["distinct_disks"], 2);
+    let other = call(
+        json!({"op":"copy_candidates","db":db,"entry_id":selected_id,
+        "other_disks_only":true,"offset":0,"limit":1}),
+    );
+    assert_eq!(other["ok"], true, "{other}");
+    assert_eq!(other["data"]["all_total"], 2);
+    assert_eq!(other["data"]["other_total"], 1);
+    assert_eq!(other["data"]["total"], 1);
+    assert_eq!(other["data"]["distinct_disks"], 1);
+    assert_eq!(other["data"]["has_more"], false);
+    assert_ne!(other["data"]["items"][0]["volume_id"], source_volume);
+    assert_eq!(other["data"]["verified"], false);
+    assert_eq!(other["data"]["read_only"], true);
+    let source_focus = call(json!({"op":"copy_candidates","db":db,
+        "entry_id":selected_id,"candidate_volume_id":source_volume,
+        "other_disks_only":true}));
+    assert_eq!(source_focus["ok"], true, "{source_focus}");
+    assert_eq!(source_focus["data"]["total"], 0);
+    assert!(source_focus["data"]["items"].as_array().unwrap().is_empty());
+    let malformed = call(json!({"op":"copy_candidates","db":db,
+        "entry_id":selected_id,"other_disks_only":"yes"}));
+    assert_eq!(malformed["error"]["code"], "invalid_request");
+}

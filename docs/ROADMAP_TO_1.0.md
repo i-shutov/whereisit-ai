@@ -1,3 +1,7 @@
+# UX direction (2026-11-01)
+
+The operator's primary workflow is **find a file across ~40 external USB disks, identify the physical disk to retrieve, and inspect metadata duplicate candidates**. The search-first tri-pane design and staged implementation/acceptance matrix are maintained in [UX_OFFLINE_USB_SEARCH_2026-11-01.md](UX_OFFLINE_USB_SEARCH_2026-11-01.md). This direction supersedes any older general-purpose-media-manager UX priorities, but **does not** waive RC3 privacy, linked-CTF generation checks, original-app compatibility, physical GUI acceptance, signing, or the 150 ms p95 SLO.
+
 # WhereIsIt AI — дорожная карта до устанавливаемого выпуска 1.0
 
 **Репозиторий:** https://github.com/i-shutov/whereisit-ai (private)  

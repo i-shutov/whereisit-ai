@@ -1,6 +1,12 @@
 use crate::{Error, Result};
 use rusqlite::types::Value;
 
+// Video is an indexed filename-extension heuristic, NOT proof of file content.
+const VIDEO_EXTENSION_SQL: &str = concat!(
+    "ext IN ('mkv','mp4','avi','mov','m4v','webm',",
+    "'mpg','mpeg','wmv','ts','m2ts','vob','flv')"
+);
+
 #[derive(Debug, PartialEq)]
 enum Token {
     Word(String),
@@ -150,6 +156,22 @@ impl Parser {
                 self.args.push(Value::Integer(size));
                 Ok(format!("size {op} ?"))
             }
+            "name_exact" => {
+                // Case-folded literal equality: any recorded size, any disk.
+                // Bound parameter, never filename interpolation or hash inference.
+                self.args.push(Value::Text(v));
+                Ok("name_norm = ?".into())
+            }
+            "kind" if v == "file" => Ok("kind = 'file'".into()),
+            "kind" => Err(Error::new(
+                "invalid_query",
+                "Unsupported kind filter; kind:file selects recorded files only",
+            )),
+            "type" if v == "video" => Ok(VIDEO_EXTENSION_SQL.into()),
+            "type" => Err(Error::new(
+                "invalid_query",
+                "Unsupported type filter; type:video checks filename extensions only",
+            )),
             "ext" => {
                 self.args
                     .push(Value::Text(v.trim_start_matches('.').into()));
