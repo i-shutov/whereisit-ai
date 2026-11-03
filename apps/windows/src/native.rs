@@ -65,6 +65,7 @@ const EXPORT_MENU_PARQUET: usize = 155;
 const EXPORT_MENU_CTF: usize = 156;
 const EXPORT_MENU_JSON: usize = 157;
 const TOGGLE_CATEGORIES: usize = 158;
+const CYCLE_DISK_REGISTER_ORDER: usize = 159;
 
 fn export_menu_format_selection(command: usize) -> Option<usize> {
     match command {
@@ -1119,6 +1120,92 @@ mod page_sort_and_layout_tests {
     }
 }
 
+// Sorting rearranges only the register's mapped catalog indices. It never
+// changes search scope, original CTF rows, private pairing, or copy candidates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DiskRegisterOrder {
+    Catalog,
+    Shelf,
+    Os,
+}
+impl DiskRegisterOrder {
+    fn from_preference(raw: &str) -> Self {
+        match raw {
+            "shelf" => Self::Shelf,
+            "os" => Self::Os,
+            _ => Self::Catalog,
+        }
+    }
+    fn preference(self) -> &'static str {
+        match self {
+            Self::Catalog => "catalog",
+            Self::Shelf => "shelf",
+            Self::Os => "os",
+        }
+    }
+    fn next(self) -> Self {
+        match self {
+            Self::Catalog => Self::Shelf,
+            Self::Shelf => Self::Os,
+            Self::Os => Self::Catalog,
+        }
+    }
+    fn caption(self) -> &'static str {
+        match self {
+            Self::Catalog => "catalog order",
+            Self::Shelf => "sticker/shelf A–Z (missing last)",
+            Self::Os => "last verified OS state (unverified last)",
+        }
+    }
+}
+fn sort_disk_register_indices(
+    indices: &mut [usize],
+    volumes: &[Value],
+    shelves: &HashMap<i64, String>,
+    safe_states: &HashMap<i64, String>,
+    order: DiskRegisterOrder,
+) {
+    if order == DiskRegisterOrder::Catalog {
+        return; // Preserve original catalog ordering, including filtered subsets.
+    }
+    indices.sort_by_key(|index| {
+        let disk = id(&volumes[*index]).unwrap_or(i64::MAX);
+        match order {
+            DiskRegisterOrder::Shelf => {
+                let shelf = shelves.get(&disk).map(|tag| tag.trim()).unwrap_or("");
+                (u8::from(shelf.is_empty()), shelf.to_lowercase(), disk)
+            }
+            DiskRegisterOrder::Os => {
+                let priority = match safe_states.get(&disk).map(String::as_str) {
+                    Some("connected") => 0,
+                    Some("offline") => 1,
+                    Some("conflict") => 2,
+                    _ => 3,
+                };
+                (priority, String::new(), disk)
+            }
+            DiskRegisterOrder::Catalog => (0, String::new(), disk),
+        }
+    });
+}
+fn parse_disk_register_order_preference(raw: &str) -> DiskRegisterOrder {
+    let Ok(value) = serde_json::from_str::<Value>(raw) else {
+        return DiskRegisterOrder::Catalog;
+    };
+    if value["version"].as_u64() != Some(1) {
+        return DiskRegisterOrder::Catalog;
+    }
+    DiskRegisterOrder::from_preference(
+        value["disk_register_order"].as_str().unwrap_or("catalog"),
+    )
+}
+fn read_disk_register_order_preference() -> DiskRegisterOrder {
+    std::fs::read_to_string(config_dir().join("ui-layout.json"))
+        .ok()
+        .map(|raw| parse_disk_register_order_preference(&raw))
+        .unwrap_or(DiskRegisterOrder::Catalog)
+}
+
 // This is a view-only filter for the physical disk register; it must never
 // become a query-volume filter or rewrite the selected catalog disk.
 fn filtered_disk_indices(
@@ -1342,6 +1429,46 @@ mod disk_register_filter_tests {
     };
     use serde_json::json;
     use std::collections::HashMap;
+
+    #[test]
+    fn register_sort_is_view_only_with_stable_exact_id_ties_and_fail_closed_os() {
+        use super::{
+            parse_disk_register_order_preference, sort_disk_register_indices, DiskRegisterOrder,
+        };
+        let volumes = vec![
+            json!({"id":42,"label":"Archive"}),
+            json!({"id":142,"label":"Archive"}),
+            json!({"id":4,"label":"Archive #42"}),
+            json!({"id":9,"label":"Диски"}),
+        ];
+        let shelves = HashMap::from([
+            (42, "Полка Б".to_owned()),
+            (142, "Полка А".to_owned()),
+            (4, "Полка А".to_owned()),
+        ]);
+        let states = HashMap::from([
+            (42, "connected".to_owned()),
+            (142, "offline".to_owned()),
+            (4, "conflict".to_owned()),
+        ]);
+        let mut rows = vec![0, 1, 2, 3];
+        sort_disk_register_indices(&mut rows, &volumes, &shelves, &states, DiskRegisterOrder::Shelf);
+        assert_eq!(rows, vec![2, 1, 0, 3]); // missing sticker last; duplicate tags use ID
+        assert_eq!(filtered_disk_index_at_row(&rows, 1), Some(2));
+        sort_disk_register_indices(&mut rows, &volumes, &shelves, &states, DiskRegisterOrder::Os);
+        assert_eq!(rows, vec![0, 1, 2, 3]); // ONLY caller-supplied verified state
+        sort_disk_register_indices(&mut rows, &volumes, &shelves, &HashMap::new(), DiskRegisterOrder::Os);
+        assert_eq!(rows, vec![2, 3, 0, 1]); // all are unverified, exact IDs only
+        sort_disk_register_indices(&mut rows, &volumes, &shelves, &states, DiskRegisterOrder::Catalog);
+        assert_eq!(rows, vec![2, 3, 0, 1]); // original order handled by filtering, not sorting
+        assert_eq!(DiskRegisterOrder::Catalog.next(), DiskRegisterOrder::Shelf);
+        assert_eq!(DiskRegisterOrder::Shelf.next(), DiskRegisterOrder::Os);
+        assert_eq!(DiskRegisterOrder::Os.next(), DiskRegisterOrder::Catalog);
+        assert_eq!(parse_disk_register_order_preference("bad"), DiskRegisterOrder::Catalog);
+        assert_eq!(parse_disk_register_order_preference(r#"{"version":1,"disk_register_order":"shelf"}"#), DiskRegisterOrder::Shelf);
+        assert_eq!(parse_disk_register_order_preference(r#"{"version":1,"disk_register_order":"os"}"#), DiskRegisterOrder::Os);
+        assert_eq!(parse_disk_register_order_preference(r#"{"version":2,"disk_register_order":"os"}"#), DiskRegisterOrder::Catalog);
+    }
 
     #[test]
     fn label_and_catalog_id_filter_keep_stable_original_indices() {
@@ -3792,6 +3919,7 @@ struct App {
     shelf_tag_conflicts: HashMap<i64, Vec<i64>>,
     disk_filter_query: String,
     visible_disk_indices: Vec<usize>,
+    disk_register_order: DiskRegisterOrder,
     files: HWND,
     search: HWND,
     header: HWND,
@@ -3882,6 +4010,7 @@ impl App {
             shelf_tag_conflicts: HashMap::new(),
             disk_filter_query: String::new(),
             visible_disk_indices: Vec::new(),
+            disk_register_order: read_disk_register_order_preference(),
             files: null_mut(),
             search: null_mut(),
             header: null_mut(),
@@ -5030,6 +5159,15 @@ impl App {
         } else {
             filtered_disk_indices(&self.volumes, &self.shelf_labels, &self.disk_filter_query)
         };
+        if !candidate_mode {
+            sort_disk_register_indices(
+                &mut self.visible_disk_indices,
+                &self.volumes,
+                &self.shelf_labels,
+                &safe_states,
+                self.disk_register_order,
+            );
+        }
         SendMessageW(self.disks, LB_RESETCONTENT, 0, 0);
         let audit = register_audit_counts(
             &self.volumes,
@@ -5597,7 +5735,8 @@ impl App {
         if std::fs::create_dir_all(&dir).is_ok() {
             let data = json!({"version":1, "locator_visible":self.locator_visible,
                 "locator_width":self.locator_requested_width.clamp(220, 420),
-                "categories_visible":self.categories_visible});
+                "categories_visible":self.categories_visible,
+                "disk_register_order":self.disk_register_order.preference()});
             let _ = std::fs::write(dir.join("ui-layout.json"), data.to_string());
         }
     }
@@ -6470,6 +6609,17 @@ impl App {
                 } else {
                     self.copy_current_locator_selection(entry_id);
                 }
+            }
+            CYCLE_DISK_REGISTER_ORDER => {
+                self.disk_register_order = self.disk_register_order.next();
+                self.save_ui_layout_preferences();
+                // Rebuild the view-only ID mapping; scoped volume, source query,
+                // selected file, and keyboard focus remain unchanged.
+                self.populate_physical_disk_list();
+                self.status(&format!(
+                    "Disk register: {}. Copy candidates keep their own verified-state/count priority; catalog search unchanged.",
+                    self.disk_register_order.caption()
+                ));
             }
             TOGGLE_CATEGORIES => {
                 self.categories_visible = !self.categories_visible;
@@ -7745,6 +7895,12 @@ pub fn run() {
                 AppendMenuW(
                     view,
                     MF_STRING,
+                    CYCLE_DISK_REGISTER_ORDER,
+                    wide("Cycle disk register order\tCtrl+Shift+T").as_ptr(),
+                );
+                AppendMenuW(
+                    view,
+                    MF_STRING,
                     BROWSE_RECORDED_FOLDER,
                     wide("Browse selected file's RECORDED folder\tCtrl+Shift+F").as_ptr(),
                 );
@@ -7891,6 +8047,16 @@ pub fn run() {
                 && message.wParam == b'A' as usize
             {
                 (*app).command(TOGGLE_CATEGORIES, 0);
+                continue;
+            }
+            // Ctrl+Shift+T cycles only the physical disk register's ordering.
+            // No CTF, global query or current OS pairing operation is issued.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && GetKeyState(VK_SHIFT as i32) < 0
+                && message.wParam == b'T' as usize
+            {
+                (*app).command(CYCLE_DISK_REGISTER_ORDER, 0);
                 continue;
             }
             // Dismiss only the current page response; the background source
