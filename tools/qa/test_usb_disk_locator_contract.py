@@ -136,7 +136,7 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn('UserDefaults.standard.set(registerOrder, forKey: "AtlasCatalog.registerOrder")', MAC)
         self.assertIn("private var filteredVolumes: [Volume]", MAC)
         self.assertIn("var visibleVolumes: [Volume]", MAC)
-        self.assertIn("guard !isCandidateRegisterMode else { return rows }", MAC)
+        self.assertIn("guard !isCandidateRegisterMode && !isPageRegisterMode else { return rows }", MAC)
         self.assertIn('case "shelf":', MAC)
         self.assertIn('case "os":', MAC)
         self.assertIn("case \"connected\": return 0", MAC)
