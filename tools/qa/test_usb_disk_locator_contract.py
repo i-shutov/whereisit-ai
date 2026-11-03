@@ -121,7 +121,7 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("CYCLE_DISK_REGISTER_ORDER => {", WIN)
         self.assertIn("(*app).command(CYCLE_DISK_REGISTER_ORDER, 0);", WIN)
         self.assertIn("Cycle disk register order", WIN)
-        self.assertIn("if !candidate_mode {\n            sort_disk_register_indices(", WIN)
+        self.assertIn("if !candidate_mode && !page_mode {\n            sort_disk_register_indices(", WIN)
         win_sort = WIN.split("CYCLE_DISK_REGISTER_ORDER => {", 1)[1].split(
             "TOGGLE_CATEGORIES => {", 1
         )[0]

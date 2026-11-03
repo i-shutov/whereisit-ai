@@ -1309,7 +1309,10 @@ fn current_page_register_indices(volumes: &[Value], counts: &HashMap<i64, usize>
         .collect();
     indices.sort_by_key(|index| {
         let disk = id(&volumes[*index]).unwrap_or_default();
-        (std::cmp::Reverse(counts.get(&disk).copied().unwrap_or(0)), disk)
+        (
+            std::cmp::Reverse(counts.get(&disk).copied().unwrap_or(0)),
+            disk,
+        )
     });
     indices
 }
@@ -5146,7 +5149,10 @@ impl App {
                     // A new pinned page may carry a different disk-group set.
                     // Keep the candidate-only register synchronized with the
                     // current authoritative page, never the previous selection.
-                    if self.disk_filter_query.trim().eq_ignore_ascii_case("copies:")
+                    if self
+                        .disk_filter_query
+                        .trim()
+                        .eq_ignore_ascii_case("copies:")
                         || self.disk_filter_query.trim().eq_ignore_ascii_case("page:")
                     {
                         self.populate_physical_disk_list();
@@ -6867,7 +6873,9 @@ impl App {
             }
             PAGE_DISKS_REGISTER => {
                 if !self.page_ready || self.page_awaiting || self.entries.is_empty() {
-                    self.status("No verified nonempty current catalog page; previous-page disks refused.");
+                    self.status(
+                        "No verified nonempty current catalog page; previous-page disks refused.",
+                    );
                     return;
                 }
                 self.disk_filter_query = "page:".to_owned();
