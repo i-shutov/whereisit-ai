@@ -6614,8 +6614,7 @@ impl App {
     }
 
     unsafe fn show_catalog_tools_menu(&mut self) {
-        let Some((_, button)) = self.buttons.iter().find(|(id, _)| *id == CATALOG_TOOLS)
-        else {
+        let Some((_, button)) = self.buttons.iter().find(|(id, _)| *id == CATALOG_TOOLS) else {
             return;
         };
         let mut rect: RECT = std::mem::zeroed();
@@ -6633,9 +6632,18 @@ impl App {
             (NEW, "New catalog...", !busy),
             (SCAN, "Add disk (scan)...", !busy && !self.linked_mode()),
             (LINK_CTF, "Link CTF read-only...", !busy),
-            (IMPORT, "Import CTF into SQLite...", !busy && !self.linked_mode()),
+            (
+                IMPORT,
+                "Import CTF into SQLite...",
+                !busy && !self.linked_mode(),
+            ),
         ] {
-            AppendMenuW(menu, MF_STRING | if enabled { 0 } else { MF_GRAYED }, id, wide(label).as_ptr());
+            AppendMenuW(
+                menu,
+                MF_STRING | if enabled { 0 } else { MF_GRAYED },
+                id,
+                wide(label).as_ptr(),
+            );
         }
         AppendMenuW(menu, MF_SEPARATOR, 0, null());
         let export_menu = CreatePopupMenu();
@@ -6643,25 +6651,61 @@ impl App {
             for (id, label, enabled) in [
                 (EXPORT_MENU_CSV, "CSV - current scope", !busy),
                 (EXPORT_MENU_PARQUET, "Parquet - current scope", !busy),
-                (EXPORT_MENU_CTF, "CTF - entire catalog", !busy && !self.linked_mode()),
+                (
+                    EXPORT_MENU_CTF,
+                    "CTF - entire catalog",
+                    !busy && !self.linked_mode(),
+                ),
                 (EXPORT_MENU_JSON, "JSON - current scope", !busy),
             ] {
-                AppendMenuW(export_menu, MF_STRING | if enabled { 0 } else { MF_GRAYED }, id, wide(label).as_ptr());
+                AppendMenuW(
+                    export_menu,
+                    MF_STRING | if enabled { 0 } else { MF_GRAYED },
+                    id,
+                    wide(label).as_ptr(),
+                );
             }
-            AppendMenuW(menu, MF_POPUP, export_menu as usize, wide("Export...").as_ptr());
+            AppendMenuW(
+                menu,
+                MF_POPUP,
+                export_menu as usize,
+                wide("Export...").as_ptr(),
+            );
         }
         AppendMenuW(menu, MF_SEPARATOR, 0, null());
         for (id, label, enabled) in [
-            (VALIDATE_CATALOG, "Check catalog integrity", !busy && !self.linked_mode()),
-            (COMPACT_COPY, "Make compact SQLite copy...", !busy && !self.linked_mode()),
-            (ANNOTATION_PREVIEW, "Review linked CTF notes...", !busy && self.linked_mode()),
+            (
+                VALIDATE_CATALOG,
+                "Check catalog integrity",
+                !busy && !self.linked_mode(),
+            ),
+            (
+                COMPACT_COPY,
+                "Make compact SQLite copy...",
+                !busy && !self.linked_mode(),
+            ),
+            (
+                ANNOTATION_PREVIEW,
+                "Review linked CTF notes...",
+                !busy && self.linked_mode(),
+            ),
             (CANCEL, "Cancel current scan", self.job.is_some()),
         ] {
-            AppendMenuW(menu, MF_STRING | if enabled { 0 } else { MF_GRAYED }, id, wide(label).as_ptr());
+            AppendMenuW(
+                menu,
+                MF_STRING | if enabled { 0 } else { MF_GRAYED },
+                id,
+                wide(label).as_ptr(),
+            );
         }
         let selected = TrackPopupMenu(
-            menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, rect.left, rect.bottom,
-            0, self.hwnd, null(),
+            menu,
+            TPM_RETURNCMD | TPM_RIGHTBUTTON,
+            rect.left,
+            rect.bottom,
+            0,
+            self.hwnd,
+            null(),
         ) as usize;
         DestroyMenu(menu); // Destroys the attached Export submenu.
         if let Some(format) = export_menu_format_selection(selected) {

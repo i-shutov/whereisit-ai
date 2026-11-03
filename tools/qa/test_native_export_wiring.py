@@ -32,7 +32,9 @@ class NativeExportWiring(unittest.TestCase):
         self.assertRegex(self.win, r'if !self\.duplicates\s*\{\s*linked\["parent_id"\]')
 
     def test_macos_duplicate_button_is_enabled_and_json_is_selectable(self):
-        self.assertIn('Text("JSON • current scope").tag("json")', self.mac)
+        self.assertIn('Button("JSON • current scope")', self.mac)
+        self.assertIn('model.exportFormat = "json"; model.export()', self.mac)
+        self.assertIn('Menu("Export")', self.mac)
         self.assertNotIn('model.exportFormat == "ctf" || model.showingDuplicates', self.mac)
         self.assertIn('["csv", "parquet", "json"].contains(exportFormat)', self.mac)
         self.assertIn('"op": "ctf_export_pinned"', self.mac)

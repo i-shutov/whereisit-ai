@@ -1,3 +1,20 @@
+## UX39 initial exact-HEAD CI defects and repair (2026-11-03)
+
+At initial source SHA [4c5d3c8](https://github.com/i-shutov/whereisit-ai/commit/4c5d3c8b0d88a7e8917af1d7a344076f369202be),
+[offline acceptance 41562418423](https://github.com/i-shutov/whereisit-ai/actions/runs/41562418423)
+failed at **Check integrated Rust contracts** with four Rustfmt-only
+diff blocks in the new Win32 native popup;
+[integration 41562418448](https://github.com/i-shutov/whereisit-ai/actions/runs/41562418448)
+failed at `test_macos_duplicate_button_is_enabled_and_json_is_selectable`,
+whose old source assertion expected a removed toolbar Picker rather than
+the functional new native JSON Export menu. Replaced the assertion with a
+check of actual new menu command dispatch; no test disabled.
+Applied the exact Rustfmt output, in SAME draft PR #57.
+Do not claim final CI green until **new exact-HEAD** native Linux/Windows/
+Mac ARM+Intel, offline, integration and installed RC2→RC3 gates complete.
+
+---
+
 ## UX39 — compact search-first native catalog toolbar (2026-11-03; exact-HEAD CI pending)
 
 On SAME draft PR #57, Win32 and SwiftUI replace the old administrative first
