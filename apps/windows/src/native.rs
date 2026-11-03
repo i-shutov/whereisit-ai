@@ -5525,6 +5525,16 @@ impl App {
         }
     }
 
+    // One source/generation identity for physical picker guards and the
+    // independent private pairing store; never a historical volume letter.
+    fn physical_scope(&self) -> String {
+        if let Some(generation) = self.linked_generation.as_deref() {
+            format!("ctf:{generation}")
+        } else {
+            format!("sqlite:{}", self.db)
+        }
+    }
+
     fn physical_request(
         &self,
         op: &str,
@@ -5532,11 +5542,7 @@ impl App {
         identity: Option<&str>,
         shelf_label: Option<&str>,
     ) -> Value {
-        let key = if let Some(generation) = self.linked_generation.as_deref() {
-            format!("ctf:{generation}")
-        } else {
-            format!("sqlite:{}", self.db)
-        };
+        let key = self.physical_scope();
         let request = json!({
             "op":op,
             "user_store":config_dir().join("physical-volume-bindings.sqlite").to_string_lossy(),
