@@ -16,6 +16,46 @@ PHYSICAL = (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encod
 
 
 class DiskLocatorWiringTests(unittest.TestCase):
+    def test_ux41_register_order_is_native_private_and_view_only(self):
+        # Catalog/owner sticker/OS-state order are view-only permutations
+        # of exact catalog IDs; cannot alter the service's read-only CTF scope.
+        self.assertIn("enum DiskRegisterOrder {", WIN)
+        self.assertIn("fn sort_disk_register_indices(", WIN)
+        self.assertIn("fn parse_disk_register_order_preference(raw: &str)", WIN)
+        self.assertIn('"disk_register_order":self.disk_register_order.preference()', WIN)
+        self.assertIn("disk_register_order: read_disk_register_order_preference()", WIN)
+        self.assertIn("CYCLE_DISK_REGISTER_ORDER => {", WIN)
+        self.assertIn("(*app).command(CYCLE_DISK_REGISTER_ORDER, 0);", WIN)
+        self.assertIn("Cycle disk register order", WIN)
+        self.assertIn("if !candidate_mode {\n            sort_disk_register_indices(", WIN)
+        win_sort = WIN.split("CYCLE_DISK_REGISTER_ORDER => {", 1)[1].split(
+            "TOGGLE_CATEGORIES => {", 1
+        )[0]
+        self.assertIn("self.populate_physical_disk_list();", win_sort)
+        self.assertIn("self.save_ui_layout_preferences();", win_sort)
+        for forbidden in ("self.load()", "self.refresh_physical_presence()",
+                          "self.volume =", "self.query =", "self.call("):
+            self.assertNotIn(forbidden, win_sort)
+        self.assertIn("fn register_sort_is_view_only_with_stable_exact_id_ties_and_fail_closed_os()", WIN)
+
+        self.assertIn('UserDefaults.standard.string(forKey: "AtlasCatalog.registerOrder")', MAC)
+        self.assertIn('UserDefaults.standard.set(registerOrder, forKey: "AtlasCatalog.registerOrder")', MAC)
+        self.assertIn("private var filteredVolumes: [Volume]", MAC)
+        self.assertIn("var visibleVolumes: [Volume]", MAC)
+        self.assertIn("guard !isCandidateRegisterMode else { return rows }", MAC)
+        self.assertIn('case "shelf":', MAC)
+        self.assertIn('case "os":', MAC)
+        self.assertIn("case \"connected\": return 0", MAC)
+        self.assertIn('model.cycleRegisterOrder()', MAC)
+        self.assertIn('.keyboardShortcut("t", modifiers: [.command, .shift])', MAC)
+        self.assertIn('accessibilityLabel("Cycle physical disk register order', MAC)
+        mac_sort = MAC.split("func cycleRegisterOrder() {", 1)[1].split(
+            "@Published var physicalStates", 1
+        )[0]
+        for forbidden in ("search()", "selectVolume()", "refreshPhysicalPresence()",
+                          "request(", "linkCTF("):
+            self.assertNotIn(forbidden, mac_sort)
+
     def test_ux40_category_disclosure_keeps_disk_register_primary(self):
         # Optional category administration must not take half of a 40-disk
         # register by default, and must not reset search, OS pairing or rows.
