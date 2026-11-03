@@ -999,8 +999,7 @@ fn parse_categories_visible_preference(raw: &str) -> bool {
     let Ok(value) = serde_json::from_str::<Value>(raw) else {
         return false;
     };
-    value["version"].as_u64() == Some(1)
-        && value["categories_visible"].as_bool().unwrap_or(false)
+    value["version"].as_u64() == Some(1) && value["categories_visible"].as_bool().unwrap_or(false)
 }
 fn read_categories_visible_preference() -> bool {
     std::fs::read_to_string(config_dir().join("ui-layout.json"))
