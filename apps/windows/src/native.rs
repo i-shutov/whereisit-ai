@@ -64,6 +64,7 @@ const EXPORT_MENU_CSV: usize = 154;
 const EXPORT_MENU_PARQUET: usize = 155;
 const EXPORT_MENU_CTF: usize = 156;
 const EXPORT_MENU_JSON: usize = 157;
+const TOGGLE_CATEGORIES: usize = 158;
 
 fn export_menu_format_selection(command: usize) -> Option<usize> {
     match command {
@@ -993,9 +994,37 @@ fn read_ui_layout_preferences() -> (bool, i32) {
         .unwrap_or((true, 282))
 }
 
+// UI-only, versioned preference. Old/corrupt files default to search-first.
+fn parse_categories_visible_preference(raw: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<Value>(raw) else {
+        return false;
+    };
+    value["version"].as_u64() == Some(1)
+        && value["categories_visible"].as_bool().unwrap_or(false)
+}
+fn read_categories_visible_preference() -> bool {
+    std::fs::read_to_string(config_dir().join("ui-layout.json"))
+        .ok()
+        .is_some_and(|raw| parse_categories_visible_preference(&raw))
+}
+
+// Reserve most of the sidebar for the ~40 catalog disks unless the operator
+// explicitly opens secondary category administration.
+fn disk_register_height(sidebar_height: i32, categories_visible: bool) -> i32 {
+    let height = sidebar_height.max(200);
+    if categories_visible {
+        (height / 2).max(70)
+    } else {
+        (height - 36).max(70)
+    }
+}
+
 #[cfg(test)]
 mod page_sort_and_layout_tests {
-    use super::{focusable_result_row, id, parse_ui_layout_preferences, sort_page_rows};
+    use super::{
+        disk_register_height, focusable_result_row, id, parse_categories_visible_preference,
+        parse_ui_layout_preferences, sort_page_rows,
+    };
     use serde_json::json;
     use std::collections::HashMap;
 
@@ -1053,6 +1082,25 @@ mod page_sort_and_layout_tests {
         assert_eq!(focusable_result_row(true, &rows, -1), Some(0));
         assert_eq!(focusable_result_row(true, &rows, 90), Some(0));
         assert_eq!(focusable_result_row(true, &rows, 1), Some(1));
+    }
+
+    #[test]
+    fn categories_are_opt_in_and_disk_register_uses_available_height() {
+        assert!(!parse_categories_visible_preference("invalid"));
+        assert!(!parse_categories_visible_preference(
+            r#"{"version":2,"categories_visible":true}"#
+        ));
+        assert!(!parse_categories_visible_preference(r#"{"version":1}"#));
+        assert!(parse_categories_visible_preference(
+            r#"{"version":1,"categories_visible":true}"#
+        ));
+        assert!(!parse_categories_visible_preference(
+            r#"{"version":1,"categories_visible":false}"#
+        ));
+        assert_eq!(disk_register_height(594, false), 558);
+        assert_eq!(disk_register_height(594, true), 297);
+        assert!(disk_register_height(100, false) >= 70);
+        assert!(disk_register_height(100, true) >= 70);
     }
 
     #[test]
@@ -3755,6 +3803,7 @@ struct App {
     locator: HWND,
     locator_requested_width: i32,
     locator_visible: bool,
+    categories_visible: bool,
     dragging_locator: bool,
     page_sort_column: Option<usize>,
     page_sort_descending: bool,
@@ -3844,6 +3893,7 @@ impl App {
             locator: null_mut(),
             locator_requested_width: locator_width,
             locator_visible,
+            categories_visible: read_categories_visible_preference(),
             dragging_locator: false,
             page_sort_column: None,
             page_sort_descending: false,
@@ -5547,7 +5597,8 @@ impl App {
         let dir = config_dir();
         if std::fs::create_dir_all(&dir).is_ok() {
             let data = json!({"version":1, "locator_visible":self.locator_visible,
-                "locator_width":self.locator_requested_width.clamp(220, 420)});
+                "locator_width":self.locator_requested_width.clamp(220, 420),
+                "categories_visible":self.categories_visible});
             let _ = std::fs::write(dir.join("ui-layout.json"), data.to_string());
         }
     }
@@ -6421,6 +6472,26 @@ impl App {
                     self.copy_current_locator_selection(entry_id);
                 }
             }
+            TOGGLE_CATEGORIES => {
+                self.categories_visible = !self.categories_visible;
+                let focused = GetFocus();
+                let inside_categories = focused == self.category_list
+                    || focused == self.category_name
+                    || self.buttons.iter().any(|(id, hwnd)| {
+                        [CATEGORY_CREATE, CATEGORY_FILTER, CATEGORY_ASSIGN].contains(id)
+                            && *hwnd == focused
+                    });
+                self.save_ui_layout_preferences();
+                self.layout();
+                if inside_categories {
+                    SetFocus(self.disk_filter);
+                }
+                self.status(if self.categories_visible {
+                    "Category tools expanded; search and disk scope unchanged (Ctrl+Shift+A)."
+                } else {
+                    "Physical disk register expanded; category tools hidden (Ctrl+Shift+A)."
+                });
+            }
             TOGGLE_LOCATOR => {
                 self.locator_visible = !self.locator_visible;
                 self.save_ui_layout_preferences();
@@ -6773,7 +6844,7 @@ impl App {
         }
         MoveWindow(self.location, 8, 83, (w - 16).max(50), 20, 1);
         let sidebar_height = (h - 146).max(200);
-        let disk_height = (sidebar_height / 2).max(70);
+        let disk_height = disk_register_height(sidebar_height, self.categories_visible);
         MoveWindow(self.disk_filter, 8, 106, 200, 24, 1);
         MoveWindow(self.shelf_edit, 8, 134, 140, 24, 1);
         MoveWindow(self.disks, 8, 162, 200, (disk_height - 56).max(42), 1);
@@ -6786,10 +6857,18 @@ impl App {
             1,
         );
         MoveWindow(self.category_name, 8, h - 92, 150, 24, 1);
+        let category_visibility = if self.categories_visible {
+            SW_SHOW
+        } else {
+            SW_HIDE
+        };
+        ShowWindow(self.category_list, category_visibility);
+        ShowWindow(self.category_name, category_visibility);
         for (command, control) in &self.buttons {
             match *command {
                 CATEGORY_CREATE => {
                     MoveWindow(*control, 164, h - 92, 44, 24, 1);
+                    ShowWindow(*control, category_visibility);
                 }
                 SHELF_SAVE => {
                     MoveWindow(*control, 154, 134, 54, 24, 1);
@@ -6843,9 +6922,11 @@ impl App {
                 }
                 CATEGORY_FILTER => {
                     MoveWindow(*control, 8, h - 64, 88, 24, 1);
+                    ShowWindow(*control, category_visibility);
                 }
                 CATEGORY_ASSIGN => {
                     MoveWindow(*control, 102, h - 64, 106, 24, 1);
+                    ShowWindow(*control, category_visibility);
                 }
                 _ => {}
             }
@@ -7659,6 +7740,12 @@ pub fn run() {
                 AppendMenuW(
                     view,
                     MF_STRING,
+                    TOGGLE_CATEGORIES,
+                    wide("Show / hide category tools\tCtrl+Shift+A").as_ptr(),
+                );
+                AppendMenuW(
+                    view,
+                    MF_STRING,
                     BROWSE_RECORDED_FOLDER,
                     wide("Browse selected file's RECORDED folder\tCtrl+Shift+F").as_ptr(),
                 );
@@ -7795,6 +7882,16 @@ pub fn run() {
                 && message.wParam == b'I' as usize
             {
                 (*app).command(TOGGLE_LOCATOR, 0);
+                continue;
+            }
+            // Ctrl+Shift+A reveals optional category administration without
+            // altering the global search, selected row, or current disk scope.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && GetKeyState(VK_SHIFT as i32) < 0
+                && message.wParam == b'A' as usize
+            {
+                (*app).command(TOGGLE_CATEGORIES, 0);
                 continue;
             }
             // Dismiss only the current page response; the background source
