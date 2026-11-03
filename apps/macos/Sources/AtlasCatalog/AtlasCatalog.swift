@@ -818,7 +818,7 @@ private struct CandidateFolderReturnContext {
     // only displays UUIDs observed exactly once in the current scan.
     var pairablePhysicalVolumes: [LivePhysicalVolume] {
         let counts = Dictionary(mountedPhysicalVolumes.map { ($0.id, 1) }, uniquingKeysWith: +)
-        return mountedPhysicalVolumes.filter { counts[$0.id] == 1 }
+        return mountedPhysicalVolumes.filter { counts[$0.id] == 1 && $0.currentMount != "/" }
             .sorted {
                 let order = $0.name.localizedStandardCompare($1.name)
                 return order == .orderedSame ? $0.currentMount < $1.currentMount : order == .orderedAscending
@@ -924,7 +924,7 @@ private struct CandidateFolderReturnContext {
             // UUID establishes current physical attachment.
             guard let verifiedID = verifiedPhysicalIDs[id],
                   !verifiedID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  mountedPhysicalVolumes.filter({ $0.id == verifiedID }).count == 1 else {
+                  mountedPhysicalVolumes.filter({ $0.id == verifiedID && $0.currentMount != "/" }).count == 1 else {
                 return "unverified"
             }
             return "connected"
@@ -1476,6 +1476,7 @@ private struct CandidateFolderReturnContext {
             physicalStates = [:]
             return
         }
+        let initialScope = physicalScope
         let warning = NSAlert()
         warning.alertStyle = .warning
         warning.messageText = "Pair catalog disk with this mounted OS volume?"
@@ -1488,6 +1489,10 @@ private struct CandidateFolderReturnContext {
         warning.addButton(withTitle: "Pair explicitly")
         warning.addButton(withTitle: "Cancel")
         guard warning.runModal() == .alertFirstButtonReturn else { return }
+        guard physicalScope == initialScope, selectedDiskForPairing == volumeID else {
+            status = "Catalog or selected disk changed during pairing dialog; pairing refused."
+            return
+        }
         // Reprobe after the modal, not before: the disk may have been unplugged.
         guard let freshProbe = scanPhysicalVolumes(),
               // Reject a same-UUID clone at ANY other mount, even when the
@@ -1499,7 +1504,7 @@ private struct CandidateFolderReturnContext {
             status = "OS volume changed during confirmation; pairing refused. Refresh mounts."
             return
         }
-        let scope = physicalScope
+        let scope = initialScope
         var args = physicalArguments(freshProbe, probeOK: true)
         args["op"] = "physical_pair"
         args["volume_id"] = volumeID
@@ -2491,7 +2496,7 @@ private struct CandidateFolderReturnContext {
                 }
                 .labelsHidden()
                 .accessibilityLabel("Mounted volume for explicit physical disk pairing")
-                .help("Use only after checking the actual USB sticker; filesystem UUID can be cloned")
+                .help("Only uniquely observed local mounts except the macOS startup root; check actual USB sticker. Filesystem UUID can be cloned.")
                 if model.pairablePhysicalVolumes.count < model.mountedPhysicalVolumes.count {
                     Label("Duplicate OS volume UUID: ambiguous mounts cannot be paired.", systemImage: "exclamationmark.triangle")
                         .font(.caption).foregroundStyle(.orange)

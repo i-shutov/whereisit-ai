@@ -16,6 +16,29 @@ PHYSICAL = (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encod
 
 
 class DiskLocatorWiringTests(unittest.TestCase):
+    def test_ux47_native_single_mount_choice_fails_closed_during_pairing(self):
+        self.assertIn("fn physical_pairing_menu_caption(", WIN)
+        self.assertIn("mod physical_pairing_menu_tests", WIN)
+        pairing = WIN.split("unsafe fn pair_selected_physical_disk(", 1)[1].split(
+            "unsafe fn unpair_selected_physical_disk(", 1
+        )[0]
+        self.assertIn("CreatePopupMenu()", pairing)
+        self.assertIn("TrackPopupMenu(", pairing)
+        self.assertIn("physical_pairing_menu_caption(candidate)", pairing)
+        self.assertIn("unique_pairable_mounts(&self.mounted_volumes)", pairing)
+        self.assertNotIn("for candidate in candidates {", pairing)
+        self.assertIn("self.physical_scope() != pairing_scope", pairing)
+        self.assertIn("unique_matching_live_mount(&candidate, &self.mounted_volumes)", pairing)
+        self.assertIn('self.physical_request("physical_pair"', pairing)
+        self.assertIn('counts[$0.id] == 1 && $0.currentMount != "/"', MAC)
+        self.assertIn('mountedPhysicalVolumes.filter({ $0.id == verifiedID && $0.currentMount != "/" }).count == 1', MAC)
+        mac_pair = MAC.split("func pairSelectedPhysicalDisk() {", 1)[1].split(
+            "func unpairSelectedPhysicalDisk()", 1
+        )[0]
+        self.assertIn("let initialScope = physicalScope", mac_pair)
+        self.assertIn("physicalScope == initialScope, selectedDiskForPairing == volumeID", mac_pair)
+        self.assertIn("freshProbe.filter({ $0.id == candidate.id }).count == 1", mac_pair)
+
     def test_ux46_full_offline_register_native_clipboard_is_all_disks_and_re_pinned(self):
         self.assertIn("fn full_disk_register_manifest(", WIN)
         self.assertIn("full_disk_register_manifest_tests", WIN)

@@ -1824,6 +1824,54 @@ fn unique_pairable_mounts(volumes: &[MountedPhysicalVolume]) -> Vec<MountedPhysi
         .collect()
 }
 
+// A readable native OS picker replaces serial Yes/No prompts. The current
+// mount description is local-only; escaping prevents Windows menu mnemonics
+// and untrusted filesystem names from reshaping the choices.
+fn physical_pairing_menu_caption(mount: &MountedPhysicalVolume) -> String {
+    let clean = |raw: &str| raw.replace(['\r', '\n', '\t'], " ").replace('&', "&&");
+    format!("{} • {}", clean(&mount.description), clean(&mount.id))
+}
+
+#[cfg(test)]
+mod physical_pairing_menu_tests {
+    use super::{physical_pairing_menu_caption, unique_pairable_mounts, MountedPhysicalVolume};
+
+    #[test]
+    fn duplicate_os_identity_not_offered_and_colliding_names_remain_distinct() {
+        let mounts = vec![
+            MountedPhysicalVolume {
+                id: "win:{aaaa}:11111111".into(),
+                description: "Movies & Series\r\nInjected".into(),
+                mount_roots: vec!["E:\\".into()],
+            },
+            MountedPhysicalVolume {
+                id: "win:{aaaa}:11111111".into(),
+                description: "Cloned UUID".into(),
+                mount_roots: vec!["F:\\".into()],
+            },
+            MountedPhysicalVolume {
+                id: "win:{bbbb}:22222222".into(),
+                description: "Movies & Series".into(),
+                mount_roots: vec!["G:\\".into()],
+            },
+            MountedPhysicalVolume {
+                id: "win:{cccc}:33333333".into(),
+                description: "Movies & Series".into(),
+                mount_roots: vec!["H:\\".into()],
+            },
+        ];
+        let offered = unique_pairable_mounts(&mounts);
+        assert_eq!(offered.len(), 2);
+        let labels: Vec<_> = offered.iter().map(physical_pairing_menu_caption).collect();
+        assert!(labels[0].contains("Movies && Series"));
+        assert!(!labels[0].contains('\r'));
+        assert!(!labels[0].contains('\n'));
+        assert_ne!(labels[0], labels[1]);
+        assert!(labels[0].contains("win:{bbbb}"));
+        assert!(labels[1].contains("win:{cccc}"));
+    }
+}
+
 #[cfg(test)]
 mod physical_mount_picker_tests {
     use super::{unique_pairable_mounts, MountedPhysicalVolume};
@@ -5994,6 +6042,7 @@ impl App {
             return;
         }
         let name = self.volume_label(Some(volume_id));
+        let pairing_scope = self.physical_scope();
         // Keep raw observation collisions in the Rust service, but never
         // display a duplicate UUID as an unambiguous pairing candidate.
         let candidates = unique_pairable_mounts(&self.mounted_volumes);
@@ -6001,45 +6050,107 @@ impl App {
             self.status("OS volume identities collide; pairing refused until resolved.");
             return;
         }
-        for candidate in candidates {
-            let question = format!(
-                "CATALOG DISK: {name}\r\n\r\nLIVE OS VOLUME: {}\r\n\r\nThis may be an INTERNAL/system drive. Inspect the actual USB disk sticker and current mount before confirming this OS volume pairing.\r\n\r\nYES: pair this disk   NO: inspect next mount   CANCEL: stop",
-                candidate.description
-            );
-            let answer = MessageBoxW(
-                self.hwnd,
-                wide(&question).as_ptr(),
-                wide("Explicit physical disk pairing").as_ptr(),
-                MB_YESNOCANCEL | MB_ICONQUESTION,
-            );
-            if answer == IDCANCEL {
-                return;
-            }
-            if answer != IDYES {
-                continue;
-            }
-            // The mount may have disappeared or been replaced during the
-            // operator's confirmation dialog. Probe AGAIN before binding.
-            self.refresh_physical_presence();
-            if !self.physical_probe_ok
-                || !unique_matching_live_mount(&candidate, &self.mounted_volumes)
-            {
-                self.status("OS volume changed during pairing; no pairing saved. Retry after checking the USB device.");
-                return;
-            }
-            let response =
-                self.physical_request("physical_pair", Some(volume_id), Some(&candidate.id), None);
-            if response["ok"] == true {
-                self.refresh_physical_presence();
-                self.status(
-                    "Physical disk paired to live OS identity. Automatic reconnect checks enabled.",
-                );
-            } else {
-                self.status("Pairing refused: disk is already bound, ambiguous, or OS identity changed. Unpair explicitly to replace.");
-            }
+        // One native, keyboard-navigable picker, not a chain of modal Yes/No
+        // dialogs for every local/system mount. No historical CTF path is used.
+        let menu = CreatePopupMenu();
+        if menu.is_null() {
+            self.status("Could not open native OS mount picker; pairing refused.");
             return;
         }
-        self.status("No physical volume pairing made.");
+        for (index, candidate) in candidates.iter().enumerate() {
+            let label = physical_pairing_menu_caption(candidate);
+            AppendMenuW(
+                menu,
+                MF_STRING,
+                index + 1,
+                wide(&label).as_ptr(),
+            );
+        }
+        let mut anchor: POINT = std::mem::zeroed();
+        if let Some((_, button)) = self.buttons.iter().find(|(id, _)| *id == PHYSICAL_PAIR) {
+            let mut rect: RECT = std::mem::zeroed();
+            if IsWindowVisible(*button) != 0 && GetWindowRect(*button, &mut rect) != 0 {
+                anchor.x = rect.left;
+                anchor.y = rect.bottom;
+            } else {
+                GetCursorPos(&mut anchor);
+            }
+        } else {
+            GetCursorPos(&mut anchor);
+        }
+        let choice = TrackPopupMenu(
+            menu,
+            TPM_RETURNCMD | TPM_RIGHTBUTTON,
+            anchor.x,
+            anchor.y,
+            0,
+            self.hwnd,
+            null(),
+        ) as usize;
+        DestroyMenu(menu);
+        let Some(candidate) = choice
+            .checked_sub(1)
+            .and_then(|index| candidates.get(index))
+            .cloned()
+        else {
+            self.status("No OS mount selected; physical pairing unchanged.");
+            return;
+        };
+        // The popup pumps window messages; never bind a different catalog
+        // generation or a newly selected result during that interval.
+        if self.physical_scope() != pairing_scope
+            || self.selected_physical_catalog_disk() != Some(volume_id)
+        {
+            self.status("Catalog or selected disk changed during OS picker; pairing refused.");
+            return;
+        }
+        // The choice may have disappeared while the popup was open.
+        self.refresh_physical_presence();
+        if !self.physical_probe_ok
+            || !unique_matching_live_mount(&candidate, &self.mounted_volumes)
+        {
+            self.status("OS mount changed while picking; pairing refused.");
+            return;
+        }
+        let question = format!(
+            "CATALOG DISK #{volume_id}: {name}\r\n\r\nSELECTED LIVE OS VOLUME: {}\r\n\r\nThis may be an INTERNAL or system drive. Verify the actual USB disk sticker and live mount, not the historical catalog path. A filesystem UUID is NOT a hardware serial.\r\n\r\nPair this exact OS identity?",
+            candidate.description
+        );
+        if MessageBoxW(
+            self.hwnd,
+            wide(&question).as_ptr(),
+            wide("Explicit physical disk pairing").as_ptr(),
+            MB_YESNO | MB_ICONWARNING,
+        ) != IDYES
+        {
+            return;
+        }
+        if self.physical_scope() != pairing_scope
+            || self.selected_physical_catalog_disk() != Some(volume_id)
+        {
+            self.status("Catalog or selected disk changed during confirmation; pairing refused.");
+            return;
+        }
+        // The disk may have been unplugged during the confirmation dialog.
+        // The service additionally rejects duplicated UUIDs and other bindings.
+        self.refresh_physical_presence();
+        if !self.physical_probe_ok
+            || !unique_matching_live_mount(&candidate, &self.mounted_volumes)
+        {
+            self.status("OS volume changed during pairing; no pairing saved. Retry after checking the USB device.");
+            return;
+        }
+        let response =
+            self.physical_request("physical_pair", Some(volume_id), Some(&candidate.id), None);
+        if response["ok"] == true {
+            self.refresh_physical_presence();
+            self.status(
+                "Physical disk paired to live OS identity. Automatic reconnect checks enabled.",
+            );
+        } else {
+            self.status("Pairing refused: disk is already bound, ambiguous, or OS identity changed. Unpair explicitly to replace.");
+        }
+        return;
     }
 
     unsafe fn unpair_selected_physical_disk(&mut self) {
