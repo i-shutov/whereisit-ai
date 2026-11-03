@@ -435,9 +435,10 @@ pub fn search(v: &Value) -> Result<Value> {
     }))
 }
 
-/// All pinned reads share the same full original CTF SHA checks and periodic
-/// SQLite cache integrity verification. This returns an explicitly tagged
-/// snapshot response, not a user-editable catalog.
+/// All pinned reads rehash the full original CTF SHA once per call, *before
+/// releasing any result*, and periodically rehash the immutable SQLite mirror.
+/// The pin itself exists only after strict sync; a changed source fails closed.
+/// This returns an explicitly tagged snapshot, never an editable catalog.
 pub(crate) fn read_pinned<F>(v: &Value, work: F) -> Result<Value>
 where
     F: FnOnce(&Catalog) -> Result<Value>,
@@ -463,15 +464,10 @@ where
             "Expected an unlinked regular .CTF source",
         ));
     }
-    let original = identity(&source_path)?;
-    let used_recipe = recipe();
-    let current_key = ctf_sidecar::cache_key(&original, &used_recipe).map_err(io_error)?;
-    if requested != current_key {
-        return Err(failure(
-            "source_changed",
-            "Original CTF changed; synchronize the new generation",
-        ));
-    }
+    // A pin is created only by a complete source-hash-verified ctf_sync in
+    // this process. Resolve its immutable expected identity without hashing
+    // the same large original *twice* in each search. No page can escape
+    // without a fresh full SHA-256 check after the read below.
     let root = path(v, "cache_root")?;
     if !fs::symlink_metadata(&root)
         .map_err(io_error)?
@@ -483,18 +479,28 @@ where
             "Pinned mirror root must be a real directory",
         ));
     }
-    let key: PinKey = (root.clone(), current_key.clone());
+    let key: PinKey = (root.clone(), requested.to_owned());
     let pinned = pins()
         .lock()
         .map_err(|_| failure("internal", "Pinned registry unavailable"))?
         .get(&key)
         .cloned()
         .ok_or_else(|| failure("not_pinned", "Call ctf_sync in this process first"))?;
-    if pinned.source != original {
-        forget(&root, &current_key);
+    let original = pinned.source.clone();
+    if source_meta.len() != original.size_bytes {
+        forget(&root, requested);
         return Err(failure(
             "source_changed",
-            "Pinned source generation does not match",
+            "Original CTF length differs from pinned generation",
+        ));
+    }
+    let used_recipe = recipe();
+    let current_key = ctf_sidecar::cache_key(&original, &used_recipe).map_err(io_error)?;
+    if requested != current_key {
+        forget(&root, requested);
+        return Err(failure(
+            "source_changed",
+            "Pinned generation does not match current recipe",
         ));
     }
     let cache_dir = root.join(&current_key);
@@ -536,6 +542,9 @@ where
             "SQLite artifact changed during query",
         ));
     }
+    // The full original SHA-256 is checked on EVERY reuse, including pages
+    // whose cache metadata appears unchanged. This is the authorization
+    // boundary for returning metadata; an OS mtime/length check is not enough.
     if identity(&source_path)? != original {
         forget(&root, &current_key);
         return Err(failure(

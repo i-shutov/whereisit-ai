@@ -619,3 +619,16 @@ Catalog and Export menus rather than a row of administration buttons. The
 actual search, exact disk register and locator remain native; no current USB
 or file-content assertions are introduced. See the [UX39 runbook](qa/UX39_COMPACT_NATIVE_CATALOG_TOOLBARS_20261103.md).
 Manual GUI acceptance and stable 1.0 hard gates remain outstanding.
+
+## UX43 — source-verified search performance and transparent local page timing (2026-11-03)
+
+Pinned CTF searches now reuse the generation digest established by strict sync as
+an **expected** identity, but still compute full original SHA-256 at the end
+of **every** read before returning any page. Removing the former redundant
+pre-query hash may lower latency on very large sources; no claim of meeting the
+150 ms hardware p95 is made without new measurements. Native Win32 and SwiftUI
+show a single local verified page duration, clearly marked **not p95**.
+Cancelled/stale/failed requests cannot display a timing or stale rows. See
+[UX43 QA](qa/UX43_PINNED_SEARCH_LATENCY_20261103.md). All prior source
+immutability, OS-verification, metadata-only copy, signing and manual release
+gates remain in force. Source work is in the existing draft PR #57 only.

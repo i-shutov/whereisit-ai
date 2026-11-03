@@ -3865,6 +3865,32 @@ unsafe fn verified_overlay_action(
     }
 }
 
+// Page timing is local only: no filenames, paths, CTF SHA or query strings
+// are persisted or uploaded. It is a single sample, NOT accepted p95.
+fn verified_page_latency_caption(verified: bool, elapsed_ms: Option<u64>) -> String {
+    if !verified {
+        return String::new();
+    }
+    elapsed_ms
+        .map(|ms| format!(" • local page {ms} ms (not p95)"))
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod verified_page_latency_tests {
+    use super::verified_page_latency_caption;
+
+    #[test]
+    fn only_fresh_verified_pages_disclose_local_latency_not_an_slo_claim() {
+        assert_eq!(verified_page_latency_caption(false, Some(50)), "");
+        assert_eq!(verified_page_latency_caption(true, None), "");
+        assert_eq!(
+            verified_page_latency_caption(true, Some(187)),
+            " • local page 187 ms (not p95)"
+        );
+    }
+}
+
 // Late replies from a closed review or another selected user sidecar must not
 // populate the current review or trigger a CAS action on the wrong sidecar.
 fn annotation_reply_current(tag: &str, request_session: u64, active_session: u64) -> bool {
@@ -3879,6 +3905,7 @@ struct Reply {
     tag: &'static str,
     generation: u64,
     annotation_session: u64,
+    elapsed_ms: u64,
     result: Value,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4101,6 +4128,7 @@ struct App {
     page_ready: bool,
     page_awaiting: bool,
     page_retry_available: bool,
+    last_page_elapsed_ms: Option<u64>,
     pending_mount_root: Option<(i64, u64, bool)>,
     pending_disk_card: Option<(i64, u64)>,
     pending_locator_copy: Option<(i64, u64)>,
@@ -4194,6 +4222,7 @@ impl App {
             page_ready: false,
             page_awaiting: false,
             page_retry_available: false,
+            last_page_elapsed_ms: None,
             pending_mount_root: None,
             pending_disk_card: None,
             pending_locator_copy: None,
@@ -4322,6 +4351,7 @@ impl App {
         }
         self.pending += 1;
         std::thread::spawn(move || {
+            let started = Instant::now();
             let result = std::panic::catch_unwind(|| atlas_service::dispatch_json(&request.to_string()))
                 .ok().and_then(|s|serde_json::from_str(&s).ok())
                 .unwrap_or_else(||json!({"ok":false,"error":{"message":"Core operation failed or returned invalid JSON"}}));
@@ -4330,6 +4360,7 @@ impl App {
                 tag,
                 generation,
                 annotation_session,
+                elapsed_ms: started.elapsed().as_millis() as u64,
                 result,
             });
         });
@@ -4450,6 +4481,7 @@ impl App {
         }
         self.page_awaiting = false;
         self.page_retry_available = false;
+        self.last_page_elapsed_ms = None;
         // Hide all rows from the preceding scope/page before the async reply.
         // Never permit an old selection to masquerade as the new catalog page.
         self.page_ready = false;
@@ -4917,6 +4949,9 @@ impl App {
                     }
                 }
                 "rows" => {
+                    // Only this generation's successful source-verified page
+                    // receives a timing; cancelled/failed replies never do.
+                    self.last_page_elapsed_ms = Some(reply.elapsed_ms);
                     let page = if self.linked_mode() {
                         &data["result"]
                     } else {
@@ -5980,7 +6015,7 @@ impl App {
         }
         self.update_disk_locator();
         self.status(&format!(
-            "{}–{}{}{}{}{}",
+            "{}–{}{}{}{}{}{}",
             if self.total == 0 { 0 } else { self.offset + 1 },
             self.offset + self.entries.len(),
             if self.total_known {
@@ -6016,7 +6051,8 @@ impl App {
                         "ascending"
                     }
                 ))
-                .unwrap_or_default()
+                .unwrap_or_default(),
+            verified_page_latency_caption(self.page_ready, self.last_page_elapsed_ms)
         ));
     }
     // From a verified search result, browse the containing CATALOG folder

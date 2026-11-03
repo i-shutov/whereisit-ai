@@ -427,6 +427,7 @@ private struct CandidateFolderReturnContext {
     @Published var hasMore = false
     var stack: [(Int64?, String)] = [(nil, "/")]
     var generation = 0
+    private var pageRequestStartedUptime: TimeInterval?
     let limit = 250
     var currentPath: String { stack.last?.1 ?? "/" }
     var canPreviousResultsPage: Bool { pageReady && !awaitingPage && offset > 0 }
@@ -1639,6 +1640,7 @@ private struct CandidateFolderReturnContext {
         // before an asynchronous response can turn a scoped view into global search.
         cancelPendingLiveFilenameSearch()
         generation += 1; let token = generation
+        pageRequestStartedUptime = ProcessInfo.processInfo.systemUptime
         if pendingReturnSelection?.token != token { pendingReturnSelection = nil }
         if pendingPageFocusToken != token { pendingPageFocusToken = nil }
         awaitingPage = true; retryPageAvailable = false
@@ -1716,6 +1718,7 @@ private struct CandidateFolderReturnContext {
         generation += 1
         pendingReturnSelection = nil
         pendingPageFocusToken = nil
+        pageRequestStartedUptime = nil
         awaitingPage = false
         retryPageAvailable = true
         pageReady = false
@@ -1729,6 +1732,12 @@ private struct CandidateFolderReturnContext {
     }
     func acceptPage(_ page: EntryPage?, token: Int) {
         guard generation == token else { return }
+        // Wall-time from a native page request through FFI, SHA verification
+        // and the response; not a synthetic benchmark or accepted p95.
+        let elapsedMs = pageRequestStartedUptime.map {
+            max(0, Int((ProcessInfo.processInfo.systemUptime - $0) * 1000))
+        }
+        pageRequestStartedUptime = nil
         awaitingPage = false
         guard let page else {
             pendingReturnSelection = nil
@@ -1737,6 +1746,9 @@ private struct CandidateFolderReturnContext {
             return
         }
         applyPage(page, token: token)
+        if let elapsedMs {
+            status += " • local page \(elapsedMs) ms (not p95)"
+        }
     }
     func applyPage(_ page: EntryPage, token: Int) {
         guard generation == token else { return }

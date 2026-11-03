@@ -1,3 +1,9 @@
+## UX43 — source SHA rehash reduction + native verified page timing (2026-11-03)
+
+Same draft PR #57: linked pinned CTF pages now compute the full original SHA **once per actual read**, after the SQLite query and before returning any data, using the strictly synchronized pin's previously verified expected SHA/recipe; source length/cache stamps and full cache integrity gates remain. Same-size/restored-mtime modifications continue to fail closed. This is a performance attempt, NOT a waiver of rechecking generation SHA on every reuse, nor proof of <=150ms on owner hardware. Win32/SwiftUI show a native locally measured verified page duration and explicitly warn it is **not p95**; stale, failed and cancelled page timings are suppressed. Compiled Windows and dual-client synthetic regressions plus the [UX43 QA runbook](docs/qa/UX43_PINNED_SEARCH_LATENCY_20261103.md) are included. Check the **new exact HEAD** 4-platform CI/offline/integration/installed-upgrades before saying PASS. Do not publish raw private CTFs or measurements; owner real representative >=30-sample p95, manual USB/GUI on all target OS, two provider-blocked historical raw CTFs, original modified CTF, signing/notarization remain blockers. PR stays draft; stable 1.0 blocked. No other repository touched.
+
+---
+
 ## UX42 — compact 40-disk register + adjustable native sidebar (2026-11-03)
 
 Integrated in SAME draft PR #57: Win32 physical register now has a draggable

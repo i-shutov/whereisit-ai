@@ -16,6 +16,27 @@ PHYSICAL = (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encod
 
 
 class DiskLocatorWiringTests(unittest.TestCase):
+    def test_ux43_verified_local_page_latency_and_one_fresh_ctf_sha_per_reuse(self):
+        # Measured only on fresh successful pages. No private identifiers and
+        # no claim that CI timings satisfy an owner's hardware p95 SLO.
+        self.assertIn("elapsed_ms: started.elapsed().as_millis() as u64", WIN)
+        self.assertIn("last_page_elapsed_ms = Some(reply.elapsed_ms)", WIN)
+        self.assertIn("last_page_elapsed_ms = None", WIN)
+        self.assertIn("verified_page_latency_caption(self.page_ready, self.last_page_elapsed_ms)", WIN)
+        self.assertIn("only_fresh_verified_pages_disclose_local_latency_not_an_slo_claim", WIN)
+        self.assertIn("pageRequestStartedUptime = ProcessInfo.processInfo.systemUptime", MAC)
+        self.assertIn("pageRequestStartedUptime = nil", MAC)
+        self.assertIn("guard generation == token else { return }", MAC)
+        self.assertIn('status += " • local page \\(elapsedMs) ms (not p95)"', MAC)
+        mirror = (ROOT / "crates/atlas-service/src/ctf_mirror.rs").read_text(encoding="utf-8")
+        body = mirror.split("pub(crate) fn read_pinned<", 1)[1].split("pub fn search_pinned(", 1)[0]
+        self.assertIn("let original = pinned.source.clone();", body)
+        self.assertIn("if source_meta.len() != original.size_bytes", body)
+        self.assertEqual(body.count("identity(&source_path)?"), 1)
+        self.assertIn("if identity(&source_path)? != original", body)
+        self.assertIn("if stamp(&db_path)? != first_stamp", body)
+        self.assertIn("forget(&root, &current_key)", body)
+
     def test_ux42_adaptive_register_density_is_view_only_and_keyboard_accessible(self):
         self.assertIn("fn bounded_sidebar_width(", WIN)
         self.assertIn("fn explorer_geometry_with_sidebar(", WIN)
