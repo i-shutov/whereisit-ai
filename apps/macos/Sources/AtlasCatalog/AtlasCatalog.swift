@@ -2382,6 +2382,7 @@ private struct CandidateFolderReturnContext {
     @FocusState private var diskFilterFocused: Bool
     @FocusState private var resultTableFocused: Bool
     @AppStorage("AtlasCatalog.locatorVisible") private var locatorVisible = true
+    @AppStorage("AtlasCatalog.categoriesVisible") private var categoriesVisible = false
     var body: some View {
         VStack(spacing: 4) {
             HStack(spacing: 6) {
@@ -2678,17 +2679,29 @@ private struct CandidateFolderReturnContext {
                                 : (disk.root_path ?? disk.label))
                         }
                     }.listStyle(.sidebar)
-                    Divider()
-                    Text("CATEGORIES").font(.caption.bold()).foregroundStyle(.secondary).padding(.horizontal, 6)
-                    List(model.categories, selection: $model.categoryID) { category in Text(category.name).tag(category.id) }.listStyle(.sidebar)
-                    HStack(spacing: 4) {
-                        TextField("New category", text: $model.categoryName).onSubmit { model.createCategory() }.disabled(model.linkedMode)
-                        Button("+") { model.createCategory() }.disabled(model.linkedMode || model.categoryName.trimmingCharacters(in: .whitespaces).isEmpty).help("Create category")
-                    }.padding(.horizontal, 5)
-                    HStack(spacing: 4) {
-                        Button("Filter") { model.filterCategory() }.disabled(model.linkedMode || model.categoryID == nil)
-                        Button("Assign selected") { model.assignCategory() }.disabled(model.linkedMode || model.selection == nil || model.categoryID == nil)
-                    }.padding(.horizontal, 5)
+                    Button(categoriesVisible ? "Hide category tools" : "Show category tools") {
+                        categoriesVisible.toggle()
+                    }
+                    .font(.caption)
+                    .buttonStyle(.borderless)
+                    .keyboardShortcut("a", modifiers: [.command, .shift])
+                    .accessibilityLabel(categoriesVisible ? "Collapse category administration" : "Expand category administration")
+                    .accessibilityHint("The disk register gets the available height; search and disk scope never change.")
+                    .help("Secondary category tools • Command-Shift-A; keeps all ~40 catalog disks easy to scan")
+                    .padding(.horizontal, 6)
+                    if categoriesVisible {
+                        Divider()
+                        Text("CATEGORIES").font(.caption.bold()).foregroundStyle(.secondary).padding(.horizontal, 6)
+                        List(model.categories, selection: $model.categoryID) { category in Text(category.name).tag(category.id) }.listStyle(.sidebar)
+                        HStack(spacing: 4) {
+                            TextField("New category", text: $model.categoryName).onSubmit { model.createCategory() }.disabled(model.linkedMode)
+                            Button("+") { model.createCategory() }.disabled(model.linkedMode || model.categoryName.trimmingCharacters(in: .whitespaces).isEmpty).help("Create category")
+                        }.padding(.horizontal, 5)
+                        HStack(spacing: 4) {
+                            Button("Filter") { model.filterCategory() }.disabled(model.linkedMode || model.categoryID == nil)
+                            Button("Assign selected") { model.assignCategory() }.disabled(model.linkedMode || model.selection == nil || model.categoryID == nil)
+                        }.padding(.horizontal, 5)
+                    }
                 }.frame(minWidth: 170, idealWidth: 220, maxWidth: 320)
                 Table(model.displayEntries, selection: $model.selection) {
                     TableColumn("Name") { entry in Label(entry.name, systemImage: entry.isFolder ? "folder" : "doc").lineLimit(1) }.width(min: 145, ideal: 230)
