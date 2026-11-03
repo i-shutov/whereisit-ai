@@ -16,6 +16,43 @@ PHYSICAL = (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encod
 
 
 class DiskLocatorWiringTests(unittest.TestCase):
+    def test_ux40_category_disclosure_keeps_disk_register_primary(self):
+        # Optional category administration must not take half of a 40-disk
+        # register by default, and must not reset search, OS pairing or rows.
+        self.assertIn("fn disk_register_height(sidebar_height: i32, categories_visible: bool)", WIN)
+        self.assertIn("fn parse_categories_visible_preference(raw: &str)", WIN)
+        self.assertIn('"categories_visible":self.categories_visible', WIN)
+        self.assertIn("categories_visible: read_categories_visible_preference()", WIN)
+        self.assertIn("TOGGLE_CATEGORIES => {", WIN)
+        self.assertIn("(*app).command(TOGGLE_CATEGORIES, 0);", WIN)
+        self.assertIn("Show / hide category tools", WIN)
+        layout = WIN.split("unsafe fn layout(&self) {", 1)[1].split(
+            "unsafe fn file_dialog(", 1)[0]
+        self.assertIn("disk_register_height(sidebar_height, self.categories_visible)", layout)
+        self.assertIn("ShowWindow(self.category_list, category_visibility)", layout)
+        self.assertIn("ShowWindow(self.category_name, category_visibility)", layout)
+        self.assertEqual(layout.count("ShowWindow(*control, category_visibility)"), 3)
+        toggler = WIN.split("TOGGLE_CATEGORIES => {", 1)[1].split(
+            "TOGGLE_LOCATOR => {", 1)[0]
+        self.assertIn("self.save_ui_layout_preferences();", toggler)
+        self.assertIn("SetFocus(self.disk_filter)", toggler)
+        self.assertNotIn("self.load()", toggler)
+        self.assertNotIn("self.refresh_physical_presence()", toggler)
+
+        self.assertIn('@AppStorage("AtlasCatalog.categoriesVisible")', MAC)
+        self.assertIn('private var categoriesVisible = false', MAC)
+        self.assertIn('Button(categoriesVisible ? "Hide category tools" : "Show category tools")', MAC)
+        self.assertIn('.keyboardShortcut("a", modifiers: [.command, .shift])', MAC)
+        self.assertIn('if categoriesVisible {', MAC)
+        self.assertIn('List(model.categories, selection: $model.categoryID)', MAC)
+        self.assertIn('Table(model.displayEntries, selection: $model.selection)', MAC)
+        swift_toggler = MAC.split('Button(categoriesVisible ? "Hide category tools"', 1)[1].split(
+            '.font(.caption)', 1
+        )[0]
+        self.assertIn('categoriesVisible.toggle()', swift_toggler)
+        self.assertNotIn('model.search()', swift_toggler)
+        self.assertNotIn('model.selectVolume()', swift_toggler)
+
 
     def test_ux39_compact_native_search_first_toolbars(self):
         self.assertIn("CATALOG_TOOLS => self.show_catalog_tools_menu()", WIN)
