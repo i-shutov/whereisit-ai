@@ -1006,7 +1006,10 @@ fn parse_sidebar_width_preference(raw: &str) -> i32 {
     if value["version"].as_u64() != Some(1) {
         return 200;
     }
-    value["sidebar_width"].as_i64().unwrap_or(200).clamp(200, 400) as i32
+    value["sidebar_width"]
+        .as_i64()
+        .unwrap_or(200)
+        .clamp(200, 400) as i32
 }
 fn read_sidebar_width_preference() -> i32 {
     std::fs::read_to_string(config_dir().join("ui-layout.json"))
@@ -2845,9 +2848,18 @@ mod locator_splitter_tests {
     #[test]
     fn sidebar_preference_is_private_versioned_and_fail_closed() {
         assert_eq!(parse_sidebar_width_preference("not json"), 200);
-        assert_eq!(parse_sidebar_width_preference(r#"{"version":2,"sidebar_width":400}"#), 200);
-        assert_eq!(parse_sidebar_width_preference(r#"{"version":1,"sidebar_width":999}"#), 400);
-        assert_eq!(parse_sidebar_width_preference(r#"{"version":1,"sidebar_width":150}"#), 200);
+        assert_eq!(
+            parse_sidebar_width_preference(r#"{"version":2,"sidebar_width":400}"#),
+            200
+        );
+        assert_eq!(
+            parse_sidebar_width_preference(r#"{"version":1,"sidebar_width":999}"#),
+            400
+        );
+        assert_eq!(
+            parse_sidebar_width_preference(r#"{"version":1,"sidebar_width":150}"#),
+            200
+        );
         assert_eq!(parse_sidebar_width_preference(r#"{"version":1}"#), 200);
     }
 
@@ -2856,9 +2868,11 @@ mod locator_splitter_tests {
         assert_eq!(bounded_sidebar_width(1366, 370), 370);
         assert_eq!(bounded_sidebar_width(880, 400), 258);
         assert_eq!(bounded_sidebar_width(1366, -50), 200);
-        assert_eq!(explorer_geometry_with_sidebar(880, 400, 282, true), (258, 0, 600, 185));
-        let (side, locator, files, _) =
-            explorer_geometry_with_sidebar(1366, 370, 282, true);
+        assert_eq!(
+            explorer_geometry_with_sidebar(880, 400, 282, true),
+            (258, 0, 600, 185)
+        );
+        let (side, locator, files, _) = explorer_geometry_with_sidebar(1366, 370, 282, true);
         assert_eq!(side, 370);
         assert_eq!(locator, 282);
         assert_eq!(files, 684);
@@ -6724,7 +6738,11 @@ impl App {
                 }
             }
             WIDEN_DISK_REGISTER | NARROW_DISK_REGISTER => {
-                let delta = if command == WIDEN_DISK_REGISTER { 40 } else { -40 };
+                let delta = if command == WIDEN_DISK_REGISTER {
+                    40
+                } else {
+                    -40
+                };
                 self.sidebar_requested_width =
                     (self.sidebar_requested_width + delta).clamp(200, 400);
                 self.save_ui_layout_preferences();
@@ -6946,18 +6964,21 @@ impl App {
         let mut rect: RECT = std::mem::zeroed();
         GetClientRect(self.hwnd, &mut rect);
         let (_, width, _, _) = explorer_geometry_with_sidebar(
-            rect.right, self.sidebar_requested_width,
-            self.locator_requested_width, self.locator_visible,
+            rect.right,
+            self.sidebar_requested_width,
+            self.locator_requested_width,
+            self.locator_visible,
         );
-        width > 0 && x >= rect.right - width - 8 && x <= rect.right - width
-            && y >= 106 && y < rect.bottom - 146
+        width > 0
+            && x >= rect.right - width - 8
+            && x <= rect.right - width
+            && y >= 106
+            && y < rect.bottom - 146
     }
     unsafe fn sidebar_splitter_hit(&self, x: i32, y: i32) -> bool {
         let mut rect: RECT = std::mem::zeroed();
         GetClientRect(self.hwnd, &mut rect);
-        sidebar_splitter_hit_test(
-            rect.right, rect.bottom, self.sidebar_requested_width, x, y,
-        )
+        sidebar_splitter_hit_test(rect.right, rect.bottom, self.sidebar_requested_width, x, y)
     }
 
     unsafe fn show_catalog_tools_menu(&mut self) {
@@ -7124,7 +7145,14 @@ impl App {
         let disk_height = disk_register_height(sidebar_height, self.categories_visible);
         MoveWindow(self.disk_filter, 8, 106, sidebar_width, 24, 1);
         MoveWindow(self.shelf_edit, 8, 134, sidebar_width - 60, 24, 1);
-        MoveWindow(self.disks, 8, 162, sidebar_width, (disk_height - 56).max(42), 1);
+        MoveWindow(
+            self.disks,
+            8,
+            162,
+            sidebar_width,
+            (disk_height - 56).max(42),
+            1,
+        );
         MoveWindow(
             self.category_list,
             8,
@@ -7211,9 +7239,19 @@ impl App {
         // Keep the legacy full-width table on narrow screens; the locator
         // becomes a third pane only when it does not obscure the file list.
         let (_, locator_width, file_width, _) = explorer_geometry_with_sidebar(
-            w, self.sidebar_requested_width, self.locator_requested_width, self.locator_visible,
+            w,
+            self.sidebar_requested_width,
+            self.locator_requested_width,
+            self.locator_visible,
         );
-        MoveWindow(self.files, sidebar_width + 14, 106, file_width, (h - 146).max(60), 1);
+        MoveWindow(
+            self.files,
+            sidebar_width + 14,
+            106,
+            file_width,
+            (h - 146).max(60),
+            1,
+        );
         for (index, width) in result_column_widths(file_width, locator_width > 0)
             .iter()
             .enumerate()
@@ -7628,7 +7666,11 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             let mut cursor: POINT = std::mem::zeroed();
             if GetCursorPos(&mut cursor) != 0 {
                 ScreenToClient(hwnd, &mut cursor);
-                if app.dragging_locator || app.dragging_sidebar || app.sidebar_splitter_hit(cursor.x, cursor.y) || app.locator_splitter_hit(cursor.x, cursor.y) {
+                if app.dragging_locator
+                    || app.dragging_sidebar
+                    || app.sidebar_splitter_hit(cursor.x, cursor.y)
+                    || app.locator_splitter_hit(cursor.x, cursor.y)
+                {
                     SetCursor(LoadCursorW(null_mut(), IDC_SIZEWE));
                     return 1;
                 }
