@@ -2596,7 +2596,11 @@ fn full_disk_register_manifest(
     collisions: &HashMap<i64, Vec<i64>>,
 ) -> Option<String> {
     let mut disks: Vec<&Value> = volumes.iter().collect();
-    if disks.is_empty() || disks.iter().any(|disk| !id(disk).is_some_and(|key| key > 0)) {
+    if disks.is_empty()
+        || disks
+            .iter()
+            .any(|disk| !id(disk).is_some_and(|key| key > 0))
+    {
         return None;
     }
     disks.sort_by_key(|disk| id(disk).unwrap_or_default());
@@ -2620,7 +2624,8 @@ fn full_disk_register_manifest(
             .as_u64()
             .map(|n| format!("{n} recorded entries"))
             .unwrap_or_else(|| "entry count unavailable".to_owned());
-        let badge = physical_state_label(states.get(&key).map(String::as_str).unwrap_or("unverified"));
+        let badge =
+            physical_state_label(states.get(&key).map(String::as_str).unwrap_or("unverified"));
         let shared = shelf_collision_warning(key, collisions)
             .map(|warning| format!(" • WARNING: {}", clean(&warning)))
             .unwrap_or_default();
@@ -2654,7 +2659,8 @@ mod full_disk_register_manifest_tests {
             &HashMap::from([(42, "live-uuid".to_owned())]),
             false,
         );
-        let manifest = full_disk_register_manifest(&volumes, &shelves, &stale, &collisions).unwrap();
+        let manifest =
+            full_disk_register_manifest(&volumes, &shelves, &stale, &collisions).unwrap();
         assert!(manifest.contains("2 catalog disk IDs; ALL REGISTERED DISKS"));
         assert!(manifest.find("#4 •").unwrap() < manifest.find("#42 •").unwrap());
         assert!(manifest.contains("Shelf 2"));
@@ -2664,8 +2670,12 @@ mod full_disk_register_manifest_tests {
         assert!(!manifest.contains("Архив\nБ"));
         assert!(full_disk_register_manifest(&[], &shelves, &stale, &collisions).is_none());
         assert!(full_disk_register_manifest(
-            &[json!({"id": 4}), json!({"id": 4})], &shelves, &stale, &collisions
-        ).is_none());
+            &[json!({"id": 4}), json!({"id": 4})],
+            &shelves,
+            &stale,
+            &collisions
+        )
+        .is_none());
     }
 }
 
@@ -4963,7 +4973,9 @@ impl App {
                         {
                             self.copy_full_disk_register();
                         } else {
-                            self.status("Original linked CTF SHA changed; FULL disk register NOT copied.");
+                            self.status(
+                                "Original linked CTF SHA changed; FULL disk register NOT copied.",
+                            );
                         }
                     }
                 }
@@ -5942,7 +5954,9 @@ impl App {
             &safe_states,
             &self.shelf_tag_conflicts,
         ) else {
-            self.status("Catalog volume IDs missing, empty or duplicated; full register NOT copied.");
+            self.status(
+                "Catalog volume IDs missing, empty or duplicated; full register NOT copied.",
+            );
             return;
         };
         self.text(self.locator, &manifest);
@@ -7066,10 +7080,14 @@ impl App {
                 if self.linked_ctf.is_some() {
                     if let Some(pinned) = self.linked_request("ctf_volumes_pinned") {
                         self.pending_full_disk_register = Some(self.generation);
-                        self.status("Rechecking original CTF SHA before copying ALL catalog disks...");
+                        self.status(
+                            "Rechecking original CTF SHA before copying ALL catalog disks...",
+                        );
                         self.call("full_disk_register_source", pinned);
                     } else {
-                        self.status("Linked CTF generation missing; full disk register NOT copied.");
+                        self.status(
+                            "Linked CTF generation missing; full disk register NOT copied.",
+                        );
                     }
                 } else {
                     self.copy_full_disk_register();
