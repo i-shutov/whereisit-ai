@@ -1,3 +1,34 @@
+## UX41 — persisted physical disk register sort (2026-11-03)
+
+Same draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57):
+the native Win32 and SwiftUI disk register offers Catalog order, owner sticker/
+shelf A–Z with missing tags last, or independently verified OS-state priority.
+Windows View/Ctrl+Shift+T and macOS compact header/Command+Shift+T cycle
+these **presentation-only** modes. Ties use exact catalog disk ID and the
+`copies:` candidate register retains its existing OS-state/metadata-count
+ranking; resorting may not reset global search, scoped disk, selected result,
+or genuine OS volume pairing. Settings live in UI preferences, never the CTF.
+Live "connected" still requires a fresh complete native OS check and pairing;
+neither badge nor sort implies file presence or byte-equality.
+
+Source changes: native Win32 and macOS code, compiled Windows Rust tests,
+dual-native Python contract, and
+[UX41 manual GUI/USB runbook](docs/qa/UX41_PHYSICAL_REGISTER_SORT_20261103.md).
+**Exact new HEAD CI is NOT yet verified at source integration.**
+Re-read PR HEAD and native Linux/Windows/macOS ARM+Intel, offline acceptance,
+integration, and installed RC2→RC3 upgrade workflows; if failed diagnose
+exact job/step and fix in SAME PR without disabling tests. Never infer manual
+GUI/accessibility or real USB verification from synthetic CI.
+
+Draft/unmerged; RC3 unsigned prerelease, stable 1.0 blocked by modified
+original CTF and two provider-blocked historical raw CTFs, Win10/11 and Mac
+ARM/Intel physical GUI/USB acceptance, signing/notarization, and measured
+real p95 ≤150 ms. Earlier genuine 44-disk/3,046,027-record CTF checks are
+historical real evidence, not synthetic. No private CTFs/paths/SHAs or other
+repositories changed.
+
+---
+
 ## UX40 — disk register takes priority over secondary category tools (2026-11-03)
 
 One integrated vertical in SAME draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57):
