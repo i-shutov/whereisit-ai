@@ -71,6 +71,7 @@ const NARROW_DISK_REGISTER: usize = 161;
 const SHOW_SEARCH_LATENCY: usize = 162;
 const RESET_SEARCH_LATENCY: usize = 163;
 const PAGE_DISKS_REGISTER: usize = 164;
+const COPY_FULL_DISK_REGISTER: usize = 165;
 
 fn export_menu_format_selection(command: usize) -> Option<usize> {
     match command {
@@ -2585,6 +2586,89 @@ mod disk_pickup_card_tests {
     }
 }
 
+// A retrieval inventory for ALL catalogued offline disks, irrespective of
+// selected search page, register filter or browse scope. Physical states are
+// always sourced from independently verified, time-bounded OS observations.
+fn full_disk_register_manifest(
+    volumes: &[Value],
+    shelves: &HashMap<i64, String>,
+    states: &HashMap<i64, String>,
+    collisions: &HashMap<i64, Vec<i64>>,
+) -> Option<String> {
+    let mut disks: Vec<&Value> = volumes.iter().collect();
+    if disks.is_empty() || disks.iter().any(|disk| !id(disk).is_some_and(|key| key > 0)) {
+        return None;
+    }
+    disks.sort_by_key(|disk| id(disk).unwrap_or_default());
+    if disks.windows(2).any(|pair| id(pair[0]) == id(pair[1])) {
+        return None;
+    }
+    let clean = |value: &str| value.replace(['\r', '\n', '\t'], " ");
+    let mut lines = vec![
+        "WhereIsIt AI — FULL offline physical disk register".to_owned(),
+        format!("{} catalog disk IDs; ALL REGISTERED DISKS, not a search page or current filter.", disks.len()),
+        "Physical state is a recent, independently paired OS filesystem UUID check only. NOT proof of file presence.".to_owned(),
+    ];
+    for disk in disks {
+        let key = id(disk)?;
+        let sticker = shelves
+            .get(&key)
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| clean(value))
+            .unwrap_or_else(|| "not assigned".to_owned());
+        let count = disk["entry_count"]
+            .as_u64()
+            .map(|n| format!("{n} recorded entries"))
+            .unwrap_or_else(|| "entry count unavailable".to_owned());
+        let badge = physical_state_label(states.get(&key).map(String::as_str).unwrap_or("unverified"));
+        let shared = shelf_collision_warning(key, collisions)
+            .map(|warning| format!(" • WARNING: {}", clean(&warning)))
+            .unwrap_or_default();
+        lines.push(format!(
+            "#{key} • {} • sticker/shelf: {sticker} • {count} • {badge}{shared}",
+            clean(&string(disk, "label"))
+        ));
+    }
+    lines.push(
+        "Use exact catalog IDs and your physical stickers. Historical volume letters and catalog paths are NOT current OS mount locations.".to_owned(),
+    );
+    lines.push(
+        "Filesystem UUIDs may be cloned. No file hashes or bytes were compared; never auto-delete metadata matches.".to_owned(),
+    );
+    Some(lines.join("\r\n"))
+}
+
+#[cfg(test)]
+mod full_disk_register_manifest_tests {
+    use super::*;
+    #[test]
+    fn inventory_is_full_exact_sorted_and_unverified_on_failed_probe() {
+        let volumes = vec![
+            json!({"id": 42, "label": "Архив\nБ", "entry_count": 7}),
+            json!({"id": 4, "label": "Архив\nА", "entry_count": 3}),
+        ];
+        let shelves = HashMap::from([(42, "Shelf\t2".to_owned()), (4, "Shelf\t2".to_owned())]);
+        let collisions = HashMap::from([(42, vec![4, 42]), (4, vec![4, 42])]);
+        let stale = verified_physical_state_map(
+            &HashMap::from([(42, "connected".to_owned())]),
+            &HashMap::from([(42, "live-uuid".to_owned())]),
+            false,
+        );
+        let manifest = full_disk_register_manifest(&volumes, &shelves, &stale, &collisions).unwrap();
+        assert!(manifest.contains("2 catalog disk IDs; ALL REGISTERED DISKS"));
+        assert!(manifest.find("#4 •").unwrap() < manifest.find("#42 •").unwrap());
+        assert!(manifest.contains("Shelf 2"));
+        assert!(manifest.contains("SHARED STICKER"));
+        assert!(manifest.contains("Physical connection: NOT VERIFIED"));
+        assert!(!manifest.contains("Physical connection: CONNECTED"));
+        assert!(!manifest.contains("Архив\nБ"));
+        assert!(full_disk_register_manifest(&[], &shelves, &stale, &collisions).is_none());
+        assert!(full_disk_register_manifest(
+            &[json!({"id": 4}), json!({"id": 4})], &shelves, &stale, &collisions
+        ).is_none());
+    }
+}
+
 // A live OS mount hint is available ONLY after service-side confirmation
 // of an explicitly paired volume identity and a unique current OS observation.
 // This never constructs a path from a recorded catalog drive letter.
@@ -4297,6 +4381,7 @@ struct App {
     global_search_latency: GlobalSearchLatencySession,
     pending_mount_root: Option<(i64, u64, bool)>,
     pending_disk_card: Option<(i64, u64)>,
+    pending_full_disk_register: Option<u64>,
     pending_locator_copy: Option<(i64, u64)>,
     pending_candidate_clipboard: Option<CandidateClipboardGuard>,
     generation: u64,
@@ -4392,6 +4477,7 @@ impl App {
             global_search_latency: GlobalSearchLatencySession::default(),
             pending_mount_root: None,
             pending_disk_card: None,
+            pending_full_disk_register: None,
             pending_locator_copy: None,
             pending_candidate_clipboard: None,
             generation: 0,
@@ -4561,6 +4647,7 @@ impl App {
         self.page_retry_available = false;
         self.pending_mount_root = None;
         self.pending_disk_card = None;
+        self.pending_full_disk_register = None;
         self.pending_locator_copy = None;
         self.pending_candidate_clipboard = None;
         self.categories.clear();
@@ -4596,6 +4683,7 @@ impl App {
             self.physical_probe_ok = false;
             self.mounted_volumes.clear();
             self.pending_disk_card = None;
+            self.pending_full_disk_register = None;
             self.pending_locator_copy = None;
             SendMessageW(self.disks, LB_RESETCONTENT, 0, 0);
             SendMessageW(self.category_list, LB_RESETCONTENT, 0, 0);
@@ -4861,6 +4949,21 @@ impl App {
                             self.status(
                                 "Linked CTF generation changed; selected locator NOT copied.",
                             );
+                        }
+                    }
+                }
+                continue;
+            }
+            if reply.tag == "full_disk_register_source" {
+                if let Some(token) = self.pending_full_disk_register.take() {
+                    if token == reply.generation && token == self.generation {
+                        if reply.result["ok"] == true
+                            && reply.result["data"]["generation"].as_str()
+                                == self.linked_generation.as_deref()
+                        {
+                            self.copy_full_disk_register();
+                        } else {
+                            self.status("Original linked CTF SHA changed; FULL disk register NOT copied.");
                         }
                     }
                 }
@@ -5829,6 +5932,25 @@ impl App {
         SendMessageW(self.locator, EM_SETSEL, 0, 0);
         self.update_disk_locator();
         self.status("Exact catalog disk pickup card copied locally; historical label/sticker and last OS state are NOT file or hardware proof.");
+    }
+
+    unsafe fn copy_full_disk_register(&mut self) {
+        let safe_states = self.safe_physical_states();
+        let Some(manifest) = full_disk_register_manifest(
+            &self.volumes,
+            &self.shelf_labels,
+            &safe_states,
+            &self.shelf_tag_conflicts,
+        ) else {
+            self.status("Catalog volume IDs missing, empty or duplicated; full register NOT copied.");
+            return;
+        };
+        self.text(self.locator, &manifest);
+        SendMessageW(self.locator, EM_SETSEL, 0, -1);
+        SendMessageW(self.locator, WM_COPY, 0, 0);
+        SendMessageW(self.locator, EM_SETSEL, 0, 0);
+        self.update_disk_locator();
+        self.status("FULL offline disk register copied locally (all catalog IDs, regardless of filter). OS states may expire; file bytes unverified.");
     }
 
     unsafe fn selected_physical_catalog_disk(&self) -> Option<i64> {
@@ -6940,6 +7062,19 @@ impl App {
             }
             COPY_VERIFIED_OS_ROOT => self.begin_verified_os_root_action(false),
             OPEN_VERIFIED_OS_ROOT => self.begin_verified_os_root_action(true),
+            COPY_FULL_DISK_REGISTER => {
+                if self.linked_ctf.is_some() {
+                    if let Some(pinned) = self.linked_request("ctf_volumes_pinned") {
+                        self.pending_full_disk_register = Some(self.generation);
+                        self.status("Rechecking original CTF SHA before copying ALL catalog disks...");
+                        self.call("full_disk_register_source", pinned);
+                    } else {
+                        self.status("Linked CTF generation missing; full disk register NOT copied.");
+                    }
+                } else {
+                    self.copy_full_disk_register();
+                }
+            }
             COPY_DISK_CARD => {
                 let Some(catalog_id) = self.selected_physical_catalog_disk() else {
                     self.status("Select a file or catalog disk before copying its pickup card.");
@@ -8451,6 +8586,12 @@ pub fn run() {
                 AppendMenuW(
                     view,
                     MF_STRING,
+                    COPY_FULL_DISK_REGISTER,
+                    wide("Copy FULL physical disk register\tCtrl+Shift+4").as_ptr(),
+                );
+                AppendMenuW(
+                    view,
+                    MF_STRING,
                     COPY_PICKUP_PLAN,
                     wide("Copy all candidate disks pickup list\tCtrl+Shift+P").as_ptr(),
                 );
@@ -8651,6 +8792,17 @@ pub fn run() {
                 && message.wParam == b'K' as usize
             {
                 (*app).command(COPY_REGISTER_FILTER, 0);
+                continue;
+            }
+            // Ctrl+Shift+4 copies every catalogued disk, independent of the
+            // current page or filter. Linked original source is re-pinned.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && GetKeyState(VK_SHIFT as i32) < 0
+                && GetKeyState(VK_MENU as i32) >= 0
+                && message.wParam == b'4' as usize
+            {
+                (*app).command(COPY_FULL_DISK_REGISTER, 0);
                 continue;
             }
             // Ctrl+Shift+6 opens only verified CURRENT page disk IDs.

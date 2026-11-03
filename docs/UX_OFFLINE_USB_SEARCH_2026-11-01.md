@@ -653,3 +653,8 @@ accompany the native code. Build success does not imply 1366×768/HiDPI,
 keyboard/VoiceOver, unplug/replug or clone tests were performed. Original
 modified/historical provider-blocked CTF, signing/notarization and real p95
 <=150ms are still stable 1.0 release gates. Draft PR #57 must remain unmerged.
+
+
+## UX46 — full physical disk register clipboard (2026-11-03)
+
+Same draft PR #57 adds an ALL-DISKS offline retrieval inventory (native Win32 Ctrl+Shift+4 / SwiftUI Command-Shift-4), independent of selected/filtered register, loaded page and browse scope. Every exact catalog ID, label, private shelf tag and shared-sticker conflict is represented. Live status uses only time-bounded, independently verified OS UUID/pairing, never guesses content. Linked CTF clipboard re-use independently rechecks source generation SHA; ambiguous/missing disk IDs refuse the action. Compiled Win32 regression, dual-client source contract and manual QA runbook: `docs/qa/UX46_FULL_OFFLINE_DISK_REGISTER_20261103.md`. **Source integrated; final exact-HEAD CI pending.** Stable blocked by manual GUI/USB, modified/historical CTF, signing/notarization and real p95 <=150ms. Draft PR, no merge or stable publication.

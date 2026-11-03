@@ -16,6 +16,24 @@ PHYSICAL = (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encod
 
 
 class DiskLocatorWiringTests(unittest.TestCase):
+    def test_ux46_full_offline_register_native_clipboard_is_all_disks_and_re_pinned(self):
+        self.assertIn("fn full_disk_register_manifest(", WIN)
+        self.assertIn("full_disk_register_manifest_tests", WIN)
+        self.assertIn("COPY_FULL_DISK_REGISTER => {", WIN)
+        self.assertIn('self.call("full_disk_register_source", pinned);', WIN)
+        self.assertIn('if reply.tag == "full_disk_register_source"', WIN)
+        self.assertIn('reply.result["data"]["generation"].as_str()', WIN)
+        self.assertIn("COPY_FULL_DISK_REGISTER, 0);", WIN)
+        self.assertIn("func copyFullDiskRegister()", MAC)
+        self.assertIn("private func writeFullDiskRegister(_ snapshot: [Volume])", MAC)
+        self.assertIn('pinned["op"] = "ctf_volumes_pinned"', MAC)
+        self.assertIn(r"Set(ordered.map(\.id)).count == ordered.count", MAC)
+        self.assertIn('Button("Full disk register") { model.copyFullDiskRegister() }', MAC)
+        self.assertIn('.keyboardShortcut("4", modifiers: [.command, .shift])', MAC)
+        self.assertIn("ALL REGISTERED DISKS", WIN)
+        self.assertIn("ALL REGISTERED DISKS", MAC)
+
+
     def test_ux45_current_page_disk_register_exact_and_fail_closed(self):
         self.assertIn("fn current_page_disk_counts(", WIN)
         self.assertIn("fn current_page_register_indices(", WIN)

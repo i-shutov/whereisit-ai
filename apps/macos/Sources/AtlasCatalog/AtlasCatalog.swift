@@ -1024,6 +1024,66 @@ private struct CandidateFolderReturnContext {
         }
     }
 
+    // ALL registered catalog disks, regardless of the loaded results page,
+    // temporary register filter or source browse scope. Linked mode rechecks
+    // the original CTF generation independently at clipboard time.
+    func copyFullDiskRegister() {
+        let token = generation
+        let scope = physicalScope
+        if linkedCTFPath != nil {
+            guard var pinned = linkedFields() else {
+                status = "Linked CTF generation missing; FULL disk register NOT copied."
+                return
+            }
+            pinned["op"] = "ctf_volumes_pinned"
+            status = "Rechecking original CTF SHA before copying ALL catalog disks…"
+            request(pinned, as: LinkedCTFResult<[Volume]>.self, generationToken: token) { [weak self] reply in
+                guard let self else { return }
+                guard self.generation == token, self.physicalScope == scope,
+                      reply?.generation == self.linkedGeneration,
+                      let verified = reply?.result,
+                      Set(verified.map(\.id)) == Set(self.volumes.map(\.id)) else {
+                    self.status = "Linked source or catalog register changed; FULL disk register NOT copied."
+                    return
+                }
+                self.writeFullDiskRegister(verified)
+            }
+        } else {
+            writeFullDiskRegister(volumes)
+        }
+    }
+    private func writeFullDiskRegister(_ snapshot: [Volume]) {
+        let ordered = snapshot.sorted { $0.id < $1.id }
+        guard !ordered.isEmpty, ordered.allSatisfy({ $0.id > 0 }),
+              Set(ordered.map(\.id)).count == ordered.count else {
+            status = "Catalog disk IDs missing or duplicated; FULL disk register NOT copied."
+            return
+        }
+        let clean: (String) -> String = {
+            $0.replacingOccurrences(of: "\r", with: " ")
+              .replacingOccurrences(of: "\n", with: " ")
+              .replacingOccurrences(of: "\t", with: " ")
+        }
+        var lines = [
+            "WhereIsIt AI — FULL offline physical disk register",
+            "\(ordered.count) catalog disk IDs; ALL REGISTERED DISKS, not a search page or current filter.",
+            "Physical state is a recent, independently paired OS filesystem UUID check only. NOT proof of file presence."
+        ]
+        for disk in ordered {
+            let sticker = shelfLabel(disk.id)
+            let tag = sticker.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "not assigned" : clean(sticker)
+            let count = disk.entry_count.map { "\($0) recorded entries" } ?? "entry count unavailable"
+            let warning = shelfConflictCaption(disk.id).map { " • WARNING: \(clean($0))" } ?? ""
+            lines.append("#\(disk.id) • \(clean(disk.label)) • sticker/shelf: \(tag) • \(count) • \(physicalCaption(disk.id))\(warning)")
+        }
+        lines.append("Use exact catalog IDs and your physical stickers. Historical letters and catalog paths are NOT current OS mount locations.")
+        lines.append("Filesystem UUIDs may be cloned. No file hashes or bytes were compared; never auto-delete metadata matches.")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
+        status = "FULL offline disk register copied locally (all catalog IDs, regardless of filter). OS states may expire; file bytes unverified."
+    }
+
     func copyPickupPlan() {
         verifyCandidateClipboardThen(.pickupList)
     }
@@ -2659,6 +2719,11 @@ private struct CandidateFolderReturnContext {
                         .keyboardShortcut("f", modifiers: [.command, .shift])
                         .accessibilityLabel("Browse recorded parent catalog folder of the selected file")
                         .help("Recorded catalog parent only; Back returns to search.")
+                    Button("Full disk register") { model.copyFullDiskRegister() }
+                        .disabled(model.volumes.isEmpty)
+                        .keyboardShortcut("4", modifiers: [.command, .shift])
+                        .accessibilityLabel("Copy every registered catalog disk ID, owner shelf tag, and last independently OS-verified status")
+                        .help("FULL offline USB inventory, not the current search page or filter; linked source SHA rechecked (Command-Shift-4)")
                     Button("Disk card") { model.copySelectedDiskPickupCard() }
                         .disabled(model.selectedDiskForPairing == nil)
                         .keyboardShortcut("l", modifiers: [.command, .shift])
