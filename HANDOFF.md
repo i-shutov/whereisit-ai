@@ -1,3 +1,23 @@
+## UX42 — compact 40-disk register + adjustable native sidebar (2026-11-03)
+
+Integrated in SAME draft PR #57: Win32 physical register now has a draggable
+200–400px sidebar separator (bounded to retain at least 600px results at 880px)
+and View/Ctrl+Alt+Left/Right adjustment, persisted in UI-only preferences.
+macOS SwiftUI retains resizable HSplitView and adds compact single-line disk
+rows by default; Command-Shift-9 toggles the detailed view with full VoiceOver
+disk/candidate/sticker-conflict description. This affects display only: no
+catalog search, scope, original SHA-pinned source, physical binding or user
+annotations change. Rust pure geometry/preference tests and dual-native
+source regression plus [manual UX42 runbook](docs/qa/UX42_ADAPTIVE_DISK_REGISTER_20261103.md)
+are included. **Exact-HEAD CI must be rechecked after integration before PASS
+claims**; manual USB/GUI/a11y acceptance is not established by CI.
+Original modified CTF, two provider-blocked historic CTF bytes, real hardware
+p95 <=150 ms, Win10/11/Mac ARM+Intel GUI and signing/notarization still block
+stable 1.0. Draft PR remains unmerged. No user CTF/SQLite/private data or
+other repositories modified.
+
+---
+
 ## UX41 — persisted physical disk register sort (2026-11-03)
 
 Same draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57):

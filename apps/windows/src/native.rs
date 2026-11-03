@@ -66,6 +66,8 @@ const EXPORT_MENU_CTF: usize = 156;
 const EXPORT_MENU_JSON: usize = 157;
 const TOGGLE_CATEGORIES: usize = 158;
 const CYCLE_DISK_REGISTER_ORDER: usize = 159;
+const WIDEN_DISK_REGISTER: usize = 160;
+const NARROW_DISK_REGISTER: usize = 161;
 
 fn export_menu_format_selection(command: usize) -> Option<usize> {
     match command {
@@ -993,6 +995,24 @@ fn read_ui_layout_preferences() -> (bool, i32) {
         .ok()
         .map(|raw| parse_ui_layout_preferences(&raw))
         .unwrap_or((true, 282))
+}
+
+// The disk register width is a private UI preference, not a disk identity.
+// Legacy/corrupt layout records default to a compact 200-pixel register.
+fn parse_sidebar_width_preference(raw: &str) -> i32 {
+    let Ok(value) = serde_json::from_str::<Value>(raw) else {
+        return 200;
+    };
+    if value["version"].as_u64() != Some(1) {
+        return 200;
+    }
+    value["sidebar_width"].as_i64().unwrap_or(200).clamp(200, 400) as i32
+}
+fn read_sidebar_width_preference() -> i32 {
+    std::fs::read_to_string(config_dir().join("ui-layout.json"))
+        .ok()
+        .map(|raw| parse_sidebar_width_preference(&raw))
+        .unwrap_or(200)
 }
 
 // UI-only, versioned preference. Old/corrupt files default to search-first.
@@ -2703,21 +2723,27 @@ fn explorer_geometry(window_width: i32) -> (i32, i32, i32) {
     explorer_geometry_for_width(window_width, 282, true)
 }
 
-// A real Win32 three-pane splitter; the disk register stays 200px wide.
-// Retain at least 600px for results, and collapse the inspector below 1120px.
-fn explorer_geometry_for_width(
+// Reserve a readable result table when the operator widens the 40-disk
+// register; narrow windows automatically clamp the sidebar or hide locator.
+fn bounded_sidebar_width(window_width: i32, requested: i32) -> i32 {
+    requested.clamp(200, 400).min((window_width - 622).max(200))
+}
+fn explorer_geometry_with_sidebar(
     window_width: i32,
+    requested_sidebar: i32,
     requested_locator: i32,
     visible: bool,
-) -> (i32, i32, i32) {
-    let maximum = (window_width - 222 - 8 - 600).min(420);
+) -> (i32, i32, i32, i32) {
+    let sidebar = bounded_sidebar_width(window_width, requested_sidebar);
+    let maximum = (window_width - sidebar - 22 - 8 - 600).min(420);
     let locator_width = if visible && window_width >= 1120 && maximum >= 220 {
         requested_locator.clamp(220, maximum)
     } else {
         0
     };
     let file_width = (window_width
-        - 222
+        - sidebar
+        - 22
         - if locator_width > 0 {
             locator_width + 8
         } else {
@@ -2729,7 +2755,26 @@ fn explorer_geometry_for_width(
     } else {
         0
     };
-    (locator_width, file_width, path_column_width)
+    (sidebar, locator_width, file_width, path_column_width)
+}
+fn explorer_geometry_for_width(
+    window_width: i32,
+    requested_locator: i32,
+    visible: bool,
+) -> (i32, i32, i32) {
+    let (_, locator, files, path) =
+        explorer_geometry_with_sidebar(window_width, 200, requested_locator, visible);
+    (locator, files, path)
+}
+fn sidebar_splitter_hit_test(
+    window_width: i32,
+    window_height: i32,
+    requested_sidebar: i32,
+    x: i32,
+    y: i32,
+) -> bool {
+    let grip = bounded_sidebar_width(window_width, requested_sidebar) + 8;
+    x >= grip && x <= grip + 6 && y >= 106 && y < window_height - 40
 }
 
 // Keep the historical path visible when the locator cannot fit, even at
@@ -2775,7 +2820,11 @@ fn locator_splitter_hit_test(
 
 #[cfg(test)]
 mod locator_splitter_tests {
-    use super::{explorer_geometry_for_width, locator_splitter_hit_test, result_column_widths};
+    use super::{
+        bounded_sidebar_width, explorer_geometry_for_width, explorer_geometry_with_sidebar,
+        locator_splitter_hit_test, parse_sidebar_width_preference, result_column_widths,
+        sidebar_splitter_hit_test,
+    };
 
     #[test]
     fn pane_resizing_respects_minimum_result_space_and_can_hide() {
@@ -2791,6 +2840,31 @@ mod locator_splitter_tests {
         assert_eq!(explorer_geometry_for_width(880, 282, true), (0, 658, 185));
         assert_eq!(explorer_geometry_for_width(1120, 282, true), (282, 608, 0));
         assert_eq!(explorer_geometry_for_width(1119, 282, true), (0, 897, 185));
+    }
+
+    #[test]
+    fn sidebar_preference_is_private_versioned_and_fail_closed() {
+        assert_eq!(parse_sidebar_width_preference("not json"), 200);
+        assert_eq!(parse_sidebar_width_preference(r#"{"version":2,"sidebar_width":400}"#), 200);
+        assert_eq!(parse_sidebar_width_preference(r#"{"version":1,"sidebar_width":999}"#), 400);
+        assert_eq!(parse_sidebar_width_preference(r#"{"version":1,"sidebar_width":150}"#), 200);
+        assert_eq!(parse_sidebar_width_preference(r#"{"version":1}"#), 200);
+    }
+
+    #[test]
+    fn adjustable_register_keeps_results_readable_and_does_not_shift_catalog_identity() {
+        assert_eq!(bounded_sidebar_width(1366, 370), 370);
+        assert_eq!(bounded_sidebar_width(880, 400), 258);
+        assert_eq!(bounded_sidebar_width(1366, -50), 200);
+        assert_eq!(explorer_geometry_with_sidebar(880, 400, 282, true), (258, 0, 600, 185));
+        let (side, locator, files, _) =
+            explorer_geometry_with_sidebar(1366, 370, 282, true);
+        assert_eq!(side, 370);
+        assert_eq!(locator, 220);
+        assert_eq!(files, 754);
+        assert!(sidebar_splitter_hit_test(1366, 740, 370, 378, 300));
+        assert!(!sidebar_splitter_hit_test(1366, 740, 370, 600, 300));
+        assert!(!sidebar_splitter_hit_test(1366, 740, 370, 378, 80));
     }
 
     #[test]
@@ -3964,8 +4038,10 @@ struct App {
     locator: HWND,
     locator_requested_width: i32,
     locator_visible: bool,
+    sidebar_requested_width: i32,
     categories_visible: bool,
     dragging_locator: bool,
+    dragging_sidebar: bool,
     page_sort_column: Option<usize>,
     page_sort_descending: bool,
     buttons: Vec<(usize, HWND)>,
@@ -4055,8 +4131,10 @@ impl App {
             locator: null_mut(),
             locator_requested_width: locator_width,
             locator_visible,
+            sidebar_requested_width: read_sidebar_width_preference(),
             categories_visible: read_categories_visible_preference(),
             dragging_locator: false,
+            dragging_sidebar: false,
             page_sort_column: None,
             page_sort_descending: false,
             buttons: vec![],
@@ -5769,6 +5847,7 @@ impl App {
         if std::fs::create_dir_all(&dir).is_ok() {
             let data = json!({"version":1, "locator_visible":self.locator_visible,
                 "locator_width":self.locator_requested_width.clamp(220, 420),
+                "sidebar_width":self.sidebar_requested_width.clamp(200, 400),
                 "categories_visible":self.categories_visible,
                 "disk_register_order":self.disk_register_order.preference()});
             let _ = std::fs::write(dir.join("ui-layout.json"), data.to_string());
@@ -6644,6 +6723,15 @@ impl App {
                     self.copy_current_locator_selection(entry_id);
                 }
             }
+            WIDEN_DISK_REGISTER | NARROW_DISK_REGISTER => {
+                let delta = if command == WIDEN_DISK_REGISTER { 40 } else { -40 };
+                self.sidebar_requested_width =
+                    (self.sidebar_requested_width + delta).clamp(200, 400);
+                self.save_ui_layout_preferences();
+                self.layout();
+                InvalidateRect(self.hwnd, null(), 0);
+                self.status("Physical disk register width changed; catalog IDs, scope and search preserved.");
+            }
             CYCLE_DISK_REGISTER_ORDER => {
                 self.disk_register_order = self.disk_register_order.next();
                 self.save_ui_layout_preferences();
@@ -6857,13 +6945,18 @@ impl App {
     unsafe fn locator_splitter_hit(&self, x: i32, y: i32) -> bool {
         let mut rect: RECT = std::mem::zeroed();
         GetClientRect(self.hwnd, &mut rect);
-        locator_splitter_hit_test(
-            rect.right,
-            rect.bottom,
-            self.locator_requested_width,
-            self.locator_visible,
-            x,
-            y,
+        let (_, width, _, _) = explorer_geometry_with_sidebar(
+            rect.right, self.sidebar_requested_width,
+            self.locator_requested_width, self.locator_visible,
+        );
+        width > 0 && x >= rect.right - width - 8 && x <= rect.right - width
+            && y >= 106 && y < rect.bottom - 146
+    }
+    unsafe fn sidebar_splitter_hit(&self, x: i32, y: i32) -> bool {
+        let mut rect: RECT = std::mem::zeroed();
+        GetClientRect(self.hwnd, &mut rect);
+        sidebar_splitter_hit_test(
+            rect.right, rect.bottom, self.sidebar_requested_width, x, y,
         )
     }
 
@@ -7026,20 +7119,21 @@ impl App {
             }
         }
         MoveWindow(self.location, 8, 83, (w - 16).max(50), 20, 1);
+        let sidebar_width = bounded_sidebar_width(w, self.sidebar_requested_width);
         let sidebar_height = (h - 146).max(200);
         let disk_height = disk_register_height(sidebar_height, self.categories_visible);
-        MoveWindow(self.disk_filter, 8, 106, 200, 24, 1);
-        MoveWindow(self.shelf_edit, 8, 134, 140, 24, 1);
-        MoveWindow(self.disks, 8, 162, 200, (disk_height - 56).max(42), 1);
+        MoveWindow(self.disk_filter, 8, 106, sidebar_width, 24, 1);
+        MoveWindow(self.shelf_edit, 8, 134, sidebar_width - 60, 24, 1);
+        MoveWindow(self.disks, 8, 162, sidebar_width, (disk_height - 56).max(42), 1);
         MoveWindow(
             self.category_list,
             8,
             112 + disk_height,
-            200,
+            sidebar_width,
             (sidebar_height - disk_height - 66).max(40),
             1,
         );
-        MoveWindow(self.category_name, 8, h - 92, 150, 24, 1);
+        MoveWindow(self.category_name, 8, h - 92, sidebar_width - 50, 24, 1);
         let category_visibility = if self.categories_visible {
             SW_SHOW
         } else {
@@ -7050,11 +7144,11 @@ impl App {
         for (command, control) in &self.buttons {
             match *command {
                 CATEGORY_CREATE => {
-                    MoveWindow(*control, 164, h - 92, 44, 24, 1);
+                    MoveWindow(*control, sidebar_width - 36, h - 92, 44, 24, 1);
                     ShowWindow(*control, category_visibility);
                 }
                 SHELF_SAVE => {
-                    MoveWindow(*control, 154, 134, 54, 24, 1);
+                    MoveWindow(*control, sidebar_width - 46, 134, 54, 24, 1);
                 }
                 VIDEO_FILTER => {
                     MoveWindow(*control, w - 290, 62, 132, 23, 1);
@@ -7108,7 +7202,7 @@ impl App {
                     ShowWindow(*control, category_visibility);
                 }
                 CATEGORY_ASSIGN => {
-                    MoveWindow(*control, 102, h - 64, 106, 24, 1);
+                    MoveWindow(*control, 102, h - 64, sidebar_width - 94, 24, 1);
                     ShowWindow(*control, category_visibility);
                 }
                 _ => {}
@@ -7116,9 +7210,10 @@ impl App {
         }
         // Keep the legacy full-width table on narrow screens; the locator
         // becomes a third pane only when it does not obscure the file list.
-        let (locator_width, file_width, _) =
-            explorer_geometry_for_width(w, self.locator_requested_width, self.locator_visible);
-        MoveWindow(self.files, 214, 106, file_width, (h - 146).max(60), 1);
+        let (_, locator_width, file_width, _) = explorer_geometry_with_sidebar(
+            w, self.sidebar_requested_width, self.locator_requested_width, self.locator_visible,
+        );
+        MoveWindow(self.files, sidebar_width + 14, 106, file_width, (h - 146).max(60), 1);
         for (index, width) in result_column_widths(file_width, locator_width > 0)
             .iter()
             .enumerate()
@@ -7128,7 +7223,7 @@ impl App {
         if locator_width > 0 {
             MoveWindow(
                 self.locator,
-                214 + file_width + 8,
+                sidebar_width + 14 + file_width + 8,
                 106,
                 locator_width,
                 (h - 336).max(60),
@@ -7151,7 +7246,7 @@ impl App {
         ] {
             if let Some((_, button)) = self.buttons.iter().find(|(id, _)| *id == command) {
                 if locator_width > 0 {
-                    let left = 214 + file_width + 8;
+                    let left = sidebar_width + 14 + file_width + 8;
                     let half = (locator_width - 6) / 2;
                     let (button_left, button_width) = match command {
                         BROWSE_RECORDED_FOLDER => (left, half),
@@ -7489,12 +7584,24 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
         WM_LBUTTONDOWN => {
             let x = (lp as u16 as i16) as i32;
             let y = ((lp >> 16) as u16 as i16) as i32;
+            if app.sidebar_splitter_hit(x, y) {
+                app.dragging_sidebar = true;
+                SetCapture(hwnd);
+                return 0;
+            }
             if app.locator_splitter_hit(x, y) {
                 app.dragging_locator = true;
                 SetCapture(hwnd);
                 return 0;
             }
             DefWindowProcW(hwnd, msg, wp, lp)
+        }
+        WM_MOUSEMOVE if app.dragging_sidebar => {
+            let x = (lp as u16 as i16) as i32;
+            app.sidebar_requested_width = (x - 8).clamp(200, 400);
+            app.layout();
+            InvalidateRect(hwnd, null(), 0);
+            0
         }
         WM_MOUSEMOVE if app.dragging_locator => {
             let x = (lp as u16 as i16) as i32;
@@ -7505,21 +7612,23 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             InvalidateRect(hwnd, null(), 0);
             0
         }
-        WM_LBUTTONUP if app.dragging_locator => {
+        WM_LBUTTONUP if app.dragging_locator || app.dragging_sidebar => {
             app.dragging_locator = false;
+            app.dragging_sidebar = false;
             app.save_ui_layout_preferences();
             ReleaseCapture();
             0
         }
         WM_CAPTURECHANGED => {
             app.dragging_locator = false;
+            app.dragging_sidebar = false;
             0
         }
         WM_SETCURSOR => {
             let mut cursor: POINT = std::mem::zeroed();
             if GetCursorPos(&mut cursor) != 0 {
                 ScreenToClient(hwnd, &mut cursor);
-                if app.dragging_locator || app.locator_splitter_hit(cursor.x, cursor.y) {
+                if app.dragging_locator || app.dragging_sidebar || app.sidebar_splitter_hit(cursor.x, cursor.y) || app.locator_splitter_hit(cursor.x, cursor.y) {
                     SetCursor(LoadCursorW(null_mut(), IDC_SIZEWE));
                     return 1;
                 }
@@ -7536,6 +7645,16 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
                 app.locator_requested_width,
                 app.locator_visible,
             );
+            let sidebar_grip = bounded_sidebar_width(rect.right, app.sidebar_requested_width) + 8;
+            for offset in [1, 4] {
+                let grip = RECT {
+                    left: sidebar_grip + offset,
+                    top: 106,
+                    right: sidebar_grip + offset + 1,
+                    bottom: (rect.bottom - 40).max(107),
+                };
+                FillRect(dc, &grip, GetSysColorBrush(COLOR_3DSHADOW));
+            }
             if locator_width > 0 {
                 let left = rect.right - locator_width - 8;
                 let middle = (rect.bottom - 40) / 2;
@@ -7929,6 +8048,18 @@ pub fn run() {
                 AppendMenuW(
                     view,
                     MF_STRING,
+                    NARROW_DISK_REGISTER,
+                    wide("Narrow disk register\tCtrl+Alt+Left").as_ptr(),
+                );
+                AppendMenuW(
+                    view,
+                    MF_STRING,
+                    WIDEN_DISK_REGISTER,
+                    wide("Widen disk register\tCtrl+Alt+Right").as_ptr(),
+                );
+                AppendMenuW(
+                    view,
+                    MF_STRING,
                     CYCLE_DISK_REGISTER_ORDER,
                     wide("Cycle disk register order\tCtrl+Shift+T").as_ptr(),
                 );
@@ -8042,6 +8173,24 @@ pub fn run() {
                         NEXT
                     } else {
                         PREV
+                    },
+                    0,
+                );
+                continue;
+            }
+            // Resize only the native physical disk register, preserving the
+            // selected catalog entry, global search, and exact disk IDs.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && GetKeyState(VK_MENU as i32) < 0
+                && GetKeyState(VK_SHIFT as i32) >= 0
+                && (message.wParam == VK_LEFT as usize || message.wParam == VK_RIGHT as usize)
+            {
+                (*app).command(
+                    if message.wParam == VK_RIGHT as usize {
+                        WIDEN_DISK_REGISTER
+                    } else {
+                        NARROW_DISK_REGISTER
                     },
                     0,
                 );

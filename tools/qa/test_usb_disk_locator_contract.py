@@ -16,6 +16,33 @@ PHYSICAL = (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encod
 
 
 class DiskLocatorWiringTests(unittest.TestCase):
+    def test_ux42_adaptive_register_density_is_view_only_and_keyboard_accessible(self):
+        self.assertIn("fn bounded_sidebar_width(", WIN)
+        self.assertIn("fn explorer_geometry_with_sidebar(", WIN)
+        self.assertIn("fn sidebar_splitter_hit_test(", WIN)
+        self.assertIn("adjustable_register_keeps_results_readable_and_does_not_shift_catalog_identity", WIN)
+        self.assertIn("sidebar_preference_is_private_versioned_and_fail_closed", WIN)
+        self.assertIn('"sidebar_width":self.sidebar_requested_width.clamp(200, 400)', WIN)
+        self.assertIn("sidebar_requested_width: read_sidebar_width_preference()", WIN)
+        self.assertIn("WM_MOUSEMOVE if app.dragging_sidebar => {", WIN)
+        self.assertIn("WIDEN_DISK_REGISTER | NARROW_DISK_REGISTER => {", WIN)
+        self.assertIn("Ctrl+Alt+Left", WIN)
+        self.assertIn("Ctrl+Alt+Right", WIN)
+        width_action = WIN.split("WIDEN_DISK_REGISTER | NARROW_DISK_REGISTER => {", 1)[1].split(
+            "CYCLE_DISK_REGISTER_ORDER => {", 1)[0]
+        for forbidden in ("self.load()", "self.refresh_physical_presence()",
+                          "self.volume =", "self.query =", "self.call("):
+            self.assertNotIn(forbidden, width_action)
+        self.assertIn('@AppStorage("AtlasCatalog.compactDiskRows")', MAC)
+        self.assertIn("if compactDiskRows {", MAC)
+        self.assertIn("compactDiskRows.toggle()", MAC)
+        self.assertIn('.keyboardShortcut("9", modifiers: [.command, .shift])', MAC)
+        self.assertIn("accessibilityLabel(compactDiskRows ?", MAC)
+        self.assertIn("model.candidateCopyOSCaption(disk.id)", MAC)
+        self.assertIn("model.physicalCaption(disk.id)", MAC)
+        self.assertIn(".tag(Optional(disk.id))", MAC)
+        self.assertIn("model.candidateRegisterAccessibility(disk)", MAC)
+
     def test_ux41_register_order_is_native_private_and_view_only(self):
         # Catalog/owner sticker/OS-state order are view-only permutations
         # of exact catalog IDs; cannot alter the service's read-only CTF scope.

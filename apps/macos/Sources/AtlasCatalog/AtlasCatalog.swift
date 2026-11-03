@@ -2432,6 +2432,7 @@ private struct CandidateFolderReturnContext {
     @FocusState private var resultTableFocused: Bool
     @AppStorage("AtlasCatalog.locatorVisible") private var locatorVisible = true
     @AppStorage("AtlasCatalog.categoriesVisible") private var categoriesVisible = false
+    @AppStorage("AtlasCatalog.compactDiskRows") private var compactDiskRows = true
     var body: some View {
         VStack(spacing: 4) {
             HStack(spacing: 6) {
@@ -2673,6 +2674,15 @@ private struct CandidateFolderReturnContext {
                         .accessibilityHint("Catalog order, owner sticker and shelf A to Z, or last independently verified OS state. Does not change search, selected file or disk pairing.")
                         .help("Register order: \(model.registerOrderCaption) (Command-Shift-T); copy candidates retain their priority")
                         Button {
+                            compactDiskRows.toggle()
+                        } label: {
+                            Image(systemName: compactDiskRows ? "rectangle.grid.1x2" : "line.3.horizontal")
+                        }
+                        .keyboardShortcut("9", modifiers: [.command, .shift])
+                        .accessibilityLabel(compactDiskRows ? "Show detailed disk register rows" : "Show compact disk register rows")
+                        .accessibilityHint("Changes only the row height; selected catalog disk, physical pairing and search remain unchanged.")
+                        .help("Toggle dense 40-disk register (Command-Shift-9)")
+                        Button {
                             diskFilterFocused = true
                         } label: {
                             Image(systemName: "line.3.horizontal.decrease")
@@ -2712,18 +2722,37 @@ private struct CandidateFolderReturnContext {
                         Text("All disks / global search").tag(Optional<Int64>.none)
                         ForEach(model.visibleVolumes) { disk in
                             VStack(alignment: .leading, spacing: 1) {
-                                Label(model.isCandidateRegisterMode
-                                      ? "#\(disk.id) • \(model.candidateRegisterCount(disk.id)) name+size candidates • \(disk.label)"
-                                      : "#\(disk.id) • \(disk.label)", systemImage: "externaldrive")
-                                if model.shelfConflictCaption(disk.id) != nil {
-                                    Text(model.shelfConflictCaption(disk.id) ?? "SHARED STICKER")
-                                        .font(.caption2).foregroundStyle(.orange)
-                                        .accessibilityLabel(model.shelfConflictCaption(disk.id) ?? "SHARED STICKER")
+                                if compactDiskRows {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "externaldrive")
+                                            .foregroundStyle(.secondary)
+                                        Text("#\(disk.id) • \(disk.label)")
+                                            .lineLimit(1)
+                                        if model.shelfConflictCaption(disk.id) != nil {
+                                            Image(systemName: "exclamationmark.triangle.fill")
+                                                .foregroundStyle(.orange)
+                                                .help(model.shelfConflictCaption(disk.id) ?? "Shared sticker")
+                                        }
+                                        Spacer(minLength: 1)
+                                        Text(model.isCandidateRegisterMode
+                                            ? "\(model.candidateRegisterCount(disk.id)) candidates • \(model.candidateCopyOSCaption(disk.id))"
+                                            : "\(model.shelfLabel(disk.id).isEmpty ? "" : model.shelfLabel(disk.id) + " • ")\(model.physicalCaption(disk.id))")
+                                            .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                                    }
+                                } else {
+                                    Label(model.isCandidateRegisterMode
+                                          ? "#\(disk.id) • \(model.candidateRegisterCount(disk.id)) name+size candidates • \(disk.label)"
+                                          : "#\(disk.id) • \(disk.label)", systemImage: "externaldrive")
+                                    if model.shelfConflictCaption(disk.id) != nil {
+                                        Text(model.shelfConflictCaption(disk.id) ?? "SHARED STICKER")
+                                            .font(.caption2).foregroundStyle(.orange)
+                                            .accessibilityLabel(model.shelfConflictCaption(disk.id) ?? "SHARED STICKER")
+                                    }
+                                    Text(model.isCandidateRegisterMode
+                                        ? "\(model.shelfLabel(disk.id).isEmpty ? "No sticker" : "Shelf: " + model.shelfLabel(disk.id)) • \(model.candidateCopyOSCaption(disk.id)) • content unverified"
+                                        : "\(model.shelfLabel(disk.id).isEmpty ? "" : "Shelf: " + model.shelfLabel(disk.id) + " • ")\(disk.entry_count ?? 0) items • \(model.physicalCaption(disk.id))")
+                                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                                 }
-                                Text(model.isCandidateRegisterMode
-                                    ? "\(model.shelfLabel(disk.id).isEmpty ? "No sticker" : "Shelf: " + model.shelfLabel(disk.id)) • \(model.candidateCopyOSCaption(disk.id)) • content unverified"
-                                    : "\(model.shelfLabel(disk.id).isEmpty ? "" : "Shelf: " + model.shelfLabel(disk.id) + " • ")\(disk.entry_count ?? 0) items • \(model.physicalCaption(disk.id))")
-                                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             }
                             .tag(Optional(disk.id))
                             .accessibilityElement(children: .combine)
@@ -2758,7 +2787,7 @@ private struct CandidateFolderReturnContext {
                             Button("Assign selected") { model.assignCategory() }.disabled(model.linkedMode || model.selection == nil || model.categoryID == nil)
                         }.padding(.horizontal, 5)
                     }
-                }.frame(minWidth: 170, idealWidth: 220, maxWidth: 320)
+                }.frame(minWidth: 190, idealWidth: 245, maxWidth: 360)
                 Table(model.displayEntries, selection: $model.selection) {
                     TableColumn("Name") { entry in Label(entry.name, systemImage: entry.isFolder ? "folder" : "doc").lineLimit(1) }.width(min: 145, ideal: 230)
                     TableColumn("Disk") { entry in
