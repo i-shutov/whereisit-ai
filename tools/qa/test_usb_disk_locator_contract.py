@@ -16,6 +16,29 @@ PHYSICAL = (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encod
 
 
 class DiskLocatorWiringTests(unittest.TestCase):
+    def test_ux44_bounded_native_global_search_diagnostics(self):
+        self.assertIn("struct GlobalSearchLatencySession", WIN)
+        self.assertIn("GLOBAL_SEARCH_LATENCY_WINDOW: usize = 128", WIN)
+        self.assertIn("GLOBAL_SEARCH_LATENCY_MIN: usize = 30", WIN)
+        self.assertIn("global_search_latency_eligible(", WIN)
+        self.assertIn('!self.linked_mode() || data["source_sha_checked"] == true', WIN)
+        self.assertIn("global_search_latency.reset()", WIN)
+        self.assertIn("session.percentile(95), Some(38)", WIN)
+        self.assertIn("NOT hardware/release acceptance", WIN)
+        self.assertIn("SHOW_SEARCH_LATENCY =>", WIN)
+        self.assertIn("RESET_SEARCH_LATENCY =>", WIN)
+        self.assertIn("private var globalSearchLatencyMs: [Int] = []", MAC)
+        self.assertIn("private let globalSearchLatencyWindow = 128", MAC)
+        self.assertIn("globalSearchLatencyMs.removeAll()", MAC)
+        self.assertIn("recordGlobalSearchLatency(elapsedMs)", MAC)
+        self.assertIn("guard pageReady, !appliedQuery.isEmpty, volumeID == nil,", MAC)
+        self.assertIn("!showingDuplicates, copySourceID == nil else { return }", MAC)
+        self.assertIn("func showGlobalSearchLatency()", MAC)
+        self.assertIn("func resetGlobalSearchLatency()", MAC)
+        self.assertIn('.keyboardShortcut("8", modifiers: [.command, .shift])', MAC)
+        self.assertIn('.keyboardShortcut("7", modifiers: [.command, .shift])', MAC)
+        self.assertNotIn("UserDefaults.standard.set(globalSearchLatencyMs", MAC)
+
     def test_ux43_verified_local_page_latency_and_one_fresh_ctf_sha_per_reuse(self):
         # Measured only on fresh successful pages. No private identifiers and
         # no claim that CI timings satisfy an owner's hardware p95 SLO.

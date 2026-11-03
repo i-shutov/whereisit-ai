@@ -68,6 +68,8 @@ const TOGGLE_CATEGORIES: usize = 158;
 const CYCLE_DISK_REGISTER_ORDER: usize = 159;
 const WIDEN_DISK_REGISTER: usize = 160;
 const NARROW_DISK_REGISTER: usize = 161;
+const SHOW_SEARCH_LATENCY: usize = 162;
+const RESET_SEARCH_LATENCY: usize = 163;
 
 fn export_menu_format_selection(command: usize) -> Option<usize> {
     match command {
@@ -3900,6 +3902,81 @@ fn annotation_reply_current(tag: &str, request_session: u64, active_session: u64
     ) || request_session == active_session
 }
 
+
+const GLOBAL_SEARCH_LATENCY_WINDOW: usize = 128;
+const GLOBAL_SEARCH_LATENCY_MIN: usize = 30;
+
+// A local-only, bounded session. Never retain a query, path, disk ID or CTF SHA.
+fn global_search_latency_eligible(
+    ready: bool,
+    sha_checked: bool,
+    disk: Option<i64>,
+    query: &str,
+    duplicates: bool,
+    copies: bool,
+) -> bool {
+    ready && sha_checked && disk.is_none() && !query.is_empty() && !duplicates && !copies
+}
+
+#[derive(Default)]
+struct GlobalSearchLatencySession {
+    samples_ms: Vec<u64>,
+}
+impl GlobalSearchLatencySession {
+    fn reset(&mut self) { self.samples_ms.clear(); }
+    fn observe(&mut self, eligible: bool, ms: u64) {
+        if !eligible { return; }
+        if self.samples_ms.len() == GLOBAL_SEARCH_LATENCY_WINDOW {
+            self.samples_ms.remove(0);
+        }
+        self.samples_ms.push(ms);
+    }
+    fn percentile(&self, percent: usize) -> Option<u64> {
+        if self.samples_ms.is_empty() || percent == 0 || percent > 100 { return None; }
+        let mut sorted = self.samples_ms.clone();
+        sorted.sort_unstable();
+        sorted.get((sorted.len() * percent).div_ceil(100) - 1).copied()
+    }
+    fn summary(&self) -> String {
+        let n = self.samples_ms.len();
+        if n < GLOBAL_SEARCH_LATENCY_MIN {
+            return format!("Global search: {n}/30 fresh verified pages; no p95 yet. Local-only diagnostic.");
+        }
+        format!("Global search: {n} fresh pages; session p50={} ms, p95={} ms (nearest-rank, last 128). NOT hardware/release acceptance.",
+            self.percentile(50).unwrap_or_default(), self.percentile(95).unwrap_or_default())
+    }
+}
+
+#[cfg(test)]
+mod global_search_latency_tests {
+    use super::*;
+    #[test]
+    fn bounded_verified_session_is_not_an_slo_acceptance() {
+        let mut session = GlobalSearchLatencySession::default();
+        for (ready, sha, disk, query, dup, copies) in [
+            (false, true, None, "film", false, false),
+            (true, false, None, "film", false, false),
+            (true, true, Some(3), "film", false, false),
+            (true, true, None, "", false, false),
+            (true, true, None, "film", true, false),
+            (true, true, None, "film", false, true)
+        ] {
+            session.observe(global_search_latency_eligible(ready, sha, disk, query, dup, copies), 1);
+        }
+        assert!(session.samples_ms.is_empty());
+        for ms in 1..=40 { session.observe(true, ms); }
+        assert_eq!(session.percentile(50), Some(20));
+        assert_eq!(session.percentile(95), Some(38));
+        assert!(session.summary().contains("NOT hardware/release acceptance"));
+        for ms in 41..=200 { session.observe(true, ms); }
+        assert_eq!(session.samples_ms.len(), GLOBAL_SEARCH_LATENCY_WINDOW);
+        assert_eq!(session.percentile(95), Some(194));
+        session.reset();
+        assert!(session.summary().contains("0/30"));
+        assert_eq!(session.percentile(95), None);
+    }
+}
+
 struct Reply {
     database: String,
     tag: &'static str,
@@ -4129,6 +4206,7 @@ struct App {
     page_awaiting: bool,
     page_retry_available: bool,
     last_page_elapsed_ms: Option<u64>,
+    global_search_latency: GlobalSearchLatencySession,
     pending_mount_root: Option<(i64, u64, bool)>,
     pending_disk_card: Option<(i64, u64)>,
     pending_locator_copy: Option<(i64, u64)>,
@@ -4223,6 +4301,7 @@ impl App {
             page_awaiting: false,
             page_retry_available: false,
             last_page_elapsed_ms: None,
+            global_search_latency: GlobalSearchLatencySession::default(),
             pending_mount_root: None,
             pending_disk_card: None,
             pending_locator_copy: None,
@@ -4366,6 +4445,7 @@ impl App {
         });
     }
     unsafe fn init(&mut self) {
+        self.global_search_latency.reset();
         self.linked_ctf = None;
         self.linked_generation = None;
         self.pending_link_path = None;
@@ -4883,6 +4963,7 @@ impl App {
                     if let (Some(path), Some(generation)) = (path, generation) {
                         self.linked_ctf = Some(path);
                         self.linked_generation = Some(generation);
+                        self.global_search_latency.reset();
                         self.physical_states.clear();
                         self.shelf_labels.clear();
                         self.shelf_tag_conflicts.clear();
@@ -4959,6 +5040,17 @@ impl App {
                     };
                     self.entries = page["items"].as_array().cloned().unwrap_or_default();
                     self.page_ready = true;
+                    self.global_search_latency.observe(
+                        global_search_latency_eligible(
+                            self.page_ready,
+                            !self.linked_mode() || data["source_sha_checked"] == true,
+                            self.volume,
+                            &self.query,
+                            self.duplicates,
+                            self.copy_source.is_some(),
+                        ),
+                        reply.elapsed_ms,
+                    );
                     self.copy_disk_groups = if self.copy_source.is_some() {
                         page["disk_groups"].as_array().cloned().unwrap_or_default()
                     } else {
@@ -6490,6 +6582,11 @@ impl App {
                         json!({"op":"create_category","name":name}),
                     );
                 }
+            }
+            SHOW_SEARCH_LATENCY => self.status(&self.global_search_latency.summary()),
+            RESET_SEARCH_LATENCY => {
+                self.global_search_latency.reset();
+                self.status("Local global-search latency session cleared; source unchanged.");
             }
             SHELF_SAVE => self.save_shelf_label(),
             CATALOG_TOOLS => self.show_catalog_tools_menu(),
@@ -8103,6 +8200,18 @@ pub fn run() {
                 AppendMenuW(
                     view,
                     MF_STRING,
+                    SHOW_SEARCH_LATENCY,
+                    wide("Global-search latency (local)\tCtrl+Shift+8").as_ptr(),
+                );
+                AppendMenuW(
+                    view,
+                    MF_STRING,
+                    RESET_SEARCH_LATENCY,
+                    wide("Reset search latency\tCtrl+Shift+7").as_ptr(),
+                );
+                AppendMenuW(
+                    view,
+                    MF_STRING,
                     STOP_PAGE_WAIT,
                     wide("Stop waiting for catalog page\tCtrl+Shift+X").as_ptr(),
                 );
@@ -8228,6 +8337,19 @@ pub fn run() {
         SetFocus((*app).search);
         let mut message: MSG = std::mem::zeroed();
         while GetMessageW(&mut message, null_mut(), 0, 0) > 0 {
+            // Menu-only private diagnostics; keep the dense search toolbar unchanged.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && GetKeyState(VK_SHIFT as i32) < 0
+                && GetKeyState(VK_MENU as i32) >= 0
+                && (message.wParam == b'8' as usize || message.wParam == b'7' as usize)
+            {
+                (*app).command(
+                    if message.wParam == b'8' as usize { SHOW_SEARCH_LATENCY } else { RESET_SEARCH_LATENCY },
+                    0,
+                );
+                continue;
+            }
             // Ctrl+F focuses global search. Without the Shift guard,
             // Ctrl+Shift+F would be swallowed before recorded-folder browse.
             if message.message == WM_KEYDOWN

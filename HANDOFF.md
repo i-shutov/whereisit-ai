@@ -1118,3 +1118,9 @@ new docs/qa/UX26_EVENT_DRIVEN_USB_HOTPLUG_20261102.md; the final exact-HEAD
 Actions results must be verified separately before any PASS claim. Manual USB
 hardware/Win10/11/Mac ARM/Intel, historic CTF, signing/notarization and real
 p95 <=150ms remain stable 1.0 gates. Do not merge draft #57 automatically.
+
+---
+## UX44 — native private in-session global-search latency summary (2026-11-03)
+Draft PR #57: both real Win32 and SwiftUI clients now retain at most 128 **successful SHA-verified all-disk search page durations** in volatile process memory, and show nearest-rank p50/p95 after 30 samples. Failed/stale/cancelled, browse, one-disk, metadata duplicates and candidate pages cannot add samples. Diagnostics are in the native menu, Ctrl+Shift+8/7 (Win) and Command+Shift+8/7 (Mac), not an extra crowded toolbar. Switching catalog / successful linked CTF sync clears timings; no raw queries, filenames, disk IDs, paths, hashes, logs or telemetry. Original linked CTF stays read-only and SHA checked per reuse.
+
+Companion QA: docs/qa/UX44_NATIVE_SEARCH_SESSION_P95_20261103.md, Windows compiled test and dual-native synthetic contract. **Source integrated; exact new HEAD CI and human USB/GUI tests NOT yet proven here.** Neither synthetic checks nor a rolling local session p95 certify the owner hardware p95 <=150ms; representative private Win10/11 + Mac ARM/Intel assessment still needed. Modified-original/historic CTF provider restrictions, signing/notarization remain hard stable blockers. RC3 unsigned prerelease, no merge, no unrelated repository touches.

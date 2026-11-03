@@ -350,6 +350,35 @@ private struct CandidateFolderReturnContext {
         query = next
         search()
     }
+    // Last 128 accepted GLOBAL query pages, local-only and in-memory.
+    // No source SHA, filename, query, physical disk ID or telemetry is retained.
+    private var globalSearchLatencyMs: [Int] = []
+    private let globalSearchLatencyWindow = 128
+    private let globalSearchLatencyMinimum = 30
+    private func recordGlobalSearchLatency(_ ms: Int) {
+        guard pageReady, !appliedQuery.isEmpty, volumeID == nil,
+              !showingDuplicates, copySourceID == nil else { return }
+        if globalSearchLatencyMs.count == globalSearchLatencyWindow {
+            globalSearchLatencyMs.removeFirst()
+        }
+        globalSearchLatencyMs.append(max(0, ms))
+    }
+    func resetGlobalSearchLatency() {
+        globalSearchLatencyMs.removeAll()
+        status = "Local search latency session cleared; source unchanged."
+    }
+    func showGlobalSearchLatency() {
+        let count = globalSearchLatencyMs.count
+        guard count >= globalSearchLatencyMinimum else {
+            status = "Global search: \(count)/30 fresh verified pages; no p95 yet. Local-only diagnostic."
+            return
+        }
+        let sorted = globalSearchLatencyMs.sorted()
+        let p50 = sorted[((count * 50 + 99) / 100) - 1]
+        let p95 = sorted[((count * 95 + 99) / 100) - 1]
+        status = "Global search: \(count) fresh pages; session p50=\(p50) ms, p95=\(p95) ms (nearest-rank, last 128). NOT hardware/release acceptance."
+    }
+
     var appliedQuery = ""
     @Published var status = "Opening catalog…"
     @Published var error: String?
@@ -526,6 +555,7 @@ private struct CandidateFolderReturnContext {
         }
     }
     func initialize() {
+        globalSearchLatencyMs.removeAll()
         linkedCTFPath = nil; linkedGeneration = nil
         resetAnnotationReview()
         generation += 1; candidateClipboardRequestSerial += 1; volumeID = nil; stack = [(nil, "/")]; entries = []; query = ""; appliedQuery = ""; showingDuplicates = false; offset = 0
@@ -1747,6 +1777,7 @@ private struct CandidateFolderReturnContext {
         }
         applyPage(page, token: token)
         if let elapsedMs {
+            recordGlobalSearchLatency(elapsedMs)
             status += " • local page \(elapsedMs) ms (not p95)"
         }
     }
@@ -1854,6 +1885,7 @@ private struct CandidateFolderReturnContext {
             self.job = nil
             guard let result else { return }
             self.linkedCTFPath = source; self.linkedGeneration = result.generation
+            self.globalSearchLatencyMs.removeAll()
             self.physicalStates = [:]; self.verifiedPhysicalIDs = [:]; self.pendingMountCopy = nil; self.mountActionGeneration += 1
             self.physicalVerifiedUptime = nil
             self.shelfLabels = [:]; self.selectedPhysicalID = ""
@@ -2476,6 +2508,15 @@ private struct CandidateFolderReturnContext {
                         .disabled(!model.editableAllowed)
                     Button("Compact SQLite copy…") { model.compactCopy() }
                         .disabled(!model.editableAllowed)
+                    Divider()
+                    Menu("Local search latency") {
+                        Button("Show verified global-search p50/p95") { model.showGlobalSearchLatency() }
+                            .keyboardShortcut("8", modifiers: [.command, .shift])
+                            .accessibilityLabel("Show local session latency of verified all-disk search pages")
+                        Button("Reset search latency session") { model.resetGlobalSearchLatency() }
+                            .keyboardShortcut("7", modifiers: [.command, .shift])
+                            .accessibilityLabel("Clear private in-memory search timing samples")
+                    }
                 }
                 .accessibilityLabel("Catalog tools, imports and maintenance")
                 .help("Secondary operations; search defaults to all catalogued disks.")
