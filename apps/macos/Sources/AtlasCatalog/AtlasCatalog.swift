@@ -230,6 +230,24 @@ private struct CandidateFolderReturnContext {
     @Published var database: String
     @Published var volumes: [Volume] = []
     @Published var diskFilter = ""
+    // UI-only preference; never persisted with CTF, source paths or physical pairings.
+    @Published var registerOrder = UserDefaults.standard.string(forKey: "AtlasCatalog.registerOrder") ?? "catalog"
+    var registerOrderCaption: String {
+        switch registerOrder {
+        case "shelf": return "Shelf A–Z"
+        case "os": return "Last OS state"
+        default: return "Catalog order"
+        }
+    }
+    func cycleRegisterOrder() {
+        switch registerOrder {
+        case "catalog": registerOrder = "shelf"
+        case "shelf": registerOrder = "os"
+        default: registerOrder = "catalog"
+        }
+        UserDefaults.standard.set(registerOrder, forKey: "AtlasCatalog.registerOrder")
+        status = "Disk register: \(registerOrderCaption). Candidate copies keep their separate priority; global search and physical pairing unchanged."
+    }
     @Published var volumeID: Int64?
     @Published var physicalStates: [Int64: String] = [:]
     @Published var verifiedPhysicalIDs: [Int64: String] = [:]
@@ -582,7 +600,7 @@ private struct CandidateFolderReturnContext {
     }
 
     // View-only filtering: never change volumeID, query scope or disk pairing.
-    var visibleVolumes: [Volume] {
+    private var filteredVolumes: [Volume] {
         let needle = diskFilter.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !needle.isEmpty else { return volumes }
         // copies: is a temporary, view-only exact ID match from the active
@@ -629,6 +647,37 @@ private struct CandidateFolderReturnContext {
         return volumes.filter {
             $0.label.localizedStandardContains(needle) || String($0.id).contains(needle)
                 || (shelfLabels[$0.id] ?? "").localizedStandardContains(needle)
+        }
+    }
+    // This is presentation order ONLY. Exact catalog IDs remain List tags,
+    // the selected browse scope is untouched, and candidate-only mode retains
+    // its connected/count ordering rather than the user's ordinary register order.
+    var visibleVolumes: [Volume] {
+        let rows = filteredVolumes
+        guard !isCandidateRegisterMode else { return rows }
+        switch registerOrder {
+        case "shelf":
+            return rows.sorted { lhs, rhs in
+                let a = shelfLabel(lhs.id).trimmingCharacters(in: .whitespacesAndNewlines)
+                let b = shelfLabel(rhs.id).trimmingCharacters(in: .whitespacesAndNewlines)
+                if a.isEmpty != b.isEmpty { return !a.isEmpty }
+                let comparison = a.localizedStandardCompare(b)
+                return comparison == .orderedSame ? lhs.id < rhs.id : comparison == .orderedAscending
+            }
+        case "os":
+            func rank(_ disk: Int64) -> Int {
+                switch physicalState(disk) {
+                case "connected": return 0
+                case "offline": return 1
+                case "conflict": return 2
+                default: return 3
+                }
+            }
+            return rows.sorted { lhs, rhs in
+                let left = rank(lhs.id), right = rank(rhs.id)
+                return left == right ? lhs.id < rhs.id : left < right
+            }
+        default: return rows
         }
     }
     var isCandidateRegisterMode: Bool {
@@ -2616,6 +2665,13 @@ private struct CandidateFolderReturnContext {
                         .keyboardShortcut("k", modifiers: [.command, .shift])
                         .accessibilityLabel("Show only catalog disks containing name and size copy candidates")
                         .help("View-only exact disk ID filter; no USB mount or file content verification (Command-Shift-K)")
+                        Button {
+                            model.cycleRegisterOrder()
+                        } label: { Image(systemName: "arrow.up.arrow.down") }
+                        .keyboardShortcut("t", modifiers: [.command, .shift])
+                        .accessibilityLabel("Cycle physical disk register order, current: \(model.registerOrderCaption)")
+                        .accessibilityHint("Catalog order, owner sticker and shelf A to Z, or last independently verified OS state. Does not change search, selected file or disk pairing.")
+                        .help("Register order: \(model.registerOrderCaption) (Command-Shift-T); copy candidates retain their priority")
                         Button {
                             diskFilterFocused = true
                         } label: {
