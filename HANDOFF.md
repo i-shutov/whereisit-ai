@@ -1,3 +1,23 @@
+## UX37 exact-HEAD CI formatting defect and repair (2026-11-03)
+
+Initial UX37 commit [e938c18](https://github.com/i-shutov/whereisit-ai/commit/e938c1824f9a2a1513ef0a2a35a1050976210ca6)
+failed only at the **Rustfmt check** in
+[offline acceptance 41552047010](https://github.com/i-shutov/whereisit-ai/actions/runs/41552047010)
+(`Check integrated Rust contracts`) and
+[native Linux 41552047019](https://github.com/i-shutov/whereisit-ai/actions/runs/41552047019)
+(`Run cargo fmt --all -- --check`); the integration wiring job
+[41552047073](https://github.com/i-shutov/whereisit-ai/actions/runs/41552047073)
+passed. The check reported **two exact formatting hunks** in the
+Windows pure helper and test table. Repaired those two hunks in this
+same draft PR #57 without disabling tests. This statement is not
+a claim that the repair HEAD has completed CI; recheck all four native
+jobs, offline kit, integration and all installed upgrade jobs at
+the newest commit. Human USB/GUI/VoiceOver, modified/historical CTF,
+signing/notarization and real p95 <=150 ms still block stable 1.0.
+No merge or public private data.
+
+---
+
 ## UX37 — debounced native global filename typeahead (2026-11-03; exact-HEAD CI pending)
 
 Draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57) now implements

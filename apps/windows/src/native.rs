@@ -72,10 +72,9 @@ fn live_filename_search_query(raw: &str) -> Option<String> {
     if query.chars().count() < 2 || query.len() > 256 {
         return None;
     }
-    if !query
-        .chars()
-        .all(|ch| ch.is_alphanumeric() || ch.is_whitespace() || matches!(ch, '.' | '-' | '_' | '\''))
-    {
+    if !query.chars().all(|ch| {
+        ch.is_alphanumeric() || ch.is_whitespace() || matches!(ch, '.' | '-' | '_' | '\'')
+    }) {
         return None;
     }
     if query
@@ -106,8 +105,18 @@ mod live_filename_search_tests {
     #[test]
     fn boolean_fields_paths_partial_and_excessive_inputs_stay_enter_only() {
         for expression in [
-            "", " ", "x", "name:movie", "type:video", "a OR b", "a and b",
-            "NOT movie", "(movie)", "films/2026", "foo\\bar", "size:100",
+            "",
+            " ",
+            "x",
+            "name:movie",
+            "type:video",
+            "a OR b",
+            "a and b",
+            "NOT movie",
+            "(movie)",
+            "films/2026",
+            "foo\\bar",
+            "size:100",
         ] {
             assert_eq!(live_filename_search_query(expression), None);
         }
