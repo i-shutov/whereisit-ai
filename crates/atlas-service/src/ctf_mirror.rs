@@ -488,7 +488,8 @@ where
         .ok_or_else(|| failure("not_pinned", "Call ctf_sync in this process first"))?;
     let original = pinned.source.clone();
     if source_meta.len() != original.size_bytes {
-        forget(&root, requested);
+        // A restored original is still eligible for this verified pin.
+        // No row can escape while the source bytes do not match.
         return Err(failure(
             "source_changed",
             "Original CTF length differs from pinned generation",
@@ -546,7 +547,9 @@ where
     // whose cache metadata appears unchanged. This is the authorization
     // boundary for returning metadata; an OS mtime/length check is not enough.
     if identity(&source_path)? != original {
-        forget(&root, &current_key);
+        // Keep the immutable pin only as an expected SHA: the original may
+        // later be restored. Every retry still performs a full SHA check
+        // before returning data, so no mismatched page can escape.
         return Err(failure(
             "source_changed",
             "Original CTF changed during pinned query",
