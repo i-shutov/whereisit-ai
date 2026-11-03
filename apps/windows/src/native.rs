@@ -6168,6 +6168,9 @@ impl App {
                 self.sync_shelf_editor();
             }
             FIND | FIND_DISK | DUPLICATES => {
+                // An explicit command always wins over a pending 450 ms search:
+                // even a rejected This disk action must not later run globally.
+                self.cancel_live_filename_search();
                 if command == FIND_DISK && self.volume.is_none() {
                     self.status("Choose a disk in the register for an explicit disk-only search.");
                     return;

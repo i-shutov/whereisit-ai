@@ -606,3 +606,7 @@ Win10/11 and Mac ARM/Intel GUI/keyboard/VoiceOver/USB, modified original
 and provider-blocked historical CTF checks, signatures/notarization and
 measured real p95 <=150 ms remain open. RC3 unsigned prerelease;
 stable 1.0 blocked, draft PR unmerged.
+
+## UX38 — live search intent and explicit scope isolation (2026-11-03)
+
+Both native applications distinguish an actual user edit from a programmatic search-text change. Explicit **This disk**, **Duplicates**, Back and page navigation cancel pending 450 ms typeahead; invalid disk-only actions do not later run all-disk search. SwiftUI is keyed to a user-edit revision (not the query string), and Win32 cancels at the command boundary as well as page load. This protects deliberate scope, current selection and original CTF generation-pinned queries without changing any catalog bytes. See [UX38 source/integration QA](qa/UX38_LIVE_SEARCH_INTENT_20261103.md). Manual hardware/GUI acceptance and exact-HEAD CI remain separate gates.

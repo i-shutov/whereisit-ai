@@ -257,6 +257,24 @@ private struct CandidateFolderReturnContext {
     // Fresh page focus is requested by a paging action, never a stale response.
     private var pendingPageFocusToken: Int?
     @Published var query = ""
+    // Only actual edits from the native TextField may arm live filename search.
+    // Programmatic Back, copy navigation and scoped/duplicate operations must
+    // never schedule a second global search 450 ms later.
+    @Published private(set) var liveFilenameTaskID: UInt64 = 0
+    private var pendingLiveFilenameQuery: String?
+    func userEditedSearchText(_ value: String) {
+        query = value
+        pendingLiveFilenameQuery = Self.liveFilenameSearchQuery(value)
+        liveFilenameTaskID &+= 1
+    }
+    private func cancelPendingLiveFilenameSearch() {
+        pendingLiveFilenameQuery = nil
+        liveFilenameTaskID &+= 1
+    }
+    func pendingLiveFilenameSearch(for token: UInt64) -> String? {
+        guard token == liveFilenameTaskID else { return nil }
+        return pendingLiveFilenameQuery
+    }
     // Plain filename typeahead; partially typed Boolean and field queries
     // must wait for an explicit Return and never rewrite the query.
     static func liveFilenameSearchQuery(_ raw: String) -> String? {
@@ -271,11 +289,16 @@ private struct CandidateFolderReturnContext {
             .contains(where: { operators.contains($0.uppercased()) }) else { return nil }
         return trimmed
     }
-    func runLiveFilenameSearchIfCurrent(_ expected: String) {
-        guard Self.liveFilenameSearchQuery(query) == expected else { return }
+    func runLiveFilenameSearchIfCurrent(_ expected: String, editToken: UInt64) {
+        // The text can remain identical after a manual This disk/Duplicates/Back.
+        // Only the still-pending user-edit token may switch scope to all disks.
+        guard pendingLiveFilenameSearch(for: editToken) == expected,
+              Self.liveFilenameSearchQuery(query) == expected else { return }
         if appliedQuery == expected && !showingDuplicates && volumeID == nil && copySourceID == nil {
+            cancelPendingLiveFilenameSearch()
             return
         }
+        cancelPendingLiveFilenameSearch()
         // Search/Return already supplies all-disk scope, bounded pages,
         // generation checks and original linked CTF SHA re-verification.
         search()
@@ -1533,6 +1556,8 @@ private struct CandidateFolderReturnContext {
     func searchAcrossAllDisks() { search() }
 
     func searchInSelectedDisk() {
+        // Explicit scope selection, including invalid attempts, cancels typeahead.
+        cancelPendingLiveFilenameSearch()
         guard volumeID != nil else {
             status = "Choose a catalog disk for an explicit disk-only search."
             return
@@ -1561,6 +1586,9 @@ private struct CandidateFolderReturnContext {
         load() // Always a fresh bounded and generation-pinned service page.
     }
     func load() {
+        // Every explicit navigation/page request invalidates pending typed intent
+        // before an asynchronous response can turn a scoped view into global search.
+        cancelPendingLiveFilenameSearch()
         generation += 1; let token = generation
         if pendingReturnSelection?.token != token { pendingReturnSelection = nil }
         if pendingPageFocusToken != token { pendingPageFocusToken = nil }
@@ -2381,25 +2409,29 @@ private struct CandidateFolderReturnContext {
             HStack(spacing: 6) {
                 Button { model.back() } label: { Image(systemName: "chevron.left") }.help("Back to parent folder or leave results")
                 Button { model.openSelected() } label: { Image(systemName: "folder") }.disabled(model.selected?.isFolder != true).keyboardShortcut(.downArrow, modifiers: [.command]).help("Open selected folder (Command-Down)")
-                TextField("Find file or film • name:… ext:mkv AND/OR…", text: $model.query)
+                TextField("Find file or film • name:… ext:mkv AND/OR…",
+                          text: Binding(
+                              get: { model.query },
+                              set: { model.userEditedSearchText($0) }))
                     .focused($searchFieldFocused)
                     .onSubmit { model.search() }
                     .accessibilityLabel("Search catalogued files")
                     .accessibilityHint("Plain filenames search every disk after a short pause. Press Return for fields or Boolean expressions.")
                     .help("Live all-disk filename lookup after 450 ms and 2 characters; Return executes full Boolean or field queries")
-                    .task(id: model.query) {
+                    .task(id: model.liveFilenameTaskID) {
+                        let editToken = model.liveFilenameTaskID
                         let candidate = await MainActor.run {
-                            Catalog.liveFilenameSearchQuery(model.query)
+                            model.pendingLiveFilenameSearch(for: editToken)
                         }
                         guard let candidate else { return }
                         do {
                             try await Task.sleep(nanoseconds: 450_000_000)
                         } catch {
-                            return // New typing cancels this old task.
+                            return // New typing or explicit navigation cancels the old task.
                         }
                         guard !Task.isCancelled else { return }
                         await MainActor.run {
-                            model.runLiveFilenameSearchIfCurrent(candidate)
+                            model.runLiveFilenameSearchIfCurrent(candidate, editToken: editToken)
                         }
                     }
                 Button { searchFieldFocused = true } label: { Image(systemName: "magnifyingglass") }

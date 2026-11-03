@@ -17,6 +17,35 @@ PHYSICAL = (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encod
 
 class DiskLocatorWiringTests(unittest.TestCase):
 
+    def test_ux38_explicit_search_intent_preempts_live_filename_timer(self):
+        # Scope/duplicate/back must not be overwritten by a pending typing task.
+        # Windows previously cancelled on load, but a rejected This disk did
+        # not reach load; cancellation is now at the command boundary.
+        command = WIN.split("FIND | FIND_DISK | DUPLICATES => {", 1)[1]
+        self.assertLess(command.index("self.cancel_live_filename_search();"),
+                        command.index("if command == FIND_DISK && self.volume.is_none()"))
+        win_load = WIN.split("unsafe fn load(&mut self) {", 1)[1].split(
+            "unsafe fn poll(&mut self) {", 1)[0]
+        self.assertIn("self.cancel_live_filename_search();", win_load)
+        self.assertIn("KillTimer(self.hwnd, LIVE_FILENAME_SEARCH_TIMER);", WIN)
+
+        # SwiftUI tasks are armed ONLY by TextField edits, not @Published query
+        # rewrites on Back, candidate folder navigation, or other commands.
+        self.assertIn("func userEditedSearchText(_ value: String)", MAC)
+        self.assertIn("pendingLiveFilenameQuery = Self.liveFilenameSearchQuery(value)", MAC)
+        self.assertIn("set: { model.userEditedSearchText($0) }", MAC)
+        self.assertIn(".task(id: model.liveFilenameTaskID)", MAC)
+        self.assertNotIn(".task(id: model.query)", MAC)
+        self.assertIn("pendingLiveFilenameSearch(for: editToken) == expected", MAC)
+        self.assertIn("model.runLiveFilenameSearchIfCurrent(candidate, editToken: editToken)", MAC)
+        mac_load = MAC.split("func load() {", 1)[1].split("private func", 1)[0]
+        self.assertIn("cancelPendingLiveFilenameSearch()", mac_load)
+        scoped = MAC.split("func searchInSelectedDisk() {", 1)[1].split(
+            "var resultScopeCaption:", 1)[0]
+        self.assertLess(scoped.index("cancelPendingLiveFilenameSearch()"),
+                        scoped.index("guard volumeID != nil"))
+        self.assertIn('args["op"] = "ctf_search_pinned"', MAC)
+
     def test_ux37_debounced_filename_lookup_is_global_and_source_pinned(self):
         # Synthetic source-wiring regression, NOT a UI p95 benchmark.
         self.assertIn("fn live_filename_search_query(raw: &str)", WIN)
@@ -32,11 +61,11 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn("app.command(FIND, 0);", WIN)
         self.assertIn('"ctf_search_pinned"', WIN)
         self.assertIn("static func liveFilenameSearchQuery(_ raw: String)", MAC)
-        self.assertIn("func runLiveFilenameSearchIfCurrent(_ expected: String)", MAC)
-        self.assertIn(".task(id: model.query)", MAC)
+        self.assertIn("func runLiveFilenameSearchIfCurrent(_ expected: String, editToken: UInt64)", MAC)
+        self.assertIn(".task(id: model.liveFilenameTaskID)", MAC)
         self.assertIn("try await Task.sleep(nanoseconds: 450_000_000)", MAC)
         self.assertIn("guard !Task.isCancelled else { return }", MAC)
-        self.assertIn("model.runLiveFilenameSearchIfCurrent(candidate)", MAC)
+        self.assertIn("model.runLiveFilenameSearchIfCurrent(candidate, editToken: editToken)", MAC)
         self.assertIn('args["op"] = "ctf_search_pinned"', MAC)
         # Every programmatic edit in Windows uses the suppression wrapper;
         # its one deliberate SetWindowText helper is allowed.

@@ -1,3 +1,9 @@
+## UX38 — explicit scope/search intent beats 450 ms live timer (2026-11-03)
+
+On the SAME draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57), repaired a cross-client live-search intent race: macOS SwiftUI's previous `.task(id: model.query)` would treat programmatic Back/scoped-search text as fresh typing; after a manual **This disk** or **Duplicates** action it could silently relaunch global search 450 ms later. Win32 already cancelled its timer on `load()`, but an invalid **This disk** action returned before that cancellation. The native implementations now invalidate pending typeahead on explicit navigation/commands, and SwiftUI arms it only from actual TextField user edits using a monotonic revision token. Synthetic dual-native wiring checks and the [UX38 hardware/GUI runbook](docs/qa/UX38_LIVE_SEARCH_INTENT_20261103.md) accompany the code. Exact-HEAD CI **not yet verified** for this integration; read all 4 native jobs, offline acceptance, regression and RC2→RC3 installed upgrade workflows before reporting success. PR stays draft/unmerged; no stable release. No private sources or other repositories touched.
+
+---
+
 ## UX37 exact-HEAD CI formatting defect and repair (2026-11-03)
 
 Initial UX37 commit [e938c18](https://github.com/i-shutov/whereisit-ai/commit/e938c1824f9a2a1513ef0a2a35a1050976210ca6)
