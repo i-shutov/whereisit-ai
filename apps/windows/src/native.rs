@@ -70,6 +70,7 @@ const WIDEN_DISK_REGISTER: usize = 160;
 const NARROW_DISK_REGISTER: usize = 161;
 const SHOW_SEARCH_LATENCY: usize = 162;
 const RESET_SEARCH_LATENCY: usize = 163;
+const PAGE_DISKS_REGISTER: usize = 164;
 
 fn export_menu_format_selection(command: usize) -> Option<usize> {
     match command {
@@ -1272,6 +1273,72 @@ fn filtered_disk_indices(
             }
         })
         .collect()
+}
+
+// Only the CURRENT verified <=250-row page may supply this view-only disk map.
+// Unknown disk IDs and pending/failed linked-CTF SHA checks must fail closed.
+fn current_page_disk_counts(
+    ready: bool,
+    awaiting: bool,
+    entries: &[Value],
+    volumes: &[Value],
+) -> HashMap<i64, usize> {
+    if !ready || awaiting {
+        return HashMap::new();
+    }
+    let mut counts = HashMap::new();
+    for row in entries {
+        let Some(disk) = row["volume_id"].as_i64().filter(|disk| *disk > 0) else {
+            continue;
+        };
+        if volumes.iter().any(|volume| id(volume) == Some(disk)) {
+            *counts.entry(disk).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+fn current_page_register_indices(volumes: &[Value], counts: &HashMap<i64, usize>) -> Vec<usize> {
+    let mut indices: Vec<usize> = volumes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, volume)| {
+            id(volume)
+                .filter(|disk| counts.get(disk).is_some_and(|count| *count > 0))
+                .map(|_| index)
+        })
+        .collect();
+    indices.sort_by_key(|index| {
+        let disk = id(&volumes[*index]).unwrap_or_default();
+        (std::cmp::Reverse(counts.get(&disk).copied().unwrap_or(0)), disk)
+    });
+    indices
+}
+#[cfg(test)]
+mod current_page_register_tests {
+    use super::*;
+    #[test]
+    fn page_disk_map_is_exact_and_disappears_while_awaiting() {
+        let volumes = vec![
+            json!({"id":7,"label":"Shared"}),
+            json!({"id":8,"label":"Shared"}),
+            json!({"id":9,"label":"Unseen"}),
+        ];
+        let page = vec![
+            json!({"volume_id":8}),
+            json!({"volume_id":7}),
+            json!({"volume_id":8}),
+            json!({"volume_id":99}),
+            json!({"volume_id":0}),
+        ];
+        assert!(current_page_disk_counts(false, false, &page, &volumes).is_empty());
+        assert!(current_page_disk_counts(true, true, &page, &volumes).is_empty());
+        let counts = current_page_disk_counts(true, false, &page, &volumes);
+        assert_eq!(counts.get(&8), Some(&2));
+        assert_eq!(counts.get(&7), Some(&1));
+        assert_eq!(counts.get(&99), None);
+        assert_eq!(current_page_register_indices(&volumes, &counts), vec![1, 0]);
+        assert!(current_page_register_indices(&volumes, &HashMap::new()).is_empty());
+    }
 }
 
 // Register audit works on an OS-probed, explicitly paired catalog ID only.
@@ -4584,6 +4651,9 @@ impl App {
         // Never permit an old selection to masquerade as the new catalog page.
         self.page_ready = false;
         self.entries.clear();
+        if self.disk_filter_query.trim().eq_ignore_ascii_case("page:") {
+            self.populate_physical_disk_list(); // No stale page disks while awaiting source SHA.
+        }
         self.total = 0;
         self.total_known = false;
         self.has_more = false;
@@ -5076,10 +5146,8 @@ impl App {
                     // A new pinned page may carry a different disk-group set.
                     // Keep the candidate-only register synchronized with the
                     // current authoritative page, never the previous selection.
-                    if self
-                        .disk_filter_query
-                        .trim()
-                        .eq_ignore_ascii_case("copies:")
+                    if self.disk_filter_query.trim().eq_ignore_ascii_case("copies:")
+                        || self.disk_filter_query.trim().eq_ignore_ascii_case("page:")
                     {
                         self.populate_physical_disk_list();
                     }
@@ -5411,12 +5479,21 @@ impl App {
             .disk_filter_query
             .trim()
             .eq_ignore_ascii_case("copies:");
+        let page_mode = self.disk_filter_query.trim().eq_ignore_ascii_case("page:");
+        let page_counts = current_page_disk_counts(
+            self.page_ready,
+            self.page_awaiting,
+            &self.entries,
+            &self.volumes,
+        );
         self.visible_disk_indices = if candidate_mode {
             if self.copy_source.is_some() {
                 candidate_register_indices(&self.volumes, &self.copy_disk_groups, &safe_states)
             } else {
                 vec![]
             }
+        } else if page_mode {
+            current_page_register_indices(&self.volumes, &page_counts)
         } else if let Some(indices) = audited_register_filter_indices(
             &self.volumes,
             &self.shelf_labels,
@@ -5429,7 +5506,7 @@ impl App {
         } else {
             filtered_disk_indices(&self.volumes, &self.shelf_labels, &self.disk_filter_query)
         };
-        if !candidate_mode {
+        if !candidate_mode && !page_mode {
             sort_disk_register_indices(
                 &mut self.visible_disk_indices,
                 &self.volumes,
@@ -5457,6 +5534,11 @@ impl App {
             audit[4],
             audit[5],
         );
+        let global_label = if page_mode {
+            format!("CURRENT PAGE ONLY • {global_label}")
+        } else {
+            global_label
+        };
         SendMessageW(
             self.disks,
             LB_ADDSTRING,
@@ -5482,7 +5564,14 @@ impl App {
                 .and_then(|disk_id| shelf_collision_warning(disk_id, &self.shelf_tag_conflicts))
                 .map(|_| " ! SHARED STICKER")
                 .unwrap_or("");
-            let label = if candidate_mode {
+            let label = if page_mode {
+                let disk_id = id(disk).unwrap_or_default();
+                let hits = page_counts.get(&disk_id).copied().unwrap_or(0);
+                format!(
+                    "#{disk_id} • {hits} on THIS PAGE • {}{shelf} • {badge}{warning}",
+                    string(disk, "label")
+                )
+            } else if candidate_mode {
                 let disk_id = id(disk).unwrap_or_default();
                 let group = self
                     .copy_disk_groups
@@ -6775,6 +6864,17 @@ impl App {
                 self.populate_physical_disk_list();
                 SetFocus(self.disk_filter);
                 self.status("Showing selected file's exact disk in register. Search scope and OS pairing unchanged; click disk to browse.");
+            }
+            PAGE_DISKS_REGISTER => {
+                if !self.page_ready || self.page_awaiting || self.entries.is_empty() {
+                    self.status("No verified nonempty current catalog page; previous-page disks refused.");
+                    return;
+                }
+                self.disk_filter_query = "page:".to_owned();
+                self.text(self.disk_filter, "page:");
+                self.populate_physical_disk_list();
+                SetFocus(self.disks);
+                self.status("CURRENT PAGE ONLY: exact catalog disk IDs and counts from up to 250 verified rows. Search and OS pairing unchanged; Ctrl+L clears.");
             }
             COPY_REGISTER_FILTER => {
                 if self.copy_source.is_none() || self.copy_disk_groups.is_empty() {
@@ -8337,6 +8437,12 @@ pub fn run() {
                 AppendMenuW(
                     view,
                     MF_STRING,
+                    PAGE_DISKS_REGISTER,
+                    wide("Show disks on CURRENT results page\tCtrl+Shift+6").as_ptr(),
+                );
+                AppendMenuW(
+                    view,
+                    MF_STRING,
                     COPY_PICKUP_PLAN,
                     wide("Copy all candidate disks pickup list\tCtrl+Shift+P").as_ptr(),
                 );
@@ -8537,6 +8643,16 @@ pub fn run() {
                 && message.wParam == b'K' as usize
             {
                 (*app).command(COPY_REGISTER_FILTER, 0);
+                continue;
+            }
+            // Ctrl+Shift+6 opens only verified CURRENT page disk IDs.
+            if message.message == WM_KEYDOWN
+                && GetKeyState(VK_CONTROL as i32) < 0
+                && GetKeyState(VK_SHIFT as i32) < 0
+                && GetKeyState(VK_MENU as i32) >= 0
+                && message.wParam == b'6' as usize
+            {
+                (*app).command(PAGE_DISKS_REGISTER, 0);
                 continue;
             }
             // Ctrl+Shift+M copies only the verified loaded candidate page,

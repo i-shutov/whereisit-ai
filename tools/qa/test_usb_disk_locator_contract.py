@@ -16,6 +16,29 @@ PHYSICAL = (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encod
 
 
 class DiskLocatorWiringTests(unittest.TestCase):
+    def test_ux45_current_page_disk_register_exact_and_fail_closed(self):
+        self.assertIn("fn current_page_disk_counts(", WIN)
+        self.assertIn("fn current_page_register_indices(", WIN)
+        self.assertIn("page_disk_map_is_exact_and_disappears_while_awaiting", WIN)
+        self.assertIn('let page_mode = self.disk_filter_query.trim().eq_ignore_ascii_case("page:");', WIN)
+        self.assertIn("CURRENT PAGE ONLY • {global_label}", WIN)
+        self.assertIn("if !self.page_ready || self.page_awaiting || self.entries.is_empty()", WIN)
+        self.assertIn("No stale page disks while awaiting source SHA", WIN)
+        self.assertIn("PAGE_DISKS_REGISTER => {", WIN)
+        self.assertIn("(*app).command(PAGE_DISKS_REGISTER, 0);", WIN)
+        self.assertIn("var currentPageDiskCounts: [Int64: Int]", MAC)
+        self.assertIn("guard pageReady, !awaitingPage else { return [:] }", MAC)
+        self.assertIn("let registered = Set(volumes.map(\\.id))", MAC)
+        self.assertIn('if needle.lowercased() == "page:"', MAC)
+        self.assertIn("!isCandidateRegisterMode && !isPageRegisterMode", MAC)
+        self.assertIn("func revealCurrentPageDisksInRegister()", MAC)
+        self.assertIn("model.pageRegisterAccessibility(disk)", MAC)
+        self.assertIn('.keyboardShortcut("6", modifiers: [.command, .shift])', MAC)
+        method = MAC.split("func revealCurrentPageDisksInRegister() {", 1)[1].split(
+            "private var filteredVolumes", 1)[0]
+        for forbidden in ("load()", "volumeID =", "appliedQuery =", "pairSelectedPhysicalDisk()"):
+            self.assertNotIn(forbidden, method)
+
     def test_ux44_bounded_native_global_search_diagnostics(self):
         self.assertIn("struct GlobalSearchLatencySession", WIN)
         self.assertIn("GLOBAL_SEARCH_LATENCY_WINDOW: usize = 128", WIN)

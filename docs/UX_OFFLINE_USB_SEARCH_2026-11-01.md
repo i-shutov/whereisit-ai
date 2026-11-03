@@ -632,3 +632,24 @@ Cancelled/stale/failed requests cannot display a timing or stale rows. See
 [UX43 QA](qa/UX43_PINNED_SEARCH_LATENCY_20261103.md). All prior source
 immutability, OS-verification, metadata-only copy, signing and manual release
 gates remain in force. Source work is in the existing draft PR #57 only.
+
+
+## UX45 — Verified CURRENT page → exact catalog disk register (2026-11-03)
+
+The **Page** control (Windows View/Ctrl+Shift+6; macOS native Page button/
+Command+Shift+6) filters ONLY the left register to exact catalog disk IDs
+on the latest successful, bounded (<=250 entries) search/copy/browse page.
+Per-disk counts are from that page only (explicit CURRENT PAGE ONLY), ordered
+by descending page hits and numeric ID. Repeated labels never merge IDs.
+Owner shelf tags and separately OS-verified presence remain intact. Pending,
+cancelled, failed or changed-linked-CTF-generation pages immediately lose
+previous membership; the next successful page recomputes. This is not a count
+of all global search hits, a live path mapping, evidence of file presence or
+hash equality. No CTF, derivative cache or user annotations are modified.
+
+Win32 unit tests, dual-client source-wiring checks and the
+[UX45 manual runbook](qa/UX45_CURRENT_PAGE_DISK_REGISTER_20261103.md)
+accompany the native code. Build success does not imply 1366×768/HiDPI,
+keyboard/VoiceOver, unplug/replug or clone tests were performed. Original
+modified/historical provider-blocked CTF, signing/notarization and real p95
+<=150ms are still stable 1.0 release gates. Draft PR #57 must remain unmerged.

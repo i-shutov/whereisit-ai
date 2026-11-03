@@ -1,3 +1,24 @@
+## UX45 — current verified page disk map, native Win32 + SwiftUI (2026-11-03)
+
+Same draft PR #57: Page/Ctrl+Shift+6 (Win32 View) and Page/Command+Shift+6
+(macOS register) show exact catalog disk IDs, page-only hit counts and
+independent OS/sticker evidence for the **CURRENT SHA-verified <=250-row page**.
+Never represent counts as global, and never infer attached hardware/file
+presence from catalog metadata. Pending and failed pages remove old disk
+membership. Source generation SHA is still rechecked on each actual CTF
+page request; this feature does not fetch source bytes or modify catalog,
+caches, user SQLite, pairing or selected search scope.
+Synthetic compiled Win32 Rust test, dual-native Python wiring regressions and
+[UX45 QA](docs/qa/UX45_CURRENT_PAGE_DISK_REGISTER_20261103.md) included.
+At integration **exact-HEAD CI pending**: re-read final SHA and full native
+Linux/Windows/macOS ARM/Intel, offline kit, regression and installed upgrade
+jobs before claiming PASS. Manual native GUI/USB/VoiceOver, original modified
+and two provider-blocked historic CTFs, signing/notarization and real p95
+<=150ms still block stable 1.0. Keep PR draft/unmerged; no user CTF, private
+names/paths/SHA or other repositories touched.
+
+---
+
 ## UX43 — source SHA rehash reduction + native verified page timing (2026-11-03)
 
 Same draft PR #57: linked pinned CTF pages now compute the full original SHA **once per actual read**, after the SQLite query and before returning any data, using the strictly synchronized pin's previously verified expected SHA/recipe; source length/cache stamps and full cache integrity gates remain. Same-size/restored-mtime modifications continue to fail closed. This is a performance attempt, NOT a waiver of rechecking generation SHA on every reuse, nor proof of <=150ms on owner hardware. Win32/SwiftUI show a native locally measured verified page duration and explicitly warn it is **not p95**; stale, failed and cancelled page timings are suppressed. Compiled Windows and dual-client synthetic regressions plus the [UX43 QA runbook](docs/qa/UX43_PINNED_SEARCH_LATENCY_20261103.md) are included. Check the **new exact HEAD** 4-platform CI/offline/integration/installed-upgrades before saying PASS. Do not publish raw private CTFs or measurements; owner real representative >=30-sample p95, manual USB/GUI on all target OS, two provider-blocked historical raw CTFs, original modified CTF, signing/notarization remain blockers. PR stays draft; stable 1.0 blocked. No other repository touched.

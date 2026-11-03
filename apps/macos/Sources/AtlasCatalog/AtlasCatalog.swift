@@ -631,11 +631,43 @@ private struct CandidateFolderReturnContext {
     }
 
     // View-only filtering: never change volumeID, query scope or disk pairing.
+    // Page register is a view of already-fetched SHA-verified rows only.
+    var currentPageDiskCounts: [Int64: Int] {
+        guard pageReady, !awaitingPage else { return [:] }
+        let registered = Set(volumes.map(\.id))
+        var counts: [Int64: Int] = [:]
+        for entry in entries where registered.contains(entry.volume_id) {
+            counts[entry.volume_id, default: 0] += 1
+        }
+        return counts
+    }
+    var isPageRegisterMode: Bool {
+        diskFilter.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "page:"
+    }
+    func pageRegisterCount(_ disk: Int64) -> Int { currentPageDiskCounts[disk] ?? 0 }
+    func pageRegisterAccessibility(_ disk: Volume) -> String {
+        "Catalog disk number \(disk.id), \(disk.label). \(pageRegisterCount(disk.id)) hits on CURRENT verified page only (maximum 250). Owner sticker \(shelfLabel(disk.id).isEmpty ? "not assigned" : shelfLabel(disk.id)). Last OS check: \(physicalCaption(disk.id)). \(shelfConflictCaption(disk.id) ?? ""). Unloaded pages and file contents unverified."
+    }
+    func revealCurrentPageDisksInRegister() {
+        guard pageReady, !awaitingPage, !entries.isEmpty else {
+            status = "Wait for a verified nonempty results page; no stale disk membership."
+            return
+        }
+        diskFilter = "page:"
+        status = "CURRENT PAGE ONLY: exact disk IDs and counts from loaded results. Search, selected file and OS pairing unchanged."
+    }
     private var filteredVolumes: [Volume] {
         let needle = diskFilter.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !needle.isEmpty else { return volumes }
         // copies: is a temporary, view-only exact ID match from the active
         // cross-disk metadata candidate groups, never OS mount evidence.
+        if needle.lowercased() == "page:" {
+            let counts = currentPageDiskCounts
+            return volumes.filter { (counts[$0.id] ?? 0) > 0 }.sorted { lhs, rhs in
+                let l = counts[lhs.id] ?? 0, r = counts[rhs.id] ?? 0
+                return l == r ? lhs.id < rhs.id : l > r
+            }
+        }
         if needle.lowercased() == "copies:" {
             guard copySourceID != nil else { return [] }
             // Preserve priority order used by the pickup list, but keep
@@ -685,7 +717,7 @@ private struct CandidateFolderReturnContext {
     // its connected/count ordering rather than the user's ordinary register order.
     var visibleVolumes: [Volume] {
         let rows = filteredVolumes
-        guard !isCandidateRegisterMode else { return rows }
+        guard !isCandidateRegisterMode && !isPageRegisterMode else { return rows }
         switch registerOrder {
         case "shelf":
             return rows.sorted { lhs, rhs in
@@ -2697,7 +2729,7 @@ private struct CandidateFolderReturnContext {
             HSplitView {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 5) {
-                        Text("DISKS • \(model.visibleVolumes.count)/\(model.volumes.count)")
+                        Text("DISKS \(model.isPageRegisterMode ? "• PAGE ONLY " : "")• \(model.visibleVolumes.count)/\(model.volumes.count)")
                             .font(.caption.bold()).foregroundStyle(.secondary)
                         Spacer(minLength: 0)
                         Button {
@@ -2712,6 +2744,12 @@ private struct CandidateFolderReturnContext {
                         .keyboardShortcut("u", modifiers: [.command, .shift])
                         .accessibilityLabel("Filter register to catalog disks without verified physical identity")
                         .help("Refresh OS UUIDs; show unverified disks, including scan failures (Command-Shift-U)")
+                        Button("Page") { model.revealCurrentPageDisksInRegister() }
+                            .disabled(!model.pageReady || model.awaitingPage || model.entries.isEmpty)
+                            .keyboardShortcut("6", modifiers: [.command, .shift])
+                            .accessibilityLabel("Filter register to exact disk IDs on the current verified results page only")
+                            .accessibilityHint("At most 250 loaded entries, not the whole search or evidence of live file presence.")
+                            .help("CURRENT PAGE ONLY disk distribution • Command-Shift-6")
                         Button("Candidates") {
                             model.revealCopyCandidateDisksInRegister()
                         }
@@ -2753,7 +2791,7 @@ private struct CandidateFolderReturnContext {
                         TextField("Filter disk label / ID", text: $model.diskFilter)
                             .focused($diskFilterFocused)
                             .accessibilityLabel("Filter catalog disk register")
-                            .help("Register only: id:42, copies:, state:connected/offline/conflict/unverified, tag:missing/shared. Search scope unchanged.")
+                            .help("Register only: page: (loaded PAGE ONLY), id:42, copies:, state:connected/offline/conflict/unverified, tag:missing/shared. Search scope unchanged.")
                         if !model.diskFilter.isEmpty {
                             Button {
                                 model.diskFilter = ""
@@ -2779,7 +2817,9 @@ private struct CandidateFolderReturnContext {
                                     HStack(spacing: 4) {
                                         Image(systemName: "externaldrive")
                                             .foregroundStyle(.secondary)
-                                        Text("#\(disk.id) • \(disk.label)")
+                                        Text(model.isPageRegisterMode
+                                             ? "#\(disk.id) • \(model.pageRegisterCount(disk.id)) THIS-PAGE hits • \(disk.label)"
+                                             : "#\(disk.id) • \(disk.label)")
                                             .lineLimit(1)
                                         if model.shelfConflictCaption(disk.id) != nil {
                                             Image(systemName: "exclamationmark.triangle.fill")
@@ -2793,9 +2833,11 @@ private struct CandidateFolderReturnContext {
                                             .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                                     }
                                 } else {
-                                    Label(model.isCandidateRegisterMode
+                                    Label(model.isPageRegisterMode
+                                          ? "#\(disk.id) • \(model.pageRegisterCount(disk.id)) CURRENT PAGE hits • \(disk.label)"
+                                          : (model.isCandidateRegisterMode
                                           ? "#\(disk.id) • \(model.candidateRegisterCount(disk.id)) name+size candidates • \(disk.label)"
-                                          : "#\(disk.id) • \(disk.label)", systemImage: "externaldrive")
+                                          : "#\(disk.id) • \(disk.label)"), systemImage: "externaldrive")
                                     if model.shelfConflictCaption(disk.id) != nil {
                                         Text(model.shelfConflictCaption(disk.id) ?? "SHARED STICKER")
                                             .font(.caption2).foregroundStyle(.orange)
@@ -2809,9 +2851,11 @@ private struct CandidateFolderReturnContext {
                             }
                             .tag(Optional(disk.id))
                             .accessibilityElement(children: .combine)
-                            .accessibilityLabel(model.isCandidateRegisterMode
+                            .accessibilityLabel(model.isPageRegisterMode
+                                ? model.pageRegisterAccessibility(disk)
+                                : (model.isCandidateRegisterMode
                                 ? model.candidateRegisterAccessibility(disk)
-                                : "Catalog disk #\(disk.id), \(disk.label), \(model.physicalCaption(disk.id))")
+                                : "Catalog disk #\(disk.id), \(disk.label), \(model.physicalCaption(disk.id))"))
                             .help(model.isCandidateRegisterMode
                                 ? "Metadata name+size candidate disk. Last OS check is not proof the file exists."
                                 : (disk.root_path ?? disk.label))
