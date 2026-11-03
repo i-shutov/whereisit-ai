@@ -374,7 +374,7 @@ class DiskLocatorWiringTests(unittest.TestCase):
         mac_status = MAC.split("func physicalState(_ id: Int64)", 1)[1].split(
             "func candidateCopyOSCaption(", 1)[0]
         self.assertIn("verifiedPhysicalIDs[id]", mac_status)
-        self.assertIn("mountedPhysicalVolumes.filter({ $0.id == verifiedID }).count == 1", mac_status)
+        self.assertIn('mountedPhysicalVolumes.filter({ $0.id == verifiedID && $0.currentMount != "/" }).count == 1', mac_status)
         self.assertIn('case "connected": return "OS verified now"', MAC)
 
     def test_ux33_live_result_os_badges_are_reactive_and_fail_closed(self):
@@ -717,7 +717,9 @@ class DiskLocatorWiringTests(unittest.TestCase):
     def test_pairing_picker_rejects_colliding_live_volume_uuids(self):
         self.assertIn("fn unique_pairable_mounts(", WIN)
         self.assertIn("cloned_and_multi_mounted_identity_is_not_a_pairing_choice", WIN)
-        self.assertIn("for candidate in candidates {", WIN)
+        self.assertIn("for (index, candidate) in candidates.iter().enumerate()", WIN)
+        self.assertIn("TrackPopupMenu(", WIN)
+        self.assertIn("unique_matching_live_mount(&candidate, &self.mounted_volumes)", WIN)
         self.assertIn("var pairablePhysicalVolumes: [LivePhysicalVolume]", MAC)
         self.assertIn("ForEach(model.pairablePhysicalVolumes)", MAC)
         self.assertIn("Duplicate OS volume UUID: ambiguous mounts cannot be paired.", MAC)

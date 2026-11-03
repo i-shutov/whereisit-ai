@@ -6065,12 +6065,7 @@ impl App {
         }
         for (index, candidate) in candidates.iter().enumerate() {
             let label = physical_pairing_menu_caption(candidate);
-            AppendMenuW(
-                menu,
-                MF_STRING,
-                index + 1,
-                wide(&label).as_ptr(),
-            );
+            AppendMenuW(menu, MF_STRING, index + 1, wide(&label).as_ptr());
         }
         let mut anchor: POINT = std::mem::zeroed();
         if let Some((_, button)) = self.buttons.iter().find(|(id, _)| *id == PHYSICAL_PAIR) {
@@ -6112,8 +6107,7 @@ impl App {
         }
         // The choice may have disappeared while the popup was open.
         self.refresh_physical_presence();
-        if !self.physical_probe_ok
-            || !unique_matching_live_mount(&candidate, &self.mounted_volumes)
+        if !self.physical_probe_ok || !unique_matching_live_mount(&candidate, &self.mounted_volumes)
         {
             self.status("OS mount changed while picking; pairing refused.");
             return;
@@ -6140,8 +6134,7 @@ impl App {
         // The disk may have been unplugged during the confirmation dialog.
         // The service additionally rejects duplicated UUIDs and other bindings.
         self.refresh_physical_presence();
-        if !self.physical_probe_ok
-            || !unique_matching_live_mount(&candidate, &self.mounted_volumes)
+        if !self.physical_probe_ok || !unique_matching_live_mount(&candidate, &self.mounted_volumes)
         {
             self.status("OS volume changed during pairing; no pairing saved. Retry after checking the USB device.");
             return;
