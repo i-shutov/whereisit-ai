@@ -1,4 +1,32 @@
-# WhereIsIt AI — integrated RC3 handoff (2026-10-31)
+# WhereIsIt AI — handoff (checkpoint CP-2026-11-13)
+
+## Resume point (current)
+
+Canonical integrated `main`: `cabdb3d2b139a67729a795ba9c34e4d3144c9c9f`
+(tree `00c1e20ab5779475610275e1292cd2c5e333b618`). Identity `1.0.0-rc.3`,
+`release/ACCEPTANCE.json` keeps `stable_ready: false`.
+
+Integral checkpoint materials (reports, evidence, gates, verification):
+[`docs/checkpoint/2026-11-13/`](docs/checkpoint/2026-11-13/00_START_HERE.md).
+Start with `reports/NEXT_STEPS_AND_GATES_RU.md` and `VERIFY.md` in that folder.
+
+Published tag `v1.0.0-rc.3` points at `5d91ba12…` and **precedes** the later
+privacy-publication gate merged via PR #56 into current `main`. **Do not move
+that tag.** Newer installers must be built from an exact later SHA.
+
+Draft PR #57 (search-first / physical USB locator), HEAD
+`93d7e525dc0433b6790a99250030c9c7fe09ca9a` on branch
+`ux/search-first-disk-locator-20261101`, has green CI but **is not merged** and
+has no manual Win/Mac USB GUI acceptance. Work that UX on its branch; do not
+substitute it for `main`.
+
+Local Linux offline kit (binaries, DuckDB wheel): sibling directory documented in
+[`docs/checkpoint/2026-11-13/OFFLINE_KIT.md`](docs/checkpoint/2026-11-13/OFFLINE_KIT.md).
+Not a git artifact.
+
+---
+
+## Historical: integrated RC3 handoff (2026-10-31)
 
 ## Continue the integrated product, not the old micro-PR plan
 

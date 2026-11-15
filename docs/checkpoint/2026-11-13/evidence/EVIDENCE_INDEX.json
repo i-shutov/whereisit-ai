@@ -1,0 +1,285 @@
+{
+  "format": "whereisit-integral-checkpoint-evidence-v1",
+  "captured_on_utc_date": "2026-11-13",
+  "repository": "https://github.com/i-shutov/whereisit-ai",
+  "main_sha": "cabdb3d2b139a67729a795ba9c34e4d3144c9c9f",
+  "main_tree_sha": "00c1e20ab5779475610275e1292cd2c5e333b618",
+  "latest_release": {
+    "tag": "v1.0.0-rc.3",
+    "commit_sha": "5d91ba12adfa46f5ec6f0310f8e08b590b60f3c6",
+    "published_at_utc": "2026-10-31T04:50:26Z",
+    "prerelease": true,
+    "stable_accepted": false,
+    "url": "https://github.com/i-shutov/whereisit-ai/releases/tag/v1.0.0-rc.3"
+  },
+  "integrations": [
+    {
+      "pr": 34,
+      "sha": "af5a7e4227ba11b77f29c722f2dd135f33521acf",
+      "result": "merged_pinned_CTF_export"
+    },
+    {
+      "pr": 35,
+      "sha": "7f340683a8db326f352fa51eaf3848b37744d63e",
+      "result": "merged_pinned_CTF_duplicate_candidates"
+    },
+    {
+      "pr": 36,
+      "sha": "e8a16abd15fd4880ec2affa41b660a3b1f2aa5ba",
+      "result": "merged_macOS_hdiutil_resource_busy_gate"
+    },
+    {
+      "pr": 54,
+      "sha": "5d91ba12adfa46f5ec6f0310f8e08b590b60f3c6",
+      "result": "merged_pr37_through_pr53_integrated_RC3"
+    },
+    {
+      "pr": 56,
+      "sha": "cabdb3d2b139a67729a795ba9c34e4d3144c9c9f",
+      "result": "merged_privacy_publication_gate_into_main"
+    }
+  ],
+  "draft_pr_57": {
+    "url": "https://github.com/i-shutov/whereisit-ai/pull/57",
+    "head_sha": "93d7e525dc0433b6790a99250030c9c7fe09ca9a",
+    "status": "open_draft",
+    "last_commit_at_utc": "2026-11-03",
+    "manual_ux_accepted": false
+  },
+  "real_ctf": {
+    "source_kind": "genuine_owner_catalog",
+    "raw_source_in_package": false,
+    "volumes": 44,
+    "entries": 3046027,
+    "executed_source_commit": "fedc833b19c69428ad3f22d4fa2e2c0a9582a07a",
+    "ctf_roundtrip": "PASS",
+    "all_rows_field_parity": "PASS",
+    "compared_rows": 3046027,
+    "compared_columns": 15,
+    "selected_exports_rows": 12664,
+    "duplicate_candidates_export_rows": 32757,
+    "source_changed_detection": "PASS",
+    "annotation_CAS_restore": "PASS",
+    "platform": "isolated_Linux_x64",
+    "initial_sync_milliseconds": 170471.12,
+    "query_p95_milliseconds": [
+      218.6,
+      209.82,
+      252.83
+    ],
+    "p95_target_milliseconds": 150,
+    "p95_target_met": false,
+    "redacted_reference": "refs/main/docs/qa/RC3_REAL_DATA_REDACTED_20261031.json"
+  },
+  "verified_ci": [
+    {
+      "ref": "main",
+      "run_id": 41171910671,
+      "kind": "native",
+      "status": "PASS",
+      "jobs": 4,
+      "url": "https://github.com/i-shutov/whereisit-ai/actions/runs/41171910671"
+    },
+    {
+      "ref": "main",
+      "run_id": 41171910713,
+      "kind": "installed_RC2_to_RC3_upgrade",
+      "status": "PASS",
+      "jobs": 3,
+      "url": "https://github.com/i-shutov/whereisit-ai/actions/runs/41171910713"
+    },
+    {
+      "ref": "main",
+      "run_id": 41171910729,
+      "kind": "integration",
+      "status": "PASS",
+      "jobs": 1,
+      "url": "https://github.com/i-shutov/whereisit-ai/actions/runs/41171910729"
+    },
+    {
+      "ref": "main",
+      "run_id": 41172238335,
+      "kind": "prerelease_publication",
+      "status": "SUCCESS",
+      "url": "https://github.com/i-shutov/whereisit-ai/actions/runs/41172238335"
+    },
+    {
+      "ref": "pr57",
+      "run_id": 41616027549,
+      "kind": "native",
+      "status": "PASS",
+      "jobs": 4,
+      "url": "https://github.com/i-shutov/whereisit-ai/actions/runs/41616027549"
+    },
+    {
+      "ref": "pr57",
+      "run_id": 41616027556,
+      "kind": "installed_RC2_to_RC3_upgrade",
+      "status": "PASS",
+      "jobs": 3,
+      "url": "https://github.com/i-shutov/whereisit-ai/actions/runs/41616027556"
+    },
+    {
+      "ref": "pr57",
+      "run_id": 41616027540,
+      "kind": "integration",
+      "status": "PASS",
+      "url": "https://github.com/i-shutov/whereisit-ai/actions/runs/41616027540"
+    },
+    {
+      "ref": "pr57",
+      "run_id": 41616027525,
+      "kind": "offline_source_kit",
+      "status": "PASS",
+      "url": "https://github.com/i-shutov/whereisit-ai/actions/runs/41616027525"
+    }
+  ],
+  "source_archives": {
+    "main": {
+      "repository": "i-shutov/whereisit-ai",
+      "ref_kind": "integrated_main",
+      "ref_sha": "cabdb3d2b139a67729a795ba9c34e4d3144c9c9f",
+      "git_tree_sha": "00c1e20ab5779475610275e1292cd2c5e333b618",
+      "snapshot_source_commit": "e87e06f3c6b1921bdcce232ee44f0c3028ca9d95",
+      "artifact_id": 13029884531,
+      "workflow_run": 41169239686,
+      "outer_artifact_sha256": "ba712598b419f98dfc3e7ffb17c268959f15fe1bb6729aecd0d465cc997074b6",
+      "source_zip": "source/WhereIsItAI_main_cabdb3d2_tree_00c1e20a_source.zip",
+      "note": "source commit e87... has EXACT SAME Git tree SHA as integrated main cabdb...; full code bytes identical, history not included",
+      "source_zip_sha256": "0259c7747cc27630e15a00c3a4047524fe7a427dafef4a1fa771f8e1745a38f0",
+      "source_zip_bytes": 1039834,
+      "archive_entries": 580,
+      "zip_crc_test": "PASS"
+    },
+    "pr57": {
+      "repository": "i-shutov/whereisit-ai",
+      "ref_kind": "open_draft_pr",
+      "ref_sha": "93d7e525dc0433b6790a99250030c9c7fe09ca9a",
+      "git_tree_sha": "4f09c2b6175d12899881ad95381ed9d95c92e921",
+      "snapshot_source_commit": "93d7e525dc0433b6790a99250030c9c7fe09ca9a",
+      "artifact_id": 13220324321,
+      "workflow_run": 41616027525,
+      "outer_artifact_sha256": "453c1568e6cd78b0fcee48c532fbc52bba561292bcc2c460c55bc4594274f336",
+      "source_zip": "source/WhereIsItAI_PR57_draft_93d7e525_source.zip",
+      "note": "not merged into main as of 2026-11-13; do NOT conflate with release tree",
+      "source_zip_sha256": "60c555de1e05a4349909ea8e4fb4a5d046ec71625537f6b785548d225e99c687",
+      "source_zip_bytes": 1295840,
+      "archive_entries": 631,
+      "zip_crc_test": "PASS"
+    }
+  },
+  "tag_main_race": {
+    "tag_sha": "5d91ba12adfa46f5ec6f0310f8e08b590b60f3c6",
+    "main_sha": "cabdb3d2b139a67729a795ba9c34e4d3144c9c9f",
+    "privacy_gate_only_later_in_main": true,
+    "tag_mutation_allowed": false
+  },
+  "not_accepted": [
+    "modified_CTF_in_original_WhereIsIt",
+    "two_historical_original_CTF_raw_bytes",
+    "physical_Windows_and_macOS_GUI_USB_a11y",
+    "signing_and_notarization",
+    "p95_le_150ms",
+    "opaque_0x10_semantics",
+    "PR57_manual_GUI_integration"
+  ],
+  "privacy": {
+    "private_CTF_in_checkpoint": false,
+    "private_SQLite_in_checkpoint": false,
+    "owner_file_names_paths_hashes_in_checkpoint": false,
+    "signing_secrets_in_checkpoint": false
+  },
+  "refs": {
+    "main:HANDOFF.md": {
+      "sha256": "b4ca4aaa8fa2e114d5587b820cde3f26b8e1ce9fc9b6449dd1adb6a0544b2fc5",
+      "size": 5452
+    },
+    "main:README.md": {
+      "sha256": "fc843021301a77acb707e15caadb07e8247ceb359c8a0ba057ae2eaa2ba15cb5",
+      "size": 16651
+    },
+    "main:AGENTS.md": {
+      "sha256": "9410a0f05a1de835394d0acbf6f4d1c3148109dae1b935506dbbb60d7bc86f75",
+      "size": 1415
+    },
+    "main:release/ACCEPTANCE.json": {
+      "sha256": "76e501017bc4fbf60194fb0c9820372e765f3163c81c5813e0f67de6635f7e37",
+      "size": 1766
+    },
+    "main:docs/qa/RC3_REAL_DATA_REDACTED_20261031.json": {
+      "sha256": "c7c195fb873eb94be6b8cbcf5bddc84e2404974bc0cd19789c7e1522d3a66163",
+      "size": 2023
+    },
+    "main:docs/qa/RC3_PRIVACY_RELEASE_GATE_WP_20261031.md": {
+      "sha256": "6ceee2076f13924e159f2736cd3f2ada5540250ef74baaace6b992089c9c12cd",
+      "size": 3042
+    },
+    "main:docs/qa/CTF_DESCRIPTION_GAPS.md": {
+      "sha256": "f9a4973f17a379ed416602e3d389a4a3bc59a5cda319d7c5aa42628341bfe233",
+      "size": 5069
+    },
+    "main:docs/qa/CTF_PINNED_EXPORT.md": {
+      "sha256": "500d021823c5c68626fe9d2c372fb682767574e671b6847a456a61187fb6fb42",
+      "size": 4234
+    },
+    "main:docs/qa/CTF_PINNED_DUPLICATES.md": {
+      "sha256": "c8eda4c22921505cbfe385dc1f6c94cd2db6d8b4f285a495d6a3f3dcbcb450af",
+      "size": 4681
+    },
+    "main:docs/qa/CTF_DUPLICATE_EXPORT_WP_20261030.md": {
+      "sha256": "7982d4a5697bfeebbdd5ea855f2ddabde6fa61220965f4bee95306b597816cc8",
+      "size": 2897
+    },
+    "main:docs/qa/CTF_ANNOTATIONS_USER_STORE_WP_20261030.md": {
+      "sha256": "93b275792127a6e3a45bcaa4d2e26f1e5ddf1f780cd29f47d589b9cc53b3d284",
+      "size": 4118
+    },
+    "main:docs/qa/CTF_ANNOTATION_SNAPSHOT_RESTORE_WP_20261030.md": {
+      "sha256": "a59357af7c6bc6c9b6258ba657a85bb32b94f8fa0a75df5aeb4338e0a7f1123d",
+      "size": 4291
+    },
+    "main:docs/qa/MAC_DMG_RESOURCE_BUSY_20261030.md": {
+      "sha256": "c1b5fba8c23b2d2893ef7ffc9eef054bf8f832a0a3c9a88dfc4c12cd06e90871",
+      "size": 2614
+    },
+    "main:docs/releases/v1.0.0-rc.3.md": {
+      "sha256": "f7ec9431e7933e024b80c804996123d43d87447c35c045980b14073ff59f613f",
+      "size": 1479
+    },
+    "main:docs/decisions/ADR-0002-hot-cold-storage.md": {
+      "sha256": "35c20b247c48ae50902c0f76cfb9d3bf82b51c87ab08c719f26c97f4f53ba568",
+      "size": 6781
+    },
+    "main:docs/decisions/ADR-0003-ctf-authority-content-caches.md": {
+      "sha256": "eccda8d2b9585cee3f05971431c66a9703bcfb5867d685345f091795c86dd643",
+      "size": 9334
+    },
+    "pr57:docs/UX_OFFLINE_USB_SEARCH_2026-11-01.md": {
+      "sha256": "22a4fff4291f5cc1f142b0069f3fee5177ee8065e0505c49a03682b0adb6c7a1",
+      "size": 57916
+    },
+    "pr57:docs/qa/UX_NATIVE_PANE_REVIEW_20261101.md": {
+      "sha256": "6c8cc4e7dcb52ae01d832453b611f7500a9232d7d2e66efe5ae023c0bc9896c8",
+      "size": 4276
+    },
+    "pr57:docs/qa/PHYSICAL_USB_IDENTITY_WP_20261101.md": {
+      "sha256": "b6356f05e192c601a0d17c1b3993c3fcff06cacb4dd4e4eeb7a2330b604fc989",
+      "size": 8132
+    },
+    "pr57:docs/qa/UX21_ONLY_OTHER_DISKS_20261102.md": {
+      "sha256": "0f4ac5db82c2412c73875eee57517c9cc7ffbcaa5685fb8a3b51c221f53e9ffd",
+      "size": 2164
+    }
+  },
+  "companion_drive_artifact": {
+    "name": "WhereIsItAI_RC3_privacy_gated_offline_kit_13029884531.zip",
+    "drive_file_id": "19MDXCY8h_cxP5nUsFyvIHQWaN7JGc22i",
+    "url": "https://drive.google.com/file/d/19MDXCY8h_cxP5nUsFyvIHQWaN7JGc22i/view?usp=drivesdk",
+    "sha256": "ba712598b419f98dfc3e7ffb17c268959f15fe1bb6729aecd0d465cc997074b6",
+    "verified_zip_crc": true
+  },
+  "drive_folder": {
+    "id": "1O5HMbCZGQnaGejOEAzQyQLV8gROknZLu",
+    "url": "https://drive.google.com/drive/folders/1O5HMbCZGQnaGejOEAzQyQLV8gROknZLu"
+  }
+}

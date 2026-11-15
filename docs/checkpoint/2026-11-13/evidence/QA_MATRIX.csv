@@ -1,0 +1,17 @@
+﻿scope,test,status,count_or_measurement,source_ref,limitations
+real CTF,byte-identical unchanged roundtrip,PASS,44 volumes / 3 046 027 records,docs/qa/RC3_REAL_DATA_REDACTED_20261031.json,original-app modified export NOT tested
+real CTF,full 15-field CSV/Parquet parity,PASS,3 046 027 rows / 15 fields,docs/qa/RC3_REAL_DATA_REDACTED_20261031.json,Linux source commit fedc833
+real CTF,selected CSV/Parquet/JSON,PASS,12 664 rows,docs/qa/RC3_REAL_DATA_REDACTED_20261031.json,Linux service only
+real CTF,metadata duplicate candidate export,PASS,32 757 rows,docs/qa/RC3_REAL_DATA_REDACTED_20261031.json,metadata candidates != byte identity
+real CTF,annotation CAS and source immutability,PASS,source and derivative unchanged,docs/qa/RC3_REAL_DATA_REDACTED_20261031.json,not physically validated on Win/Mac GUI
+performance,warm full-source SHA search p95,FAIL_TARGET,218.60 / 209.82 / 252.83 ms vs <=150 ms,docs/qa/RC3_REAL_DATA_REDACTED_20261031.json,3 queries / 10 repeats each
+main,native CI Linux/Win/Mac ARM/Intel,PASS,4/4,actions/runs/41171910671,CI only; manual GUI pending
+main,installed RC2->RC3 upgrade,PASS,3/3,actions/runs/41171910713,generated datasets only
+main,integration regression,PASS,1/1,actions/runs/41171910729,not manual UX
+PR57,native CI Linux/Win/Mac ARM/Intel,PASS,4/4,actions/runs/41616027549,draft not merged; hardware QA missing
+PR57,installed upgrade,PASS,3/3,actions/runs/41616027556,generated datasets only
+release,Win Authenticode and Mac DeveloperID/notarization,BLOCKED,none,release/ACCEPTANCE.json,unsigned/ad-hoc candidates only
+CTF,new/modified output read in original WhereIsIt,BLOCKED,none,release/ACCEPTANCE.json,unchanged roundtrip is insufficient
+historical CTF,e-books + Mp3 provider original byte access,BLOCKED,2 source files,Issue #19,"previously provided, provider denies bytes"
+UX,Win10/11 Mac ARM/Intel physical/keyboard/a11y,BLOCKED,manual acceptance missing,PR #57,CI not physical QA
+opaque CTF,0x10 flag semantics,UNKNOWN,1 782 opaque candidates,Issue #23,not proven lost text

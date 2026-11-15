@@ -1,0 +1,31 @@
+{
+  "checkpoint_id": "WHEREISIT_AI_CP_20261113_01",
+  "created_date": "2026-11-13",
+  "project": "WhereIsIt AI",
+  "main": {
+    "sha": "cabdb3d2b139a67729a795ba9c34e4d3144c9c9f",
+    "tree": "00c1e20ab5779475610275e1292cd2c5e333b618",
+    "state": "integrated_RC3_plus_later_privacy_fix"
+  },
+  "pr57": {
+    "sha": "93d7e525dc0433b6790a99250030c9c7fe09ca9a",
+    "tree": "4f09c2b6175d12899881ad95381ed9d95c92e921",
+    "state": "draft_unmerged_all_CI_green_manual_QA_pending"
+  },
+  "published_release": "v1.0.0-rc.3",
+  "tag_sha": "5d91ba12adfa46f5ec6f0310f8e08b590b60f3c6",
+  "stable_ready": false,
+  "all_private_sources_embedded": false,
+  "drive_checkpoint_folder": "https://drive.google.com/drive/folders/1O5HMbCZGQnaGejOEAzQyQLV8gROknZLu",
+  "companion_offline_kit_url": "https://drive.google.com/file/d/19MDXCY8h_cxP5nUsFyvIHQWaN7JGc22i/view?usp=drivesdk",
+  "companion_offline_kit_sha256": "ba712598b419f98dfc3e7ffb17c268959f15fe1bb6729aecd0d465cc997074b6",
+  "watchdog": {
+    "id": "6ae718c5ea408191bd5bc6ac2d43d7ef",
+    "title": "WhereIsIt AI — CI watchdog",
+    "enabled": true,
+    "mode": "read-only",
+    "interval": "hourly",
+    "last_observed_run": "2026-11-13T07:51:14.211467+00:00"
+  },
+  "guidance": "Always re-read live main and PRs; never treat PR57 as merged or RC3 as stable."
+}

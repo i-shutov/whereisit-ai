@@ -8,6 +8,9 @@
 *.parquet
 *.csv
 !tests/fixtures/*.csv
+!docs/checkpoint/**/*.csv
 apps/macos/.build/
 .DS_Store
+# Local companion binaries (sibling path preferred: ../whereisit-ai-offline-kit/)
+/whereisit-ai-offline-kit/
 
