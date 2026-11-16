@@ -1,0 +1,6 @@
+{
+  "name": "WhereIsIt AI — Offline USB Catalog & UX Workbench",
+  "description": "Search-first offline USB disk catalog locator, physical UUID pairing workbench, and Gate G1/G3 UX audit suite for WhereIsIt AI (PR #57).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
