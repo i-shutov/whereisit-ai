@@ -37,7 +37,6 @@ pub enum Purpose {
     Create { path: String },
     Volumes,
     Page { route: Route },
-    Rename { id: i64 },
 }
 
 pub struct Reply {
