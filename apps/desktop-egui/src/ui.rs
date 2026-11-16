@@ -402,8 +402,7 @@ impl DesktopApp {
                 });
                 let disk_filter_hint = self.t("Фильтр дисков", "Filter disks");
                 ui.add(
-                    egui::TextEdit::singleline(&mut self.disk_filter)
-                        .hint_text(disk_filter_hint),
+                    egui::TextEdit::singleline(&mut self.disk_filter).hint_text(disk_filter_hint),
                 );
                 ui.separator();
                 if ui
