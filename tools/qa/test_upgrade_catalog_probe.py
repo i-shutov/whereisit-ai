@@ -1,10 +1,21 @@
 """Regression: an RC2-to-RC3 run must never validate RC1-to-RC2 versions."""
 import unittest
+from pathlib import Path
 from upgrade_catalog_probe import (FORMAT, RC1, RC2,
     expected_cli_version, validate_checkpoint_versions)
 
 
 class InstalledVersionContract(unittest.TestCase):
+    def test_os_upgrade_qa_uses_pinned_sqlite_metadata(self):
+        root = Path(__file__).resolve().parents[2]
+        for path in (
+            root / "tools/qa/upgrade-rc3-macos.sh",
+            root / "tools/qa/upgrade-rc3-windows.ps1",
+        ):
+            contents = path.read_text(encoding="utf-8")
+            self.assertIn("refresh_sqlite_notices.py", contents)
+            self.assertNotIn("3.51.3", contents)
+
     def test_historical_pair_remains_exact(self):
         self.assertEqual(expected_cli_version("prepare", RC1, RC2), "WhereIsIt AI " + RC1)
         self.assertEqual(expected_cli_version("verify", RC1, RC2), "WhereIsIt AI " + RC2)
