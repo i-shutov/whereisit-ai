@@ -50,10 +50,10 @@ pub struct DesktopApp {
 
 impl DesktopApp {
     pub fn new(cc: &eframe::CreationContext<'_>, startup_catalog: Option<String>) -> Self {
-        let mut style = (*cc.egui_ctx.style()).clone();
-        style.spacing.item_spacing = egui::vec2(6.0, 5.0);
-        style.spacing.button_padding = egui::vec2(7.0, 4.0);
-        cc.egui_ctx.set_style(style);
+        cc.egui_ctx.all_styles_mut(|style| {
+            style.spacing.item_spacing = egui::vec2(6.0, 5.0);
+            style.spacing.button_padding = egui::vec2(7.0, 4.0);
+        });
         Self {
             bus: CommandBus::new(),
             active_request: None,
@@ -270,8 +270,8 @@ impl DesktopApp {
         }
     }
 
-    fn menu(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("menu").show(ctx, |ui| {
+    fn menu(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
+        egui::Panel::top("menu").show(root, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.strong("WhereIsIt AI");
                 ui.separator();
@@ -340,8 +340,8 @@ impl DesktopApp {
         });
     }
 
-    fn search_toolbar(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("search_toolbar").show(ctx, |ui| {
+    fn search_toolbar(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
+        egui::Panel::top("search_toolbar").show(root, |ui| {
             ui.add_space(5.0);
             ui.horizontal(|ui| {
                 let back = ui.add_enabled(
@@ -387,13 +387,13 @@ impl DesktopApp {
         });
     }
 
-    fn disk_sidebar(&mut self, ctx: &egui::Context) {
-        egui::SidePanel::left("disk_register")
+    fn disk_sidebar(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
+        egui::Panel::left("disk_register")
             .resizable(true)
-            .default_width(245.0)
-            .min_width(180.0)
-            .max_width(420.0)
-            .show(ctx, |ui| {
+            .default_size(245.0)
+            .min_size(180.0)
+            .max_size(420.0)
+            .show(root, |ui| {
                 ui.horizontal(|ui| {
                     ui.strong(self.t("Диски каталога", "Catalog disks"));
                     ui.label(RichText::new(self.volumes.len().to_string()).weak());
@@ -474,13 +474,13 @@ impl DesktopApp {
             });
     }
 
-    fn inspector(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::bottom("inspector")
+    fn inspector(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
+        egui::Panel::bottom("inspector")
             .resizable(true)
-            .default_height(138.0)
-            .min_height(95.0)
-            .max_height(320.0)
-            .show(ctx, |ui| {
+            .default_size(138.0)
+            .min_size(95.0)
+            .max_size(320.0)
+            .show(root, |ui| {
                 ui.horizontal(|ui| {
                     ui.strong(self.t("Инспектор", "Inspector"));
                     ui.separator();
@@ -522,8 +522,8 @@ impl DesktopApp {
             });
     }
 
-    fn results_table(&mut self, ctx: &egui::Context) {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    fn results_table(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
+        egui::CentralPanel::default().show(root, |ui| {
             if self.db.is_none() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(75.0);
@@ -774,7 +774,8 @@ impl DesktopApp {
 }
 
 impl eframe::App for DesktopApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = root.ctx().clone();
         ctx.set_visuals(if self.dark {
             egui::Visuals::dark()
         } else {
@@ -782,17 +783,17 @@ impl eframe::App for DesktopApp {
         });
         if self.auto_open {
             self.auto_open = false;
-            self.start_catalog(false, ctx);
+            self.start_catalog(false, &ctx);
         }
         while let Some(reply) = self.bus.poll() {
-            self.apply_reply(reply, ctx);
+            self.apply_reply(reply, &ctx);
         }
-        self.handle_shortcuts(ctx);
-        self.menu(ctx);
-        self.search_toolbar(ctx);
-        self.disk_sidebar(ctx);
-        self.inspector(ctx);
-        self.results_table(ctx);
+        self.handle_shortcuts(&ctx);
+        self.menu(root, &ctx);
+        self.search_toolbar(root, &ctx);
+        self.disk_sidebar(root, &ctx);
+        self.inspector(root, &ctx);
+        self.results_table(root, &ctx);
         self.dialogs(ctx);
     }
 }
