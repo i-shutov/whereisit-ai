@@ -29,7 +29,10 @@ fn main() -> eframe::Result<()> {
         "WhereIsIt AI — egui",
         native_options,
         Box::new(move |creation| {
-            Ok(Box::new(ui::DesktopApp::new(creation, startup_catalog.clone())))
+            Ok(Box::new(ui::DesktopApp::new(
+                creation,
+                startup_catalog.clone(),
+            )))
         }),
     )
 }

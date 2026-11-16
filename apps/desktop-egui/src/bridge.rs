@@ -7,9 +7,17 @@ use std::thread;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Route {
-    Search { query: String, volume_id: Option<i64> },
-    Folder { volume_id: i64, parent_id: Option<i64> },
-    Copies { entry_id: i64 },
+    Search {
+        query: String,
+        volume_id: Option<i64>,
+    },
+    Folder {
+        volume_id: i64,
+        parent_id: Option<i64>,
+    },
+    Copies {
+        entry_id: i64,
+    },
 }
 
 impl Route {
@@ -19,7 +27,10 @@ impl Route {
                 "op":"search_fast", "db":db, "query":query,
                 "volume_id":volume_id, "offset":offset, "limit":limit
             }),
-            Self::Folder { volume_id, parent_id } => json!({
+            Self::Folder {
+                volume_id,
+                parent_id,
+            } => json!({
                 "op":"children", "db":db, "volume_id":volume_id,
                 "parent_id":parent_id, "offset":offset, "limit":limit
             }),
@@ -64,11 +75,17 @@ impl CommandBus {
         let repaint = ctx.clone();
         thread::spawn(move || {
             let raw = atlas_service::dispatch_json(&request.to_string());
-            let response = serde_json::from_str(&raw).unwrap_or_else(|_| json!({
-                "ok":false, "error":{"code":"invalid_backend_response",
-                    "message":"Service returned invalid JSON"}
-            }));
-            let _ = tx.send(Reply { id, purpose, response });
+            let response = serde_json::from_str(&raw).unwrap_or_else(|_| {
+                json!({
+                    "ok":false, "error":{"code":"invalid_backend_response",
+                        "message":"Service returned invalid JSON"}
+                })
+            });
+            let _ = tx.send(Reply {
+                id,
+                purpose,
+                response,
+            });
             repaint.request_repaint();
         });
         id
@@ -84,9 +101,12 @@ mod tests {
     use super::*;
     #[test]
     fn search_scope_is_explicit_and_copies_never_claim_byte_equality() {
-        let search = Route::Search { query:"name:фильм".into(), volume_id:None };
+        let search = Route::Search {
+            query: "name:фильм".into(),
+            volume_id: None,
+        };
         assert!(search.request("/tmp/x.sqlite", 0, 250)["volume_id"].is_null());
-        let copies = Route::Copies { entry_id:42 };
+        let copies = Route::Copies { entry_id: 42 };
         let r = copies.request("/tmp/x.sqlite", 100, 100);
         assert_eq!(r["op"], "copy_candidates");
         assert_eq!(r["entry_id"], 42);

@@ -72,7 +72,10 @@ impl Page {
             .get("items")
             .and_then(Value::as_array)
             .ok_or_else(|| "service response is missing items[]".to_owned())?;
-        let items = raw.iter().map(Entry::parse).collect::<Result<Vec<_>, _>>()?;
+        let items = raw
+            .iter()
+            .map(Entry::parse)
+            .collect::<Result<Vec<_>, _>>()?;
         let offset = unsigned(v, "offset")?;
         let limit = unsigned(v, "limit")?;
         let has_more = v
@@ -83,7 +86,12 @@ impl Page {
                     .and_then(Value::as_u64)
                     .is_some_and(|total| offset.saturating_add(limit) < total)
             });
-        Ok(Self { items, offset, limit, has_more })
+        Ok(Self {
+            items,
+            offset,
+            limit,
+            has_more,
+        })
     }
 }
 
@@ -96,15 +104,19 @@ pub fn parse_volumes(v: &Value) -> Result<Vec<Volume>, String> {
 }
 
 fn positive_id(v: &Value, key: &str) -> Result<i64, String> {
-    v.get(key).and_then(Value::as_i64).filter(|id| *id > 0)
+    v.get(key)
+        .and_then(Value::as_i64)
+        .filter(|id| *id > 0)
         .ok_or_else(|| format!("invalid {key}"))
 }
 fn unsigned(v: &Value, key: &str) -> Result<u64, String> {
-    v.get(key).and_then(Value::as_u64)
+    v.get(key)
+        .and_then(Value::as_u64)
         .ok_or_else(|| format!("invalid {key}"))
 }
 fn string<'a>(v: &'a Value, key: &str) -> Result<&'a str, String> {
-    v.get(key).and_then(Value::as_str)
+    v.get(key)
+        .and_then(Value::as_str)
         .ok_or_else(|| format!("invalid {key}"))
 }
 
@@ -116,7 +128,11 @@ pub fn bytes_compact(size: u64) -> String {
         value /= 1024.0;
         index += 1;
     }
-    if index == 0 { format!("{size} B") } else { format!("{value:.1} {}", units[index]) }
+    if index == 0 {
+        format!("{size} B")
+    } else {
+        format!("{value:.1} {}", units[index])
+    }
 }
 
 #[cfg(test)]

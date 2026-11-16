@@ -16,7 +16,11 @@ enum Language {
 }
 impl Language {
     fn text(self, ru: &'static str, en: &'static str) -> &'static str {
-        if self == Self::Russian { ru } else { en }
+        if self == Self::Russian {
+            ru
+        } else {
+            en
+        }
     }
 }
 
@@ -57,7 +61,10 @@ impl DesktopApp {
             path_input: startup_catalog.clone().unwrap_or_default(),
             query_input: String::new(),
             volumes: Vec::new(),
-            route: Route::Search { query: String::new(), volume_id: None },
+            route: Route::Search {
+                query: String::new(),
+                volume_id: None,
+            },
             history: Vec::new(),
             page: Page::default(),
             offset: 0,
@@ -87,7 +94,13 @@ impl DesktopApp {
     fn start_catalog(&mut self, create: bool, ctx: &egui::Context) {
         let path = self.path_input.trim().to_owned();
         if path.is_empty() {
-            self.error = Some(self.t("Введите путь к SQLite-каталогу.", "Enter a SQLite catalog path.").to_owned());
+            self.error = Some(
+                self.t(
+                    "Введите путь к SQLite-каталогу.",
+                    "Enter a SQLite catalog path.",
+                )
+                .to_owned(),
+            );
             return;
         }
         if path.to_ascii_lowercase().ends_with(".ctf") {
@@ -99,14 +112,27 @@ impl DesktopApp {
         }
         let exists = Path::new(&path).exists();
         if create && exists {
-            self.error = Some(self.t("Файл уже существует: создание отменено.", "File exists: create refused.").to_owned());
+            self.error = Some(
+                self.t(
+                    "Файл уже существует: создание отменено.",
+                    "File exists: create refused.",
+                )
+                .to_owned(),
+            );
             return;
         }
         if !create && !Path::new(&path).is_file() {
-            self.error = Some(self.t("Файл каталога не найден.", "Catalog file not found.").to_owned());
+            self.error = Some(
+                self.t("Файл каталога не найден.", "Catalog file not found.")
+                    .to_owned(),
+            );
             return;
         }
-        let purpose = if create { Purpose::Create { path: path.clone() } } else { Purpose::Open { path: path.clone() } };
+        let purpose = if create {
+            Purpose::Create { path: path.clone() }
+        } else {
+            Purpose::Open { path: path.clone() }
+        };
         let op = if create { "init" } else { "validate_catalog" };
         self.status = self.t("Проверка каталога…", "Opening catalog…").to_owned();
         self.queue(purpose, json!({"op":op,"db":path}), ctx);
@@ -115,7 +141,9 @@ impl DesktopApp {
 
     fn load_volumes(&mut self, ctx: &egui::Context) {
         if let Some(db) = self.db.clone() {
-            self.status = self.t("Загрузка реестра дисков…", "Loading disk register…").to_owned();
+            self.status = self
+                .t("Загрузка реестра дисков…", "Loading disk register…")
+                .to_owned();
             self.queue(Purpose::Volumes, json!({"op":"volumes","db":db}), ctx);
         }
     }
@@ -124,7 +152,9 @@ impl DesktopApp {
         if let Some(db) = self.db.clone() {
             let route = self.route.clone();
             let request = route.request(&db, self.offset, PAGE_LIMIT);
-            self.status = self.t("Поиск по каталогу…", "Searching catalog…").to_owned();
+            self.status = self
+                .t("Поиск по каталогу…", "Searching catalog…")
+                .to_owned();
             self.queue(Purpose::Page { route }, request, ctx);
         }
     }
@@ -133,7 +163,10 @@ impl DesktopApp {
         self.history.clear();
         self.offset = 0;
         self.selected = None;
-        self.route = Route::Search { query: self.query_input.trim().to_owned(), volume_id: self.selected_volume };
+        self.route = Route::Search {
+            query: self.query_input.trim().to_owned(),
+            volume_id: self.selected_volume,
+        };
         self.load_page(ctx);
     }
 
@@ -143,17 +176,24 @@ impl DesktopApp {
     }
 
     fn navigate_folder(&mut self, entry: &Entry, ctx: &egui::Context) {
-        if !entry.is_directory() { return; }
+        if !entry.is_directory() {
+            return;
+        }
         self.history.push((self.route.clone(), self.offset));
         self.offset = 0;
         self.selected = None;
-        self.route = Route::Folder { volume_id: entry.volume_id, parent_id: Some(entry.id) };
+        self.route = Route::Folder {
+            volume_id: entry.volume_id,
+            parent_id: Some(entry.id),
+        };
         self.load_page(ctx);
     }
 
     fn navigate_copies(&mut self, ctx: &egui::Context) {
         if let Some(entry) = self.selected.clone() {
-            if entry.is_directory() { return; }
+            if entry.is_directory() {
+                return;
+            }
             self.history.push((self.route.clone(), self.offset));
             self.offset = 0;
             self.selected = None;
@@ -174,11 +214,16 @@ impl DesktopApp {
     fn apply_reply(&mut self, reply: crate::bridge::Reply, ctx: &egui::Context) {
         // Monotonic request ids reject stale worker replies when a later
         // search, navigation or source change superseded the operation.
-        if self.active_request != Some(reply.id) { return; }
+        if self.active_request != Some(reply.id) {
+            return;
+        }
         self.active_request = None;
         if reply.response.get("ok").and_then(Value::as_bool) != Some(true) {
-            let message = reply.response.pointer("/error/message")
-                .and_then(Value::as_str).unwrap_or("Unknown service error");
+            let message = reply
+                .response
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .unwrap_or("Unknown service error");
             self.error = Some(message.to_owned());
             self.status = self.t("Операция отклонена", "Operation refused").to_owned();
             return;
@@ -189,7 +234,10 @@ impl DesktopApp {
                 self.db = Some(path);
                 self.selected_volume = None;
                 self.query_input.clear();
-                self.route = Route::Search { query: String::new(), volume_id: None };
+                self.route = Route::Search {
+                    query: String::new(),
+                    volume_id: None,
+                };
                 self.history.clear();
                 self.offset = 0;
                 self.selected = None;
@@ -210,7 +258,8 @@ impl DesktopApp {
                     self.status = format!(
                         "{} {}–{}",
                         self.t("Показаны строки", "Showing rows"),
-                        page.offset.saturating_add(if page.items.is_empty() { 0 } else { 1 }),
+                        page.offset
+                            .saturating_add(if page.items.is_empty() { 0 } else { 1 }),
                         page.offset.saturating_add(page.items.len() as u64),
                     );
                     self.page = page;
@@ -227,17 +276,29 @@ impl DesktopApp {
                 ui.strong("WhereIsIt AI");
                 ui.separator();
                 ui.menu_button(self.t("Каталог", "Catalog"), |ui| {
-                    if ui.button(self.t("Открыть SQLite…", "Open SQLite…")).clicked() {
+                    if ui
+                        .button(self.t("Открыть SQLite…", "Open SQLite…"))
+                        .clicked()
+                    {
                         self.show_catalog_dialog = true;
                         self.create_catalog = false;
                         ui.close();
                     }
-                    if ui.button(self.t("Новый каталог…", "New catalog…")).clicked() {
+                    if ui
+                        .button(self.t("Новый каталог…", "New catalog…"))
+                        .clicked()
+                    {
                         self.show_catalog_dialog = true;
                         self.create_catalog = true;
                         ui.close();
                     }
-                    if ui.add_enabled(self.db.is_some(), egui::Button::new(self.t("Обновить", "Refresh"))).clicked() {
+                    if ui
+                        .add_enabled(
+                            self.db.is_some(),
+                            egui::Button::new(self.t("Обновить", "Refresh")),
+                        )
+                        .clicked()
+                    {
                         self.load_volumes(ctx);
                         ui.close();
                     }
@@ -251,13 +312,27 @@ impl DesktopApp {
                 });
                 ui.menu_button(self.t("Справка", "Help"), |ui| {
                     ui.label("WhereIsIt AI · native egui R2");
-                    ui.label(self.t("Локальные метаданные, без чтения видео.", "Local metadata only; no video reads."));
-                    ui.label(self.t("Совпадения — кандидаты, не точные копии.", "Matches are candidates, not byte-verified copies."));
+                    ui.label(self.t(
+                        "Локальные метаданные, без чтения видео.",
+                        "Local metadata only; no video reads.",
+                    ));
+                    ui.label(self.t(
+                        "Совпадения — кандидаты, не точные копии.",
+                        "Matches are candidates, not byte-verified copies.",
+                    ));
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let language_label = if self.lang == Language::Russian { "RU" } else { "EN" };
+                    let language_label = if self.lang == Language::Russian {
+                        "RU"
+                    } else {
+                        "EN"
+                    };
                     if ui.small_button(language_label).clicked() {
-                        self.lang = if self.lang == Language::Russian { Language::English } else { Language::Russian };
+                        self.lang = if self.lang == Language::Russian {
+                            Language::English
+                        } else {
+                            Language::Russian
+                        };
                     }
                     ui.label(RichText::new("native egui · preview").small().weak());
                 });
@@ -269,10 +344,15 @@ impl DesktopApp {
         egui::TopBottomPanel::top("search_toolbar").show(ctx, |ui| {
             ui.add_space(5.0);
             ui.horizontal(|ui| {
-                let back = ui.add_enabled(!self.history.is_empty() && self.active_request.is_none(),
-                    egui::Button::new(self.t("← Назад", "← Back")));
-                if back.clicked() { self.go_back(ctx); }
-                let scope = self.selected_volume
+                let back = ui.add_enabled(
+                    !self.history.is_empty() && self.active_request.is_none(),
+                    egui::Button::new(self.t("← Назад", "← Back")),
+                );
+                if back.clicked() {
+                    self.go_back(ctx);
+                }
+                let scope = self
+                    .selected_volume
                     .and_then(|id| self.volumes.iter().find(|v| v.id == id))
                     .map(|v| format!("#{} · {}", v.id, v.label))
                     .unwrap_or_else(|| self.t("Все диски", "All disks").to_owned());
@@ -280,13 +360,25 @@ impl DesktopApp {
                 ui.separator();
                 let response = ui.add_sized(
                     [ui.available_width().max(220.0) - 185.0, 25.0],
-                    egui::TextEdit::singleline(&mut self.query_input)
-                        .hint_text(self.t("Поиск: имя, размер, ext, AND/OR/NOT…", "Search: name, size, ext, AND/OR/NOT…"))
+                    egui::TextEdit::singleline(&mut self.query_input).hint_text(self.t(
+                        "Поиск: имя, размер, ext, AND/OR/NOT…",
+                        "Search: name, size, ext, AND/OR/NOT…",
+                    )),
                 );
                 let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                let clicked = ui.add_enabled(self.db.is_some(), egui::Button::new(self.t("Найти", "Search"))).clicked();
-                if enter || clicked { self.navigate_search(ctx); }
-                if ui.add_enabled(self.db.is_some(), egui::Button::new(self.t("Все", "All"))).clicked() {
+                let clicked = ui
+                    .add_enabled(
+                        self.db.is_some(),
+                        egui::Button::new(self.t("Найти", "Search")),
+                    )
+                    .clicked();
+                if enter || clicked {
+                    self.navigate_search(ctx);
+                }
+                if ui
+                    .add_enabled(self.db.is_some(), egui::Button::new(self.t("Все", "All")))
+                    .clicked()
+                {
                     self.selected_volume = None;
                     self.navigate_search(ctx);
                 }
@@ -306,46 +398,79 @@ impl DesktopApp {
                     ui.strong(self.t("Диски каталога", "Catalog disks"));
                     ui.label(RichText::new(self.volumes.len().to_string()).weak());
                 });
-                ui.add(egui::TextEdit::singleline(&mut self.disk_filter)
-                    .hint_text(self.t("Фильтр дисков", "Filter disks")));
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.disk_filter)
+                        .hint_text(self.t("Фильтр дисков", "Filter disks")),
+                );
                 ui.separator();
-                if ui.selectable_label(self.selected_volume.is_none(),
-                    format!("{} ({})", self.t("Все диски", "All disks"), self.volumes.len())).clicked()
+                if ui
+                    .selectable_label(
+                        self.selected_volume.is_none(),
+                        format!(
+                            "{} ({})",
+                            self.t("Все диски", "All disks"),
+                            self.volumes.len()
+                        ),
+                    )
+                    .clicked()
                 {
                     self.navigate_disk(None, ctx);
                 }
                 ui.separator();
 
                 let filter = self.disk_filter.to_lowercase();
-                let visible: Vec<_> = self.volumes.iter()
-                    .filter(|v| filter.is_empty()
-                        || v.label.to_lowercase().contains(&filter)
-                        || v.id.to_string().contains(&filter))
-                    .cloned().collect();
-                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                    for volume in &visible {
-                        let selected = self.selected_volume == Some(volume.id);
-                        ui.horizontal(|ui| {
-                            let title = format!("#{} · {}", volume.id, volume.label);
-                            let label = ui.selectable_label(selected, title);
-                            if label.clicked() { self.navigate_disk(Some(volume.id), ctx); }
-                            if label.double_clicked() {
-                                self.history.push((self.route.clone(), self.offset));
-                                self.route = Route::Folder { volume_id: volume.id, parent_id: None };
-                                self.offset = 0;
-                                self.load_page(ctx);
-                            }
-                            if ui.small_button("⋯").on_hover_text(self.t("Свойства диска", "Disk properties")).clicked() {
-                                self.show_disk_properties = Some(volume.id);
-                            }
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new(format!("{} · {}", volume.entry_count, bytes_compact(volume.total_bytes)))
-                                .small().weak());
-                        });
-                        ui.add_space(1.0);
-                    }
-                });
+                let visible: Vec<_> = self
+                    .volumes
+                    .iter()
+                    .filter(|v| {
+                        filter.is_empty()
+                            || v.label.to_lowercase().contains(&filter)
+                            || v.id.to_string().contains(&filter)
+                    })
+                    .cloned()
+                    .collect();
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for volume in &visible {
+                            let selected = self.selected_volume == Some(volume.id);
+                            ui.horizontal(|ui| {
+                                let title = format!("#{} · {}", volume.id, volume.label);
+                                let label = ui.selectable_label(selected, title);
+                                if label.clicked() {
+                                    self.navigate_disk(Some(volume.id), ctx);
+                                }
+                                if label.double_clicked() {
+                                    self.history.push((self.route.clone(), self.offset));
+                                    self.route = Route::Folder {
+                                        volume_id: volume.id,
+                                        parent_id: None,
+                                    };
+                                    self.offset = 0;
+                                    self.load_page(ctx);
+                                }
+                                if ui
+                                    .small_button("⋯")
+                                    .on_hover_text(self.t("Свойства диска", "Disk properties"))
+                                    .clicked()
+                                {
+                                    self.show_disk_properties = Some(volume.id);
+                                }
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new(format!(
+                                        "{} · {}",
+                                        volume.entry_count,
+                                        bytes_compact(volume.total_bytes)
+                                    ))
+                                    .small()
+                                    .weak(),
+                                );
+                            });
+                            ui.add_space(1.0);
+                        }
+                    });
             });
     }
 
@@ -403,16 +528,29 @@ impl DesktopApp {
                 ui.vertical_centered(|ui| {
                     ui.add_space(75.0);
                     ui.heading("WhereIsIt AI");
-                    ui.label(self.t("Офлайн-видеокаталог · PR58 → Rust/egui", "Offline video catalog · PR58 → Rust/egui"));
+                    ui.label(self.t(
+                        "Офлайн-видеокаталог · PR58 → Rust/egui",
+                        "Offline video catalog · PR58 → Rust/egui",
+                    ));
                     ui.add_space(10.0);
-                    if ui.button(self.t("Открыть существующий SQLite-каталог", "Open existing SQLite catalog")).clicked() {
+                    if ui
+                        .button(self.t(
+                            "Открыть существующий SQLite-каталог",
+                            "Open existing SQLite catalog",
+                        ))
+                        .clicked()
+                    {
                         self.show_catalog_dialog = true;
                         self.create_catalog = false;
                     }
-                    ui.label(RichText::new(self.t(
-                        "Это настоящий нативный клиент, не демонстрация на вымышленных дисках.",
-                        "This is the native client, not a fake-disk simulator."
-                    )).small().weak());
+                    ui.label(
+                        RichText::new(self.t(
+                            "Это настоящий нативный клиент, не демонстрация на вымышленных дисках.",
+                            "This is the native client, not a fake-disk simulator.",
+                        ))
+                        .small()
+                        .weak(),
+                    );
                 });
                 return;
             }
@@ -420,24 +558,44 @@ impl DesktopApp {
                 ui.strong(match &self.route {
                     Route::Search { .. } => self.t("Результаты поиска", "Search results"),
                     Route::Folder { .. } => self.t("Содержимое каталога", "Folder contents"),
-                    Route::Copies { .. } => self.t("Кандидаты по имени и размеру · НЕ байтовая проверка", "Name+size candidates · NOT byte verified"),
+                    Route::Copies { .. } => self.t(
+                        "Кандидаты по имени и размеру · НЕ байтовая проверка",
+                        "Name+size candidates · NOT byte verified",
+                    ),
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.add_enabled(self.page.has_more && self.active_request.is_none(),
-                        egui::Button::new(self.t("Далее →", "Next →"))).clicked()
+                    if ui
+                        .add_enabled(
+                            self.page.has_more && self.active_request.is_none(),
+                            egui::Button::new(self.t("Далее →", "Next →")),
+                        )
+                        .clicked()
                     {
                         self.offset = self.offset.saturating_add(PAGE_LIMIT);
                         self.load_page(ctx);
                     }
-                    if ui.add_enabled(self.offset > 0 && self.active_request.is_none(),
-                        egui::Button::new(self.t("← Ранее", "← Previous"))).clicked()
+                    if ui
+                        .add_enabled(
+                            self.offset > 0 && self.active_request.is_none(),
+                            egui::Button::new(self.t("← Ранее", "← Previous")),
+                        )
+                        .clicked()
                     {
                         self.offset = self.offset.saturating_sub(PAGE_LIMIT);
                         self.load_page(ctx);
                     }
-                    ui.label(RichText::new(format!("{}–{}",
-                        self.offset.saturating_add(if self.page.items.is_empty() {0} else {1}),
-                        self.offset.saturating_add(self.page.items.len() as u64))).weak());
+                    ui.label(
+                        RichText::new(format!(
+                            "{}–{}",
+                            self.offset.saturating_add(if self.page.items.is_empty() {
+                                0
+                            } else {
+                                1
+                            }),
+                            self.offset.saturating_add(self.page.items.len() as u64)
+                        ))
+                        .weak(),
+                    );
                 });
             });
             ui.separator();
@@ -455,38 +613,70 @@ impl DesktopApp {
                 .column(Column::initial(92.0).at_least(80.0))
                 .column(Column::initial(235.0).at_least(90.0))
                 .header(24.0, |mut header| {
-                    header.col(|ui| { ui.strong("Disk"); });
-                    header.col(|ui| { ui.strong(self.t("Имя", "Name")); });
-                    header.col(|ui| { ui.strong(self.t("Размер", "Size")); });
-                    header.col(|ui| { ui.strong(self.t("Тип", "Kind")); });
-                    header.col(|ui| { ui.strong(self.t("Путь", "Path")); });
+                    header.col(|ui| {
+                        ui.strong("Disk");
+                    });
+                    header.col(|ui| {
+                        ui.strong(self.t("Имя", "Name"));
+                    });
+                    header.col(|ui| {
+                        ui.strong(self.t("Размер", "Size"));
+                    });
+                    header.col(|ui| {
+                        ui.strong(self.t("Тип", "Kind"));
+                    });
+                    header.col(|ui| {
+                        ui.strong(self.t("Путь", "Path"));
+                    });
                 })
                 .body(|body| {
                     body.rows(24.0, rows.len(), |mut row| {
                         let entry = &rows[row.index()];
-                        row.col(|ui| { ui.label(format!("#{}", entry.volume_id)); });
                         row.col(|ui| {
-                            let name = if entry.is_directory() { format!("▸ {}", entry.name) }
-                                       else { entry.name.clone() };
+                            ui.label(format!("#{}", entry.volume_id));
+                        });
+                        row.col(|ui| {
+                            let name = if entry.is_directory() {
+                                format!("▸ {}", entry.name)
+                            } else {
+                                entry.name.clone()
+                            };
                             let result = ui.selectable_label(selection == Some(entry.id), name);
-                            if result.clicked() { chosen = Some(entry.clone()); }
+                            if result.clicked() {
+                                chosen = Some(entry.clone());
+                            }
                             if result.double_clicked() && entry.is_directory() {
                                 open_folder = Some(entry.clone());
                             }
                         });
-                        row.col(|ui| { ui.label(bytes_compact(entry.size)); });
                         row.col(|ui| {
-                            let kind = if entry.is_directory() { "Folder" }
-                                else if ["mkv", "mp4", "avi", "m2ts", "mov", "webm"]
-                                    .iter().any(|ext| entry.name.to_lowercase().ends_with(&format!(".{ext}")))
-                                { "Video*" } else { "File" };
-                            ui.label(kind).on_hover_text("Video* = filename extension only");
+                            ui.label(bytes_compact(entry.size));
                         });
-                        row.col(|ui| { ui.label(&entry.relative_path); });
+                        row.col(|ui| {
+                            let kind = if entry.is_directory() {
+                                "Folder"
+                            } else if ["mkv", "mp4", "avi", "m2ts", "mov", "webm"]
+                                .iter()
+                                .any(|ext| entry.name.to_lowercase().ends_with(&format!(".{ext}")))
+                            {
+                                "Video*"
+                            } else {
+                                "File"
+                            };
+                            ui.label(kind)
+                                .on_hover_text("Video* = filename extension only");
+                        });
+                        row.col(|ui| {
+                            ui.label(&entry.relative_path);
+                        });
                     });
                 });
-            if let Some(entry) = chosen { self.selected = Some(entry); }
-            if let Some(folder) = open_folder { self.navigate_folder(&folder, ctx); }
+            if let Some(entry) = chosen {
+                self.selected = Some(entry);
+            }
+            if let Some(folder) = open_folder {
+                self.navigate_folder(&folder, ctx);
+            }
         });
     }
 
@@ -494,15 +684,29 @@ impl DesktopApp {
         if self.show_catalog_dialog {
             let mut open = self.show_catalog_dialog;
             egui::Window::new(self.t("Каталог SQLite", "SQLite catalog"))
-                .open(&mut open).collapsible(false).resizable(true).default_width(510.0)
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(true)
+                .default_width(510.0)
                 .show(ctx, |ui| {
-                    ui.label(self.t("Локальный путь к каталогу (SQLite). Не открывайте исходный CTF здесь.",
-                        "Local SQLite catalog path. Do not open source CTF here."));
-                    ui.add(egui::TextEdit::singleline(&mut self.path_input).desired_width(f32::INFINITY));
+                    ui.label(self.t(
+                        "Локальный путь к каталогу (SQLite). Не открывайте исходный CTF здесь.",
+                        "Local SQLite catalog path. Do not open source CTF here.",
+                    ));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.path_input)
+                            .desired_width(f32::INFINITY),
+                    );
                     ui.horizontal(|ui| {
-                        if ui.button(self.t("Открыть", "Open")).clicked() { self.start_catalog(false, ctx); }
-                        if ui.button(self.t("Создать новый", "Create new")).clicked() { self.start_catalog(true, ctx); }
-                        if ui.button(self.t("Закрыть", "Close")).clicked() { self.show_catalog_dialog = false; }
+                        if ui.button(self.t("Открыть", "Open")).clicked() {
+                            self.start_catalog(false, ctx);
+                        }
+                        if ui.button(self.t("Создать новый", "Create new")).clicked() {
+                            self.start_catalog(true, ctx);
+                        }
+                        if ui.button(self.t("Закрыть", "Close")).clicked() {
+                            self.show_catalog_dialog = false;
+                        }
                     });
                 });
             self.show_catalog_dialog &= open;
@@ -511,22 +715,42 @@ impl DesktopApp {
             if let Some(volume) = self.volumes.iter().find(|v| v.id == id).cloned() {
                 let mut open = true;
                 egui::Window::new(self.t("Свойства диска", "Disk properties"))
-                    .open(&mut open).collapsible(false).resizable(false)
+                    .open(&mut open)
+                    .collapsible(false)
+                    .resizable(false)
                     .show(ctx, |ui| {
                         ui.strong(format!("#{} · {}", volume.id, volume.label));
-                        ui.label(format!("{}: {}", self.t("Записано файлов/папок", "Recorded entries"), volume.entry_count));
-                        ui.label(format!("{}: {}", self.t("Логический объём", "Logical total bytes"), bytes_compact(volume.total_bytes)));
-                        ui.label(format!("{}: {}", self.t("Исторический корень", "Recorded root"), volume.root_path));
-                        ui.label(RichText::new(self.t(
-                            "Это НЕ подтверждённый текущий путь или подключённый USB.",
-                            "This is NOT a verified current mount or physical USB connection."
-                        )).small().weak());
+                        ui.label(format!(
+                            "{}: {}",
+                            self.t("Записано файлов/папок", "Recorded entries"),
+                            volume.entry_count
+                        ));
+                        ui.label(format!(
+                            "{}: {}",
+                            self.t("Логический объём", "Logical total bytes"),
+                            bytes_compact(volume.total_bytes)
+                        ));
+                        ui.label(format!(
+                            "{}: {}",
+                            self.t("Исторический корень", "Recorded root"),
+                            volume.root_path
+                        ));
+                        ui.label(
+                            RichText::new(self.t(
+                                "Это НЕ подтверждённый текущий путь или подключённый USB.",
+                                "This is NOT a verified current mount or physical USB connection.",
+                            ))
+                            .small()
+                            .weak(),
+                        );
                         ui.add_space(3.0);
                         if ui.button(self.t("Закрыть", "Close")).clicked() {
                             self.show_disk_properties = None;
                         }
                     });
-                if !open { self.show_disk_properties = None; }
+                if !open {
+                    self.show_disk_properties = None;
+                }
             } else {
                 self.show_disk_properties = None;
             }
@@ -537,15 +761,25 @@ impl DesktopApp {
         let search = ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::F));
         let all = ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::L));
         let back = ctx.input(|i| i.modifiers.alt && i.key_pressed(egui::Key::ArrowLeft));
-        if all { self.navigate_disk(None, ctx); }
-        if search { self.navigate_search(ctx); }
-        if back { self.go_back(ctx); }
+        if all {
+            self.navigate_disk(None, ctx);
+        }
+        if search {
+            self.navigate_search(ctx);
+        }
+        if back {
+            self.go_back(ctx);
+        }
     }
 }
 
 impl eframe::App for DesktopApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        ctx.set_visuals(if self.dark { egui::Visuals::dark() } else { egui::Visuals::light() });
+        ctx.set_visuals(if self.dark {
+            egui::Visuals::dark()
+        } else {
+            egui::Visuals::light()
+        });
         if self.auto_open {
             self.auto_open = false;
             self.start_catalog(false, ctx);
