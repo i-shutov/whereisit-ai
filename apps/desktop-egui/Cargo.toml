@@ -1,0 +1,13 @@
+[package]
+name = "atlas-desktop-egui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "WhereIsIt AI — native PR58-first desktop UI"
+
+[dependencies]
+atlas-service = { path = "../../crates/atlas-service" }
+eframe = { version = "=0.32.3", default-features = true }
+egui_extras = { version = "=0.32.3", default-features = false }
+serde_json.workspace = true

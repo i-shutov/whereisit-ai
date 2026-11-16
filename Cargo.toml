@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/atlas-core", "crates/ctf-format", "crates/atlas-service", "crates/atlas-ffi", "crates/atlas-cli", "apps/windows"]
+members = ["crates/atlas-core", "crates/ctf-format", "crates/atlas-service", "crates/atlas-ffi", "crates/atlas-cli", "apps/windows", "apps/desktop-egui"]
 default-members = ["crates/atlas-core", "crates/ctf-format", "crates/atlas-cli", "crates/atlas-ffi"]
 
 [workspace.package]
