@@ -218,7 +218,6 @@ impl DesktopApp {
                 }
                 Err(e) => self.error = Some(e),
             },
-            Purpose::Rename { .. } => self.load_volumes(ctx),
         }
     }
 

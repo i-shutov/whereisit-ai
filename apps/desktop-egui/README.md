@@ -6,7 +6,7 @@ authority remains `apps/ui-prototype` from PR #58. This R2 slice uses the existi
 
 ## Build and run
 
-Pinned UI: eframe/egui 0.32.3 (declared MSRV Rust 1.85); project Rust remains 1.90.0.
+Pinned UI: eframe/egui/egui_extras 0.37.0 on Rust 1.100.0. Core libraries are upgraded together and tested; Cargo.lock and license inventory are regenerated in isolated CI.
 The package is a member of the root workspace; `Cargo.lock` is generated/extended on
 the integration branch by an audited lockfile CI bootstrap before locked CI is accepted.
 
