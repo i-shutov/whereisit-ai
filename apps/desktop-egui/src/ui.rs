@@ -573,7 +573,7 @@ impl DesktopApp {
                         )
                         .clicked()
                     {
-                        self.offset = self.offset.saturating_add(PAGE_LIMIT);
+                        self.offset = self.offset.saturating_add(self.page.limit.max(1));
                         self.load_page(ctx);
                     }
                     if ui
@@ -583,7 +583,7 @@ impl DesktopApp {
                         )
                         .clicked()
                     {
-                        self.offset = self.offset.saturating_sub(PAGE_LIMIT);
+                        self.offset = self.offset.saturating_sub(self.page.limit.max(1));
                         self.load_page(ctx);
                     }
                     ui.label(
