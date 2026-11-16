@@ -1,0 +1,143 @@
+{
+  "schema": "whereisit-v1-release-gates-2026-11-16",
+  "created_date": "2026-11-16",
+  "source_baseline": "main ff87d109a7185e16be593db319e98ba76ba058f7 (PR59 source merged)",
+  "integration_candidate": "PR59 HEAD 9f3eba788b0b35137a519f131cbf9eba5dc52a5a (CI PASS), merged main ff87d109",
+  "published_candidate": "v1.0.0-rc.3",
+  "stable_ready": false,
+  "status_definitions": {
+    "PASS": "Completed with cited evidence",
+    "IN_PROGRESS": "Work ongoing, not accepted",
+    "PARTIAL": "Some implemented and tested but missing mandatory evidence",
+    "BLOCKED": "Missing external or physical evidence",
+    "NOT_STARTED": "No accepted implementation"
+  },
+  "gate_policy": "ALL mandatory gates must be PASS before stable; no implicit waiver",
+  "gates": [
+    {
+      "id": "G0",
+      "name": "PR58 canonical interactive UX",
+      "status": "PASS",
+      "evidence": [
+        "PR58 merged to main 5b421e9",
+        "Original UX a899ac4",
+        "UX contract in integration PR59"
+      ],
+      "owner": "UX"
+    },
+    {
+      "id": "G1",
+      "name": "PR57+PR58 integrated source in main and exact SHA CI",
+      "status": "IN_PROGRESS",
+      "evidence": [
+        "PR59 merged main ff87d109a7185e16be593db319e98ba76ba058f7",
+        "PR59 exact HEAD 9f3eba7 native 4/4 PASS",
+        "Installed RC upgrades Windows+Mac ARM/Intel PASS",
+        "Offline QA and integration regressions PASS"
+      ],
+      "missing": [
+        "Postmerge exact main SHA CI and checkpoint"
+      ],
+      "owner": "Integrator"
+    },
+    {
+      "id": "G2",
+      "name": "Real Windows/macOS Rust egui app",
+      "status": "NOT_STARTED",
+      "missing": [
+        "egui/eframe toolchain selection",
+        "P0 UI functional parity",
+        "native manual acceptance"
+      ],
+      "owner": "egui"
+    },
+    {
+      "id": "G3",
+      "name": "P0 end to end service parity",
+      "status": "PARTIAL",
+      "evidence": [
+        "Rust core/CTF/exports in main"
+      ],
+      "missing": [
+        "egui adapter and full workflows"
+      ],
+      "owner": "Service"
+    },
+    {
+      "id": "G4",
+      "name": "Physical USB fail-closed acceptance",
+      "status": "BLOCKED",
+      "evidence": [
+        "PR57 synthetic native implementation"
+      ],
+      "missing": [
+        "Win10/Win11/Mac real unplug/clones/system-volume"
+      ],
+      "owner": "QA"
+    },
+    {
+      "id": "G5",
+      "name": "Original WhereIsIt accepts new/edited supported CTF",
+      "status": "BLOCKED",
+      "evidence": [
+        "Unchanged real CTF roundtrip"
+      ],
+      "missing": [
+        "Original app independent modified-output evidence",
+        "Two historical CTF provider bytes"
+      ],
+      "owner": "CTF"
+    },
+    {
+      "id": "G6",
+      "name": "3M parity, p95 latency and cancellation",
+      "status": "PARTIAL",
+      "evidence": [
+        "44-volume 3046027 real records",
+        "p95 209.82–252.83ms on isolated Linux"
+      ],
+      "missing": [
+        "Target <=150 ms or documented release scope decision",
+        "Native cancel/rollback and memory"
+      ],
+      "owner": "Storage"
+    },
+    {
+      "id": "G7",
+      "name": "Privacy and data-loss safety",
+      "status": "PARTIAL",
+      "evidence": [
+        "Privacy-gated RC3",
+        "Safe PR58 workbench"
+      ],
+      "missing": [
+        "Final egui/native package recheck"
+      ],
+      "owner": "QA"
+    },
+    {
+      "id": "G8",
+      "name": "Signed/notarized native packages and installed upgrades",
+      "status": "BLOCKED",
+      "evidence": [
+        "Unsigned RC3 installers and earlier synthetic upgrades"
+      ],
+      "missing": [
+        "Authenticode",
+        "Apple Developer ID notarization/staple",
+        "Final egui upgrade on real OS"
+      ],
+      "owner": "Release"
+    },
+    {
+      "id": "G9",
+      "name": "Frozen stable v1.0.0 and independent signoff",
+      "status": "NOT_STARTED",
+      "missing": [
+        "All mandatory gates PASS",
+        "Immutable source+artifact provenance"
+      ],
+      "owner": "Integrator"
+    }
+  ]
+}
