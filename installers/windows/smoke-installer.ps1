@@ -31,10 +31,11 @@ try {
         throw 'Installed GUI or CLI executable is missing'
     }
     $sqliteManifest = Get-Content (Join-Path $root 'tools/dev/refresh_sqlite_notices.py') -Raw
-    if ($sqliteManifest -notmatch '(?m)^SQLITE_VERSION = "([0-9]+\.[0-9]+\.[0-9]+)"$') {
+    $versionMatch = [regex]::Match($sqliteManifest, '(?m)^SQLITE_VERSION = "([0-9]+\.[0-9]+\.[0-9]+)"\r?$')
+    if (-not $versionMatch.Success) {
         throw 'Cannot identify locked bundled SQLite version from dependency manifest.'
     }
-    $expectedSqlite = $Matches[1]
+    $expectedSqlite = $versionMatch.Groups[1].Value
     foreach ($file in @('LICENSE','THIRD_PARTY_NOTICES.md',"licenses/SQLite-$expectedSqlite/COPYRIGHT.txt")) {
         if (-not (Test-Path (Join-Path $InstallDir $file) -PathType Leaf)) { throw "Missing installed notice: $file" }
     }

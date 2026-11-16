@@ -22,6 +22,8 @@ class InstalledVersionContract(unittest.TestCase):
         win = (root / 'installers/windows/smoke-installer.ps1').read_text(encoding='utf-8')
         self.assertIn('refresh_sqlite_notices.py', mac)
         self.assertIn('refresh_sqlite_notices.py', win)
+        self.assertIn('[regex]::Match', win)
+        self.assertNotIn('$Matches[1]', win)
         self.assertIn('SQLite-${EXPECTED_SQLITE}', mac)
         self.assertIn('SQLite-$expectedSqlite', win)
         self.assertNotIn('3.51.3', mac)
