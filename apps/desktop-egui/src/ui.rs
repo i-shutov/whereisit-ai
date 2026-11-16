@@ -104,7 +104,9 @@ impl DesktopApp {
     }
 
     fn start_catalog(&mut self, create: bool, ctx: &egui::Context) {
-        if self.active_request.is_some() { return; }
+        if self.active_request.is_some() {
+            return;
+        }
         let path = self.path_input.trim().to_owned();
         if path.is_empty() {
             self.error = Some(
@@ -152,32 +154,55 @@ impl DesktopApp {
         self.show_catalog_dialog = false;
     }
 
-
     fn start_export(&mut self, ctx: &egui::Context) {
-        if self.active_request.is_some() { return; }
-        let Some(db) = self.db.clone() else { return; };
+        if self.active_request.is_some() {
+            return;
+        }
+        let Some(db) = self.db.clone() else {
+            return;
+        };
         let path = self.export_path.trim().to_owned();
         if path.is_empty() {
-            self.error = Some(self.t("Введите путь для нового файла экспорта.", "Enter a new export file path.").to_owned());
+            self.error = Some(
+                self.t(
+                    "Введите путь для нового файла экспорта.",
+                    "Enter a new export file path.",
+                )
+                .to_owned(),
+            );
             return;
         }
         let file = Path::new(&path);
-        let parent = file.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        let parent = file
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
         if !parent.is_dir() || file.exists() || file.is_symlink() {
-            self.error = Some(self.t(
-                "Нужна существующая папка и НОВОЕ имя файла: перезапись запрещена.",
-                "Choose an existing folder and a NEW filename: overwrite is forbidden.",
-            ).to_owned());
+            self.error = Some(
+                self.t(
+                    "Нужна существующая папка и НОВОЕ имя файла: перезапись запрещена.",
+                    "Choose an existing folder and a NEW filename: overwrite is forbidden.",
+                )
+                .to_owned(),
+            );
             return;
         }
         let Some(request) = self.route.export_request(&db, &path, self.export_kind) else {
-            self.error = Some(self.t(
-                "Экспорт копий из этого экрана не поддержан: вернитесь к поиску или папке.",
-                "Copy-candidate export is unavailable here: return to search or folder.",
-            ).to_owned());
+            self.error = Some(
+                self.t(
+                    "Экспорт копий из этого экрана не поддержан: вернитесь к поиску или папке.",
+                    "Copy-candidate export is unavailable here: return to search or folder.",
+                )
+                .to_owned(),
+            );
             return;
         };
-        self.status = self.t("Экспорт полного набора метаданных…", "Exporting full metadata scope…").to_owned();
+        self.status = self
+            .t(
+                "Экспорт полного набора метаданных…",
+                "Exporting full metadata scope…",
+            )
+            .to_owned();
         self.show_export_dialog = false;
         self.queue(Purpose::Export { path }, request, ctx);
     }
@@ -203,7 +228,9 @@ impl DesktopApp {
     }
 
     fn navigate_search(&mut self, ctx: &egui::Context) {
-        if self.active_request.is_some() { return; }
+        if self.active_request.is_some() {
+            return;
+        }
         self.history.clear();
         self.offset = 0;
         self.selected = None;
@@ -215,13 +242,17 @@ impl DesktopApp {
     }
 
     fn navigate_disk(&mut self, volume_id: Option<i64>, ctx: &egui::Context) {
-        if self.active_request.is_some() { return; }
+        if self.active_request.is_some() {
+            return;
+        }
         self.selected_volume = volume_id;
         self.navigate_search(ctx);
     }
 
     fn navigate_folder(&mut self, entry: &Entry, ctx: &egui::Context) {
-        if self.active_request.is_some() { return; }
+        if self.active_request.is_some() {
+            return;
+        }
         if !entry.is_directory() {
             return;
         }
@@ -236,7 +267,9 @@ impl DesktopApp {
     }
 
     fn navigate_copies(&mut self, ctx: &egui::Context) {
-        if self.active_request.is_some() { return; }
+        if self.active_request.is_some() {
+            return;
+        }
         if let Some(entry) = self.selected.clone() {
             if entry.is_directory() {
                 return;
@@ -250,7 +283,9 @@ impl DesktopApp {
     }
 
     fn go_back(&mut self, ctx: &egui::Context) {
-        if self.active_request.is_some() { return; }
+        if self.active_request.is_some() {
+            return;
+        }
         if let Some((route, offset)) = self.history.pop() {
             self.route = route;
             self.offset = offset;
@@ -353,9 +388,15 @@ impl DesktopApp {
                     let can_export = self.db.is_some()
                         && self.active_request.is_none()
                         && !matches!(self.route, Route::Copies { .. });
-                    if ui.add_enabled(can_export,
-                        egui::Button::new(self.t("Экспорт текущей выборки…", "Export current scope…"))
-                    ).clicked() {
+                    if ui
+                        .add_enabled(
+                            can_export,
+                            egui::Button::new(
+                                self.t("Экспорт текущей выборки…", "Export current scope…"),
+                            ),
+                        )
+                        .clicked()
+                    {
                         self.export_path.clear();
                         self.show_export_dialog = true;
                         ui.close();

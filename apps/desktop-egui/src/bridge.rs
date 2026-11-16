@@ -68,7 +68,10 @@ impl Route {
                 "op":kind.operation(), "db":db, "path":path, "mode":"search",
                 "query":query, "volume_id":volume_id, "overwrite":false
             })),
-            Self::Folder { volume_id, parent_id } => Some(json!({
+            Self::Folder {
+                volume_id,
+                parent_id,
+            } => Some(json!({
                 "op":kind.operation(), "db":db, "path":path, "mode":"children",
                 "volume_id":volume_id, "parent_id":parent_id, "overwrite":false
             })),
@@ -137,15 +140,25 @@ mod tests {
     use super::*;
     #[test]
     fn exports_respect_scope_and_never_overwrite() {
-        let filtered = Route::Search { query: "ext:mkv AND size:>1GiB".into(), volume_id: Some(17) };
-        let json = filtered.export_request("/catalog.sqlite", "/review.json", ExportKind::Json).unwrap();
+        let filtered = Route::Search {
+            query: "ext:mkv AND size:>1GiB".into(),
+            volume_id: Some(17),
+        };
+        let json = filtered
+            .export_request("/catalog.sqlite", "/review.json", ExportKind::Json)
+            .unwrap();
         assert_eq!(json["op"], "export_json");
         assert_eq!(json["mode"], "search");
         assert_eq!(json["volume_id"], 17);
         assert_eq!(json["query"], "ext:mkv AND size:>1GiB");
         assert_eq!(json["overwrite"], false);
-        let folder = Route::Folder { volume_id: 17, parent_id: Some(204) };
-        let csv = folder.export_request("/catalog.sqlite", "/branch.csv", ExportKind::Csv).unwrap();
+        let folder = Route::Folder {
+            volume_id: 17,
+            parent_id: Some(204),
+        };
+        let csv = folder
+            .export_request("/catalog.sqlite", "/branch.csv", ExportKind::Csv)
+            .unwrap();
         assert_eq!(csv["mode"], "children");
         assert_eq!(csv["parent_id"], 204);
         assert_eq!(csv["op"], "export_csv");
@@ -157,7 +170,6 @@ mod tests {
 
     #[test]
     fn search_scope_is_explicit_and_copies_never_claim_byte_equality() {
-
         let search = Route::Search {
             query: "name:фильм".into(),
             volume_id: None,
