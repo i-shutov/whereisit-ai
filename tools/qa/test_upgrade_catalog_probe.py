@@ -16,6 +16,17 @@ class InstalledVersionContract(unittest.TestCase):
             self.assertIn("refresh_sqlite_notices.py", contents)
             self.assertNotIn("3.51.3", contents)
 
+    def test_installer_smokes_follow_pinned_sqlite_version(self):
+        root = Path(__file__).resolve().parents[2]
+        mac = (root / 'installers/macos/smoke-package.sh').read_text(encoding='utf-8')
+        win = (root / 'installers/windows/smoke-installer.ps1').read_text(encoding='utf-8')
+        self.assertIn('refresh_sqlite_notices.py', mac)
+        self.assertIn('refresh_sqlite_notices.py', win)
+        self.assertIn('SQLite-${EXPECTED_SQLITE}', mac)
+        self.assertIn('SQLite-$expectedSqlite', win)
+        self.assertNotIn('3.51.3', mac)
+        self.assertNotIn('3.51.3', win)
+
     def test_historical_pair_remains_exact(self):
         self.assertEqual(expected_cli_version("prepare", RC1, RC2), "WhereIsIt AI " + RC1)
         self.assertEqual(expected_cli_version("verify", RC1, RC2), "WhereIsIt AI " + RC2)

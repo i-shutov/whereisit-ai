@@ -30,12 +30,17 @@ try {
     if (-not (Test-Path $cli) -or -not (Test-Path $gui)) {
         throw 'Installed GUI or CLI executable is missing'
     }
-    foreach ($file in @('LICENSE','THIRD_PARTY_NOTICES.md','licenses/SQLite-3.51.3/COPYRIGHT.txt')) {
+    $sqliteManifest = Get-Content (Join-Path $root 'tools/dev/refresh_sqlite_notices.py') -Raw
+    if ($sqliteManifest -notmatch '(?m)^SQLITE_VERSION = "([0-9]+\.[0-9]+\.[0-9]+)"$') {
+        throw 'Cannot identify locked bundled SQLite version from dependency manifest.'
+    }
+    $expectedSqlite = $Matches[1]
+    foreach ($file in @('LICENSE','THIRD_PARTY_NOTICES.md',"licenses/SQLite-$expectedSqlite/COPYRIGHT.txt")) {
         if (-not (Test-Path (Join-Path $InstallDir $file) -PathType Leaf)) { throw "Missing installed notice: $file" }
     }
     $sqliteVersion = (& $cli --sqlite-version).Trim()
-    if ($LASTEXITCODE -ne 0 -or $sqliteVersion -ne '3.51.3') {
-        throw "Installed CLI embeds incorrect SQLite: $sqliteVersion (expected 3.51.3)"
+    if ($LASTEXITCODE -ne 0 -or $sqliteVersion -ne $expectedSqlite) {
+        throw "Installed CLI embeds incorrect SQLite: $sqliteVersion (expected $expectedSqlite)"
     }
     Write-Host "PASS: installed Windows CLI embeds SQLite $sqliteVersion"
     $request = @{op='init'; db=$catalog} | ConvertTo-Json -Compress
