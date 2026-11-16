@@ -50,9 +50,9 @@ jobs:
           python3 tools/dev/refresh_sqlite_notices.py
           cargo fmt --all
           python3 tools/dev/verify_release_identity.py
-          cargo tree --locked -i eframe > egui-tree.txt
-          cargo tree --locked -i rusqlite > sqlite-tree.txt
-          cargo tree --locked -i parquet > parquet-tree.txt
+          cargo tree --locked --workspace -i eframe > egui-tree.txt
+          cargo tree --locked --workspace -i rusqlite > sqlite-tree.txt
+          cargo tree --locked --workspace -i parquet > parquet-tree.txt
       - name: Commit lock, licenses and rustfmt to the exact feature branch
         shell: bash
         run: |
