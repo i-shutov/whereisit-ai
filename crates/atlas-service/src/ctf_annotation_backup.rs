@@ -116,7 +116,7 @@ fn digest_file(path: &Path) -> Result<String> {
         }
         hash.update(&buffer[..n]);
     }
-    Ok(format!("{:x}", hash.finalize()))
+    Ok(crate::digest_hex(hash.finalize()))
 }
 
 fn open_snapshot(path: &Path) -> Result<Connection> {

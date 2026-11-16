@@ -14,7 +14,7 @@ const MANIFEST_LIMIT: u64 = 64 * 1024;
 const MAX_SOURCE_BYTES: u64 = 2_000_000_000;
 
 pub fn sha256(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    crate::digest_hex(Sha256::digest(bytes))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,7 +106,7 @@ fn stream_identity(path: &Path, limit: u64) -> io::Result<SourceIdentity> {
         hash.update(&buffer[..n]);
     }
     Ok(SourceIdentity {
-        sha256: format!("{:x}", hash.finalize()),
+        sha256: crate::digest_hex(hash.finalize()),
         size_bytes: size,
     })
 }

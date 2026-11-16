@@ -59,7 +59,7 @@ fn read(v: &Value) -> Result<(Vec<u8>, String)> {
             "CTF grew beyond the supported size limit while reading",
         ));
     }
-    let hash = format!("{:x}", Sha256::digest(&bytes));
+    let hash = crate::digest_hex(Sha256::digest(&bytes));
     Ok((bytes, hash))
 }
 pub fn info(v: &Value) -> Result<Value> {
@@ -305,7 +305,7 @@ pub fn export(c: &Catalog, v: &Value) -> Result<Value> {
     }
     snapshot.commit()?;
     let bytes = ctf_format::write_ctf(&catalog).map_err(fail)?;
-    let sha = format!("{:x}", Sha256::digest(&bytes));
+    let sha = crate::digest_hex(Sha256::digest(&bytes));
     let len = bytes.len();
     let disk_count = catalog.disks.len();
     drop(catalog);

@@ -27,7 +27,7 @@ fn digest(path: &Path) -> Result<(String, u64)> {
             .ok_or_else(|| Error::new("export", "Export length overflow"))?;
         sha.update(&block[..bytes]);
     }
-    Ok((format!("{:x}", sha.finalize()), length))
+    Ok((crate::digest_hex(sha.finalize()), length))
 }
 
 /// The input `path` is an authoritative .CTF. `output` is a *new* CSV,
