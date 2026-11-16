@@ -308,7 +308,8 @@ impl DesktopApp {
                         self.navigate_disk(None, ctx);
                         ui.close();
                     }
-                    ui.checkbox(&mut self.dark, self.t("Тёмная тема", "Dark mode"));
+                    let theme_label = self.t("Тёмная тема", "Dark mode");
+                    ui.checkbox(&mut self.dark, theme_label);
                 });
                 ui.menu_button(self.t("Справка", "Help"), |ui| {
                     ui.label("WhereIsIt AI · native egui R2");
@@ -358,12 +359,13 @@ impl DesktopApp {
                     .unwrap_or_else(|| self.t("Все диски", "All disks").to_owned());
                 ui.label(RichText::new(scope).strong());
                 ui.separator();
+                let query_hint = self.t(
+                    "Поиск: имя, размер, ext, AND/OR/NOT…",
+                    "Search: name, size, ext, AND/OR/NOT…",
+                );
                 let response = ui.add_sized(
                     [ui.available_width().max(220.0) - 185.0, 25.0],
-                    egui::TextEdit::singleline(&mut self.query_input).hint_text(self.t(
-                        "Поиск: имя, размер, ext, AND/OR/NOT…",
-                        "Search: name, size, ext, AND/OR/NOT…",
-                    )),
+                    egui::TextEdit::singleline(&mut self.query_input).hint_text(query_hint),
                 );
                 let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 let clicked = ui
@@ -398,9 +400,10 @@ impl DesktopApp {
                     ui.strong(self.t("Диски каталога", "Catalog disks"));
                     ui.label(RichText::new(self.volumes.len().to_string()).weak());
                 });
+                let disk_filter_hint = self.t("Фильтр дисков", "Filter disks");
                 ui.add(
                     egui::TextEdit::singleline(&mut self.disk_filter)
-                        .hint_text(self.t("Фильтр дисков", "Filter disks")),
+                        .hint_text(disk_filter_hint),
                 );
                 ui.separator();
                 if ui
