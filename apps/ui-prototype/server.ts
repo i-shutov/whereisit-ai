@@ -1303,7 +1303,7 @@ function compilePredicate(raw: string): (entry: RawEntry) => boolean {
 
 const { volumes: rawVolumes, entries: rawEntries, ensureFolderChain, pushEntry } = buildInitialCatalog();
 
-// Fast exact-byte-size duplicate counter (catches both exact-name AND renamed copies >= 1 MB!)
+// Byte-size metadata candidate counter only; NEVER evidence of identical content or backup.
 const exactSizeClassCounts = new Map<number, number>();
 function rebuildDuplicateClassCounts() {
   exactSizeClassCounts.clear();
@@ -2611,7 +2611,7 @@ async function startServer() {
             list.push(f);
             buckets.set(key, list);
           } else if (normMode === 'video_stream') {
-            // Same video stream: matching duration (rounded to 2s bucket) + resolutionTag + codec!
+            // Similar stream metadata only: duration bucket, resolution and codec do not prove stream identity.
             if (!f.videoMeta) continue;
             const durBucket = Math.round(f.videoMeta.durationSec / 2);
             const key = `vstream::${durBucket}::${f.videoMeta.resolutionTag}::${f.videoMeta.codec}`;
@@ -2666,7 +2666,7 @@ async function startServer() {
           // Sort highest quality / largest master first!
           group.sort((a, b) => b.size - a.size || a.volumeId - b.volumeId);
 
-          // Reclaimable bytes = sum of all copies/lower rips except the #1 master!
+          // Hypothetical excess bytes in candidate groups; NOT proven reclaimable or safe to delete.
           const excess = group.slice(1).reduce((acc, item) => acc + item.size, 0);
           totalReclaimable += excess;
           const disks = Array.from(new Set(group.map((g) => g.volumeId))).sort((a, b) => a - b);
@@ -3174,8 +3174,8 @@ async function startServer() {
   }
 
   const PORT = 3000;
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`WhereIsIt AI running on http://0.0.0.0:${PORT}`);
+  app.listen(PORT, '127.0.0.1', () => {
+    console.log(`WhereIsIt AI running on http://127.0.0.1:${PORT}`);
   });
 }
 

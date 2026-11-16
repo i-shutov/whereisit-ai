@@ -1,0 +1,40 @@
+name: UI reference prototype checks
+on:
+  pull_request:
+    paths:
+      - 'apps/ui-prototype/**'
+      - 'docs/UX_EGUI_VIDEO_CATALOG_2026-11-16.md'
+      - '.github/workflows/ui-prototype.yml'
+  push:
+    paths:
+      - 'apps/ui-prototype/**'
+      - 'docs/UX_EGUI_VIDEO_CATALOG_2026-11-16.md'
+      - '.github/workflows/ui-prototype.yml'
+jobs:
+  web-prototype:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: apps/ui-prototype
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: bun run lint
+      - name: Build UI
+        run: bun run build
+      - name: Safety contract (no destructive FS or public bind)
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          src = Path('src/components/LocalDiskAnalyzer.tsx').read_text()
+          server = Path('server.ts').read_text()
+          for forbidden in ('removeEntry(', 'rm -rf', 'Remove-Item -LiteralPath', "showDirectoryPicker({ mode: 'readwrite' }"):
+              assert forbidden not in src, f'unsafe demo capability: {forbidden}'
+          assert "app.listen(PORT, '127.0.0.1'" in server
+          assert 'matching duration' not in server or 'do not prove stream identity' in server
+          PY

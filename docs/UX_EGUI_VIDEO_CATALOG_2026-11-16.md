@@ -1,10 +1,20 @@
 # UX & Architecture Spec: 60-USB Video Catalog & `egui` Ergonomics
 
+> **Implementation status — reference prototype, NOT native egui.** The code in `apps/ui-prototype/`
+> is a browser-based React/TypeScript + Express in-memory simulator using generated fixtures.
+> `main` currently contains Win32 and SwiftUI/AppKit production frontends; the real cross-platform
+> Rust/egui app is **not yet implemented**. Port UX to a separate Rust `egui` app rather than
+> replacing Win32 calls in `apps/windows/src/native.rs` directly.
+>
+> **Safety and evidence:** No physical USB/CTF SQLite integration, byte-exact duplicate proof,
+> media-header decoder, external-copy existence proof or measured 5 TB scan benchmark exists in
+> this prototype. Size/time/storage numbers below are **unverified design hypotheses**, not
+> product metrics. No destructive deletion or cleanup scripts are permitted in this prototype.
 Interactive reference prototype: `apps/ui-prototype/` (React + TypeScript + Express API).
 
 ## 1. Key Ergonomic Principles (`egui` 1:1 Mapping)
 
-Every widget and interaction in `apps/ui-prototype` maps directly to standard `egui` / `egui_extras` primitives so it can be ported directly into `apps/windows/src/native.rs`:
+Every widget and interaction in `apps/ui-prototype` maps directly to standard `egui` / `egui_extras` primitives for future implementation in a new Rust/egui frontend (`apps/desktop-egui`), NOT as a direct patch of Win32 control code:
 
 - **Left Disk Panel (`egui::SidePanel::left`)**:
   - Compact single-line rows (`#ID` + USB Label left, indexed TB right, thin utilization bar below — no shelf/rack rows).
@@ -18,7 +28,7 @@ Every widget and interaction in `apps/ui-prototype` maps directly to standard `e
   - Dedicated `Video (Duration · Stream)` column (`02:46:34 · 2160p HEVC`).
   - Bottom panel displays active USB metadata, `F2` / `Props` / `Scan` triggers, exact file size + video header summary + copyable relative path, and cross-disk copy actions.
 
-## 2. WhereIsIt-Style Light Video Header Plugin (`+16 B/file`, Zero DB Bloat)
+## 2. Proposed Light Video Header Plugin (unverified storage/performance estimates)
 
 Traditional WhereIsIt plugins bloated `.CTF` databases by storing frame thumbnails and verbose text dumps. For a 99% video archive across 60 USB drives:
 
@@ -38,6 +48,14 @@ Because ~99% of cataloged items are cinema/video files, byte-exact matching alon
 3. **Exact Byte Copies (`exact_bytes` / `3×64 KB`)**: catches byte-identical files across disks, including renamed copies.
 4. **Same Filename, Different Size (`same_name`)**: flags colliding filenames with divergent byte sizes.
 
-## 4. Ephemeral Local PC Mode (`LocalDiskAnalyzer.tsx`)
+## 4. Ephemeral Local PC Mode (`LocalDiskAnalyzer.tsx`, review-only)
 
 Read-only DaisyDisk/TreeSize-style inspection of currently attached local folders/drives on the host PC (`Ctrl+N` archive scanning vs Local PC ephemeral tab) with zero writes to the 60-USB catalog, plus live read-only overlap check (`POST /api/catalog/match-local`) showing which local files are already backed up on offline USB drives.
+
+### Evidence requirements before enabling real disk operations
+
+- Benchmark container parsers and data-storage overhead on a controlled fixture; missing or non-leading container headers must fail closed.
+- Distinguish **metadata candidates**, **matching sparse samples**, and **content-verified copies**. Duration+codec or size alone never proves video-stream or file identity.
+- Real USB identity must be validated by OS discovery, explicit user binding and duplicate-ID conflict checks; never infer from historic drive letters.
+- Keep actual source CTF read-only and do not claim original-application compatibility without a physical original-app test.
+- No deletion or generated executable cleanup scripts until independent end-to-end recovery/backup evidence and explicit separate acceptance. CSV review only.

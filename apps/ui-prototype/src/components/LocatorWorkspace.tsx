@@ -918,11 +918,11 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
                     ],
                     [
                       'video_stream',
-                      t('2. Ремуксы / один видеопоток (длит.+разр.+кодек)', '2. Same Video Stream / Remuxes'),
+                      t('2. Похожие потоки (длит.+разр.+кодек)', '2. Similar stream metadata'),
                     ],
                     [
                       'exact_bytes',
-                      t('3. Точные копии файлов (байт-в-байт / переим.)', '3. Exact Byte Copies (incl. renamed)'),
+                      t('3. Кандидаты: совпадает размер (не подтверждено)', '3. Same-size candidates (unverified)'),
                     ],
                     [
                       'same_name',
@@ -961,7 +961,7 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
                     </span>
                     {pageData.duplicateSummary.reclaimableBytes > 0 && (
                       <span className="text-blue-700 dark:text-blue-300 font-semibold">
-                        {t('Можно освободить:', 'Reclaimable:')} +{formatBytes(pageData.duplicateSummary.reclaimableBytes)}
+                        {t('Условный избыток:', 'Potential excess:')} +{formatBytes(pageData.duplicateSummary.reclaimableBytes)}
                       </span>
                     )}
                   </>
