@@ -8,7 +8,7 @@
 **Текущая линия выпуска: 1.0.0-rc.3 — единый устанавливаемый кандидат, не принятый стабильный 1.0.**
 Общее ядро — Rust, база — встроенная SQLite, Windows — Win32, macOS — SwiftUI/AppKit. Python, сервер базы данных и браузерный runtime обычному пользователю не нужны.
 
-Интегральный checkpoint 2026-11-13 (статус, evidence, следующие гейты): [docs/checkpoint/2026-11-13](docs/checkpoint/2026-11-13/00_START_HERE.md). Search-first UX и физический локатор USB — открытый draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57), **не** содержимое текущего `main`.
+Интегральный checkpoint 2026-11-13 (статус, evidence, следующие гейты): [docs/checkpoint/2026-11-13](docs/checkpoint/2026-11-13/00_START_HERE.md). Search-first UX и физический USB-локатор из [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57) включены в исходный [интеграционный PR #59](https://github.com/i-shutov/whereisit-ai/pull/59); результат слияния и незавершённую физическую приёмку проверяйте в [release/ACCEPTANCE.json](release/ACCEPTANCE.json).
 
 [Выпуски и установщики](https://github.com/i-shutov/whereisit-ai/releases) · [Состав rc.3](docs/releases/v1.0.0-rc.3.md) · [Фактическая приёмка](release/ACCEPTANCE.json) · [Актуальный HANDOFF](HANDOFF.md)
 

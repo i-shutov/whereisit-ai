@@ -12,11 +12,11 @@ or 150ms real SLO waiver is asserted. Keep `stable_ready=false`, RC3 tag immutab
 
 ---
 
-# WhereIsIt AI — handoff (checkpoint CP-2026-11-13)
+# WhereIsIt AI — архивный handoff (checkpoint CP-2026-11-13)
 
-## Resume point (current)
+## Historical resume point (2026-11-13; superseded above)
 
-Canonical integrated `main`: `cabdb3d2b139a67729a795ba9c34e4d3144c9c9f`
+Historical `main` at that checkpoint: `cabdb3d2b139a67729a795ba9c34e4d3144c9c9f`
 (tree `00c1e20ab5779475610275e1292cd2c5e333b618`). Identity `1.0.0-rc.3`,
 `release/ACCEPTANCE.json` keeps `stable_ready: false`.
 
