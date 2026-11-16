@@ -5,6 +5,9 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
 
 pub(crate) fn digest_hex(input: impl AsRef<[u8]>) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
@@ -16,9 +19,6 @@ pub(crate) fn digest_hex(input: impl AsRef<[u8]>) -> String {
     }
     output
 }
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
 
 pub const MANIFEST_VERSION: u32 = 1;
 const MANIFEST_LIMIT: u64 = 64 * 1024;
