@@ -1,8 +1,8 @@
 {
   "schema": "whereisit-v1-release-gates-2026-11-16",
   "created_date": "2026-11-16",
-  "source_baseline": "main 5b421e9d2b779923765459464cd5987c27baaed7",
-  "integration_candidate": "PR59 9f3eba788b0b35137a519f131cbf9eba5dc52a5a",
+  "source_baseline": "main ff87d109a7185e16be593db319e98ba76ba058f7 (PR59 source merged)",
+  "integration_candidate": "PR59 HEAD 9f3eba788b0b35137a519f131cbf9eba5dc52a5a (CI PASS), merged main ff87d109",
   "published_candidate": "v1.0.0-rc.3",
   "stable_ready": false,
   "status_definitions": {
@@ -30,11 +30,13 @@
       "name": "PR57+PR58 integrated source in main and exact SHA CI",
       "status": "IN_PROGRESS",
       "evidence": [
-        "PR59 9f3eba7 candidate",
-        "PR58 main 5b421e9"
+        "PR59 merged main ff87d109a7185e16be593db319e98ba76ba058f7",
+        "PR59 exact HEAD 9f3eba7 native 4/4 PASS",
+        "Installed RC upgrades Windows+Mac ARM/Intel PASS",
+        "Offline QA and integration regressions PASS"
       ],
       "missing": [
-        "Final Mac native/upgrade and merge of PR59"
+        "Postmerge exact main SHA CI and checkpoint"
       ],
       "owner": "Integrator"
     },

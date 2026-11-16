@@ -1,6 +1,6 @@
 # WhereIsIt AI — мастер-план выпуска 1.0
 
-**Версия плана:** 2026-11-16 / revision 1. **Статус релиза:** NO-GO. **Канонический UX:** [PR #58](https://github.com/i-shutov/whereisit-ai/pull/58), исходный commit a899ac4, безопасная интеграция PR58 в main — 5b421e9. **Источник native USB/поиска:** [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57); объединение с PR58 проходит через [PR #59](https://github.com/i-shutov/whereisit-ai/pull/59).
+**Версия плана:** 2026-11-16 / revision 1. **Статус релиза:** NO-GO. **Канонический UX:** [PR #58](https://github.com/i-shutov/whereisit-ai/pull/58), исходный commit a899ac4, безопасная интеграция PR58 в main — 5b421e9. **Источник native USB/поиска:** [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57); [PR #59](https://github.com/i-shutov/whereisit-ai/pull/59) объединён с main в коммите ff87d109a7185e16be593db319e98ba76ba058f7 после успешных exact-head CI, offline QA и installed upgrades. Финальные проверки уже объединённого main — отдельный gate.
 
 Этот документ — оперативный источник последовательности работ и критериев выпуска. Он не объявляет ещё не запущенный Rust/egui готовым, не подменяет реальные испытания синтетическим CI и не меняет опубликованный tag v1.0.0-rc.3. Машиночитаемая начальная матрица: [release/RELEASE_1_0_GATE_MATRIX_20261116.json](../release/RELEASE_1_0_GATE_MATRIX_20261116.json).
 
@@ -21,7 +21,7 @@
 | Несжатый WhereIsIt Catalog 3.00 | main | 44 диска, 3 046 027 записей, байтовый неизменённый roundtrip, полная 15-полевая CSV/Parquet parity | Оригинальная WhereIsIt не приняла изменённые выходные CTF; исторические 2 CTF недоступны как байты |
 | Кандидаты дубликатов/экспорт CSV, Parquet, JSON | main | Контрактные тесты, read-only linked CTF | Нет основания объявлять hash/stream equality по размеру, имени, длительности |
 | Native Win32 и SwiftUI | main | Нативные сборки и upgrade CI | Не равно ручной приёмке реального GUI |
-| PR57 search-first/physical USB | интеграция PR59 | Синтетические Rust/Win/Mac проверки | Запуск на реальных 60 USB, UUID-clone и горячее отключение не подтверждены |
+| PR57 search-first/physical USB | source merged in main via PR59 | Rust/Win/Mac и offline/upgrade проверки PR59 HEAD прошли | Запуск на реальных 60 USB, UUID-clone и горячее отключение не подтверждены |
 | PR58 UX | main | Bun lint/build + safety contract | Это React in-memory demo, а не Rust/egui или реальный CTF backend |
 | Rust/egui desktop | отсутствует | — | Основная новая вертикаль |
 | Подписи и нотарификация | отсутствуют | — | RC3 unsigned/ad-hoc; stable block |
@@ -60,13 +60,13 @@ AI-семантическое распознавание фильмов; мин�
 
 **Зависит:** ни от чего. **Участники:** integrator + QA.
 
-1. Дождаться exact-SHA тестов PR59: Linux Rust tests/fmt/Clippy, Windows x64, macOS ARM/Intel, offline kit и установленное RC2→RC3 обновление; на ошибке — исправление и повтор на новом SHA.
-2. Проверить дерево merge, не потерять HANDOFF/checkpoint 2026-11-13, сохранить предка PR57 и канонический PR58; затем источник PR59 слить в main, если зелёный.
+1. **Выполнено на PR59 HEAD 9f3eba7:** Linux Rust tests/fmt/Clippy, Windows x64, macOS ARM/Intel, offline kit и установленное RC2→RC3 обновление — PASS; исходный PR59 source слит в main ff87d109. **Осталось:** проверить новый точный main merge SHA и зафиксировать checkpoint R0.
+2. Проверить уже выполненное слияние PR59, подтверждая сохранение HANDOFF/checkpoint 2026-11-13, предка PR57 и канонического PR58; закрыть R0 только после повторного main CI.
 3. Сопоставить старые 50+ веток: integrated / equivalent / research evidence / obsolete / actual missing feature. **Не** делать массовый merge давно diverged веток поверх SQLite v3.
 4. Зафиксировать baseline SHA, версию/lockfile/схему и откреплённые секреты; обновить release gate matrix и one-pager go/no-go.
 5. Обеспечить один основной список issues: #60 egui, #7 release, #2 CTF, #3/#8 storage, #4/#5 platform, #6 QA и отдельные блокеры по необходимости.
 
-**Exit:** main содержит проверенный PR57+PR58 source (не физическую приёмку), полный набор CI по exact SHA PASS, исходные CTF и личные каталоги вне публичных артефактов. Если native CI не зелёный, R0 остаётся PARTIAL и PR59 не следует сливать.
+**Exit:** main содержит PR57+PR58 source (факт слияния выполнен, физическая приёмка всё ещё отсутствует), полный postmerge CI по exact main SHA PASS, исходные CTF и личные каталоги вне публичных артефактов. Пока postmerge CI не завершён, R0 остаётся PARTIAL.
 
 ### R1. UX-эталон PR58, сценарии и сервисные контракты — 3–5 чел.-дней
 
@@ -181,7 +181,7 @@ AI-семантическое распознавание фильмов; мин�
 | Gate | Проверка | Минимум для GO | Исходный статус |
 |---|---|---|---|
 | G0 | UX authority | PR58 канонический, включён в main | PASS |
-| G1 | Native integration | PR57/PR58 вместе в main, exact SHA CI+offline QA | IN PROGRESS |
+| G1 | Native integration | PR57/PR58 в main, postmerge exact SHA CI+offline QA | IN PROGRESS: source merged, main CI pending |
 | G2 | Rust/egui | Реальный запуск Windows/Mac, parity P0 PR58 | NOT STARTED |
 | G3 | Каталог/поиск/экспорт | Все P0 маршруты через atlas-service; no-clobber/CAS | PARTIAL |
 | G4 | Физический USB | Реальные ОС, полная проверка, клоны/смена буквы | BLOCKED |
@@ -237,7 +237,7 @@ AI-семантическое распознавание фильмов; мин�
 Оценка R0–R8: **47–83 инженерных человеко-дня**, без гарантированного календарного срока. Блоки B/C/E могут выполняться параллельно с A. Критический путь — UX контракт → egui/adapter → P0 native parity → physical GUI QA → installer/signatures → final review. При одном инженере календарное время близко к суммарной трудоёмкости, при 3–5 непересекающихся исполнителях уменьшается, но внешние CTF/сертификаты/USB-стенды не распараллеливаются.
 
 **Следующий конкретный ход:**
-1. Завершить CI на exact PR59 SHA и принять source merge только после итогового полного PASS. Записать checkpoint R0, не менять старые tags.
+1. Выполненный source merge PR59 ff87d109 принять к R0 только после повторного полного CI на exact main SHA; записать checkpoint R0, не менять старые tags.
 2. Параллельно открыть ветку R1 под UX PR58: atlas + click-travel baseline + трассировка действий к реальному atlas-service; не перерисовывать экран.
 3. Создать проверяемый R2 toolchain-spike (MSRV 1.90→1.95 или совместимый egui) и сразу сборочный каркас apps/desktop-egui на Windows/Mac.
 4. В отдельной CTF-дорожке подготовить original WhereIsIt edited-CTF тест, Windows машина и протокол, не публиковать исходник.
