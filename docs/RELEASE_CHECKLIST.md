@@ -13,3 +13,13 @@
 - [ ] Artifacts have SHA256SUMS and provenance manifest (OS, runner, Rust, commit, source archive SHA).
 - [ ] A clean user profile and a profile with existing config have both been tested; no database loss.
 - [ ] Freeze version and changelog; tag `v1.0.0` only after gates pass.
+
+## Дополнительные обязательные gate после UX-консолидации 2026-11-16
+
+- [ ] Новая native сборка Rust/egui собрана и запущена на Windows x64 и Mac ARM64/Intel; React прототип не считается нативным UI.
+- [ ] Интегрированные PR #57/#58 проверены на exact `main` SHA; source-only merge не приравнивается к физическому QA.
+- [ ] Физические USB identity, OS UUID clone, unplug/replug, смена буквы, system disk deny проверены на реальных Win/Mac.
+- [ ] Размер/имя/частичный хэш не объявляются byte-exact backup; никакого удаления/cleanup script по неопределённым совпадениям.
+- [ ] Windows/macOS диалоги, клавиатура и доступность, 1366×768, 100/125/200% масштаб подтверждены на реальном GUI.
+- [ ] Подписанные и нотарифицированные пакеты и RC3→последний update проверены без потери данных.
+- [ ] Все пункты из [исполняемого плана](RELEASE_1_0_EXECUTION_PLAN_2026-11-16.md) имеют ссылку на неприватное evidence и однозначный статус.

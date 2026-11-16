@@ -1,8 +1,22 @@
-# WhereIsIt AI — handoff (checkpoint CP-2026-11-13)
+## Resume 2026-11-16 — UX consolidation and egui architecture
 
-## Resume point (current)
+Before continuing, read [integration audit](docs/RELEASE_1_0_INTEGRATION_AUDIT_2026-11-16.md),
+[release plan](docs/RELEASE_1_0_EXECUTION_PLAN_2026-11-16.md), and
+[ADR-0004](docs/decisions/ADR-0004-egui-desktop.md). PR #58 React/Express in-memory
+reference prototype is merged; it is *not* the Rust/egui native app. PR #57 native
+Windows/macOS locator and physical identity implementation is brought into the
+integration code tree preserving newer 2026-11-13 handoff/checkpoint. The latest
+main merge and native exact-SHA CI must be verified independently after integration.
+No manual real USB/UI acceptance, CTF edited-original-app proof, signing/notarization
+or 150ms real SLO waiver is asserted. Keep `stable_ready=false`, RC3 tag immutable.
 
-Canonical integrated `main`: `cabdb3d2b139a67729a795ba9c34e4d3144c9c9f`
+---
+
+# WhereIsIt AI — архивный handoff (checkpoint CP-2026-11-13)
+
+## Historical resume point (2026-11-13; superseded above)
+
+Historical `main` at that checkpoint: `cabdb3d2b139a67729a795ba9c34e4d3144c9c9f`
 (tree `00c1e20ab5779475610275e1292cd2c5e333b618`). Identity `1.0.0-rc.3`,
 `release/ACCEPTANCE.json` keeps `stable_ready: false`.
 

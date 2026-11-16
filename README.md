@@ -1,9 +1,18 @@
 # WhereIsIt AI — нативный каталог отключённых дисков
 
+## Канонический UX: выбранный прототип PR #58
+
+[PR #58](https://github.com/i-shutov/whereisit-ai/pull/58) / [`apps/ui-prototype`](apps/ui-prototype/) — основная интерактивная UX-реализация для следующих итераций (исходный `a899ac4`). **Его дизайн и сценарии сохраняются**; Rust/egui должен воспроизвести их, а не заменить другим интерфейсом. PR #57 служит источником проверяемых backend/native механизмов поиска и USB. [Контракт PR58](docs/UX_REFERENCE_CONTRACT_PR58_2026-11-16.md).
+
+## Интеграция исходников 2026-11-16 — новые правила актуальности
+
+Эталон для следующего desktop UI: Rust/egui, реализация **ещё предстоит**; см. [ADR-0004](docs/decisions/ADR-0004-egui-desktop.md) и [план 1.0](docs/RELEASE_1_0_EXECUTION_PLAN_2026-11-16.md). В `main` импортирован отдельный React UI-прототип PR #58 (не продуктовый runtime). Нативный USB locator и search-first изменения PR #57 находятся в интеграционной линии и требуют exact-SHA проверки плюс физической приёмки. Не путать с подписанным или stable релизом. [Аудит](docs/RELEASE_1_0_INTEGRATION_AUDIT_2026-11-16.md).
+
+
 **Текущая линия выпуска: 1.0.0-rc.3 — единый устанавливаемый кандидат, не принятый стабильный 1.0.**
 Общее ядро — Rust, база — встроенная SQLite, Windows — Win32, macOS — SwiftUI/AppKit. Python, сервер базы данных и браузерный runtime обычному пользователю не нужны.
 
-Интегральный checkpoint 2026-11-13 (статус, evidence, следующие гейты): [docs/checkpoint/2026-11-13](docs/checkpoint/2026-11-13/00_START_HERE.md). Search-first UX и физический локатор USB — открытый draft [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57), **не** содержимое текущего `main`.
+Интегральный checkpoint 2026-11-13 (статус, evidence, следующие гейты): [docs/checkpoint/2026-11-13](docs/checkpoint/2026-11-13/00_START_HERE.md). Search-first UX и физический USB-локатор из [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57) включены в исходный [интеграционный PR #59](https://github.com/i-shutov/whereisit-ai/pull/59); результат слияния и незавершённую физическую приёмку проверяйте в [release/ACCEPTANCE.json](release/ACCEPTANCE.json).
 
 [Выпуски и установщики](https://github.com/i-shutov/whereisit-ai/releases) · [Состав rc.3](docs/releases/v1.0.0-rc.3.md) · [Фактическая приёмка](release/ACCEPTANCE.json) · [Актуальный HANDOFF](HANDOFF.md)
 
