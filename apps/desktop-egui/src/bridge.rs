@@ -42,12 +42,48 @@ impl Route {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExportKind {
+    Csv,
+    Json,
+    Parquet,
+}
+
+impl ExportKind {
+    pub fn operation(self) -> &'static str {
+        match self {
+            Self::Csv => "export_csv",
+            Self::Json => "export_json",
+            Self::Parquet => "export_parquet",
+        }
+    }
+}
+
+impl Route {
+    /// Exact current selection, never just the rendered page. CTF operations are
+    /// intentionally excluded until the real native linked-source contract is wired.
+    pub fn export_request(&self, db: &str, path: &str, kind: ExportKind) -> Option<Value> {
+        match self {
+            Self::Search { query, volume_id } => Some(json!({
+                "op":kind.operation(), "db":db, "path":path, "mode":"search",
+                "query":query, "volume_id":volume_id, "overwrite":false
+            })),
+            Self::Folder { volume_id, parent_id } => Some(json!({
+                "op":kind.operation(), "db":db, "path":path, "mode":"children",
+                "volume_id":volume_id, "parent_id":parent_id, "overwrite":false
+            })),
+            Self::Copies { .. } => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Purpose {
     Open { path: String },
     Create { path: String },
     Volumes,
     Page { route: Route },
+    Export { path: String },
 }
 
 pub struct Reply {
@@ -100,7 +136,28 @@ impl CommandBus {
 mod tests {
     use super::*;
     #[test]
+    fn exports_respect_scope_and_never_overwrite() {
+        let filtered = Route::Search { query: "ext:mkv AND size:>1GiB".into(), volume_id: Some(17) };
+        let json = filtered.export_request("/catalog.sqlite", "/review.json", ExportKind::Json).unwrap();
+        assert_eq!(json["op"], "export_json");
+        assert_eq!(json["mode"], "search");
+        assert_eq!(json["volume_id"], 17);
+        assert_eq!(json["query"], "ext:mkv AND size:>1GiB");
+        assert_eq!(json["overwrite"], false);
+        let folder = Route::Folder { volume_id: 17, parent_id: Some(204) };
+        let csv = folder.export_request("/catalog.sqlite", "/branch.csv", ExportKind::Csv).unwrap();
+        assert_eq!(csv["mode"], "children");
+        assert_eq!(csv["parent_id"], 204);
+        assert_eq!(csv["op"], "export_csv");
+        assert_eq!(ExportKind::Parquet.operation(), "export_parquet");
+        assert!(Route::Copies { entry_id: 22 }
+            .export_request("/catalog.sqlite", "/copies.csv", ExportKind::Csv)
+            .is_none());
+    }
+
+    #[test]
     fn search_scope_is_explicit_and_copies_never_claim_byte_equality() {
+
         let search = Route::Search {
             query: "name:фильм".into(),
             volume_id: None,
