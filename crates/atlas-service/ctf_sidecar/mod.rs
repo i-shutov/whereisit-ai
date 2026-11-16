@@ -5,6 +5,17 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+pub(crate) fn digest_hex(input: impl AsRef<[u8]>) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let bytes = input.as_ref();
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 15) as usize] as char);
+    }
+    output
+}
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -14,7 +25,7 @@ const MANIFEST_LIMIT: u64 = 64 * 1024;
 const MAX_SOURCE_BYTES: u64 = 2_000_000_000;
 
 pub fn sha256(bytes: &[u8]) -> String {
-    crate::digest_hex(Sha256::digest(bytes))
+    digest_hex(Sha256::digest(bytes))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,7 +117,7 @@ fn stream_identity(path: &Path, limit: u64) -> io::Result<SourceIdentity> {
         hash.update(&buffer[..n]);
     }
     Ok(SourceIdentity {
-        sha256: crate::digest_hex(hash.finalize()),
+        sha256: digest_hex(hash.finalize()),
         size_bytes: size,
     })
 }

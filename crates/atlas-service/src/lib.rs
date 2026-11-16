@@ -142,18 +142,7 @@ pub(crate) fn unsigned(v: &Value, key: &str, default: u64) -> Result<u64> {
     }
 }
 
-/// Stable lowercase encoding for a SHA digest. The sha2 0.11 output array no longer
-/// implements LowerHex; retain byte-identical 64-character SHA-256 identifiers.
-pub(crate) fn digest_hex(input: impl AsRef<[u8]>) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let bytes = input.as_ref();
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for &byte in bytes {
-        output.push(HEX[(byte >> 4) as usize] as char);
-        output.push(HEX[(byte & 15) as usize] as char);
-    }
-    output
-}
+pub(crate) use ctf_sidecar::digest_hex;
 
 #[cfg(test)]
 mod modern_sha2_regression {
