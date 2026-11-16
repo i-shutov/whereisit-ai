@@ -1,6 +1,7 @@
 //! Shared command service for native clients and CLI.
 use atlas_core::{Catalog, Error, Result};
 use serde_json::{json, Value};
+mod copy_candidates;
 mod ctf_annotation_backup;
 mod ctf_annotations;
 mod ctf_duplicate_export;
@@ -14,6 +15,7 @@ mod duplicates;
 mod exports;
 mod legacy;
 mod maintenance;
+mod physical_disks;
 mod selection;
 
 /// The actual SQLite library linked into each installed native executable.
@@ -79,12 +81,19 @@ fn dispatch(input: &str) -> Result<Value> {
         "ctf_annotations_deactivate_pinned" => ctf_annotations::deactivate(&v)?,
         "ctf_annotations_set_pinned" => ctf_annotations::set(&v)?,
         "ctf_duplicates_pinned" => ctf_duplicates::duplicates(&v)?,
+        "ctf_copy_candidates_pinned" => copy_candidates::linked(&v)?,
         "compact_catalog" => maintenance::compact_copy(&v)?,
         "validate_catalog" => maintenance::validate(&v)?,
         "import_ctf" => legacy::import(&mut Catalog::open(text(&v, "db")?)?, &v)?,
         "export_ctf" => legacy::export(&Catalog::open(text(&v, "db")?)?, &v)?,
         "ctf_info" => legacy::info(&v)?,
         "duplicates" => duplicates::duplicates(&Catalog::open(text(&v, "db")?)?, &v)?,
+        "copy_candidates" => copy_candidates::page(&Catalog::open(text(&v, "db")?)?, &v)?,
+        "physical_status" => physical_disks::status(&v)?,
+        "physical_pair" => physical_disks::pair(&v)?,
+        "physical_unpair" => physical_disks::unpair(&v)?,
+        "physical_shelf_labels" => physical_disks::shelf_labels(&v)?,
+        "physical_shelf_label_set" => physical_disks::set_shelf_label(&v)?,
         "export_csv" | "export_parquet" | "export_json" => {
             exports::export(&Catalog::open(text(&v, "db")?)?, &v, op)?
         }

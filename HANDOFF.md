@@ -1,3 +1,17 @@
+## Resume 2026-11-16 — UX consolidation and egui architecture
+
+Before continuing, read [integration audit](docs/RELEASE_1_0_INTEGRATION_AUDIT_2026-11-16.md),
+[release plan](docs/RELEASE_1_0_EXECUTION_PLAN_2026-11-16.md), and
+[ADR-0004](docs/decisions/ADR-0004-egui-desktop.md). PR #58 React/Express in-memory
+reference prototype is merged; it is *not* the Rust/egui native app. PR #57 native
+Windows/macOS locator and physical identity implementation is brought into the
+integration code tree preserving newer 2026-11-13 handoff/checkpoint. The latest
+main merge and native exact-SHA CI must be verified independently after integration.
+No manual real USB/UI acceptance, CTF edited-original-app proof, signing/notarization
+or 150ms real SLO waiver is asserted. Keep `stable_ready=false`, RC3 tag immutable.
+
+---
+
 # WhereIsIt AI — handoff (checkpoint CP-2026-11-13)
 
 ## Resume point (current)

@@ -1,0 +1,13 @@
+# UX9 — physical USB pickup checklist, Windows Win32 and macOS SwiftUI
+Date: 2026-11-02. Draft PR #57 only.
+
+## Acceptance checklist
+1. Use an artificial catalog with at least four candidate disks: two same historical labels but different exact disk IDs, a private Cyrillic sticker, and different metadata match counts. Search globally, select an entry with recorded byte size, then Find copies. A group total is **all catalog records**, including selected file, not just the 250-row page.
+2. Explicitly pair one catalog disk to a **currently observed** OS UUID (Windows Mount Manager GUID+serial; Mac filesystem UUID); leave one paired/offline, one unpaired and one duplicate/cloned UUID conflicted. The ordered group chooser is verified connected first, paired offline second, unverified third, conflicted last; count descending and exact ID break ties. On incomplete probe, no green/verified state is allowed. A physical sticker does not imply OS pairing.
+3. Windows 10/11: after OS refresh (Ctrl+R), select each combo option. The resulting focused catalog disk must have the displayed **exact ID** even when the sort order changes. Activate visible Copy pickup list, the View menu and Ctrl+Shift+P; also test when right inspector is collapsed via Ctrl+I. The original inspector text must be restored after copying.
+4. Mac ARM64/Intel: VoiceOver announce candidate buttons and the Copy pickup list action; verify Command-Shift-P. Check list scroll, keyboard focus, Dark/Light themes and 1366×768/HiDPI layout.
+5. Paste locally: verify the original recorded name, every candidate disk ID/sticker/label/count/last OS state, and disclaimers that catalog paths are historical, states can become stale, contents/hashes were not checked, and deletion is not authorized. A catalog title containing embedded newline must not create fake checklist rows. No live disk read or CTF/private SQLite mutation takes place.
+6. Exit candidate mode and verify copied list is unavailable. Re-link to a different CTF generation and ensure old groups are cleared; **every subsequent service page** must recheck generation SHA. Copying the previously loaded page metadata does not itself reverify a changed source.
+7. Exact-HEAD gate: Linux Rustfmt/tests/Clippy, native Windows x64, macOS ARM64/Intel, integration regressions, offline acceptance and installed RC2→RC3 upgrades. Distinguish this from real owner USB, GUI/accessibility, 3M-row p95, original modified/historic CTF and code-sign/notarization acceptance.
+
+No user CTF/SQLite, private path, filename, content hash or USB identity may enter GitHub logs, fixtures or published build artifacts. No stable release and no PR merge.

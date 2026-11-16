@@ -1,3 +1,5 @@
+> Current authoritative 1.0 roadmap: [RELEASE_1_0_EXECUTION_PLAN_2026-11-16.md](RELEASE_1_0_EXECUTION_PLAN_2026-11-16.md). Historical roadmap below is preserved for traceability; Rust/egui migration is now a mandatory architecture direction.
+
 # WhereIsIt AI — дорожная карта до устанавливаемого выпуска 1.0
 
 **Репозиторий:** https://github.com/i-shutov/whereisit-ai (private)  

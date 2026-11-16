@@ -1,0 +1,23 @@
+# ADR-0004 — единый новый нативный интерфейс на Rust/egui
+
+Дата: 2026-11-16. Статус: **accepted direction / implementation pending**.
+
+## Контекст
+
+Текущее ядро `atlas-core` + `atlas-service` (Rust/SQLite) работает с Win32 и SwiftUI/AppKit клиентами. PR #57 содержит большой объём реального UX и hardware-identity кода на этих фронтендах. PR #58 добавил веб-прототип (React + Express) с новым компактным 60-USB/video-focused дизайном. Пользователь выбрал egui в качестве направления нового UI. В репозитории **пока нет** Rust-крейта, реализующего этот интерфейс.
+
+## Решение
+
+Создать отдельное нативное приложение `apps/desktop-egui` на `eframe/egui`, `egui_extras::TableBuilder`, worker/async для I/O, соблюдая source-generation/SQLite contracts существующего `atlas-service`. Держать Win32 и SwiftUI источниками реализации/приёмки до полного par­ity; не удалять их преждевременно. React остаётся standalone локальным UX-эталоном, **не** поставляется в бинарном продукте и не поднимает производственный API. Предпочитать встроенные service-команды; не создавать в egui второй поисковый SQL-движок, CTF reader или unvalidated физическую UUID эвристику.
+
+## Порядок migration
+
+1. Компактный каркас: верхнее меню, 60+ дисков в левой панели, поисковая строка, таблица с 250-элементной пагинацией, инспектор снизу/справа, отдельная панель статусов.
+2. Данные: инкапсулированный адаптер к `atlas-service`, generation-aware responses, ошибки/retry/cancel, сохранение невмешательства в linked CTF.
+3. Перенос verified physical pairing/search-first PR #57, точная идентичность диска и conflict states.
+4. Нативные диалоги/горячие клавиши, RU/EN, DPI/Retina/accessibility, mouse-click distance.
+5. Переключение release packaging на egui **после** независимого dual-OS QA.
+
+## Открытые риски
+
+Отдельно согласовать лицензии egui/eframe, тесты доступности и шрифтов, интерфейс native file pickers; учесть, что 16 Б/файл и 2,5 сек/5 TB в прототипе не измерены. Плагины видео и удаление **не** входят в подтверждённое поведение 1.0. Поздние source/CI эксперименты не подменяют физический GUI QA.

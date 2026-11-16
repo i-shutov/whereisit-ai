@@ -398,3 +398,145 @@ fn duplicate_export_rejects_wrong_scope_overwrites_stale_sources_and_hash_claims
         assert!(!name.starts_with(".whereisit-ctf-export-"), "{name}");
     }
 }
+
+#[test]
+fn selected_copy_navigation_spans_disks_and_rechecks_generation_per_page() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("synthetic-copies.ctf");
+    let cache = dir.path().join("cache");
+    let bytes = write_ctf(&CtfCatalog {
+        name: "synthetic selected-copy source".into(),
+        opaque_trailer: Vec::new(),
+        disks: vec![
+            CtfDisk {
+                name: "Shelf one".into(),
+                opaque_header: Vec::new(),
+                entries: vec![
+                    entry("Films", 0, None, EntryKind::Directory),
+                    entry("Atlas.MKV", 512, Some(0), EntryKind::File),
+                ],
+            },
+            CtfDisk {
+                name: "Shelf two".into(),
+                opaque_header: Vec::new(),
+                entries: vec![
+                    entry("atlas.mkv", 512, None, EntryKind::File),
+                    entry("atlas.mkv", 513, None, EntryKind::File),
+                ],
+            },
+        ],
+    })
+    .unwrap();
+    fs::write(&source, &bytes).unwrap();
+    let generation = sync(&source, &cache);
+    let database = cache.join(&generation).join("catalog.sqlite");
+    let db_before = fs::read(&database).unwrap();
+    let manifest_path = cache.join(&generation).join("manifest.json");
+    let manifest_before = fs::read(&manifest_path).unwrap();
+    let found = call(json!({
+        "op":"ctf_search_pinned","path":source,"cache_root":cache,
+        "generation":generation,"query":"name:atlas","limit":20
+    }));
+    assert_eq!(found["ok"], true, "{found}");
+    let entries = found["data"]["result"]["items"].as_array().unwrap();
+    let selected_id = entries
+        .iter()
+        .find(|row| row["name"] == "Atlas.MKV")
+        .unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    let copy_page = |offset| {
+        call(json!({
+            "op":"ctf_copy_candidates_pinned","path":source,"cache_root":cache,
+            "generation":generation,"entry_id":selected_id,
+            "offset":offset,"limit":1
+        }))
+    };
+    let first = copy_page(0);
+    assert_eq!(first["ok"], true, "{first}");
+    assert_eq!(first["data"]["source_sha_checked"], true);
+    assert_eq!(first["data"]["read_only"], true);
+    assert_eq!(first["data"]["result"]["verified"], false);
+    assert_eq!(
+        first["data"]["result"]["basis"],
+        "exact_normalized_name_and_size"
+    );
+    assert_eq!(first["data"]["result"]["total"], 2);
+    assert_eq!(first["data"]["result"]["distinct_disks"], 2);
+    let groups = first["data"]["result"]["disk_groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0]["count"], 1);
+    assert_eq!(groups[1]["count"], 1);
+    assert_eq!(first["data"]["result"]["all_total"], 2);
+    let source_disk = first["data"]["result"]["source_volume_id"]
+        .as_i64()
+        .unwrap();
+    let external_disk = groups
+        .iter()
+        .find(|group| group["volume_id"].as_i64() != Some(source_disk))
+        .unwrap()["volume_id"]
+        .as_i64()
+        .unwrap();
+    let other = call(json!({
+        "op":"ctf_copy_candidates_pinned","path":source,"cache_root":cache,
+        "generation":generation,"entry_id":selected_id,
+        "other_disks_only":true,"offset":0,"limit":1
+    }));
+    assert_eq!(other["ok"], true, "{other}");
+    assert_eq!(other["data"]["source_sha_checked"], true);
+    assert_eq!(other["data"]["read_only"], true);
+    assert_eq!(other["data"]["result"]["total"], 1);
+    assert_eq!(other["data"]["result"]["all_total"], 2);
+    assert_eq!(other["data"]["result"]["other_total"], 1);
+    assert_eq!(other["data"]["result"]["distinct_disks"], 1);
+    assert_eq!(
+        other["data"]["result"]["items"][0]["volume_id"],
+        external_disk
+    );
+    assert_eq!(other["data"]["result"]["verified"], false);
+    let focus = groups[1]["volume_id"].as_i64().unwrap();
+    let focused = call(json!({
+        "op":"ctf_copy_candidates_pinned","path":source,"cache_root":cache,
+        "generation":generation,"entry_id":selected_id,
+        "candidate_volume_id":focus,"offset":0,"limit":1
+    }));
+    assert_eq!(focused["ok"], true, "{focused}");
+    assert_eq!(focused["data"]["source_sha_checked"], true);
+    assert_eq!(focused["data"]["read_only"], true);
+    assert_eq!(focused["data"]["result"]["total"], 1);
+    assert_eq!(focused["data"]["result"]["all_total"], 2);
+    assert_eq!(focused["data"]["result"]["items"][0]["volume_id"], focus);
+    assert_eq!(first["data"]["result"]["has_more"], true);
+    let second = copy_page(1);
+    assert_eq!(second["ok"], true, "{second}");
+    assert_eq!(second["data"]["source_sha_checked"], true);
+    assert_eq!(second["data"]["result"]["has_more"], false);
+    assert_ne!(
+        first["data"]["result"]["items"][0]["volume_id"],
+        second["data"]["result"]["items"][0]["volume_id"]
+    );
+    assert_eq!(first["data"]["result"]["items"][0]["size"], 512);
+    assert_eq!(second["data"]["result"]["items"][0]["size"], 512);
+    assert_eq!(fs::read(&source).unwrap(), bytes);
+    assert_eq!(fs::read(&database).unwrap(), db_before);
+    assert_eq!(fs::read(&manifest_path).unwrap(), manifest_before);
+
+    // An independently changed source invalidates even a previously
+    // successful copy page. Never reuse stale mirrored data.
+    fs::write(&source, b"synthetic modified bytes").unwrap();
+    let stale = copy_page(1);
+    assert_eq!(stale["ok"], false, "{stale}");
+    let stale_focused = call(json!({
+        "op":"ctf_copy_candidates_pinned","path":source,"cache_root":cache,
+        "generation":generation,"entry_id":selected_id,
+        "candidate_volume_id":focus,"offset":0,"limit":1
+    }));
+    assert_eq!(stale_focused["error"]["code"], "source_changed");
+    let stale_other = call(json!({
+        "op":"ctf_copy_candidates_pinned","path":source,"cache_root":cache,
+        "generation":generation,"entry_id":selected_id,
+        "other_disks_only":true,"offset":0,"limit":1
+    }));
+    assert_eq!(stale_other["error"]["code"], "source_changed");
+    assert_eq!(stale["error"]["code"], "source_changed", "{stale}");
+}

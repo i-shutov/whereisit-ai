@@ -362,3 +362,149 @@ fn bulk_import_collects_query_planner_statistics() {
     assert!(n > 0, "planner statistics missing after bulk import");
     assert_eq!(c.search("ext:flac", None, 0, 10).unwrap().total, 100);
 }
+
+#[test]
+fn literal_filename_lookup_spans_disks_and_ignores_size_without_hash_claims() {
+    let d = tempfile::tempdir().unwrap();
+    let mut c = Catalog::open(d.path().join("same-name.sqlite")).unwrap();
+    let disk_a = c
+        .bulk_import("A", "offline:a", |w| {
+            w.insert(&entry("Фильм [HD].mkv", 100))?;
+            w.insert(&entry("Фильм [HD].mp4", 100))?;
+            Ok(())
+        })
+        .unwrap();
+    c.bulk_import("B", "offline:b", |w| {
+        w.insert(&entry("Фильм [HD].mkv", 200))?;
+        w.insert(&entry("Фильм [HD]-other.mkv", 100))?;
+        Ok(())
+    })
+    .unwrap();
+    let exact = "name_exact:\"Фильм [HD].mkv\"";
+    assert_eq!(c.search(exact, None, 0, 250).unwrap().total, 2);
+    assert_eq!(c.search(exact, Some(disk_a.id), 0, 250).unwrap().total, 1);
+    assert_eq!(
+        c.search("name_exact:\"ФИЛЬМ [hd].mkv\"", None, 0, 250)
+            .unwrap()
+            .total,
+        2
+    );
+    assert_eq!(
+        c.search("name_exact:\"Фильм [HD].mp4\"", None, 0, 250)
+            .unwrap()
+            .total,
+        1
+    );
+    assert_eq!(
+        c.search("name_exact:\"Фильм [HD]\"", None, 0, 250)
+            .unwrap()
+            .total,
+        0
+    );
+}
+
+#[test]
+fn video_extension_search_across_disconnected_disks_is_metadata_only() {
+    let d = tempfile::tempdir().unwrap();
+    let mut catalog = Catalog::open(d.path().join("video.sqlite")).unwrap();
+    let shelf_a = catalog
+        .bulk_import("Shelf A", "offline:a", |w| {
+            w.insert(&entry("Герой.mkv", 10))?;
+            w.insert(&entry("Герой.txt", 10))?;
+            Ok(())
+        })
+        .unwrap();
+    catalog
+        .bulk_import("Shelf B", "offline:b", |w| {
+            w.insert(&entry("Hero.MP4", 20))?;
+            w.insert(&entry("Hero.avi", 30))?;
+            w.insert(&entry("Guide.pdf", 40))?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(catalog.search("type:video", None, 0, 250).unwrap().total, 3);
+    assert_eq!(
+        catalog
+            .search("type:VIDEO", Some(shelf_a.id), 0, 250)
+            .unwrap()
+            .total,
+        1
+    );
+    assert_eq!(
+        catalog
+            .search("(name:Герой OR name:Hero) AND type:video", None, 0, 250)
+            .unwrap()
+            .total,
+        3
+    );
+    assert!(catalog.search("type:movie", None, 0, 250).is_err());
+    assert_eq!(
+        catalog
+            .search("type:video AND ext:pdf", None, 0, 250)
+            .unwrap()
+            .total,
+        0
+    );
+}
+
+#[test]
+fn same_recorded_size_search_finds_renamed_files_across_offline_disks_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut catalog = Catalog::open(dir.path().join("same-size.sqlite")).unwrap();
+    let first = catalog
+        .bulk_import("Media A", "offline:a", |writer| {
+            writer.insert(&entry("Фильм.mkv", 1_048_576))?;
+            writer.insert(&entry("unrelated.txt", 100))?;
+            Ok(())
+        })
+        .unwrap();
+    let second = catalog
+        .bulk_import("Media B", "offline:b", |writer| {
+            writer.insert(&entry("Renamed Movie.mp4", 1_048_576))?;
+            writer.insert(&entry("Different.mkv", 1_048_577))?;
+            Ok(())
+        })
+        .unwrap();
+    catalog
+        .bulk_import("Media C", "offline:c", |writer| {
+            writer.insert(&entry("Другое имя.avi", 1_048_576))?;
+            writer.insert(&entry("empty.dat", 0))?;
+            let mut directory = entry("directory-with-size", 1_048_576);
+            directory.kind = "directory".into();
+            writer.insert(&directory)?;
+            Ok(())
+        })
+        .unwrap();
+    let query = "size:1048576 AND kind:file";
+    let page = catalog.search(query, None, 0, 1).unwrap();
+    assert_eq!(page.total, 3);
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(catalog.search(query, None, 1, 1).unwrap().items.len(), 1);
+    assert_eq!(catalog.search(query, None, 2, 1).unwrap().items.len(), 1);
+    assert_eq!(catalog.search(query, None, 3, 1).unwrap().items.len(), 0);
+    assert_eq!(
+        catalog.search(query, Some(first.id), 0, 20).unwrap().total,
+        1
+    );
+    assert_eq!(
+        catalog.search(query, Some(second.id), 0, 20).unwrap().total,
+        1
+    );
+    assert_eq!(
+        catalog
+            .search("size:1048577 AND kind:file", None, 0, 20)
+            .unwrap()
+            .total,
+        1
+    );
+    assert_eq!(
+        catalog
+            .search("size:0 AND kind:file", None, 0, 20)
+            .unwrap()
+            .total,
+        1
+    );
+    assert!(catalog
+        .search("size:1048576 AND kind:movie", None, 0, 20)
+        .is_err());
+}
