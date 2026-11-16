@@ -27,6 +27,30 @@ jobs:
         run: bun run lint
       - name: Build UI
         run: bun run build
+      - name: Production server smoke (Express 5)
+        run: |
+          set -euo pipefail
+          NODE_ENV=production bun run start > /tmp/whereisit-ui.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          healthy=0
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:3000/api/state > /tmp/whereisit-state.json; then
+              healthy=1
+              break
+            fi
+            sleep 1
+          done
+          if test "$healthy" != 1; then cat /tmp/whereisit-ui.log; exit 1; fi
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          state = json.loads(Path('/tmp/whereisit-state.json').read_text())
+          assert isinstance(state.get('volumes'), list)
+          assert len(state['volumes']) >= 40
+          PY
+          curl --silent --fail http://127.0.0.1:3000/ | grep -q 'WhereIsIt AI'
+          curl --silent --fail http://127.0.0.1:3000/catalog/offline/fixture | grep -q 'WhereIsIt AI'
       - name: Safety contract (no destructive FS or public bind)
         run: |
           python3 - <<'PY'
