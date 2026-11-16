@@ -794,6 +794,6 @@ impl eframe::App for DesktopApp {
         self.disk_sidebar(root, &ctx);
         self.inspector(root, &ctx);
         self.results_table(root, &ctx);
-        self.dialogs(ctx);
+        self.dialogs(&ctx);
     }
 }
