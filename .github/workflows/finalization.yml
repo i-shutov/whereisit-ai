@@ -32,8 +32,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: finalization-linux-1.90-${{ hashFiles('Cargo.lock') }}
-      - run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
+          key: finalization-linux-1.100-${{ hashFiles('Cargo.lock') }}
+      - run: rustup toolchain install 1.100.0 --profile minimal --component rustfmt,clippy
       - name: Check integrated Rust contracts
         run: |
           set -euo pipefail

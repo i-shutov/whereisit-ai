@@ -11,8 +11,8 @@ version = (root / "VERSION").read_text().strip()
 if not re.fullmatch(r"\d+\.\d+\.\d+(?:-rc\.\d+)?", version):
     raise ValueError("Invalid release version")
 numeric = version.split("-")[0]
-workspace_names = {"atlas-core", "atlas-service", "atlas-cli", "atlas-ffi", "atlas-windows", "ctf-format"}
-for path in [root / "Cargo.toml", *root.glob("crates/*/Cargo.toml"), root / "apps/windows/Cargo.toml"]:
+workspace_names = {"atlas-core", "atlas-service", "atlas-cli", "atlas-ffi", "atlas-windows", "ctf-format", "atlas-desktop-egui"}
+for path in [root / "Cargo.toml", *root.glob("crates/*/Cargo.toml"), root / "apps/windows/Cargo.toml", root / "apps/desktop-egui/Cargo.toml"]:
     text = path.read_text(encoding="utf-8")
     parsed = tomllib.loads(text)
     if path == root / "Cargo.toml" or isinstance(parsed.get("package", {}).get("version"), str):
