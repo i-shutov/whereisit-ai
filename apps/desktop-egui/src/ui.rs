@@ -1,11 +1,12 @@
 //! PR58-first native workbench. Every user-visible catalog fact comes from atlas-service;
 //! no fictitious USB mount badges, byte-duplicate claims or on-disk delete operations.
-use crate::bridge::{CommandBus, ExportKind, Purpose, Route};
+use crate::bridge::{new_scan_job_id, scan_request, CommandBus, ExportKind, Purpose, Route};
 use crate::model::{bytes_compact, parse_volumes, Entry, Page, Volume};
 use eframe::egui::{self, Color32, RichText};
 use egui_extras::{Column, TableBuilder};
 use serde_json::{json, Value};
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 const PAGE_LIMIT: u64 = 250;
 
@@ -41,6 +42,16 @@ pub struct DesktopApp {
     show_catalog_dialog: bool,
     create_catalog: bool,
     show_export_dialog: bool,
+    show_scan_dialog: bool,
+    scan_root: String,
+    scan_label: String,
+    scan_job_id: Option<String>,
+    scan_progress_request: Option<u64>,
+    scan_cancel_request: Option<u64>,
+    scan_registered: bool,
+    scan_cancel_requested: bool,
+    scan_progress_entries: u64,
+    last_progress_poll: Option<Instant>,
     export_path: String,
     export_kind: ExportKind,
     show_disk_properties: Option<i64>,
@@ -77,6 +88,16 @@ impl DesktopApp {
             show_catalog_dialog: false,
             create_catalog: false,
             show_export_dialog: false,
+            show_scan_dialog: false,
+            scan_root: String::new(),
+            scan_label: String::new(),
+            scan_job_id: None,
+            scan_progress_request: None,
+            scan_cancel_request: None,
+            scan_registered: false,
+            scan_cancel_requested: false,
+            scan_progress_entries: 0,
+            last_progress_poll: None,
             export_path: String::new(),
             export_kind: ExportKind::Csv,
             show_disk_properties: None,
@@ -207,6 +228,100 @@ impl DesktopApp {
         self.queue(Purpose::Export { path }, request, ctx);
     }
 
+    fn start_scan(&mut self, ctx: &egui::Context) {
+        if self.active_request.is_some() {
+            return;
+        }
+        let Some(db) = self.db.clone() else {
+            return;
+        };
+        let label = self.scan_label.trim().to_owned();
+        if label.is_empty() {
+            self.error = Some(self.t("Укажите название диска.", "Enter a disk label.").to_owned());
+            return;
+        }
+        let root = Path::new(self.scan_root.trim());
+        let valid_root = std::fs::symlink_metadata(root)
+            .map(|m| m.file_type().is_dir())
+            .unwrap_or(false);
+        if !valid_root {
+            self.error = Some(self.t(
+                "Нужна существующая папка, не символическая ссылка.",
+                "Choose an existing folder, not a symbolic link.",
+            ).to_owned());
+            return;
+        }
+        let Ok(root_abs) = std::fs::canonicalize(root) else {
+            self.error = Some(self.t("Нет доступа к папке.", "Folder is inaccessible.").to_owned());
+            return;
+        };
+        let Ok(db_abs) = std::fs::canonicalize(&db) else {
+            self.error = Some(self.t("Каталог не найден.", "Catalog unavailable.").to_owned());
+            return;
+        };
+        // A catalog under its own scan root would re-index its WAL and itself.
+        if db_abs.starts_with(&root_abs) {
+            self.error = Some(self.t(
+                "Каталог SQLite расположен внутри сканируемой папки. Выберите другой источник.",
+                "The SQLite catalog is inside the scan root. Choose a different source.",
+            ).to_owned());
+            return;
+        }
+        let root_text = root_abs.to_string_lossy().into_owned();
+        let job_id = new_scan_job_id();
+        self.scan_registered = false;
+        self.scan_cancel_requested = false;
+        self.scan_progress_entries = 0;
+        self.scan_progress_request = None;
+        self.scan_cancel_request = None;
+        self.last_progress_poll = None;
+        self.scan_job_id = Some(job_id.clone());
+        self.status = self.t(
+            "Сканирование метаданных запущено…",
+            "Metadata scan started…",
+        ).to_owned();
+        self.show_scan_dialog = false;
+        self.queue(
+            Purpose::Scan { root: root_text.clone(), job_id: job_id.clone() },
+            scan_request(&db, &root_text, &label, &job_id),
+            ctx,
+        );
+    }
+
+    fn poll_scan_progress(&mut self, ctx: &egui::Context) {
+        let Some(job_id) = self.scan_job_id.clone() else {
+            return;
+        };
+        ctx.request_repaint_after(Duration::from_millis(500));
+        let should_poll = self.scan_progress_request.is_none()
+            && self.last_progress_poll
+                .is_none_or(|last| last.elapsed() >= Duration::from_millis(500));
+        if should_poll {
+            self.last_progress_poll = Some(Instant::now());
+            self.scan_progress_request = Some(self.bus.send(
+                Purpose::ScanProgress { job_id: job_id.clone() },
+                json!({"op":"progress","job_id":job_id}),
+                ctx,
+            ));
+        }
+    }
+
+    fn request_scan_cancel(&mut self, ctx: &egui::Context) {
+        if self.scan_cancel_requested || !self.scan_registered {
+            return;
+        }
+        let Some(job_id) = self.scan_job_id.clone() else {
+            return;
+        };
+        self.scan_cancel_requested = true;
+        self.status = self.t("Запрос отмены сканирования…", "Requesting scan cancellation…").to_owned();
+        self.scan_cancel_request = Some(self.bus.send(
+            Purpose::ScanCancel { job_id: job_id.clone() },
+            json!({"op":"cancel","job_id":job_id}),
+            ctx,
+        ));
+    }
+
     fn load_volumes(&mut self, ctx: &egui::Context) {
         if let Some(db) = self.db.clone() {
             self.status = self
@@ -295,12 +410,61 @@ impl DesktopApp {
     }
 
     fn apply_reply(&mut self, reply: crate::bridge::Reply, ctx: &egui::Context) {
-        // Monotonic request ids reject stale worker replies when a later
-        // search, navigation or source change superseded the operation.
+        // Progress and cancel use independent short workers. They must NEVER
+        // supersede the active scan worker or its transactional response.
+        match &reply.purpose {
+            Purpose::ScanProgress { job_id } => {
+                if self.scan_progress_request == Some(reply.id) {
+                    self.scan_progress_request = None;
+                    if self.scan_job_id.as_deref() == Some(job_id.as_str())
+                        && reply.response["ok"] == true
+                    {
+                        self.scan_registered = true;
+                        self.scan_progress_entries = reply.response["data"]["entries"]
+                            .as_u64().unwrap_or(self.scan_progress_entries);
+                    }
+                }
+                return;
+            }
+            Purpose::ScanCancel { job_id } => {
+                if self.scan_cancel_request == Some(reply.id) {
+                    self.scan_cancel_request = None;
+                    if self.scan_job_id.as_deref() == Some(job_id.as_str()) {
+                        self.status = if reply.response["ok"] == true {
+                            self.t("Отмена запрошена; ожидается откат транзакции.",
+                                "Cancellation requested; waiting for rollback.")
+                        } else {
+                            self.t("Отмена уже невозможна: операция завершается.",
+                                "Cancellation is too late; operation is finishing.")
+                        }.to_owned();
+                    }
+                }
+                return;
+            }
+            _ => {}
+        }
+        // A long I/O worker is never replaced while it is active.
         if self.active_request != Some(reply.id) {
             return;
         }
         self.active_request = None;
+        let scan_finished = matches!(reply.purpose, Purpose::Scan { .. });
+        if scan_finished {
+            self.scan_job_id = None;
+            self.scan_progress_request = None;
+            self.scan_cancel_request = None;
+            self.scan_registered = false;
+            self.scan_cancel_requested = false;
+        }
+        if scan_finished
+            && reply.response.pointer("/error/code").and_then(Value::as_str) == Some("cancelled")
+        {
+            self.status = self.t(
+                "Сканирование отменено: снимок не сохранён.",
+                "Scan cancelled: no snapshot was saved.",
+            ).to_owned();
+            return;
+        }
         if reply.response.get("ok").and_then(Value::as_bool) != Some(true) {
             let message = reply
                 .response
@@ -334,6 +498,25 @@ impl DesktopApp {
                 }
                 Err(e) => self.error = Some(e),
             },
+            Purpose::Scan { root, job_id } => {
+                let _ = (root, job_id);
+                if let Some(id) = data["id"].as_i64() {
+                    self.selected_volume = Some(id);
+                    self.query_input.clear();
+                    self.history.clear();
+                    self.offset = 0;
+                    self.selected = None;
+                    self.route = Route::Search { query: String::new(), volume_id: Some(id) };
+                }
+                self.status = self.t(
+                    "Сканирование закончено; обновляем реестр.",
+                    "Scan complete; refreshing disk register.",
+                ).to_owned();
+                self.load_volumes(ctx);
+            }
+            Purpose::ScanProgress { .. } | Purpose::ScanCancel { .. } => {
+                unreachable!("Auxiliary scan reply must be processed before active worker");
+            }
             Purpose::Export { path } => {
                 let rows = data.get("rows").and_then(Value::as_u64).unwrap_or(0);
                 self.status = format!(
@@ -383,6 +566,15 @@ impl DesktopApp {
                     {
                         self.show_catalog_dialog = true;
                         self.create_catalog = true;
+                        ui.close();
+                    }
+                    if ui.add_enabled(
+                        self.db.is_some() && self.active_request.is_none(),
+                        egui::Button::new(self.t("Сканировать диск/папку…", "Scan disk/folder…")),
+                    ).clicked() {
+                        self.show_scan_dialog = true;
+                        self.scan_root.clear();
+                        self.scan_label.clear();
                         ui.close();
                     }
                     let can_export = self.db.is_some()
@@ -551,7 +743,7 @@ impl DesktopApp {
                                 if label.clicked() {
                                     self.navigate_disk(Some(volume.id), ctx);
                                 }
-                                if label.double_clicked() {
+                                if label.double_clicked() && self.active_request.is_none() {
                                     self.history.push((self.route.clone(), self.offset));
                                     self.route = Route::Folder {
                                         volume_id: volume.id,
@@ -598,6 +790,24 @@ impl DesktopApp {
                     ui.label(RichText::new(&self.status).small().weak());
                     if self.active_request.is_some() { ui.spinner(); }
                 });
+                if self.scan_job_id.is_some() {
+                    ui.horizontal(|ui| {
+                        ui.label(format!(
+                            "{}: {}",
+                            self.t("Обработано записей", "Entries processed"),
+                            self.scan_progress_entries,
+                        ));
+                        if ui.add_enabled(
+                            self.scan_registered && !self.scan_cancel_requested,
+                            egui::Button::new(self.t("Отменить сканирование", "Cancel scan")),
+                        ).clicked() {
+                            self.request_scan_cancel(ctx);
+                        }
+                        if self.scan_cancel_requested {
+                            ui.label(self.t("Отмена запрошена", "Cancellation requested"));
+                        }
+                    });
+                }
                 if let Some(error) = &self.error {
                     ui.colored_label(Color32::from_rgb(224, 96, 88), error);
                 }
@@ -792,6 +1002,41 @@ impl DesktopApp {
     }
 
     fn dialogs(&mut self, ctx: &egui::Context) {
+        if self.show_scan_dialog {
+            let mut open = self.show_scan_dialog;
+            egui::Window::new(self.t("Сканирование диска", "Scan disk"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(true)
+                .default_width(560.0)
+                .show(ctx, |ui| {
+                    ui.label(self.t(
+                        "Папка или корень диска (только метаданные):",
+                        "Folder or disk root (metadata only):",
+                    ));
+                    ui.add(egui::TextEdit::singleline(&mut self.scan_root)
+                        .desired_width(f32::INFINITY));
+                    ui.label(self.t("Название диска в каталоге:", "Catalog disk label:"));
+                    ui.add(egui::TextEdit::singleline(&mut self.scan_label)
+                        .desired_width(f32::INFINITY));
+                    ui.label(RichText::new(self.t(
+                        "Файлы не читаются и не изменяются. Создаётся новый снимок в SQLite.",
+                        "File contents are not read or changed. A new SQLite snapshot is created.",
+                    )).small().weak());
+                    ui.horizontal(|ui| {
+                        if ui.add_enabled(
+                            self.db.is_some() && self.active_request.is_none(),
+                            egui::Button::new(self.t("Начать сканирование", "Start scan")),
+                        ).clicked() {
+                            self.start_scan(ctx);
+                        }
+                        if ui.button(self.t("Закрыть", "Close")).clicked() {
+                            self.show_scan_dialog = false;
+                        }
+                    });
+                });
+            self.show_scan_dialog &= open;
+        }
         if self.show_export_dialog {
             let mut open = self.show_export_dialog;
             egui::Window::new(self.t("Экспорт метаданных", "Metadata export"))
@@ -935,6 +1180,7 @@ impl eframe::App for DesktopApp {
         while let Some(reply) = self.bus.poll() {
             self.apply_reply(reply, &ctx);
         }
+        self.poll_scan_progress(&ctx);
         self.handle_shortcuts(&ctx);
         self.menu(root, &ctx);
         self.search_toolbar(root, &ctx);
