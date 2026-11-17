@@ -13,6 +13,7 @@ class Win10EguiQaHostContract(unittest.TestCase):
         self.assertIn("ManualReview", text)
         self.assertIn("CaptureScreenshot", text)
         self.assertIn("Get-FileHash", text)
+        self.assertIn("[System.Text.UTF8Encoding]::new($false)", text)
         self.assertIn("QA_MANIFEST.json", text)
         self.assertIn("Join-Path $script:RunFolder 'synthetic-media'", text)
         for op in ("scan", "search_fast", "export_csv", "export_json", "export_parquet",
