@@ -10,7 +10,7 @@
     "Windows_Authenticode_and_Apple_Developer_ID_notarization_missing",
     "two_historical_CTF_raw_byte_access_blocked_by_attachment_provider",
     "real_search_p95_150ms_and_full_progress_cancel_not_accepted",
-    "rust_egui_desktop_not_implemented_or_accepted",
+    "rust_egui_desktop_not_feature_complete_or_physically_accepted",
     "real_usb_locator_hardware_acceptance_missing"
   ],
   "synthetic_data_is_not_real_data_acceptance": true,
@@ -66,9 +66,33 @@
     "reference_ui_kind": "react_in_memory_design_not_rust_egui",
     "reference_ui_safety": "read_only_review_no_delete",
     "native_search_first_pr": 57,
-    "native_source_integration": "candidate_pending_exact_head_ci_and_manual_gui",
+    "native_source_integration": "pr59_pr62_pr63_source_merged_ci_verified_manual_QA_pending",
     "physical_usb_real_hardware_verified": false,
-    "rust_egui_frontend_implemented": false,
-    "stable_release_decision": "NO_GO"
+    "rust_egui_frontend_implemented": true,
+    "stable_release_decision": "NO_GO",
+    "native_egui_r2_pr": 62,
+    "native_egui_r3_pr": 63,
+    "real_gui_accepted": false
+  },
+  "native_egui_snapshot": {
+    "as_of": "2026-11-17",
+    "rust_toolchain": "1.100.0",
+    "egui_version": "0.37.0",
+    "r2_merged_main_sha": "81f0491267ab0b63109d99a470c3c0ff8ba37d9b",
+    "r3_merged_main_sha": "405b4ccbc534db73cc6f986b77c8ba6e1b5a5e9e",
+    "r3_functionality": [
+      "real_sqlite_search",
+      "real_sqlite_volumes",
+      "full_scope_csv_json_parquet_exports_no_clobber",
+      "synthetic_end_to_end_export_fixture"
+    ],
+    "r4_scan_pr": 64,
+    "r4_source_ci_pending": true,
+    "r5_qa_preview_pr": 65,
+    "r5_source_ci_pending": true,
+    "native_gui_physical_qa_issue": 66,
+    "native_gui_physical_qa_accepted": false,
+    "original_modified_ctf_compatibility_accepted": false,
+    "stable_ready": false
   }
 }

@@ -1,3 +1,32 @@
+## Resume checkpoint — 2026-11-17 — R2/R3 merged, R4/R5 QA pending
+
+The owner-selected [PR #58](https://github.com/i-shutov/whereisit-ai/pull/58)
+remains the **canonical interactive UX design**. Main now includes the real
+Rust/egui 0.37, Rust 1.100 desktop preview (R2 PR #62, merge `81f04912`)
+and full-scope SQLite CSV/JSON/Parquet no-clobber export
+(R3 PR #63, merge `405b4ccb`). **This is not a stable 1.0 release.**
+
+Source evidence: R3 exact-head native Linux/Windows/macOS ARM+Intel CI
+[44035800572](https://github.com/i-shutov/whereisit-ai/actions/runs/44035800572),
+installed RC2→RC3 upgrades [44035800600](https://github.com/i-shutov/whereisit-ai/actions/runs/44035800600),
+and offline QA [44035800563](https://github.com/i-shutov/whereisit-ai/actions/runs/44035800563)
+all PASS. Source commit `405b4ccbc534db73cc6f986b77c8ba6e1b5a5e9e`.
+R4 scan/progress/cancel [PR #64](https://github.com/i-shutov/whereisit-ai/pull/64)
+and R5 side-by-side Win/Mac egui QA preview ZIP packaging
+[PR #65](https://github.com/i-shutov/whereisit-ai/pull/65)
+remain draft while full exact-head CI completes. Manual physical
+Windows 10/11 and macOS ARM/Intel GUI tests are [issue #66](https://github.com/i-shutov/whereisit-ai/issues/66).
+
+For current release truth use [gate matrix](release/RELEASE_1_0_GATE_MATRIX_20261116.json),
+[master plan](docs/RELEASE_1_0_MASTER_PLAN_2026-11-16.md)
+and [R3/R4/R5 status checkpoint](docs/checkpoint/2026-11-17/RELEASE_STATUS.md).
+Private historical CTF original-app compatibility is deferred until complete
+application assembly, not marked PASS. No source CTF/SQLite bytes in public CI,
+no silent data removal, no trust in metadata-only duplicate equivalence.
+`release/ACCEPTANCE.json: stable_ready=false`, immutable RC3 release tag.
+
+---
+
 ## Resume 2026-11-16 — UX consolidation and egui architecture
 
 Before continuing, read [integration audit](docs/RELEASE_1_0_INTEGRATION_AUDIT_2026-11-16.md),

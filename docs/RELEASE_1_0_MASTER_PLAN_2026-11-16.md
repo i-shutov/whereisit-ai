@@ -1,5 +1,7 @@
 # WhereIsIt AI — мастер-план выпуска 1.0
 
+> **Оперативный срез 2026-11-17:** R2 `PR #62` слит в main (`81f04912`), R3 `PR #63` слит (`405b4ccb`) после полного native CI/installed-upgrade/offline kit PASS. R4 [#64](https://github.com/i-shutov/whereisit-ai/pull/64) и R5 [#65](https://github.com/i-shutov/whereisit-ai/pull/65) — код в отдельных ветках, точная межплатформенная CI ещё не принята. Физическая Windows/macOS GUI и USB-приёмка вынесена в [#66](https://github.com/i-shutov/whereisit-ai/issues/66). **stable_ready=false, 1.0 NO_GO**; не выдавать нативный исходник за финальный релиз.
+
 **Версия плана:** 2026-11-16 / revision 1. **Статус релиза:** NO-GO. **Канонический UX:** [PR #58](https://github.com/i-shutov/whereisit-ai/pull/58), исходный commit a899ac4, безопасная интеграция PR58 в main — 5b421e9. **Источник native USB/поиска:** [PR #57](https://github.com/i-shutov/whereisit-ai/pull/57); [PR #59](https://github.com/i-shutov/whereisit-ai/pull/59) объединён с main в коммите ff87d109a7185e16be593db319e98ba76ba058f7 после успешных exact-head CI, offline QA и installed upgrades. Финальные проверки уже объединённого main — отдельный gate.
 
 Этот документ — оперативный источник последовательности работ и критериев выпуска. Он не объявляет ещё не запущенный Rust/egui готовым, не подменяет реальные испытания синтетическим CI и не меняет опубликованный tag v1.0.0-rc.3. Машиночитаемая начальная матрица: [release/RELEASE_1_0_GATE_MATRIX_20261116.json](../release/RELEASE_1_0_GATE_MATRIX_20261116.json).
@@ -23,7 +25,7 @@
 | Native Win32 и SwiftUI | main | Нативные сборки и upgrade CI | Не равно ручной приёмке реального GUI |
 | PR57 search-first/physical USB | source merged in main via PR59 | Rust/Win/Mac и offline/upgrade проверки PR59 HEAD прошли | Запуск на реальных 60 USB, UUID-clone и горячее отключение не подтверждены |
 | PR58 UX | main | Bun lint/build + safety contract | Это React in-memory demo, а не Rust/egui или реальный CTF backend |
-| Rust/egui desktop | отсутствует | — | Основная новая вертикаль |
+| Rust/egui desktop | R2 native egui preview в main (PR62) | CI Win/macOS ARM/Intel PASS, рабочий каталог+поиск; R3 экспорт PR63 PASS | Основные PR58 UX экраны ещё требуют parity, manual GUI/USB QA; R4 сканирование и R5 QA ZIP не приняты |
 | Подписи и нотарификация | отсутствуют | — | RC3 unsigned/ad-hoc; stable block |
 | Производительность CTF-поиска | main | p95 209,82–252,83 мс на одном Linux стенде | Цель p95 ≤150 мс пока не достигнута |
 

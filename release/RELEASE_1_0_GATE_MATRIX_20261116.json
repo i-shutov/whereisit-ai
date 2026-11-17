@@ -1,8 +1,8 @@
 {
   "schema": "whereisit-v1-release-gates-2026-11-16",
   "created_date": "2026-11-16",
-  "source_baseline": "main ff87d109a7185e16be593db319e98ba76ba058f7 (PR59 source merged)",
-  "integration_candidate": "PR59 HEAD 9f3eba788b0b35137a519f131cbf9eba5dc52a5a (CI PASS), merged main ff87d109",
+  "source_baseline": "main 405b4ccbc534db73cc6f986b77c8ba6e1b5a5e9e (PR62+PR63 merged, stable NO_GO)",
+  "integration_candidate": "PR64 R4 scan and PR65 isolated egui QA previews remain open/draft; CI incomplete",
   "published_candidate": "v1.0.0-rc.3",
   "stable_ready": false,
   "status_definitions": {
@@ -28,38 +28,46 @@
     {
       "id": "G1",
       "name": "PR57+PR58 integrated source in main and exact SHA CI",
-      "status": "IN_PROGRESS",
+      "status": "PASS",
       "evidence": [
-        "PR59 merged main ff87d109a7185e16be593db319e98ba76ba058f7",
-        "PR59 exact HEAD 9f3eba7 native 4/4 PASS",
-        "Installed RC upgrades Windows+Mac ARM/Intel PASS",
-        "Offline QA and integration regressions PASS"
+        "PR57/PR58 source PR59 merged ff87d109",
+        "PR62 native egui Rust1.100 egui0.37 merged 81f04912",
+        "PR63 real SQLite export merged 405b4ccb",
+        "PR63 exact-head CI native Linux Windows macOS ARM/Intel PASS run 44035800572",
+        "PR63 installed upgrade QA 3/3 PASS run 44035800600",
+        "PR63 offline kit and integration run 44035800563 / 44035800540"
       ],
-      "missing": [
-        "Postmerge exact main SHA CI and checkpoint"
-      ],
+      "missing": [],
       "owner": "Integrator"
     },
     {
       "id": "G2",
       "name": "Real Windows/macOS Rust egui app",
-      "status": "NOT_STARTED",
+      "status": "PARTIAL",
       "missing": [
-        "egui/eframe toolchain selection",
-        "P0 UI functional parity",
-        "native manual acceptance"
+        "PR58 complete P0 visual/functional parity",
+        "Manual Windows10/11 macOS ARM and Intel GUI launch, DPI and accessibility QA",
+        "Signed default desktop installer"
       ],
-      "owner": "egui"
+      "owner": "egui",
+      "evidence": [
+        "Native Rust/egui R2 source implemented and merged PR62",
+        "Rust1.100 and egui0.37 native OS builds passed at exact PR63 SHA"
+      ]
     },
     {
       "id": "G3",
       "name": "P0 end to end service parity",
       "status": "PARTIAL",
       "evidence": [
-        "Rust core/CTF/exports in main"
+        "R2 SQLite browse and search integrated",
+        "R3 whole-query and branch CSV/JSON/Parquet no-clobber export integrated",
+        "Synthetic service end-to-end scan to export regression PASS"
       ],
       "missing": [
-        "egui adapter and full workflows"
+        "R4 scan with progress/cancel CI/manual QA",
+        "Other PR58 P0 actions and true physical disk status",
+        "P0 feature parity in egui"
       ],
       "owner": "Service"
     },
@@ -139,5 +147,6 @@
       ],
       "owner": "Integrator"
     }
-  ]
+  ],
+  "last_reviewed_date": "2026-11-17"
 }
