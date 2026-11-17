@@ -22,7 +22,6 @@ pub fn scan_request(db: &str, root: &str, label: &str, job_id: &str) -> Value {
     })
 }
 
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Route {
     Search {
