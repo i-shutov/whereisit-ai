@@ -15,7 +15,14 @@ impl ShelfContext {
     pub fn from_sqlite(db: &str) -> Result<Self, String> {
         let db_path = std::fs::canonicalize(db)
             .map_err(|e| format!("Cannot resolve catalog path: {e}"))?;
-        let catalog_key = format!("sqlite:{}", db_path.to_string_lossy());
+        // Existing Win32/SwiftUI native clients scope labels to the original
+        // absolute catalog path string, not OS-canonicalized \\?\ variants.
+        let identity = if Path::new(db).is_absolute() {
+            db.to_owned()
+        } else {
+            db_path.to_string_lossy().into_owned()
+        };
+        let catalog_key = format!("sqlite:{identity}");
         if catalog_key.len() > 2048 {
             return Err("Catalog identity exceeds the service limit".to_owned());
         }
