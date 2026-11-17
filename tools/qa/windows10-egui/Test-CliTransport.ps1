@@ -13,6 +13,11 @@ foreach ($name in @('Invoke-CliRaw','Invoke-Cli')) {
     if (-not $fn) { throw "Missing function $name" }
     Invoke-Expression $fn.Extent.Text
 }
+$literal = Invoke-CliRaw '{"op":"not_an_operation"}'
+if ($literal.error.code -eq 'invalid_json') { throw "Literal ASCII JSON rejected: $($literal.error.message)" }
+$serialized = @{op='not_an_operation'} | ConvertTo-Json -Compress -Depth 10
+$parsed = Invoke-CliRaw $serialized
+if ($parsed.error.code -eq 'invalid_json') { throw "Serialized ASCII JSON rejected: $($parsed.error.message)" }
 $root = Join-Path $env:TEMP ('whereisit-qa-test-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory $root | Out-Null
 try {

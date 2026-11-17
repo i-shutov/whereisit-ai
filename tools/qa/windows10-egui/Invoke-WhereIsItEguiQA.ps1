@@ -77,7 +77,7 @@ function Invoke-Cli([hashtable]$Payload, [switch]$AllowFailure) {
     $response = Invoke-CliRaw $json
     if (-not $AllowFailure -and $response.ok -ne $true) {
         $code = [string]$response.error.code
-        throw "Native service rejected request: $code"
+        throw "Native service rejected request: $code ($($response.error.message))"
     }
     return $response
 }
