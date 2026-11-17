@@ -96,17 +96,18 @@ fn same_existing_file(a: &Path, b: &Path) -> bool {
     let (Ok(a), Ok(b)) = (a.canonicalize(), b.canonicalize()) else {
         return false;
     };
-    if a == b || a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase() {
-        return true;
-    }
+    let same_path =
+        a == b || a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase();
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        if let (Ok(a), Ok(b)) = (fs::metadata(a), fs::metadata(b)) {
-            return a.dev() == b.dev() && a.ino() == b.ino();
-        }
+        same_path
+            || matches!((fs::metadata(a), fs::metadata(b)), (Ok(a), Ok(b)) if a.dev() == b.dev() && a.ino() == b.ino())
     }
-    false
+    #[cfg(not(unix))]
+    {
+        same_path
+    }
 }
 
 fn destination(source: &Path, target: &Path) -> Result<PathBuf> {
