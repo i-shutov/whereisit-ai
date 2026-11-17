@@ -143,9 +143,9 @@ mod tests {
     fn saving_a_sticker_never_claims_usb_presence_or_modifies_catalog_bytes() {
         let tmp = tempfile::tempdir().unwrap();
         let catalog = tmp.path().join("catalog.sqlite");
-        let c = atlas_core::Catalog::open(&catalog).unwrap();
+        let init = call(json!({"op":"init","db":catalog}));
+        assert_eq!(init["ok"], true, "{init}");
         let sqlite_before = std::fs::read(&catalog).unwrap();
-        drop(c);
 
         let ctx = ShelfContext {
             user_store: tmp.path().join("private/physical-volume-bindings.sqlite")

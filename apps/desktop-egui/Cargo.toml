@@ -14,4 +14,3 @@ serde_json.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-atlas-core = { path = "../../crates/atlas-core" }
