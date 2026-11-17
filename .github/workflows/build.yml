@@ -73,6 +73,9 @@ jobs:
       - name: Build isolated egui Windows QA preview ZIP
         shell: pwsh
         run: ./apps/desktop-egui/package-preview-windows.ps1
+      - name: Windows PowerShell 5.1 native CLI transport regression
+        shell: powershell
+        run: ./tools/qa/windows10-egui/Test-CliTransport.ps1 -Cli ./target/release/atlas.exe
       - name: Offline synthetic egui integration smoke (headless Windows runner)
         shell: powershell
         run: |

@@ -42,15 +42,39 @@ function Assert-Check([bool]$Condition, [string]$Name, [string]$Detail) {
     if (-not $Condition) { throw "$Name : $Detail" }
     Add-Check $Name 'PASS' $Detail
 }
+function Invoke-CliRaw([string]$Json) {
+    # One UTF-8 line without BOM; do not depend on host pipeline encoding.
+    $info = New-Object System.Diagnostics.ProcessStartInfo
+    $info.FileName = $script:Cli
+    $info.Arguments = 'serve'
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardInput = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $info.StandardOutputEncoding = $utf8NoBom
+    $info.StandardErrorEncoding = $utf8NoBom
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $info
+    try {
+        if (-not $process.Start()) { throw 'Could not start native CLI.' }
+        $outTask = $process.StandardOutput.ReadToEndAsync()
+        $errTask = $process.StandardError.ReadToEndAsync()
+        $bytes = $utf8NoBom.GetBytes($Json + [char]10)
+        $process.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+        $process.StandardInput.Close()
+        $process.WaitForExit()
+        $stdout = $outTask.GetAwaiter().GetResult()
+        $stderr = $errTask.GetAwaiter().GetResult()
+        if ($process.ExitCode -ne 0) { throw "Native CLI failed (exit=$($process.ExitCode)): $stderr" }
+        $lines = @($stdout -split "\r?\n" | Where-Object { $_ -ne '' })
+        if ($lines.Count -ne 1) { throw 'Native CLI returned ambiguous JSON output.' }
+        return ($lines[0] | ConvertFrom-Json)
+    } finally { $process.Dispose() }
+}
 function Invoke-Cli([hashtable]$Payload, [switch]$AllowFailure) {
-    # PowerShell 5.1 external argument quoting is lossy for JSON.
-    # UTF-8 stdin to "serve" preserves paths and Cyrillic without Python.
     $json = $Payload | ConvertTo-Json -Compress -Depth 10
-    $stdout = @($json | & $script:Cli serve)
-    if ($LASTEXITCODE -ne 0 -or $stdout.Count -ne 1) {
-        throw "Native CLI failed or returned ambiguous JSON output (exit=$LASTEXITCODE)."
-    }
-    $response = $stdout[0] | ConvertFrom-Json
+    $response = Invoke-CliRaw $json
     if (-not $AllowFailure -and $response.ok -ne $true) {
         $code = [string]$response.error.code
         throw "Native service rejected request: $code"
@@ -204,6 +228,7 @@ try {
     Assert-Check (($repeat.ok -eq $false) -and
         ($repeat.error.code -eq 'file_exists') -and $priorHash -eq $newHash) 'NO_CLOBBER' 'Existing export refused without byte changes'
 
+    $catalogHashBefore = (Get-FileHash -LiteralPath $script:Catalog -Algorithm SHA256).Hash
     $sidecar = Join-Path $script:RunFolder 'private-shelf-bindings.sqlite'
     $scope = 'sqlite:' + $script:Catalog
     foreach ($id in $knownVolumes[0..1]) {
@@ -224,6 +249,9 @@ try {
     }
     $bad = @($physical.data.items | Where-Object { $_.state -ne 'unverified' })
     Assert-Check ($bad.Count -eq 0) 'PHYSICAL_TRUTH' 'Sticker is never evidence of live USB connection'
+
+    $catalogHashAfter = (Get-FileHash -LiteralPath $script:Catalog -Algorithm SHA256).Hash
+    Assert-Check ($catalogHashBefore -eq $catalogHashAfter) 'SIDECAR_IMMUTABILITY' 'Shelf operations did not alter catalog bytes'
 
     if (-not $SkipGui) {
         $argsLine = '--catalog "' + $script:Catalog + '"'
@@ -293,6 +321,7 @@ public static class WhereIsItQaRect {
     }
     if ($script:Report) { Write-Host ("Local QA evidence: " + $script:Report) }
 }
+if (@($script:Manual.Values | Where-Object { $_ -eq 'FAIL' }).Count -gt 0) { exit 1 }
 if ($script:Checks.Contains('QA_BLOCKER')) { exit 1 }
 if (@($script:Checks.Values | Where-Object { $_.status -eq 'FAIL' }).Count -gt 0) { exit 1 }
 exit 0
