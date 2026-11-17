@@ -18,5 +18,9 @@ class EguiQaPreviewPackagingContract(unittest.TestCase):
         self.assertIn('WhereIsItAI-egui-qa-windows-x64', actions)
         self.assertIn('WhereIsItAI-egui-qa-', actions)
         self.assertIn('WhereIsItAI-Windows-x64-unsigned-candidate', actions)
+        self.assertIn('WhereIsItAI-Egui-QA', actions)
+        self.assertIn('Invoke-WhereIsItEguiQA.ps1', win)
+        self.assertIn('whereisit-ai-cli.exe', win)
+        self.assertIn('QA_MANIFEST.json', win)
 if __name__ == '__main__':
     unittest.main()
