@@ -371,46 +371,60 @@ impl DesktopApp {
     fn load_shelf_labels(&mut self, ctx: &egui::Context, initial: bool) {
         let Some(scope) = self.shelf_context.clone() else {
             self.shelf = ShelfSnapshot::default();
-            if initial { self.load_page(ctx); }
+            if initial {
+                self.load_page(ctx);
+            }
             return;
         };
         let ids: Vec<i64> = self.volumes.iter().map(|v| v.id).collect();
         let catalog_key = scope.catalog_key.clone();
         self.queue(
-            Purpose::ShelfLabels { catalog_key, initial },
+            Purpose::ShelfLabels {
+                catalog_key,
+                initial,
+            },
             scope.list_request(&ids),
             ctx,
         );
     }
 
     fn save_shelf_label(&mut self, volume_id: i64, ctx: &egui::Context) {
-        if self.active_request.is_some()
-            || !self.volumes.iter().any(|v| v.id == volume_id)
-        {
+        if self.active_request.is_some() || !self.volumes.iter().any(|v| v.id == volume_id) {
             return;
         }
         let label = self.shelf_editor.trim().to_owned();
         if !valid_label(&label) {
-            self.error = Some(self.t(
-                "Наклейка должна быть одной строкой, максимум 80 символов.",
-                "A shelf tag must be a single line, maximum 80 characters.",
-            ).to_owned());
+            self.error = Some(
+                self.t(
+                    "Наклейка должна быть одной строкой, максимум 80 символов.",
+                    "A shelf tag must be a single line, maximum 80 characters.",
+                )
+                .to_owned(),
+            );
             return;
         }
         let Some(scope) = self.shelf_context.clone() else {
-            self.error = Some(self.t(
-                "Личное хранилище наклеек недоступно; данные каталога не изменены.",
-                "Private shelf-label store unavailable; catalog is unchanged.",
-            ).to_owned());
+            self.error = Some(
+                self.t(
+                    "Личное хранилище наклеек недоступно; данные каталога не изменены.",
+                    "Private shelf-label store unavailable; catalog is unchanged.",
+                )
+                .to_owned(),
+            );
             return;
         };
         let catalog_key = scope.catalog_key.clone();
-        self.status = self.t(
-            "Сохраняем наклейку отдельно от каталога…",
-            "Saving the shelf tag outside the catalog…",
-        ).to_owned();
+        self.status = self
+            .t(
+                "Сохраняем наклейку отдельно от каталога…",
+                "Saving the shelf tag outside the catalog…",
+            )
+            .to_owned();
         self.queue(
-            Purpose::ShelfSave { catalog_key, volume_id },
+            Purpose::ShelfSave {
+                catalog_key,
+                volume_id,
+            },
             scope.save_request(volume_id, &label),
             ctx,
         );
@@ -601,8 +615,13 @@ impl DesktopApp {
                 }
                 Err(e) => self.error = Some(e),
             },
-            Purpose::ShelfLabels { catalog_key, initial } => {
-                if self.shelf_context.as_ref()
+            Purpose::ShelfLabels {
+                catalog_key,
+                initial,
+            } => {
+                if self
+                    .shelf_context
+                    .as_ref()
                     .is_some_and(|scope| scope.catalog_key == catalog_key)
                 {
                     let ids: Vec<i64> = self.volumes.iter().map(|v| v.id).collect();
@@ -610,21 +629,30 @@ impl DesktopApp {
                         Ok(snapshot) => self.shelf = snapshot,
                         Err(e) => self.error = Some(e),
                     }
-                    if initial { self.load_page(ctx); }
+                    if initial {
+                        self.load_page(ctx);
+                    }
                 }
             }
-            Purpose::ShelfSave { catalog_key, volume_id } => {
-                if self.shelf_context.as_ref()
+            Purpose::ShelfSave {
+                catalog_key,
+                volume_id,
+            } => {
+                if self
+                    .shelf_context
+                    .as_ref()
                     .is_some_and(|scope| scope.catalog_key == catalog_key)
                     && self.volumes.iter().any(|v| v.id == volume_id)
                 {
-                    self.status = self.t(
-                        "Наклейка сохранена; не является подтверждением подключения USB.",
-                        "Shelf label saved; it does not prove USB presence.",
-                    ).to_owned();
+                    self.status = self
+                        .t(
+                            "Наклейка сохранена; не является подтверждением подключения USB.",
+                            "Shelf label saved; it does not prove USB presence.",
+                        )
+                        .to_owned();
                     self.load_shelf_labels(ctx, false);
                 }
-            },
+            }
             Purpose::Scan { root, job_id } => {
                 let _ = (root, job_id);
                 if let Some(id) = data["id"].as_i64() {
@@ -1294,16 +1322,27 @@ impl DesktopApp {
                                 Color32::from_rgb(230, 175, 55),
                                 format!(
                                     "{}: {}",
-                                    self.t("Одинаковая наклейка у дисков", "Shared sticker on disks"),
-                                    conflicting.iter().map(|i| format!("#{i}"))
-                                        .collect::<Vec<_>>().join(", "),
+                                    self.t(
+                                        "Одинаковая наклейка у дисков",
+                                        "Shared sticker on disks"
+                                    ),
+                                    conflicting
+                                        .iter()
+                                        .map(|i| format!("#{i}"))
+                                        .collect::<Vec<_>>()
+                                        .join(", "),
                                 ),
                             );
                         }
-                        if ui.add_enabled(
-                            self.active_request.is_none() && self.shelf_context.is_some(),
-                            egui::Button::new(self.t("Сохранить наклейку", "Save shelf sticker")),
-                        ).clicked() {
+                        if ui
+                            .add_enabled(
+                                self.active_request.is_none() && self.shelf_context.is_some(),
+                                egui::Button::new(
+                                    self.t("Сохранить наклейку", "Save shelf sticker"),
+                                ),
+                            )
+                            .clicked()
+                        {
                             self.save_shelf_label(volume.id, ctx);
                         }
                         ui.label(

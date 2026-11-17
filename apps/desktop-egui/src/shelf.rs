@@ -13,8 +13,8 @@ pub struct ShelfContext {
 
 impl ShelfContext {
     pub fn from_sqlite(db: &str) -> Result<Self, String> {
-        let db_path = std::fs::canonicalize(db)
-            .map_err(|e| format!("Cannot resolve catalog path: {e}"))?;
+        let db_path =
+            std::fs::canonicalize(db).map_err(|e| format!("Cannot resolve catalog path: {e}"))?;
         // Existing Win32/SwiftUI native clients scope labels to the original
         // absolute catalog path string, not OS-canonicalized \\?\ variants.
         let identity = if Path::new(db).is_absolute() {
@@ -41,8 +41,9 @@ impl ShelfContext {
             (
                 std::env::var_os("XDG_DATA_HOME")
                     .map(PathBuf::from)
-                    .or_else(|| std::env::var_os("HOME")
-                        .map(|h| PathBuf::from(h).join(".local/share"))),
+                    .or_else(|| {
+                        std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share"))
+                    }),
                 "macos",
             )
         };
@@ -50,12 +51,18 @@ impl ShelfContext {
         if !base.is_absolute() {
             return Err("User configuration directory is not absolute".to_owned());
         }
-        let store = base.join("AtlasCatalog").join("physical-volume-bindings.sqlite");
+        let store = base
+            .join("AtlasCatalog")
+            .join("physical-volume-bindings.sqlite");
         let user_store = store.to_string_lossy().into_owned();
         if user_store.len() > 4096 {
             return Err("Private sidecar path exceeds the service limit".to_owned());
         }
-        Ok(Self { user_store, catalog_key, platform })
+        Ok(Self {
+            user_store,
+            catalog_key,
+            platform,
+        })
     }
 
     pub fn list_request(&self, volume_ids: &[i64]) -> Value {
@@ -95,23 +102,39 @@ impl ShelfSnapshot {
     pub fn parse(data: &Value, volume_ids: &[i64]) -> Result<Self, String> {
         let selected: HashSet<_> = volume_ids.iter().copied().collect();
         let mut out = Self::default();
-        let rows = data.get("items").and_then(Value::as_array)
+        let rows = data
+            .get("items")
+            .and_then(Value::as_array)
             .ok_or("Missing shelf label items[]")?;
         for row in rows {
-            let id = row.get("volume_id").and_then(Value::as_i64)
-                .filter(|id| *id > 0).ok_or("Invalid shelf volume ID")?;
-            let label = row.get("shelf_label").and_then(Value::as_str)
+            let id = row
+                .get("volume_id")
+                .and_then(Value::as_i64)
+                .filter(|id| *id > 0)
+                .ok_or("Invalid shelf volume ID")?;
+            let label = row
+                .get("shelf_label")
+                .and_then(Value::as_str)
                 .ok_or("Invalid shelf label")?;
-            if !selected.contains(&id) { continue; }
+            if !selected.contains(&id) {
+                continue;
+            }
             out.labels.insert(id, label.to_owned());
         }
-        let collision_rows = data.get("collisions").and_then(Value::as_array)
+        let collision_rows = data
+            .get("collisions")
+            .and_then(Value::as_array)
             .ok_or("Missing shelf label collisions[]")?;
         for row in collision_rows {
-            let ids = row.get("volume_ids").and_then(Value::as_array)
+            let ids = row
+                .get("volume_ids")
+                .and_then(Value::as_array)
                 .ok_or("Invalid collision volume ids")?;
-            let members: Vec<i64> = ids.iter().filter_map(Value::as_i64)
-                .filter(|id| selected.contains(id)).collect();
+            let members: Vec<i64> = ids
+                .iter()
+                .filter_map(Value::as_i64)
+                .filter(|id| selected.contains(id))
+                .collect();
             if members.len() > 1 {
                 for id in &members {
                     out.collisions.insert(*id, members.clone());
@@ -126,15 +149,21 @@ impl ShelfSnapshot {
     }
 
     pub fn collision_other_disks(&self, id: i64) -> Vec<i64> {
-        self.collisions.get(&id).map(|members| {
-            members.iter().copied().filter(|other| *other != id).collect()
-        }).unwrap_or_default()
+        self.collisions
+            .get(&id)
+            .map(|members| {
+                members
+                    .iter()
+                    .copied()
+                    .filter(|other| *other != id)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 }
 
 pub fn valid_label(text: &str) -> bool {
-    text.len() <= 320 && text.chars().count() <= 80
-        && !text.chars().any(char::is_control)
+    text.len() <= 320 && text.chars().count() <= 80 && !text.chars().any(char::is_control)
 }
 
 #[cfg(test)]
@@ -155,8 +184,11 @@ mod tests {
         let sqlite_before = std::fs::read(&catalog).unwrap();
 
         let ctx = ShelfContext {
-            user_store: tmp.path().join("private/physical-volume-bindings.sqlite")
-                .to_string_lossy().into_owned(),
+            user_store: tmp
+                .path()
+                .join("private/physical-volume-bindings.sqlite")
+                .to_string_lossy()
+                .into_owned(),
             catalog_key: format!("sqlite:{}", catalog.display()),
             platform: "windows",
         };
@@ -186,8 +218,12 @@ mod tests {
 
         let clear = call(ctx.save_request(1, ""));
         assert_eq!(clear["ok"], true);
-        assert_eq!(ShelfSnapshot::parse(&call(ctx.list_request(&[1,2]))["data"], &[1,2])
-            .unwrap().label(1), "");
+        assert_eq!(
+            ShelfSnapshot::parse(&call(ctx.list_request(&[1, 2]))["data"], &[1, 2])
+                .unwrap()
+                .label(1),
+            ""
+        );
         let sqlite_after = std::fs::read(&catalog).unwrap();
         assert_eq!(sqlite_before, sqlite_after);
     }
