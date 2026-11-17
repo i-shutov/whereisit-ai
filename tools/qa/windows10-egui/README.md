@@ -63,3 +63,8 @@ Screenshots may contain user-specific information and must be manually redacted
 before being copied into a public issue. Do not upload the synthetic catalog
 or any private CTF to GitHub. For more detailed manual scenarios follow
 [issue #66](https://github.com/i-shutov/whereisit-ai/issues/66).
+
+**Windows PowerShell 5.1:** the CI packager writes the included QA runner
+with an explicit UTF-8 BOM so Cyrillic fixture filenames and UTF-8 CLI
+responses survive the legacy shell. Windows CI invokes it with the real
+`powershell` shell (5.1), not PowerShell 7.

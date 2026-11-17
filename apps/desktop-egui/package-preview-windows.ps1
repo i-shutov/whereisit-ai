@@ -17,7 +17,13 @@ if (Test-Path $payload) { throw 'Refusing QA bundle overwrite' }
 New-Item -ItemType Directory $payload -Force | Out-Null
 Copy-Item $exe (Join-Path $payload 'WhereIsItAI-egui-preview.exe')
 Copy-Item $cli (Join-Path $payload 'whereisit-ai-cli.exe')
-Copy-Item $script (Join-Path $payload 'Invoke-WhereIsItEguiQA.ps1')
+# PowerShell 5.1 must read UTF-8 Cyrillic source with an explicit BOM.
+$scriptText = Get-Content -LiteralPath $script -Raw -Encoding UTF8
+[IO.File]::WriteAllText(
+    (Join-Path $payload 'Invoke-WhereIsItEguiQA.ps1'),
+    $scriptText,
+    [System.Text.UTF8Encoding]::new($true)
+)
 Copy-Item $instructions (Join-Path $payload 'README-Win10-QA.md')
 @{
     schema = 'whereisit-egui-qa-bundle-v1'
