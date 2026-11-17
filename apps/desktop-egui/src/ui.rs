@@ -9,6 +9,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 const PAGE_LIMIT: u64 = 250;
+const SEARCH_INPUT_ID: &str = "global_search_input";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Language {
@@ -64,7 +65,11 @@ pub struct DesktopApp {
 
 impl DesktopApp {
     pub fn new(cc: &eframe::CreationContext<'_>, startup_catalog: Option<String>) -> Self {
-        cc.egui_ctx.all_styles_mut(|style| {
+        Self::with_context(&cc.egui_ctx, startup_catalog)
+    }
+
+    fn with_context(ctx: &egui::Context, startup_catalog: Option<String>) -> Self {
+        ctx.all_styles_mut(|style| {
             style.spacing.item_spacing = egui::vec2(6.0, 5.0);
             style.spacing.button_padding = egui::vec2(7.0, 4.0);
         });
@@ -718,7 +723,9 @@ impl DesktopApp {
                 );
                 let response = ui.add_sized(
                     [ui.available_width().max(220.0) - 185.0, 25.0],
-                    egui::TextEdit::singleline(&mut self.query_input).hint_text(query_hint),
+                    egui::TextEdit::singleline(&mut self.query_input)
+                        .id(egui::Id::unique(SEARCH_INPUT_ID))
+                        .hint_text(query_hint),
                 );
                 let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 let clicked = ui
@@ -1209,14 +1216,38 @@ impl DesktopApp {
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        let search = ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::F));
-        let all = ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::L));
-        let back = ctx.input(|i| i.modifiers.alt && i.key_pressed(egui::Key::ArrowLeft));
+        let modal_open = self.show_catalog_dialog
+            || self.show_export_dialog
+            || self.show_scan_dialog
+            || self.show_disk_properties.is_some();
+        if modal_open {
+            return;
+        }
+        // Use modifiers attached to the key event: the user can release Ctrl
+        // before the next frame, leaving the frame's final modifiers empty.
+        let (search, properties, all, back) = ctx.input(|i| {
+            let has = |key, modifier: fn(egui::Modifiers) -> bool| {
+                i.events.iter().any(|event| {
+                    matches!(event,
+                    egui::Event::Key { key: pressed_key, pressed: true, modifiers, .. }
+                        if *pressed_key == key && modifier(*modifiers))
+                })
+            };
+            (
+                has(egui::Key::F, |m| m.command),
+                has(egui::Key::F2, |_| true) || has(egui::Key::Enter, |m| m.alt),
+                has(egui::Key::L, |m| m.command),
+                has(egui::Key::ArrowLeft, |m| m.alt),
+            )
+        });
         if all {
             self.navigate_disk(None, ctx);
         }
         if search {
-            self.navigate_search(ctx);
+            ctx.memory_mut(|memory| memory.request_focus(egui::Id::unique(SEARCH_INPUT_ID)));
+        }
+        if properties && self.active_request.is_none() {
+            self.show_disk_properties = self.selected_volume;
         }
         if back {
             self.go_back(ctx);
@@ -1247,5 +1278,150 @@ impl eframe::App for DesktopApp {
         self.inspector(root, &ctx);
         self.results_table(root, &ctx);
         self.dialogs(&ctx);
+    }
+}
+
+#[cfg(test)]
+mod shortcut_tests {
+    use super::*;
+
+    fn key_input(key: egui::Key, modifiers: egui::Modifiers) -> egui::RawInput {
+        egui::RawInput {
+            focused: true,
+            events: vec![
+                egui::Event::ModifiersChanged(modifiers),
+                egui::Event::Key {
+                    key,
+                    physical_key: Some(key),
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                },
+                egui::Event::Key {
+                    key,
+                    physical_key: Some(key),
+                    pressed: false,
+                    repeat: false,
+                    modifiers,
+                },
+                egui::Event::ModifiersChanged(egui::Modifiers::default()),
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn ctrl_f_focuses_search_without_discarding_navigation() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.query_input = "pending query".into();
+        app.route = Route::Folder {
+            volume_id: 7,
+            parent_id: Some(13),
+        };
+        app.offset = 250;
+        let route = app.route.clone();
+        let modifiers = egui::Modifiers {
+            ctrl: true,
+            command: true,
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(key_input(egui::Key::F, modifiers), |root| {
+            let ctx = root.ctx().clone();
+            app.handle_shortcuts(&ctx);
+            app.search_toolbar(root, &ctx);
+        });
+        output.textures_delta.clear();
+        assert_eq!(app.route, route);
+        assert_eq!(app.offset, 250);
+        assert_eq!(app.query_input, "pending query");
+        assert_eq!(
+            ctx.memory(|m| m.focused()),
+            Some(egui::Id::unique(SEARCH_INPUT_ID))
+        );
+    }
+
+    #[test]
+    fn released_modifiers_still_trigger_all_disks_and_back() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.selected_volume = Some(60);
+        app.query_input = "video".into();
+        let ctrl = egui::Modifiers {
+            ctrl: true,
+            command: true,
+            ..Default::default()
+        };
+        let mut output = ctx.run_pass(key_input(egui::Key::L, ctrl), |ctx| {
+            app.handle_shortcuts(ctx)
+        });
+        output.textures_delta.clear();
+        assert_eq!(app.selected_volume, None);
+        assert_eq!(
+            app.route,
+            Route::Search {
+                query: "video".into(),
+                volume_id: None
+            }
+        );
+
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        let original = Route::Search {
+            query: "video".into(),
+            volume_id: Some(60),
+        };
+        app.route = Route::Copies { entry_id: 9 };
+        app.history.push((original.clone(), 250));
+        let alt = egui::Modifiers {
+            alt: true,
+            ..Default::default()
+        };
+        let mut output = ctx.run_pass(key_input(egui::Key::ArrowLeft, alt), |ctx| {
+            app.handle_shortcuts(ctx)
+        });
+        output.textures_delta.clear();
+        assert_eq!(app.route, original);
+        assert_eq!(app.offset, 250);
+    }
+
+    #[test]
+    fn alt_enter_opens_selected_disk_properties() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.selected_volume = Some(60);
+        let modifiers = egui::Modifiers {
+            alt: true,
+            ..Default::default()
+        };
+        let mut output = ctx.run_pass(key_input(egui::Key::Enter, modifiers), |ctx| {
+            app.handle_shortcuts(ctx)
+        });
+        output.textures_delta.clear();
+        assert_eq!(app.show_disk_properties, Some(60));
+    }
+
+    #[test]
+    fn f2_opens_selected_disk_properties_and_respects_modal_dialogs() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.selected_volume = Some(60);
+        let mut output = ctx.run_pass(
+            key_input(egui::Key::F2, egui::Modifiers::default()),
+            |ctx| app.handle_shortcuts(ctx),
+        );
+        output.textures_delta.clear();
+        assert_eq!(app.show_disk_properties, Some(60));
+
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.selected_volume = Some(60);
+        app.show_export_dialog = true;
+        let mut output = ctx.run_pass(
+            key_input(egui::Key::F2, egui::Modifiers::default()),
+            |ctx| app.handle_shortcuts(ctx),
+        );
+        output.textures_delta.clear();
+        assert_eq!(app.show_disk_properties, None);
     }
 }
