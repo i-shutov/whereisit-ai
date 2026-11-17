@@ -13,7 +13,7 @@ Copy-Item $exe (Join-Path $payload 'WhereIsItAI-egui-preview.exe')
 Copy-Item (Join-Path $root 'LICENSE') $payload
 Copy-Item (Join-Path $root 'THIRD_PARTY_NOTICES.md') $payload
 Copy-Item (Join-Path $root 'licenses') (Join-Path $payload 'licenses') -Recurse
-@' 
+@'
 WhereIsIt AI native egui QA PREVIEW. Unsigned, not a stable installer.
 Use backed-up or synthetic catalogs. Do not treat CI as physical USB acceptance.
 No private CTF, user SQLite, source paths or signing keys are included.

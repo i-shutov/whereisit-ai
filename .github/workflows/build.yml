@@ -45,7 +45,8 @@ jobs:
       - run: |
           if test -f tools/storage_audit.py; then python3 tools/storage_audit.py --self-test; fi
           if test -f tools/storage_layout_experiment.py; then python3 tools/storage_layout_experiment.py --self-test; fi
-      - run: bash -n apps/macos/build.sh installers/macos/package.sh installers/macos/smoke-package.sh installers/macos/verify-dmg.sh installers/macos/test-verify-dmg.sh
+      - run: bash -n apps/macos/build.sh apps/desktop-egui/package-preview-macos.sh installers/macos/package.sh installers/macos/smoke-package.sh installers/macos/verify-dmg.sh installers/macos/test-verify-dmg.sh
+      - run: python3 -m unittest discover -s tools/qa -p 'test_egui_preview_packaging.py' -v
       - run: bash installers/macos/test-verify-dmg.sh
   windows:
     needs: test
@@ -68,6 +69,17 @@ jobs:
       - run: cargo build --release --locked -p atlas-windows -p atlas-cli
       - name: Compile native Rust/egui desktop preview
         run: cargo build --release --locked -p atlas-desktop-egui
+      - name: Build isolated egui Windows QA preview ZIP
+        shell: pwsh
+        run: ./apps/desktop-egui/package-preview-windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WhereIsItAI-egui-qa-windows-x64
+          if-no-files-found: error
+          path: |
+            dist/qa-egui/*.zip
+            dist/qa-egui/SHA256-windows-x64.txt
+            dist/qa-egui/provenance-windows-x64.json
       - name: Prepare Inno Setup 6
         shell: pwsh
         run: choco install innosetup --no-progress -y
@@ -120,6 +132,16 @@ jobs:
       - run: cargo test --workspace --locked
       - name: Compile native Rust/egui desktop preview
         run: cargo build --release --locked -p atlas-desktop-egui
+      - name: Build isolated egui macOS QA preview app
+        run: bash apps/desktop-egui/package-preview-macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WhereIsItAI-egui-qa-${{ matrix.os }}
+          if-no-files-found: error
+          path: |
+            dist/qa-egui/*.zip
+            dist/qa-egui/SHA256-*.txt
+            dist/qa-egui/provenance-*.txt
       - run: bash apps/macos/build.sh
       - run: bash installers/macos/package.sh
       - run: bash installers/macos/smoke-package.sh
