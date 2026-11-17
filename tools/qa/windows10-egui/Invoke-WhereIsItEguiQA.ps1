@@ -56,7 +56,12 @@ function Invoke-CliRaw([string]$Json) {
     $info.StandardErrorEncoding = $utf8NoBom
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $info
+    # .NET Framework creates StandardInput's StreamWriter using the console
+    # input encoding. A BOM-emitting encoding can write a preamble ahead of our
+    # BaseStream bytes even though we never write through the StreamWriter.
+    $previousInputEncoding = [Console]::InputEncoding
     try {
+        [Console]::InputEncoding = $utf8NoBom
         if (-not $process.Start()) { throw 'Could not start native CLI.' }
         $outTask = $process.StandardOutput.ReadToEndAsync()
         $errTask = $process.StandardError.ReadToEndAsync()
@@ -70,7 +75,10 @@ function Invoke-CliRaw([string]$Json) {
         $lines = @($stdout -split "\r?\n" | Where-Object { $_ -ne '' })
         if ($lines.Count -ne 1) { throw 'Native CLI returned ambiguous JSON output.' }
         return ($lines[0] | ConvertFrom-Json)
-    } finally { $process.Dispose() }
+    } finally {
+        [Console]::InputEncoding = $previousInputEncoding
+        $process.Dispose()
+    }
 }
 function Invoke-Cli([hashtable]$Payload, [switch]$AllowFailure) {
     $json = $Payload | ConvertTo-Json -Compress -Depth 10

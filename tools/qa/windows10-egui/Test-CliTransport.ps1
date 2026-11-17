@@ -15,6 +15,13 @@ foreach ($name in @('Invoke-CliRaw','Invoke-Cli')) {
 }
 $literal = Invoke-CliRaw '{"op":"not_an_operation"}'
 if ($literal.error.code -eq 'invalid_json') { throw "Literal ASCII JSON rejected: $($literal.error.message)" }
+$originalInputEncoding = [Console]::InputEncoding
+try {
+    [Console]::InputEncoding = [Text.UTF8Encoding]::new($true)
+    $bomHost = Invoke-CliRaw '{"op":"not_an_operation"}'
+    if ($bomHost.error.code -eq 'invalid_json') { throw "BOM-host JSON rejected: $($bomHost.error.message)" }
+    if ([Console]::InputEncoding.GetPreamble().Length -ne 3) { throw 'Console input encoding was not restored' }
+} finally { [Console]::InputEncoding = $originalInputEncoding }
 $serialized = @{op='not_an_operation'} | ConvertTo-Json -Compress -Depth 10
 $parsed = Invoke-CliRaw $serialized
 if ($parsed.error.code -eq 'invalid_json') { throw "Serialized ASCII JSON rejected: $($parsed.error.message)" }
