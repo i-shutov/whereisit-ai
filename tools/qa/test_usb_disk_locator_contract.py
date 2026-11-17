@@ -1112,7 +1112,7 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn('load() // source SHA is freshly checked', MAC)
 
     def test_ux19_physical_register_audit_both_native_clients(self):
-        self.assertIn("fn audited_physical_state<'a>(", WIN)
+        self.assertIn("fn audited_physical_state(", WIN)
         self.assertIn("fn audited_register_filter_indices(", WIN)
         self.assertIn("fn register_audit_counts(", WIN)
         self.assertIn("physical_audit_filters_keep_exact_ids_and_fail_closed_on_scan_failure", WIN)
