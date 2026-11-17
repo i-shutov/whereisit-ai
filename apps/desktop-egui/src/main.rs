@@ -1,6 +1,7 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod bridge;
 mod model;
+mod shelf;
 mod ui;
 
 fn main() -> eframe::Result<()> {

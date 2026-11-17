@@ -2,6 +2,7 @@
 //! no fictitious USB mount badges, byte-duplicate claims or on-disk delete operations.
 use crate::bridge::{new_scan_job_id, scan_request, CommandBus, ExportKind, Purpose, Route};
 use crate::model::{bytes_compact, parse_volumes, Entry, Page, Volume};
+use crate::shelf::{valid_label, ShelfContext, ShelfSnapshot};
 use eframe::egui::{self, Color32, RichText};
 use egui_extras::{Column, TableBuilder};
 use serde_json::{json, Value};
@@ -32,6 +33,9 @@ pub struct DesktopApp {
     path_input: String,
     query_input: String,
     volumes: Vec<Volume>,
+    shelf_context: Option<ShelfContext>,
+    shelf: ShelfSnapshot,
+    shelf_editor: String,
     route: Route,
     history: Vec<(Route, u64)>,
     page: Page,
@@ -75,6 +79,9 @@ impl DesktopApp {
             path_input: startup_catalog.clone().unwrap_or_default(),
             query_input: String::new(),
             volumes: Vec::new(),
+            shelf_context: None,
+            shelf: ShelfSnapshot::default(),
+            shelf_editor: String::new(),
             route: Route::Search {
                 query: String::new(),
                 volume_id: None,
@@ -361,6 +368,68 @@ impl DesktopApp {
         }
     }
 
+    fn load_shelf_labels(&mut self, ctx: &egui::Context, initial: bool) {
+        let Some(scope) = self.shelf_context.clone() else {
+            self.shelf = ShelfSnapshot::default();
+            if initial {
+                self.load_page(ctx);
+            }
+            return;
+        };
+        let ids: Vec<i64> = self.volumes.iter().map(|v| v.id).collect();
+        let catalog_key = scope.catalog_key.clone();
+        self.queue(
+            Purpose::ShelfLabels {
+                catalog_key,
+                initial,
+            },
+            scope.list_request(&ids),
+            ctx,
+        );
+    }
+
+    fn save_shelf_label(&mut self, volume_id: i64, ctx: &egui::Context) {
+        if self.active_request.is_some() || !self.volumes.iter().any(|v| v.id == volume_id) {
+            return;
+        }
+        let label = self.shelf_editor.trim().to_owned();
+        if !valid_label(&label) {
+            self.error = Some(
+                self.t(
+                    "Наклейка должна быть одной строкой, максимум 80 символов.",
+                    "A shelf tag must be a single line, maximum 80 characters.",
+                )
+                .to_owned(),
+            );
+            return;
+        }
+        let Some(scope) = self.shelf_context.clone() else {
+            self.error = Some(
+                self.t(
+                    "Личное хранилище наклеек недоступно; данные каталога не изменены.",
+                    "Private shelf-label store unavailable; catalog is unchanged.",
+                )
+                .to_owned(),
+            );
+            return;
+        };
+        let catalog_key = scope.catalog_key.clone();
+        self.status = self
+            .t(
+                "Сохраняем наклейку отдельно от каталога…",
+                "Saving the shelf tag outside the catalog…",
+            )
+            .to_owned();
+        self.queue(
+            Purpose::ShelfSave {
+                catalog_key,
+                volume_id,
+            },
+            scope.save_request(volume_id, &label),
+            ctx,
+        );
+    }
+
     fn load_page(&mut self, ctx: &egui::Context) {
         if let Some(db) = self.db.clone() {
             let route = self.route.clone();
@@ -515,11 +584,17 @@ impl DesktopApp {
                 .unwrap_or("Unknown service error");
             self.error = Some(message.to_owned());
             self.status = self.t("Операция отклонена", "Operation refused").to_owned();
+            if matches!(&reply.purpose, Purpose::ShelfLabels { initial: true, .. }) {
+                self.shelf = ShelfSnapshot::default();
+                self.load_page(ctx);
+            }
             return;
         }
         let data = &reply.response["data"];
         match reply.purpose {
             Purpose::Open { path } | Purpose::Create { path } => {
+                self.shelf_context = ShelfContext::from_sqlite(&path).ok();
+                self.shelf = ShelfSnapshot::default();
                 self.db = Some(path);
                 self.selected_volume = None;
                 self.query_input.clear();
@@ -536,10 +611,48 @@ impl DesktopApp {
                 Ok(volumes) => {
                     self.volumes = volumes;
                     self.status = self.t("Каталог открыт", "Catalog opened").to_owned();
-                    self.load_page(ctx);
+                    self.load_shelf_labels(ctx, true);
                 }
                 Err(e) => self.error = Some(e),
             },
+            Purpose::ShelfLabels {
+                catalog_key,
+                initial,
+            } => {
+                if self
+                    .shelf_context
+                    .as_ref()
+                    .is_some_and(|scope| scope.catalog_key == catalog_key)
+                {
+                    let ids: Vec<i64> = self.volumes.iter().map(|v| v.id).collect();
+                    match ShelfSnapshot::parse(data, &ids) {
+                        Ok(snapshot) => self.shelf = snapshot,
+                        Err(e) => self.error = Some(e),
+                    }
+                    if initial {
+                        self.load_page(ctx);
+                    }
+                }
+            }
+            Purpose::ShelfSave {
+                catalog_key,
+                volume_id,
+            } => {
+                if self
+                    .shelf_context
+                    .as_ref()
+                    .is_some_and(|scope| scope.catalog_key == catalog_key)
+                    && self.volumes.iter().any(|v| v.id == volume_id)
+                {
+                    self.status = self
+                        .t(
+                            "Наклейка сохранена; не является подтверждением подключения USB.",
+                            "Shelf label saved; it does not prove USB presence.",
+                        )
+                        .to_owned();
+                    self.load_shelf_labels(ctx, false);
+                }
+            }
             Purpose::Scan { root, job_id } => {
                 let _ = (root, job_id);
                 if let Some(id) = data["id"].as_i64() {
@@ -780,6 +893,7 @@ impl DesktopApp {
                     .filter(|v| {
                         filter.is_empty()
                             || v.label.to_lowercase().contains(&filter)
+                            || self.shelf.label(v.id).to_lowercase().contains(&filter)
                             || v.id.to_string().contains(&filter)
                     })
                     .cloned()
@@ -790,7 +904,12 @@ impl DesktopApp {
                         for volume in &visible {
                             let selected = self.selected_volume == Some(volume.id);
                             ui.horizontal(|ui| {
-                                let title = format!("#{} · {}", volume.id, volume.label);
+                                let sticker = self.shelf.label(volume.id);
+                                let title = if sticker.is_empty() {
+                                    format!("#{} · {}", volume.id, volume.label)
+                                } else {
+                                    format!("#{} · {} · 🏷 {}", volume.id, volume.label, sticker)
+                                };
                                 let label = ui.selectable_label(selected, title);
                                 if label.clicked() {
                                     self.navigate_disk(Some(volume.id), ctx);
@@ -810,6 +929,7 @@ impl DesktopApp {
                                     .clicked()
                                 {
                                     self.show_disk_properties = Some(volume.id);
+                                    self.shelf_editor = self.shelf.label(volume.id).to_owned();
                                 }
                             });
                             ui.horizontal(|ui| {
@@ -1186,6 +1306,45 @@ impl DesktopApp {
                             self.t("Исторический корень", "Recorded root"),
                             volume.root_path
                         ));
+                        ui.separator();
+                        ui.label(self.t(
+                            "Наклейка на полке (ваша заметка, не UUID и не USB-статус):",
+                            "Physical shelf sticker (your hint, not a UUID or USB status):",
+                        ));
+                        let hint = self.t("Например: BOX-17", "For example: BOX-17");
+                        ui.add_enabled(
+                            self.active_request.is_none(),
+                            egui::TextEdit::singleline(&mut self.shelf_editor).hint_text(hint),
+                        );
+                        let conflicting = self.shelf.collision_other_disks(volume.id);
+                        if !conflicting.is_empty() {
+                            ui.colored_label(
+                                Color32::from_rgb(230, 175, 55),
+                                format!(
+                                    "{}: {}",
+                                    self.t(
+                                        "Одинаковая наклейка у дисков",
+                                        "Shared sticker on disks"
+                                    ),
+                                    conflicting
+                                        .iter()
+                                        .map(|i| format!("#{i}"))
+                                        .collect::<Vec<_>>()
+                                        .join(", "),
+                                ),
+                            );
+                        }
+                        if ui
+                            .add_enabled(
+                                self.active_request.is_none() && self.shelf_context.is_some(),
+                                egui::Button::new(
+                                    self.t("Сохранить наклейку", "Save shelf sticker"),
+                                ),
+                            )
+                            .clicked()
+                        {
+                            self.save_shelf_label(volume.id, ctx);
+                        }
                         ui.label(
                             RichText::new(self.t(
                                 "Это НЕ подтверждённый текущий путь или подключённый USB.",
