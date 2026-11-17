@@ -1093,7 +1093,7 @@ impl DesktopApp {
                         ));
                         if ui.add_enabled(
                             self.scan_registered && !self.scan_cancel_requested,
-                            egui::Button::new(self.t("Отменить сканирование", "Cancel scan")),
+                            egui::Button::new(self.t("Отменить сканирование (Esc)", "Cancel scan (Esc)")),
                         ).clicked() {
                             self.request_scan_cancel(ctx);
                         }
@@ -1496,7 +1496,7 @@ impl DesktopApp {
         }
         // Use modifiers attached to the key event: the user can release Ctrl
         // before the next frame, leaving the frame's final modifiers empty.
-        let (search, properties, all, back) = ctx.input(|i| {
+        let (search, properties, all, back, cancel_scan) = ctx.input(|i| {
             let has = |key, modifier: fn(egui::Modifiers) -> bool| {
                 i.events.iter().any(|event| {
                     matches!(event,
@@ -1509,6 +1509,9 @@ impl DesktopApp {
                 has(egui::Key::F2, |_| true) || has(egui::Key::Enter, |m| m.alt),
                 has(egui::Key::L, |m| m.command),
                 has(egui::Key::ArrowLeft, |m| m.alt),
+                has(egui::Key::Escape, |m| {
+                    !m.alt && !m.ctrl && !m.shift && !m.command
+                }),
             )
         });
         if all {
@@ -1524,6 +1527,9 @@ impl DesktopApp {
         }
         if back {
             self.go_back(ctx);
+        }
+        if cancel_scan {
+            self.request_scan_cancel(ctx);
         }
     }
 }
@@ -1557,6 +1563,27 @@ impl eframe::App for DesktopApp {
 #[cfg(test)]
 mod shortcut_tests {
     use super::*;
+
+    #[test]
+    fn escape_cancels_only_a_registered_scan_and_respects_modals() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.scan_job_id = Some("synthetic-test-job".to_owned());
+        let input = || key_input(egui::Key::Escape, egui::Modifiers::default());
+        let mut output = ctx.run_pass(input(), |ctx| app.handle_shortcuts(ctx));
+        output.textures_delta.clear();
+        assert!(!app.scan_cancel_requested);
+        app.scan_registered = true;
+        app.show_export_dialog = true;
+        let mut output = ctx.run_pass(input(), |ctx| app.handle_shortcuts(ctx));
+        output.textures_delta.clear();
+        assert!(!app.scan_cancel_requested);
+        app.show_export_dialog = false;
+        let mut output = ctx.run_pass(input(), |ctx| app.handle_shortcuts(ctx));
+        output.textures_delta.clear();
+        assert!(app.scan_cancel_requested);
+        assert!(app.scan_cancel_request.is_some());
+    }
 
     #[test]
     fn rejected_export_replaces_previous_success_status() {

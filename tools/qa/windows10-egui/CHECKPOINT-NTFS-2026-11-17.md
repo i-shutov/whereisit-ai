@@ -23,3 +23,11 @@ The release-service probe completed 24,024 metadata records in 6.359 seconds, ab
 ## Outstanding
 
 Obtain exact-new-HEAD CI and packaged-bundle verification, resolve supported screenshot capture and visually inspect screenshots, and demonstrate GUI progress plus cancellation/rollback while a scan is running. Do not infer physical USB presence, CTF compatibility, signing, or 1.0 stability from these tests.
+
+## Follow-up: GUI progress and cancellation
+
+On a subsequent local Windows 10 Pro run, a 272,000-file synthetic NTFS tree and empty catalog allowed GUI accessibility inspection to observe progress increasing from 9,279 to 109,998 records. The automation environment could not determine the button geometry, and tabbing to it did not finish before that scan completed.
+
+The accompanying change adds a visible Esc shortcut for cancellation after the scan job is registered, while preserving the existing button and modal guards. In the locally built release GUI with this change, the inspector showed 9,148 processed records, then Esc produced `Scan cancelled; no snapshot saved`. The native catalog validator subsequently reported zero volumes, zero entries and `quick_check=ok`. A desktop regression covers registration and modal behavior. This was a local release build of the source tree; it is not hosted bundle or CI evidence.
+
+Screenshot capture remains blocked: Windows Graphics Capture timed out on two attempts after window reselection. A system-window capture reached a local image editor, but its Save As dialog was not controllable through the available automation, so no screenshot was saved or published. No resolution, DPI or system settings were changed. Exact-head hosted CI and bundle still need verification.
