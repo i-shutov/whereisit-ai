@@ -246,6 +246,7 @@ impl DesktopApp {
         let Some(db) = self.db.clone() else {
             return;
         };
+        self.status = self.t("Операция отклонена", "Operation refused").to_owned();
         let path = self.export_path.trim().to_owned();
         if path.is_empty() {
             self.error = Some(
@@ -856,6 +857,7 @@ impl DesktopApp {
                         .clicked()
                     {
                         self.export_path.clear();
+                        self.error = None;
                         self.show_export_dialog = true;
                         ui.close();
                     }
@@ -1359,6 +1361,9 @@ impl DesktopApp {
                         "Укажите НОВЫЙ файл; существующие файлы не перезаписываются.",
                         "Enter a NEW file path; existing files are never overwritten.",
                     ));
+                    if let Some(error) = &self.error {
+                        ui.colored_label(Color32::from_rgb(224, 96, 88), error);
+                    }
                     ui.horizontal(|ui| {
                         if ui.add_enabled(self.active_request.is_none(),
                             egui::Button::new(self.t("Экспортировать", "Export"))
@@ -1552,6 +1557,26 @@ impl eframe::App for DesktopApp {
 #[cfg(test)]
 mod shortcut_tests {
     use super::*;
+
+    #[test]
+    fn rejected_export_replaces_previous_success_status() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.db = Some("synthetic.sqlite".to_owned());
+        app.export_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("Cargo.toml")
+            .to_string_lossy()
+            .into_owned();
+        app.status = "Export completed".to_owned();
+        app.show_export_dialog = true;
+
+        app.start_export(&ctx);
+
+        assert_eq!(app.status, "Операция отклонена");
+        assert!(app.error.is_some());
+        assert!(app.show_export_dialog);
+        assert!(app.active_request.is_none());
+    }
 
     fn key_input(key: egui::Key, modifiers: egui::Modifiers) -> egui::RawInput {
         egui::RawInput {
