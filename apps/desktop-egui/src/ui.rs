@@ -448,7 +448,7 @@ impl DesktopApp {
             return;
         }
         self.active_request = None;
-        let scan_finished = matches!(reply.purpose, Purpose::Scan { .. });
+        let scan_finished = matches!(&reply.purpose, Purpose::Scan { .. });
         if scan_finished {
             self.scan_job_id = None;
             self.scan_progress_request = None;
