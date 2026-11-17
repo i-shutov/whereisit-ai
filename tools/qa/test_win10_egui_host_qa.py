@@ -37,6 +37,7 @@ class Win10EguiQaHostContract(unittest.TestCase):
         self.assertIn("Windows runner", workflow)
         self.assertIn("-DiskCount 6 -SkipGui", workflow)
         self.assertIn("headless Windows runner)\n        shell: powershell", workflow)
+        self.assertIn("./dist/qa-egui/windows-x64/Invoke-WhereIsItEguiQA.ps1", workflow)
         self.assertIn("[System.Text.UTF8Encoding]::new($true)", bundler)
         self.assertIn("WhereIsItAI-egui-qa-windows-synthetic-evidence", workflow)
         self.assertIn("Invoke-WhereIsItEguiQA.ps1", bundler)
