@@ -2,8 +2,25 @@
 //! Every call executes on a worker; main thread never opens CTF/SQLite.
 use eframe::egui;
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
+
+static NEXT_SCAN_JOB: AtomicU64 = AtomicU64::new(1);
+
+/// Unique only within the running process, which is the scope of JobGuard.
+pub fn new_scan_job_id() -> String {
+    let serial = NEXT_SCAN_JOB.fetch_add(1, Ordering::Relaxed);
+    format!("egui-{}-{serial}", std::process::id())
+}
+
+/// Deliberately metadata-only. A scan never reads a source file's content.
+pub fn scan_request(db: &str, root: &str, label: &str, job_id: &str) -> Value {
+    json!({
+        "op":"scan", "db":db, "root":root, "label":label, "job_id":job_id,
+        "hash":false
+    })
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Route {
@@ -87,6 +104,9 @@ pub enum Purpose {
     Volumes,
     Page { route: Route },
     Export { path: String },
+    Scan { root: String, job_id: String },
+    ScanProgress { job_id: String },
+    ScanCancel { job_id: String },
 }
 
 pub struct Reply {
@@ -138,6 +158,21 @@ impl CommandBus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn scan_request_is_explicitly_metadata_only_and_job_ids_are_unique() {
+        let first = new_scan_job_id();
+        let second = new_scan_job_id();
+        assert_ne!(first, second);
+        assert!(!first.is_empty());
+        let request = scan_request("catalog.sqlite", "/mnt/usb", "DVD Shelf", &first);
+        assert_eq!(request["op"], "scan");
+        assert_eq!(request["root"], "/mnt/usb");
+        assert_eq!(request["label"], "DVD Shelf");
+        assert_eq!(request["job_id"], first);
+        assert_eq!(request["hash"], false);
+        assert_eq!(request["db"], "catalog.sqlite");
+    }
+
     #[test]
     fn exports_respect_scope_and_never_overwrite() {
         let filtered = Route::Search {

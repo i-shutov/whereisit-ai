@@ -40,3 +40,19 @@ real progress/cancellation and physical GUI tests remain separate gates.
 
 `Route::export_request` has contract tests for exact scope and no-clobber.
 There is no CTF write integration and no deletion workflow in this release slice.
+
+## R4: real metadata scan, progress and transactional cancellation
+
+The PR58-first native desktop now scans a user-selected **real folder or disk root**
+into a **new SQLite volume snapshot**, using the existing `atlas-service` metadata-only
+`scan` operation. It never opens source file contents or calculates hashes.
+
+During the scan, the UI remains responsive; a separate short-lived service worker
+polls the actual recorded entry count. A visible **Cancel scan** action becomes
+available only after the service confirms that the job was registered. Cancellation
+is sent independently of the scanning worker. The backend owns atomic rollback:
+a cancelled scan does not persist a partial volume snapshot. The SQLite catalog
+must be outside the selected scan tree to avoid indexing its own database/WAL.
+
+This slice has not yet passed real Windows/macOS manual GUI acceptance. It does
+not perform physical USB identity pairing, CTF parsing or content-based matching.
