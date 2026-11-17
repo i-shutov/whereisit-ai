@@ -26,3 +26,17 @@ legacy Win32/SwiftUI implementations.
 
 Native GUI QA for Windows/Mac ARM+Intel is mandatory even if cross-platform CI builds pass.
 Original user CTF sources are read-only and must never be committed or uploaded to CI.
+
+## R3: safe native SQLite export vertical
+
+The native desktop can now export the **whole current search** (including disk
+scope and Boolean query) or **the selected folder and its descendants** to a
+brand-new CSV, JSON or Parquet file via the existing Rust `atlas-service`
+pipeline. The export never overwrites existing output files or the active
+SQLite/WAL/SHM. It is intentionally unavailable inside the metadata-only
+copy-candidate screen rather than silently exporting an unrelated search.
+The UI disables concurrent catalog operations while a background worker runs;
+real progress/cancellation and physical GUI tests remain separate gates.
+
+`Route::export_request` has contract tests for exact scope and no-clobber.
+There is no CTF write integration and no deletion workflow in this release slice.

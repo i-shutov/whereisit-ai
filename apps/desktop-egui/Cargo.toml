@@ -11,3 +11,6 @@ atlas-service = { path = "../../crates/atlas-service" }
 eframe = { version = "=0.37.0", default-features = true }
 egui_extras = { version = "=0.37.0", default-features = false }
 serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

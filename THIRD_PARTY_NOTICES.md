@@ -8,7 +8,7 @@
 При отсутствии отдельного файла в архиве остаётся выражение лицензии
 из его манифеста. Наличие файла не заменяет юридического анализа.
 
-SHA-256 Cargo.lock: `41136b2ca13af544a737bdeeab193b2660c4ab2c36ddfe9be2701dbc00f73421`.
+SHA-256 Cargo.lock: `7d6e97caac8cbfd4795173b2ece222787d6e6206dcdfbf3f58c542cb03589ad6`.
 
 ## Встроенный SQLite
 
@@ -392,7 +392,7 @@ rusqlite 0.43.0 + libsqlite3-sys 0.40.0
 | url | 2.5.8 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/url-2.5.8/LICENSE-APACHE), [LICENSE-MIT](licenses/url-2.5.8/LICENSE-MIT) |
 | utf8_iter | 1.1.0 | `Apache-2.0 OR MIT` | [COPYRIGHT](licenses/utf8_iter-1.1.0/COPYRIGHT), [LICENSE-APACHE](licenses/utf8_iter-1.1.0/LICENSE-APACHE), [LICENSE-MIT](licenses/utf8_iter-1.1.0/LICENSE-MIT) |
 | utf_types | 1.0.0 | `Apache-2.0 OR MIT` | [COPYRIGHT](licenses/utf_types-1.0.0/COPYRIGHT), [LICENSE-APACHE](licenses/utf_types-1.0.0/LICENSE-APACHE), [LICENSE-MIT](licenses/utf_types-1.0.0/LICENSE-MIT) |
-| uuid | 1.29.2 | `Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/uuid-1.29.2/LICENSE-APACHE), [LICENSE-MIT](licenses/uuid-1.29.2/LICENSE-MIT) |
+| uuid | 1.29.3 | `Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/uuid-1.29.3/LICENSE-APACHE), [LICENSE-MIT](licenses/uuid-1.29.3/LICENSE-MIT) |
 | vcpkg | 0.2.15 | `MIT/Apache-2.0` | [LICENSE-APACHE](licenses/vcpkg-0.2.15/LICENSE-APACHE), [LICENSE-MIT](licenses/vcpkg-0.2.15/LICENSE-MIT) |
 | vello_common | 0.2.0 | `Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/vello_common-0.2.0/LICENSE-APACHE), [LICENSE-MIT](licenses/vello_common-0.2.0/LICENSE-MIT) |
 | vello_cpu | 0.2.0 | `Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/vello_cpu-0.2.0/LICENSE-APACHE), [LICENSE-MIT](licenses/vello_cpu-0.2.0/LICENSE-MIT) |
