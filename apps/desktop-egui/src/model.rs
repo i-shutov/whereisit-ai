@@ -23,6 +23,49 @@ impl Volume {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DiskPreferences {
+    pub display_name: String,
+    pub shelf_label: String,
+    pub model: String,
+    pub filesystem: String,
+    pub capacity_bytes: Option<i64>,
+    pub note: String,
+    pub revision: i64,
+}
+impl DiskPreferences {
+    pub fn parse(v: &Value) -> Result<(i64, Self), String> {
+        let id = positive_id(v, "volume_id")?;
+        let text = |key| string(v, key).map(str::to_owned);
+        let revision = v
+            .get("revision")
+            .and_then(Value::as_i64)
+            .filter(|n| *n >= 0)
+            .ok_or_else(|| "invalid properties revision".to_owned())?;
+        let capacity_bytes = match v.get("capacity_bytes") {
+            Some(Value::Null) => None,
+            Some(n) => Some(
+                n.as_i64()
+                    .filter(|n| *n > 0)
+                    .ok_or_else(|| "invalid capacity".to_owned())?,
+            ),
+            None => return Err("missing capacity".to_owned()),
+        };
+        Ok((
+            id,
+            Self {
+                display_name: text("display_name")?,
+                shelf_label: text("shelf_label")?,
+                model: text("model")?,
+                filesystem: text("filesystem")?,
+                note: text("note")?,
+                capacity_bytes,
+                revision,
+            },
+        ))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     pub id: i64,

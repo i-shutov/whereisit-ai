@@ -11,6 +11,7 @@ mod ctf_mirror;
 #[path = "../ctf_sidecar/mod.rs"]
 mod ctf_sidecar;
 mod dates;
+mod disk_preferences;
 mod duplicates;
 mod exports;
 mod legacy;
@@ -89,6 +90,9 @@ fn dispatch(input: &str) -> Result<Value> {
         "ctf_info" => legacy::info(&v)?,
         "duplicates" => duplicates::duplicates(&Catalog::open(text(&v, "db")?)?, &v)?,
         "copy_candidates" => copy_candidates::page(&Catalog::open(text(&v, "db")?)?, &v)?,
+        "disk_preferences_list" => disk_preferences::list(&v)?,
+        "disk_preferences_get" => disk_preferences::get(&v)?,
+        "disk_preferences_set" => disk_preferences::set(&v)?,
         "physical_status" => physical_disks::status(&v)?,
         "physical_pair" => physical_disks::pair(&v)?,
         "physical_unpair" => physical_disks::unpair(&v)?,

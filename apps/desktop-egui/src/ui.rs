@@ -1,20 +1,58 @@
 //! PR58-first native workbench. Every user-visible catalog fact comes from atlas-service;
 //! no fictitious USB mount badges, byte-duplicate claims or on-disk delete operations.
 use crate::bridge::{new_scan_job_id, scan_request, CommandBus, ExportKind, Purpose, Route};
-use crate::model::{bytes_compact, parse_volumes, Entry, Page, Volume};
+use crate::model::{bytes_compact, parse_volumes, DiskPreferences, Entry, Page, Volume};
 use eframe::egui::{self, Color32, RichText};
 use egui_extras::{Column, TableBuilder};
 use serde_json::{json, Value};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 const PAGE_LIMIT: u64 = 250;
 const SEARCH_INPUT_ID: &str = "global_search_input";
+const DISK_NAME_INPUT_ID: &str = "disk_local_name_input";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Language {
     Russian,
     English,
+}
+
+#[derive(Clone, Debug, Default)]
+struct DiskPropertiesDraft {
+    values: DiskPreferences,
+    original_shelf: String,
+    capacity: String,
+}
+
+fn user_store() -> Option<std::path::PathBuf> {
+    if let Some(path) = std::env::var_os("WHEREISIT_USER_STORE") {
+        let path = std::path::PathBuf::from(path);
+        return path.is_absolute().then_some(path);
+    }
+    #[cfg(target_os = "windows")]
+    let root = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from);
+    #[cfg(target_os = "macos")]
+    let root = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .map(|p| p.join("Library/Application Support"));
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let root: Option<std::path::PathBuf> = None;
+    root.filter(|p| p.is_absolute()).map(|p| {
+        p.join("AtlasCatalog")
+            .join("physical-volume-bindings.sqlite")
+    })
+}
+
+fn preference_platform() -> Option<&'static str> {
+    if cfg!(target_os = "windows") {
+        Some("windows")
+    } else if cfg!(target_os = "macos") {
+        Some("macos")
+    } else {
+        None
+    }
 }
 impl Language {
     fn text(self, ru: &'static str, en: &'static str) -> &'static str {
@@ -56,6 +94,11 @@ pub struct DesktopApp {
     export_path: String,
     export_kind: ExportKind,
     show_disk_properties: Option<i64>,
+    focus_disk_name: bool,
+    disk_draft: DiskPropertiesDraft,
+    disk_preferences: HashMap<i64, DiskPreferences>,
+    shelf_collisions: HashSet<i64>,
+    preferences_ready: bool,
     status: String,
     error: Option<String>,
     lang: Language,
@@ -106,6 +149,11 @@ impl DesktopApp {
             export_path: String::new(),
             export_kind: ExportKind::Csv,
             show_disk_properties: None,
+            focus_disk_name: false,
+            disk_draft: DiskPropertiesDraft::default(),
+            disk_preferences: HashMap::new(),
+            shelf_collisions: HashSet::new(),
+            preferences_ready: false,
             status: "Ready · local metadata only".to_owned(),
             error: None,
             lang: Language::Russian,
@@ -169,6 +217,17 @@ impl DesktopApp {
             );
             return;
         }
+        let path = if Path::new(&path).is_absolute() {
+            path
+        } else {
+            match std::env::current_dir() {
+                Ok(current) => current.join(path).to_string_lossy().into_owned(),
+                Err(e) => {
+                    self.error = Some(e.to_string());
+                    return;
+                }
+            }
+        };
         let purpose = if create {
             Purpose::Create { path: path.clone() }
         } else {
@@ -366,6 +425,98 @@ impl DesktopApp {
         }
     }
 
+    fn load_disk_preferences(&mut self, ctx: &egui::Context) {
+        self.preferences_ready = false;
+        let (Some(db), Some(store), Some(platform)) =
+            (self.db.clone(), user_store(), preference_platform())
+        else {
+            let error = Some(
+                self.t(
+                    "Локальные свойства дисков недоступны.",
+                    "Local disk properties are unavailable.",
+                )
+                .to_owned(),
+            );
+            self.load_page(ctx);
+            self.error = error;
+            return;
+        };
+        self.queue(
+            Purpose::DiskPreferences,
+            json!({"op":"disk_preferences_list","db":db,
+            "user_store":store.to_string_lossy(),"platform":platform}),
+            ctx,
+        );
+    }
+
+    fn display_name<'a>(&'a self, volume: &'a Volume) -> &'a str {
+        self.disk_preferences
+            .get(&volume.id)
+            .map(|p| p.display_name.as_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or(&volume.label)
+    }
+
+    fn open_disk_properties(&mut self, id: i64) {
+        let Some(volume) = self.volumes.iter().find(|v| v.id == id) else {
+            return;
+        };
+        let mut values = self.disk_preferences.get(&id).cloned().unwrap_or_default();
+        if values.display_name.is_empty() {
+            values.display_name = volume.label.clone();
+        }
+        self.disk_draft = DiskPropertiesDraft {
+            original_shelf: values.shelf_label.clone(),
+            capacity: values
+                .capacity_bytes
+                .map(|n| n.to_string())
+                .unwrap_or_default(),
+            values,
+        };
+        self.error = None;
+        self.show_disk_properties = Some(id);
+        self.focus_disk_name = true;
+    }
+
+    fn save_disk_properties(&mut self, ctx: &egui::Context) {
+        if !self.preferences_ready || self.active_request.is_some() {
+            return;
+        }
+        let (Some(id), Some(db), Some(store), Some(platform)) = (
+            self.show_disk_properties,
+            self.db.clone(),
+            user_store(),
+            preference_platform(),
+        ) else {
+            return;
+        };
+        let capacity = if self.disk_draft.capacity.trim().is_empty() {
+            None
+        } else {
+            match self.disk_draft.capacity.trim().parse::<i64>() {
+                Ok(n) if n > 0 => Some(n),
+                _ => {
+                    self.error = Some(
+                        self.t(
+                            "Ёмкость должна быть положительным числом байт.",
+                            "Capacity must be a positive byte count.",
+                        )
+                        .to_owned(),
+                    );
+                    return;
+                }
+            }
+        };
+        let values = &self.disk_draft.values;
+        self.queue(Purpose::SaveDiskProperties { volume_id: id }, json!({
+            "op":"disk_preferences_set", "db":db, "user_store":store.to_string_lossy(),
+            "platform":platform, "volume_id":id, "display_name":values.display_name,
+            "shelf_label":values.shelf_label, "model":values.model, "filesystem":values.filesystem,
+            "capacity_bytes":capacity, "note":values.note, "expected_revision":values.revision,
+            "expected_shelf_label":self.disk_draft.original_shelf, "confirmed":true
+        }), ctx);
+    }
+
     fn load_page(&mut self, ctx: &egui::Context) {
         if let Some(db) = self.db.clone() {
             let route = self.route.clone();
@@ -518,14 +669,24 @@ impl DesktopApp {
                 .pointer("/error/message")
                 .and_then(Value::as_str)
                 .unwrap_or("Unknown service error");
-            self.error = Some(message.to_owned());
+            let error_message = message.to_owned();
             self.status = self.t("Операция отклонена", "Operation refused").to_owned();
+            if matches!(reply.purpose, Purpose::DiskPreferences) {
+                self.preferences_ready = false;
+                self.disk_preferences.clear();
+                self.shelf_collisions.clear();
+                self.load_page(ctx);
+            }
+            self.error = Some(error_message);
             return;
         }
         let data = &reply.response["data"];
         match reply.purpose {
             Purpose::Open { path } | Purpose::Create { path } => {
                 self.db = Some(path);
+                self.disk_preferences.clear();
+                self.shelf_collisions.clear();
+                self.preferences_ready = false;
                 self.selected_volume = None;
                 self.query_input.clear();
                 self.route = Route::Search {
@@ -541,10 +702,58 @@ impl DesktopApp {
                 Ok(volumes) => {
                     self.volumes = volumes;
                     self.status = self.t("Каталог открыт", "Catalog opened").to_owned();
-                    self.load_page(ctx);
+                    self.load_disk_preferences(ctx);
                 }
                 Err(e) => self.error = Some(e),
             },
+            Purpose::DiskPreferences => {
+                let parsed = data
+                    .get("items")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| "Missing disk preferences".to_owned())
+                    .and_then(|items| {
+                        items
+                            .iter()
+                            .map(DiskPreferences::parse)
+                            .collect::<Result<HashMap<_, _>, _>>()
+                    });
+                let error = match parsed {
+                    Ok(preferences) => {
+                        self.disk_preferences = preferences;
+                        self.shelf_collisions = data
+                            .get("collisions")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .flat_map(|c| {
+                                c["volume_ids"]
+                                    .as_array()
+                                    .into_iter()
+                                    .flatten()
+                                    .filter_map(Value::as_i64)
+                            })
+                            .collect();
+                        self.preferences_ready = true;
+                        None
+                    }
+                    Err(e) => {
+                        self.preferences_ready = false;
+                        Some(e)
+                    }
+                };
+                self.load_page(ctx);
+                if error.is_some() {
+                    self.error = error;
+                }
+            }
+            Purpose::SaveDiskProperties { volume_id } => {
+                let _ = volume_id;
+                self.show_disk_properties = None;
+                self.status = self
+                    .t("Локальные свойства сохранены", "Local properties saved")
+                    .to_owned();
+                self.load_volumes(ctx);
+            }
             Purpose::Scan { root, job_id } => {
                 let _ = (root, job_id);
                 if let Some(id) = data["id"].as_i64() {
@@ -713,7 +922,7 @@ impl DesktopApp {
                 let scope = self
                     .selected_volume
                     .and_then(|id| self.volumes.iter().find(|v| v.id == id))
-                    .map(|v| format!("#{} · {}", v.id, v.label))
+                    .map(|v| format!("#{} · {}", v.id, self.display_name(v)))
                     .unwrap_or_else(|| self.t("Все диски", "All disks").to_owned());
                 ui.label(RichText::new(scope).strong());
                 ui.separator();
@@ -786,7 +995,11 @@ impl DesktopApp {
                     .iter()
                     .filter(|v| {
                         filter.is_empty()
-                            || v.label.to_lowercase().contains(&filter)
+                            || self.display_name(v).to_lowercase().contains(&filter)
+                            || self
+                                .disk_preferences
+                                .get(&v.id)
+                                .is_some_and(|p| p.shelf_label.to_lowercase().contains(&filter))
                             || v.id.to_string().contains(&filter)
                     })
                     .cloned()
@@ -797,7 +1010,27 @@ impl DesktopApp {
                         for volume in &visible {
                             let selected = self.selected_volume == Some(volume.id);
                             ui.horizontal(|ui| {
-                                let title = format!("#{} · {}", volume.id, volume.label);
+                                let shelf = self
+                                    .disk_preferences
+                                    .get(&volume.id)
+                                    .map(|p| p.shelf_label.as_str())
+                                    .filter(|s| !s.is_empty());
+                                let title = match shelf {
+                                    Some(shelf) => format!(
+                                        "#{} · {} [{}]{}",
+                                        volume.id,
+                                        self.display_name(volume),
+                                        shelf,
+                                        if self.shelf_collisions.contains(&volume.id) {
+                                            " ⚠"
+                                        } else {
+                                            ""
+                                        }
+                                    ),
+                                    None => {
+                                        format!("#{} · {}", volume.id, self.display_name(volume))
+                                    }
+                                };
                                 let label = ui.selectable_label(selected, title);
                                 if label.clicked() {
                                     self.navigate_disk(Some(volume.id), ctx);
@@ -816,7 +1049,7 @@ impl DesktopApp {
                                     .on_hover_text(self.t("Свойства диска", "Disk properties"))
                                     .clicked()
                                 {
-                                    self.show_disk_properties = Some(volume.id);
+                                    self.open_disk_properties(volume.id);
                                 }
                             });
                             ui.horizontal(|ui| {
@@ -1172,41 +1405,74 @@ impl DesktopApp {
         if let Some(id) = self.show_disk_properties {
             if let Some(volume) = self.volumes.iter().find(|v| v.id == id).cloned() {
                 let mut open = true;
+                let normalized = self
+                    .disk_draft
+                    .values
+                    .shelf_label
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .to_lowercase();
+                let collision = !normalized.is_empty()
+                    && self.disk_preferences.iter().any(|(other, p)| {
+                        *other != id
+                            && p.shelf_label
+                                .split_whitespace()
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                                .to_lowercase()
+                                == normalized
+                    });
+                let local_name = self.t("Локальное имя", "Local display name");
+                let shelf = self.t("Код / наклейка", "Sticker / code");
+                let model = self.t("Модель (указана пользователем)", "Model (user supplied)");
+                let filesystem = self.t(
+                    "Файловая система (указана пользователем)",
+                    "Filesystem (user supplied)",
+                );
+                let capacity = self.t(
+                    "Ёмкость в байтах (необязательно)",
+                    "Capacity in bytes (optional)",
+                );
+                let note = self.t("Описание / заметка", "Description / note");
+                let save = self.t("Сохранить", "Save");
+                let cancel = self.t("Отмена", "Cancel");
                 egui::Window::new(self.t("Свойства диска", "Disk properties"))
                     .open(&mut open)
                     .collapsible(false)
-                    .resizable(false)
+                    .resizable(true)
+                    .default_width(520.0)
                     .show(ctx, |ui| {
-                        ui.strong(format!("#{} · {}", volume.id, volume.label));
-                        ui.label(format!(
-                            "{}: {}",
-                            self.t("Записано файлов/папок", "Recorded entries"),
-                            volume.entry_count
-                        ));
-                        ui.label(format!(
-                            "{}: {}",
-                            self.t("Логический объём", "Logical total bytes"),
-                            bytes_compact(volume.total_bytes)
-                        ));
-                        ui.label(format!(
-                            "{}: {}",
-                            self.t("Исторический корень", "Recorded root"),
-                            volume.root_path
-                        ));
-                        ui.label(
-                            RichText::new(self.t(
-                                "Это НЕ подтверждённый текущий путь или подключённый USB.",
-                                "This is NOT a verified current mount or physical USB connection.",
-                            ))
-                            .small()
-                            .weak(),
-                        );
-                        ui.add_space(3.0);
-                        if ui.button(self.t("Закрыть", "Close")).clicked() {
-                            self.show_disk_properties = None;
-                        }
+                        egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+                            ui.strong(format!("#{} · {}", volume.id, volume.label));
+                            ui.label(self.t("Локальное имя и свойства хранятся отдельно; исходный каталог и его экспортируемое имя не меняются.",
+                                "Local name and properties are stored separately; the source catalog and its exported name stay unchanged."));
+                            ui.label(local_name);
+                            let name_response = ui.add(egui::TextEdit::singleline(&mut self.disk_draft.values.display_name).id(egui::Id::unique(DISK_NAME_INPUT_ID)).desired_width(f32::INFINITY));
+                            if self.focus_disk_name { name_response.request_focus(); self.focus_disk_name = false; }
+                            ui.label(shelf);
+                            ui.add(egui::TextEdit::singleline(&mut self.disk_draft.values.shelf_label).desired_width(f32::INFINITY));
+                            if collision { ui.colored_label(Color32::from_rgb(224, 160, 40), self.t("Такая наклейка указана и для другого диска.", "This sticker is also assigned to another disk.")); }
+                            ui.label(model);
+                            ui.add(egui::TextEdit::singleline(&mut self.disk_draft.values.model).desired_width(f32::INFINITY));
+                            ui.label(filesystem);
+                            ui.add(egui::TextEdit::singleline(&mut self.disk_draft.values.filesystem).desired_width(f32::INFINITY));
+                            ui.label(capacity);
+                            ui.add(egui::TextEdit::singleline(&mut self.disk_draft.capacity).desired_width(f32::INFINITY));
+                            ui.label(note);
+                            ui.add(egui::TextEdit::multiline(&mut self.disk_draft.values.note).desired_rows(3).desired_width(f32::INFINITY));
+                            ui.label(format!("{}: {} · {}", self.t("Записано объектов / байт", "Recorded entries / bytes"), volume.entry_count, bytes_compact(volume.total_bytes)));
+                            ui.label(format!("{}: {}", self.t("Исторический корень", "Recorded root"), volume.root_path));
+                            ui.label(self.t("Наклейка и введённые свойства НЕ подтверждают подключение USB.", "Sticker and entered properties do NOT verify a connected USB device."));
+                            if !self.preferences_ready { ui.colored_label(Color32::from_rgb(224, 96, 88), self.t("Локальное хранилище не загружено; сохранение недоступно.", "Local store was not loaded; saving is unavailable.")); }
+                            if let Some(error) = &self.error { ui.colored_label(Color32::from_rgb(224, 96, 88), error); }
+                            ui.horizontal(|ui| {
+                                if ui.add_enabled(self.preferences_ready && self.active_request.is_none(), egui::Button::new(save)).clicked() { self.save_disk_properties(ctx); }
+                                if ui.add_enabled(self.active_request.is_none(), egui::Button::new(cancel)).clicked() { self.show_disk_properties = None; }
+                            });
+                        });
                     });
-                if !open {
+                if !open && self.active_request.is_none() {
                     self.show_disk_properties = None;
                 }
             } else {
@@ -1247,7 +1513,9 @@ impl DesktopApp {
             ctx.memory_mut(|memory| memory.request_focus(egui::Id::unique(SEARCH_INPUT_ID)));
         }
         if properties && self.active_request.is_none() {
-            self.show_disk_properties = self.selected_volume;
+            if let Some(id) = self.selected_volume {
+                self.open_disk_properties(id);
+            }
         }
         if back {
             self.go_back(ctx);
@@ -1385,11 +1653,22 @@ mod shortcut_tests {
         assert_eq!(app.offset, 250);
     }
 
+    fn selected_volume(app: &mut DesktopApp) {
+        app.selected_volume = Some(60);
+        app.volumes.push(Volume {
+            id: 60,
+            label: "Disk 60".to_owned(),
+            root_path: "synthetic".to_owned(),
+            entry_count: 1,
+            total_bytes: 1,
+        });
+    }
+
     #[test]
     fn alt_enter_opens_selected_disk_properties() {
         let ctx = egui::Context::default();
         let mut app = DesktopApp::with_context(&ctx, None);
-        app.selected_volume = Some(60);
+        selected_volume(&mut app);
         let modifiers = egui::Modifiers {
             alt: true,
             ..Default::default()
@@ -1405,7 +1684,7 @@ mod shortcut_tests {
     fn f2_opens_selected_disk_properties_and_respects_modal_dialogs() {
         let ctx = egui::Context::default();
         let mut app = DesktopApp::with_context(&ctx, None);
-        app.selected_volume = Some(60);
+        selected_volume(&mut app);
         let mut output = ctx.run_pass(
             key_input(egui::Key::F2, egui::Modifiers::default()),
             |ctx| app.handle_shortcuts(ctx),
@@ -1415,7 +1694,7 @@ mod shortcut_tests {
 
         let ctx = egui::Context::default();
         let mut app = DesktopApp::with_context(&ctx, None);
-        app.selected_volume = Some(60);
+        selected_volume(&mut app);
         app.show_export_dialog = true;
         let mut output = ctx.run_pass(
             key_input(egui::Key::F2, egui::Modifiers::default()),

@@ -102,6 +102,8 @@ pub enum Purpose {
     Open { path: String },
     Create { path: String },
     Volumes,
+    DiskPreferences,
+    SaveDiskProperties { volume_id: i64 },
     Page { route: Route },
     Export { path: String },
     Scan { root: String, job_id: String },
