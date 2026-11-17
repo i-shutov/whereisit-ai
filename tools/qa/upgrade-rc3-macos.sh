@@ -59,7 +59,9 @@ DB_SHA_BEFORE="$(shasum -a 256 "$DB" | awk '{print $1}')"
 sudo installer -pkg "$NEW_PKG" -target /
 [[ -x "$CLI" && "$("$CLI" --version)" == "WhereIsIt AI $VERSION" ]] ||
   { echo "RC3 installed CLI did not replace RC2" >&2; exit 1; }
-[[ "$("$CLI" --sqlite-version)" == 3.51.3 ]] || { echo "Embedded SQLite mismatch" >&2; exit 1; }
+EXPECTED_SQLITE="$(python3 -c 'import runpy; print(runpy.run_path("tools/dev/refresh_sqlite_notices.py")["SQLITE_VERSION"])')"
+[[ "$("$CLI" --sqlite-version)" == "$EXPECTED_SQLITE" ]] ||
+  { echo "Embedded SQLite mismatch (source/bundled version)" >&2; exit 1; }
 NEW_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")"
 [[ "$NEW_BUILD" == 10003 ]] || { echo "RC3 bundle build not monotonic" >&2; exit 1; }
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :WhereIsItReleaseVersion' "$APP/Contents/Info.plist")" == "$VERSION" ]]
@@ -78,10 +80,10 @@ CREATED=false
   { echo "External catalog or CTF was lost during cleanup" >&2; exit 1; }
 OUT="$ROOT/dist/qa-upgrade/$ARCH"
 mkdir -p "$OUT"
-python3 - "$OUT/UPGRADE-MACOS.json" "$ARCH" "$OLD_SHA" "$NEW_SHA" "$(git rev-parse HEAD)" <<'PY'
+python3 - "$OUT/UPGRADE-MACOS.json" "$ARCH" "$OLD_SHA" "$NEW_SHA" "$(git rev-parse HEAD)" "$EXPECTED_SQLITE" <<'PY'
 import json, sys
 from pathlib import Path
-dest, arch, old, new, sha = sys.argv[1:]
+dest, arch, old, new, sha, sqlite = sys.argv[1:]
 data = {
     "format": "whereisit-rc2-to-rc3-upgrade-qa-v1",
     "platform": "macos-" + arch,
@@ -90,7 +92,7 @@ data = {
     "old_package_sha256": old,
     "new_package_sha256": new,
     "bundle_build_before": 10002, "bundle_build_after": 10003,
-    "installed_sqlite": "3.51.3",
+    "installed_sqlite": sqlite,
     "category_and_query_parity": True,
     "external_user_catalog_bytes_untouched_by_installer": True,
     "external_ctf_placeholder_untouched": True,

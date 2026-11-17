@@ -1,0 +1,78 @@
+# Isolated one-shot dependency updater for the user's explicitly approved latest stable stack.
+# Writes only the named feature branch. Never publishes a release or touches private CTF/SQLite.
+name: Prepare latest stable dependencies (egui feature branch)
+on:
+  push:
+    branches: [feat/desktop-egui-pr58-r2-20261116]
+    paths:
+      - Cargo.toml
+      - rust-toolchain.toml
+      - apps/desktop-egui/Cargo.toml
+      - crates/**/Cargo.toml
+      - apps/windows/Cargo.toml
+      - tools/dev/refresh_sqlite_notices.py
+      - .github/workflows/egui-lock-prepare.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: whereisit-egui-lock-20261116
+  cancel-in-progress: false
+jobs:
+  regenerate:
+    if: github.repository == 'i-shutov/whereisit-ai' && github.ref == 'refs/heads/feat/desktop-egui-pr58-r2-20261116'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: true
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: modern-egui-${{ runner.os }}-${{ hashFiles('Cargo.toml', 'crates/**/Cargo.toml') }}
+      - name: Verify chosen stable compiler
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal --component rustfmt,clippy
+          rustc +1.100.0 --version
+      - name: Regenerate entire Rust dependency graph and legal inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo generate-lockfile
+          cargo fetch --locked
+          python3 tools/dev/refresh_sqlite_notices.py
+          cargo fmt --all
+          python3 tools/dev/verify_release_identity.py
+          cargo tree --locked --workspace -i eframe > egui-tree.txt
+          cargo tree --locked --workspace -i rusqlite > sqlite-tree.txt
+          cargo tree --locked --workspace -i parquet > parquet-tree.txt
+      - name: Commit lock, licenses and rustfmt to the exact feature branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin feat/desktop-egui-pr58-r2-20261116
+          test "$(git rev-parse origin/feat/desktop-egui-pr58-r2-20261116)" = "$GITHUB_SHA"
+          git add Cargo.lock THIRD_PARTY_NOTICES.md licenses apps/desktop-egui/src
+          if ! git diff --cached --quiet; then
+            git config user.name 'whereisit-ci'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'build(deps): regenerate latest Cargo.lock and dependency notices'
+            git push origin HEAD:refs/heads/feat/desktop-egui-pr58-r2-20261116
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: latest-dependency-audit
+          path: |
+            egui-tree.txt
+            sqlite-tree.txt
+            parquet-tree.txt
+          if-no-files-found: warn
+          retention-days: 21

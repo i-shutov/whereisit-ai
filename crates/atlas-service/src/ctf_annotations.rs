@@ -26,7 +26,7 @@ fn annotation_digest(note: &str, tags: &str) -> String {
     digest.update(note.as_bytes());
     digest.update((tags.len() as u64).to_be_bytes());
     digest.update(tags.as_bytes());
-    format!("{:x}", digest.finalize())
+    crate::digest_hex(digest.finalize())
 }
 
 fn fail(code: &'static str, message: &'static str) -> Error {

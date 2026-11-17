@@ -1,0 +1,52 @@
+# Browser UX reference dependency modernization only; no CTF/user data.
+name: Update latest UI prototype dependencies (feature branch)
+on:
+  push:
+    branches: [feat/desktop-egui-pr58-r2-20261116]
+    paths:
+      - .github/workflows/ui-latest-prepare.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: whereisit-ui-latest-20261116
+  cancel-in-progress: false
+jobs:
+  modernize:
+    if: github.repository == 'i-shutov/whereisit-ai' && github.ref == 'refs/heads/feat/desktop-egui-pr58-r2-20261116'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: true
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install latest published JS dependencies
+        working-directory: apps/ui-prototype
+        run: |
+          bun --version
+          bun update --latest
+          bun install --frozen-lockfile
+      - name: Typecheck and production build using updated graph
+        working-directory: apps/ui-prototype
+        run: |
+          bun run lint
+          bun run build
+      - name: Commit only locked UI dependency updates
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin feat/desktop-egui-pr58-r2-20261116
+          test "$(git rev-parse origin/feat/desktop-egui-pr58-r2-20261116)" = "$GITHUB_SHA"
+          git add apps/ui-prototype/package.json apps/ui-prototype/bun.lock
+          if ! git diff --cached --quiet; then
+            git config user.name 'whereisit-ci'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'build(ui): upgrade all browser prototype packages to latest stable'
+            git push origin HEAD:refs/heads/feat/desktop-egui-pr58-r2-20261116
+          fi

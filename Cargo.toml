@@ -1,19 +1,19 @@
 [workspace]
 resolver = "2"
-members = ["crates/atlas-core", "crates/ctf-format", "crates/atlas-service", "crates/atlas-ffi", "crates/atlas-cli", "apps/windows"]
+members = ["crates/atlas-core", "crates/ctf-format", "crates/atlas-service", "crates/atlas-ffi", "crates/atlas-cli", "apps/windows", "apps/desktop-egui"]
 default-members = ["crates/atlas-core", "crates/ctf-format", "crates/atlas-cli", "crates/atlas-ffi"]
 
 [workspace.package]
 version = "1.0.0-rc.3"
 edition = "2021"
-rust-version = "1.90"
+rust-version = "1.100"
 license = "MIT"
 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
-rusqlite = { version = "=0.39.0", features = ["bundled", "functions", "modern_sqlite"] }
+rusqlite = { version = "=0.43.0", features = ["bundled", "functions", "modern_sqlite"] }
 tempfile = "3"
 
 [profile.release]

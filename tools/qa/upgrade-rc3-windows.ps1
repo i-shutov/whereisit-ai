@@ -60,8 +60,12 @@ try {
 
     Run-Installer $newInstaller $flags
     Verify-CliVersion $cli $NewVersion
+    $expectedSqlite = (& python -c "import runpy,sys; print(runpy.run_path(sys.argv[1])['SQLITE_VERSION'])" (Join-Path $root 'tools/dev/refresh_sqlite_notices.py')).Trim()
+    if ($LASTEXITCODE -ne 0 -or $expectedSqlite -notmatch '^\d+\.\d+\.\d+$') {
+        throw 'Unable to read expected bundled SQLite version from audited dependency metadata.'
+    }
     $sqliteVersion = (& $cli --sqlite-version).Trim()
-    if ($LASTEXITCODE -ne 0 -or $sqliteVersion -ne '3.51.3') {
+    if ($LASTEXITCODE -ne 0 -or $sqliteVersion -ne $expectedSqlite) {
         throw 'Installed RC3 has incorrect SQLite runtime.'
     }
     $unchangedDbSha = (Get-FileHash $db -Algorithm SHA256).Hash.ToLowerInvariant()

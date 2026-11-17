@@ -20,8 +20,8 @@ expected_build = str(10000 + int(rc)) if rc is not None else "10099"
 
 manifest = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
 assert manifest["workspace"]["package"]["version"] == version, "Workspace version mismatch"
-internal = {"atlas-core", "atlas-service", "atlas-cli", "atlas-ffi", "atlas-windows", "ctf-format"}
-for path in [*sorted((ROOT / "crates").glob("*/Cargo.toml")), ROOT / "apps/windows/Cargo.toml"]:
+internal = {"atlas-core", "atlas-service", "atlas-cli", "atlas-ffi", "atlas-windows", "ctf-format", "atlas-desktop-egui"}
+for path in [*sorted((ROOT / "crates").glob("*/Cargo.toml")), ROOT / "apps/windows/Cargo.toml", ROOT / "apps/desktop-egui/Cargo.toml"]:
     meta = tomllib.loads(path.read_text(encoding="utf-8"))
     package = meta["package"]
     assert package["name"] in internal, ("Unexpected crate package", path.name)

@@ -82,8 +82,8 @@ pub(crate) fn output_file(v: &Value) -> Result<(tempfile::NamedTempFile, PathBuf
     };
     let db_name = db_abs.as_os_str().to_string_lossy();
     if resolved == db_abs
-        || resolved == PathBuf::from(format!("{db_name}-wal"))
-        || resolved == PathBuf::from(format!("{db_name}-shm"))
+        || resolved == format!("{db_name}-wal")
+        || resolved == format!("{db_name}-shm")
     {
         return Err(Error::new(
             "unsafe_output",

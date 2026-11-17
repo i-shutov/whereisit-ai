@@ -24,8 +24,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-1.90-test
-      - run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
+          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-1.100-test
+      - run: rustup toolchain install 1.100.0 --profile minimal --component rustfmt,clippy
       - run: python3 tools/dev/verify_release_identity.py
       - run: python3 -m unittest discover -s tools/qa -p 'test_usb_disk_locator_contract.py' -v
       - run: cargo test --workspace --locked
@@ -62,10 +62,12 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-1.90-release
-      - run: rustup toolchain install 1.90.0 --profile minimal
+          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-1.100-release
+      - run: rustup toolchain install 1.100.0 --profile minimal
       - run: cargo test --workspace --locked
       - run: cargo build --release --locked -p atlas-windows -p atlas-cli
+      - name: Compile native Rust/egui desktop preview
+        run: cargo build --release --locked -p atlas-desktop-egui
       - name: Prepare Inno Setup 6
         shell: pwsh
         run: choco install innosetup --no-progress -y
@@ -89,6 +91,7 @@ jobs:
           if-no-files-found: error
           path: |
             target/release/atlas-windows.exe
+            target/release/atlas-desktop-egui.exe
             target/release/atlas.exe
             dist/windows/*.exe
             dist/windows/SHA256SUMS.txt
@@ -112,9 +115,11 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-1.90-release
-      - run: rustup toolchain install 1.90.0 --profile minimal
+          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-1.100-release
+      - run: rustup toolchain install 1.100.0 --profile minimal
       - run: cargo test --workspace --locked
+      - name: Compile native Rust/egui desktop preview
+        run: cargo build --release --locked -p atlas-desktop-egui
       - run: bash apps/macos/build.sh
       - run: bash installers/macos/package.sh
       - run: bash installers/macos/smoke-package.sh
@@ -125,4 +130,6 @@ jobs:
         with:
           name: WhereIsItAI-${{ matrix.os }}-unsigned-candidate
           if-no-files-found: error
-          path: dist/macos/installers/*
+          path: |
+            dist/macos/installers/*
+            target/release/atlas-desktop-egui

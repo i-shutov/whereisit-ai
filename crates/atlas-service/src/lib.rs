@@ -141,3 +141,22 @@ pub(crate) fn unsigned(v: &Value, key: &str, default: u64) -> Result<u64> {
         }),
     }
 }
+
+pub(crate) use ctf_sidecar::digest_hex;
+
+#[cfg(test)]
+mod modern_sha2_regression {
+    use super::digest_hex;
+    use sha2::{Digest, Sha256};
+
+    #[test]
+    fn sha2_011_known_vector_and_lowercase_exact_size() {
+        let digest = Sha256::digest(b"abc");
+        let encoded = digest_hex(digest);
+        assert_eq!(
+            encoded,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(encoded.len(), 64);
+    }
+}

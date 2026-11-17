@@ -65,12 +65,14 @@ if [[ ! -x "$CLI" ]]; then
   pkgutil --files ai.whereisit.desktop || true
   exit 1
 fi
-for notice in LICENSE THIRD_PARTY_NOTICES.md licenses/SQLite-3.51.3/COPYRIGHT.txt; do
+EXPECTED_SQLITE="$(python3 -c 'import runpy; print(runpy.run_path("tools/dev/refresh_sqlite_notices.py")["SQLITE_VERSION"])')"
+[[ "$EXPECTED_SQLITE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid bundled SQLite version source" >&2; exit 1; }
+for notice in LICENSE THIRD_PARTY_NOTICES.md "licenses/SQLite-${EXPECTED_SQLITE}/COPYRIGHT.txt"; do
   [[ -f "$INSTALLED/Contents/Resources/$notice" ]] || { echo "Missing installed notice: $notice" >&2; exit 1; }
 done
 [[ "$("$CLI" --version)" == "WhereIsIt AI $VERSION" ]] || exit 1
 SQLITE_ACTUAL="$("$CLI" --sqlite-version)"
-[[ "$SQLITE_ACTUAL" == '3.51.3' ]] || { echo "Installed CLI has incorrect SQLite: $SQLITE_ACTUAL" >&2; exit 1; }
+[[ "$SQLITE_ACTUAL" == "$EXPECTED_SQLITE" ]] || { echo "Installed CLI has incorrect SQLite: $SQLITE_ACTUAL (expected $EXPECTED_SQLITE)" >&2; exit 1; }
 echo "PASS: installed $ARCH CLI embeds SQLite $SQLITE_ACTUAL"
 python3 -c 'import json,sys; print(json.dumps({"op":"init","db":sys.argv[1]}))' "$WORK/catalog.sqlite" | "$CLI" serve > "$WORK/init.json"
 python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["ok"] is True' "$WORK/init.json"

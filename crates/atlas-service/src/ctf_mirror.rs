@@ -164,7 +164,7 @@ fn hash_file(path: &Path) -> Result<SourceIdentity> {
         h.update(&block[..n]);
     }
     Ok(SourceIdentity {
-        sha256: format!("{:x}", h.finalize()),
+        sha256: crate::digest_hex(h.finalize()),
         size_bytes: bytes,
     })
 }

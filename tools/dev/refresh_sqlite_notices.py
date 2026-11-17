@@ -17,8 +17,8 @@ REGISTRY = Path.home() / ".cargo" / "registry" / "src"
 LOCK = ROOT / "Cargo.lock"
 NOTICES = ROOT / "THIRD_PARTY_NOTICES.md"
 LICENSES = ROOT / "licenses"
-SQLITE_VERSION = "3.51.3"
-REQUIRED = {"rusqlite": "0.39.0", "libsqlite3-sys": "0.37.0"}
+SQLITE_VERSION = "3.54.1"
+REQUIRED = {"rusqlite": "0.43.0", "libsqlite3-sys": "0.40.0"}
 COPY_NAMES = ("LICENSE", "LICENCE", "COPYING", "COPYRIGHT", "NOTICE", "UNLICENSE")
 
 
