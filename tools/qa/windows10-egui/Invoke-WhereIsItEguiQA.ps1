@@ -10,7 +10,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$PreviewDir = $PSScriptRoot,
+    [string]$PreviewDir = '',
     [string]$EvidenceRoot = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'WhereIsItAI-QA'),
     [ValidateRange(2, 100)][int]$DiskCount = 60,
     [string]$ExpectedCommit = '',
@@ -18,6 +18,8 @@ param(
     [switch]$ManualReview,
     [switch]$CaptureScreenshot
 )
+# Advanced-script parameter defaults are evaluated before PSScriptRoot is populated in Windows PowerShell 5.1.
+if (-not $PreviewDir) { $PreviewDir = $PSScriptRoot }
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
