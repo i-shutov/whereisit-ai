@@ -206,23 +206,29 @@ mod tests {
             "parent_id":null,"offset":0,"limit":20
         }));
         assert_eq!(root["ok"], true, "root: {root}");
-        let folder_id = root["data"]["items"].as_array().unwrap().iter()
-            .find(|entry| entry["kind"] == "directory").unwrap()["id"].as_i64().unwrap();
+        let folder_id = root["data"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["kind"] == "directory")
+            .unwrap()["id"]
+            .as_i64()
+            .unwrap();
 
         let db_text = db.to_str().unwrap();
         let json_path = temp.path().join("filtered.json");
         let search = Route::Search {
-            query: "ext:mkv".to_owned(), volume_id: Some(volume_id)
+            query: "ext:mkv".to_owned(),
+            volume_id: Some(volume_id),
         };
-        let filtered = search.export_request(
-            db_text, json_path.to_str().unwrap(), ExportKind::Json
-        ).unwrap();
+        let filtered = search
+            .export_request(db_text, json_path.to_str().unwrap(), ExportKind::Json)
+            .unwrap();
         assert_eq!(filtered["overwrite"], false);
         let completed = service(filtered.clone());
         assert_eq!(completed["ok"], true, "export json: {completed}");
         assert_eq!(completed["data"]["rows"], 1);
-        let exported_json: Value =
-            serde_json::from_slice(&fs::read(&json_path).unwrap()).unwrap();
+        let exported_json: Value = serde_json::from_slice(&fs::read(&json_path).unwrap()).unwrap();
         assert_eq!(exported_json["entries"].as_array().unwrap().len(), 1);
         assert_eq!(exported_json["entries"][0]["name"], "Фильм.mkv");
         let prior_bytes = fs::read(&json_path).unwrap();
@@ -232,10 +238,15 @@ mod tests {
         assert_eq!(fs::read(&json_path).unwrap(), prior_bytes);
 
         let csv_path = temp.path().join("branch.csv");
-        let branch = Route::Folder { volume_id, parent_id: Some(folder_id) };
-        let result = service(branch.export_request(
-            db_text, csv_path.to_str().unwrap(), ExportKind::Csv
-        ).unwrap());
+        let branch = Route::Folder {
+            volume_id,
+            parent_id: Some(folder_id),
+        };
+        let result = service(
+            branch
+                .export_request(db_text, csv_path.to_str().unwrap(), ExportKind::Csv)
+                .unwrap(),
+        );
         assert_eq!(result["ok"], true, "branch: {result}");
         assert_eq!(result["data"]["rows"], 2);
         let csv = fs::read_to_string(&csv_path).unwrap();
@@ -244,10 +255,14 @@ mod tests {
         assert!(!csv.contains("notes.txt"));
 
         let parquet_path = temp.path().join("complete.parquet");
-        let all = Route::Search { query:String::new(), volume_id:None };
-        let result = service(all.export_request(
-            db_text, parquet_path.to_str().unwrap(), ExportKind::Parquet
-        ).unwrap());
+        let all = Route::Search {
+            query: String::new(),
+            volume_id: None,
+        };
+        let result = service(
+            all.export_request(db_text, parquet_path.to_str().unwrap(), ExportKind::Parquet)
+                .unwrap(),
+        );
         assert_eq!(result["ok"], true, "parquet: {result}");
         assert_eq!(result["data"]["rows"], 3);
         let bytes = fs::read(parquet_path).unwrap();
