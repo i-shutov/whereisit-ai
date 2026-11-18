@@ -300,6 +300,7 @@ impl DesktopApp {
         let Some(db) = self.db.clone() else {
             return;
         };
+        self.status = self.t("Операция отклонена", "Operation refused").to_owned();
         let label = self.scan_label.trim().to_owned();
         if label.is_empty() {
             self.error = Some(
@@ -842,6 +843,7 @@ impl DesktopApp {
                         self.show_scan_dialog = true;
                         self.scan_root.clear();
                         self.scan_label.clear();
+                        self.error = None;
                         ui.close();
                     }
                     let can_export = self.db.is_some()
@@ -1321,6 +1323,9 @@ impl DesktopApp {
                         "Файлы не читаются и не изменяются. Создаётся новый снимок в SQLite.",
                         "File contents are not read or changed. A new SQLite snapshot is created.",
                     )).small().weak());
+                    if let Some(error) = &self.error {
+                        ui.colored_label(Color32::from_rgb(224, 96, 88), error);
+                    }
                     ui.horizontal(|ui| {
                         if ui
                             .add_enabled(
@@ -1563,6 +1568,28 @@ impl eframe::App for DesktopApp {
 #[cfg(test)]
 mod shortcut_tests {
     use super::*;
+
+    #[test]
+    fn rejected_scan_replaces_previous_status_and_keeps_dialog_open() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.db = Some("synthetic.sqlite".to_owned());
+        app.scan_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("missing-synthetic-scan-root-test")
+            .to_string_lossy()
+            .into_owned();
+        assert!(!Path::new(&app.scan_root).exists());
+        app.scan_label = "Synthetic".to_owned();
+        app.status = "Previous operation succeeded".to_owned();
+        app.show_scan_dialog = true;
+
+        app.start_scan(&ctx);
+
+        assert_eq!(app.status, "Операция отклонена");
+        assert!(app.error.is_some());
+        assert!(app.show_scan_dialog);
+        assert!(app.active_request.is_none());
+    }
 
     #[test]
     fn escape_cancels_only_a_registered_scan_and_respects_modals() {
