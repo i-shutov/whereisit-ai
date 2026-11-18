@@ -1,6 +1,8 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod bridge;
 mod model;
+#[cfg(feature = "qa-screenshots")]
+mod qa_screenshot;
 mod shelf;
 mod ui;
 

@@ -82,10 +82,11 @@ pub struct DesktopApp {
     shelf_editor: String,
     legacy_shelf_editable: bool,
     route: Route,
-    history: Vec<(Route, u64)>,
+    history: Vec<(Route, u64, Option<Entry>, Option<i64>)>,
     page: Page,
     offset: u64,
     selected: Option<Entry>,
+    restore_selection: Option<Entry>,
     selected_volume: Option<i64>,
     disk_filter: String,
     show_catalog_dialog: bool,
@@ -145,6 +146,7 @@ impl DesktopApp {
             page: Page::default(),
             offset: 0,
             selected: None,
+            restore_selection: None,
             selected_volume: None,
             disk_filter: String::new(),
             show_catalog_dialog: false,
@@ -619,6 +621,7 @@ impl DesktopApp {
             return;
         }
         self.history.clear();
+        self.restore_selection = None;
         self.offset = 0;
         self.selected = None;
         self.route = Route::Search {
@@ -643,7 +646,13 @@ impl DesktopApp {
         if !entry.is_directory() {
             return;
         }
-        self.history.push((self.route.clone(), self.offset));
+        self.history.push((
+            self.route.clone(),
+            self.offset,
+            self.selected.clone(),
+            self.selected_volume,
+        ));
+        self.restore_selection = None;
         self.offset = 0;
         self.selected = None;
         self.route = Route::Folder {
@@ -661,7 +670,13 @@ impl DesktopApp {
             if entry.is_directory() {
                 return;
             }
-            self.history.push((self.route.clone(), self.offset));
+            self.history.push((
+                self.route.clone(),
+                self.offset,
+                self.selected.clone(),
+                self.selected_volume,
+            ));
+            self.restore_selection = None;
             self.offset = 0;
             self.selected = None;
             self.route = Route::Copies { entry_id: entry.id };
@@ -673,12 +688,35 @@ impl DesktopApp {
         if self.active_request.is_some() {
             return;
         }
-        if let Some((route, offset)) = self.history.pop() {
+        if let Some((route, offset, selection, selected_volume)) = self.history.pop() {
             self.route = route;
             self.offset = offset;
             self.selected = None;
+            self.restore_selection = selection;
+            self.selected_volume = selected_volume;
             self.load_page(ctx);
         }
+    }
+
+    fn navigate_containing_folder(&mut self, entry: &Entry, ctx: &egui::Context) {
+        if self.active_request.is_some() || entry.is_directory() {
+            return;
+        }
+        self.history.push((
+            self.route.clone(),
+            self.offset,
+            self.selected.clone(),
+            self.selected_volume,
+        ));
+        self.route = Route::Folder {
+            volume_id: entry.volume_id,
+            parent_id: entry.parent_id,
+        };
+        self.selected_volume = Some(entry.volume_id);
+        self.offset = 0;
+        self.selected = None;
+        self.restore_selection = Some(entry.clone());
+        self.load_page(ctx);
     }
 
     fn apply_reply(&mut self, reply: crate::bridge::Reply, ctx: &egui::Context) {
@@ -965,8 +1003,13 @@ impl DesktopApp {
                             .saturating_add(if page.items.is_empty() { 0 } else { 1 }),
                         page.offset.saturating_add(page.items.len() as u64),
                     );
+                    self.selected = self.restore_selection.take().and_then(|selection| {
+                        page.items
+                            .iter()
+                            .find(|item| item.id == selection.id)
+                            .cloned()
+                    });
                     self.page = page;
-                    self.selected = None;
                 }
                 Err(e) => self.error = Some(e),
             },
@@ -1197,7 +1240,13 @@ impl DesktopApp {
                                     self.navigate_disk(Some(volume.id), ctx);
                                 }
                                 if label.double_clicked() && self.active_request.is_none() {
-                                    self.history.push((self.route.clone(), self.offset));
+                                    self.history.push((
+                                        self.route.clone(),
+                                        self.offset,
+                                        self.selected.clone(),
+                                        self.selected_volume,
+                                    ));
+                                    self.restore_selection = None;
                                     self.route = Route::Folder {
                                         volume_id: volume.id,
                                         parent_id: None,
@@ -1281,6 +1330,9 @@ impl DesktopApp {
                         let copies = ui.add_enabled(!selected.is_directory(),
                             egui::Button::new(self.t("Кандидаты на других дисках", "Copies on other disks")));
                         if copies.clicked() { self.navigate_copies(ctx); }
+                        if !selected.is_directory() && ui.button(self.t("Открыть папку файла", "Open containing folder")).clicked() {
+                            self.navigate_containing_folder(&selected, ctx);
+                        }
                         if selected.is_directory() && ui.button(self.t("Открыть папку", "Open folder")).clicked() {
                             self.navigate_folder(&selected, ctx);
                         }
@@ -1783,6 +1835,8 @@ impl DesktopApp {
 impl eframe::App for DesktopApp {
     fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = root.ctx().clone();
+        #[cfg(feature = "qa-screenshots")]
+        crate::qa_screenshot::capture_on_f12(&ctx);
         ctx.set_visuals(if self.dark {
             egui::Visuals::dark()
         } else {
@@ -2003,7 +2057,7 @@ mod shortcut_tests {
             volume_id: Some(60),
         };
         app.route = Route::Copies { entry_id: 9 };
-        app.history.push((original.clone(), 250));
+        app.history.push((original.clone(), 250, None, Some(60)));
         let alt = egui::Modifiers {
             alt: true,
             ..Default::default()
@@ -2014,6 +2068,47 @@ mod shortcut_tests {
         output.textures_delta.clear();
         assert_eq!(app.route, original);
         assert_eq!(app.offset, 250);
+    }
+
+    #[test]
+    fn containing_folder_and_back_restore_selected_search_result() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        let entry = Entry::parse(&json!({"id":42,"volume_id":7,"parent_id":13,
+            "name":"film.mkv","relative_path":"Movies/film.mkv","kind":"file","size":42}))
+        .unwrap();
+        let original = Route::Search {
+            query: "film".into(),
+            volume_id: None,
+        };
+        app.route = original.clone();
+        app.offset = 250;
+        app.selected = Some(entry.clone());
+        app.navigate_containing_folder(&entry, &ctx);
+        assert_eq!(
+            app.route,
+            Route::Folder {
+                volume_id: 7,
+                parent_id: Some(13)
+            }
+        );
+        assert_eq!(app.selected_volume, Some(7));
+        app.go_back(&ctx);
+        assert_eq!(app.route, original);
+        assert_eq!(app.offset, 250);
+        assert_eq!(app.selected_volume, None);
+        app.active_request = Some(1);
+        app.apply_reply(
+            crate::bridge::Reply {
+                id: 1,
+                purpose: Purpose::Page { route: original },
+                response: json!({"ok":true,"data":{"items":[{"id":42,"volume_id":7,"parent_id":13,
+                "name":"film.mkv","relative_path":"Movies/film.mkv","kind":"file","size":42}],
+                "offset":250,"limit":250,"has_more":false}}),
+            },
+            &ctx,
+        );
+        assert_eq!(app.selected, Some(entry));
     }
 
     fn selected_volume(app: &mut DesktopApp) {

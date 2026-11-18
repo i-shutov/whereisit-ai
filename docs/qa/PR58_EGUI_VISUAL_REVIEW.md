@@ -1,0 +1,14 @@
+# PR #58 visual review — partial evidence
+
+Windows 10 Pro, egui debug build with opt-in `qa-screenshots`, synthetic SQLite and isolated sidecar. No system DPI or resolution change. The renderer supplied the 1320×760 client image directly; it is not a desktop or window-compositor crop. All published images were inspected: only generated fixture data appear. The QA feature is disabled by default; build with `cargo build --locked -p atlas-desktop-egui --features qa-screenshots`, set `WHEREISIT_QA_SCREENSHOT_DIR` to an existing absolute private directory, and use F12. Each PNG is created with `create_new`; the renderer captures application contents only, so do not use a real catalog when publishing.
+
+| State | Native evidence | Reference / limitations |
+|---|---|---|
+| 62 generated volumes, page 1 (1–250) | [egui](pr58-egui-atlas/egui-62-disks-first-page.png) | PR58 pair not yet captured; next page enabled but not clicked |
+| Global search, two synthetic disks | [egui](pr58-egui-atlas/egui-global-shared-film.png) | query `shared-film`, two records; exact-name/size candidates are not byte evidence |
+| Selected result / inspector | [egui](pr58-egui-atlas/egui-inspector.png) | `clip-001` generated name, no private data |
+| Containing folder | [egui](pr58-egui-atlas/egui-containing-folder.png) | selected file restored on the first folder page; Back was verified through accessibility state |
+| Local search, next page, disk properties, scan dialog/progress/cancel/error, export/overwrite | NOT CAPTURED | prior PR #68 evidence does not substitute for an atlas of this build |
+| PR58 paired screens and analytical screens | BLOCKED | reference app source reviewed, runtime dependencies not installed; no paired screenshots claimed |
+
+Observed navigation A/B: Ctrl+F, type `clip-001`, Enter; reverse Tab to result, Enter; reverse Tab to “Open containing folder”, Enter; Alt+Left. Search, selected record and inspector returned. Pointer/click count and reaction times were not measured. Windows Graphics Capture still timed out, and mouse input reported unavailable geometry; two automation calls stalled. No resolution workaround was applied. This renderer capture solves the PNG contamination problem, not the mouse-control problem or visual parity.

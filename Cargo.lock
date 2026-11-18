@@ -392,6 +392,7 @@ dependencies = [
  "atlas-service",
  "eframe",
  "egui_extras",
+ "png",
  "serde_json",
  "tempfile",
 ]
