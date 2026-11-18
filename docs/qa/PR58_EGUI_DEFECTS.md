@@ -3,7 +3,7 @@
 | ID | Priority | Finding / impact | State and evidence |
 |---|---|---|---|
 | UX-01 | P0 | Inspector had no action to navigate from a file to its containing catalog folder; Back discarded the selected result. | FIXED for returned page: parent-id route, Back restores scope/offset/selected record. Unit test and actual egui search → folder → Back with synthetic file passed. Large-folder selected-file pagination and scroll restoration remain OPEN. |
-| UX-02 | P0 | “Candidates on other disks” called `copy_candidates` without `other_disks_only`, so it could return the selected file on the same disk. | FIXED in request before pagination; regression checks request; service verified two synthetic volumes returns the other volume only. Repeat GUI scenario on final binary OPEN. |
+| UX-02 | P0 | “Candidates on other disks” called `copy_candidates` without `other_disks_only`, so it could return the selected file on the same disk. | FIXED in request before pagination; regression checks request; service and GUI verified #61 → #62 and Back on two synthetic volumes. |
 | QA-01 | P1 | WGC frame timeout and desktop crops exposed peripheral windows. | PNG capture FIXED for opt-in egui QA build through renderer screenshot callback; mouse geometry still BLOCKED by WGC automation. |
 | UX-03 | P1 | Sidebar uses two lines per disk, lacks sorting and free-space visualization. | OPEN; compare with PR58 without inventing disk capacity. |
 | UX-04 | P1 | Archive slices, sunburst, local analyzer and category UI are absent. | OPEN; service-backed vertical slices required; prototype analytics are simulated. |
