@@ -109,6 +109,8 @@ pub enum Purpose {
     Scan { root: String, job_id: String },
     ScanProgress { job_id: String },
     ScanCancel { job_id: String },
+    ShelfLabels { catalog_key: String, initial: bool },
+    ShelfSave { catalog_key: String, volume_id: i64 },
 }
 
 pub struct Reply {

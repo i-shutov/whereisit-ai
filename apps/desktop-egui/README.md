@@ -56,3 +56,27 @@ must be outside the selected scan tree to avoid indexing its own database/WAL.
 
 This slice has not yet passed real Windows/macOS manual GUI acceptance. It does
 not perform physical USB identity pairing, CTF parsing or content-based matching.
+
+## Private shelf sticker labels (R6)
+
+The egui disk register and properties read and write operator-authored
+shelf labels in the existing `physical_shelf_labels` sidecar table. For v3
+catalogs, the `disk_preferences` service saves the sticker and extended user
+properties atomically with stale-edit checks. For supported older catalogs,
+a guarded shelf-only fallback validates the catalog and protects the source
+from sidecar aliasing. Labels use the **same private sidecar
+location and SQLite-scoped catalog identity** as the legacy native clients:
+`LOCALAPPDATA/AtlasCatalog/physical-volume-bindings.sqlite` on Windows,
+`~/Library/Application Support/AtlasCatalog/physical-volume-bindings.sqlite`
+on macOS. Explicit Save or clearing the text changes only the sidecar, **never
+the source SQLite catalog or CTF**.
+
+The disk list is filterable by the shelf sticker; shared sticker collisions
+are displayed as warnings with other catalog disk IDs. A sticker is purely a
+human retrieval hint and never proves the presence or identity of a USB volume.
+Backend-generated collision checks remain the authority.
+
+The adapter includes synthetic service tests for save/read/collision/clear and
+ensures the original catalog bytes are not changed. Physical OS USB pairing,
+original-app CTF compatibility and manual Win/Mac GUI acceptance remain outside
+this block.

@@ -9,6 +9,46 @@ fn invalid(message: &str) -> Error {
     Error::new("invalid_disk_properties", message)
 }
 
+fn guard_store(db: &Path, store: &Path) -> Result<()> {
+    if let (Some(parent), Some(name)) = (store.parent(), store.file_name()) {
+        if let Ok(parent) = parent.canonicalize() {
+            let resolved = parent.join(name);
+            for suffix in ["", "-wal", "-shm", "-journal"] {
+                let mut protected = db.as_os_str().to_os_string();
+                protected.push(suffix);
+                let protected = PathBuf::from(protected);
+                if resolved == protected
+                    || (cfg!(windows)
+                        && resolved.to_string_lossy().to_lowercase()
+                            == protected.to_string_lossy().to_lowercase())
+                {
+                    return Err(invalid(
+                        "User store cannot be the source catalog or its SQLite sidecars",
+                    ));
+                }
+            }
+        }
+    }
+    if let Ok(meta) = std::fs::symlink_metadata(store) {
+        if !meta.file_type().is_file() {
+            return Err(invalid("User store must be a regular file, not a link"));
+        }
+        for source in [
+            db.to_path_buf(),
+            PathBuf::from(format!("{}-wal", db.display())),
+            PathBuf::from(format!("{}-shm", db.display())),
+            PathBuf::from(format!("{}-journal", db.display())),
+        ] {
+            if source.exists() && same_file::is_same_file(source, store)? {
+                return Err(invalid(
+                    "User store cannot be the source catalog or its SQLite sidecars",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn paths(v: &Value) -> Result<(PathBuf, PathBuf, String, &'static str)> {
     let db_text = crate::text(v, "db")?;
     let db = Path::new(db_text);
@@ -24,23 +64,7 @@ fn paths(v: &Value) -> Result<(PathBuf, PathBuf, String, &'static str)> {
     }
     let db = db.canonicalize()?;
     let _catalog = Catalog::open_readonly(&db)?;
-    if let Ok(meta) = std::fs::symlink_metadata(store) {
-        if !meta.file_type().is_file() {
-            return Err(invalid("User store must be a regular file, not a link"));
-        }
-        for source in [
-            &db,
-            &PathBuf::from(format!("{}-wal", db.display())),
-            &PathBuf::from(format!("{}-shm", db.display())),
-            &PathBuf::from(format!("{}-journal", db.display())),
-        ] {
-            if source.exists() && same_file::is_same_file(source, store)? {
-                return Err(invalid(
-                    "User store cannot be the source catalog or its SQLite sidecars",
-                ));
-            }
-        }
-    }
+    guard_store(&db, store)?;
     let os = match crate::text(v, "platform")? {
         "windows" => "windows",
         "macos" => "macos",
@@ -53,6 +77,79 @@ fn paths(v: &Value) -> Result<(PathBuf, PathBuf, String, &'static str)> {
         return Err(invalid("Catalog identity is too long"));
     }
     Ok((db, store.to_path_buf(), key, os))
+}
+
+/// Keep the earlier shelf editor available for valid legacy catalogs without
+/// allowing its sidecar path to alias or overwrite the source catalog.
+pub fn legacy_shelf_set(v: &Value) -> Result<Value> {
+    let db_text = crate::text(v, "db")?;
+    let db = Path::new(db_text);
+    let store = Path::new(crate::text(v, "user_store")?);
+    if !db.is_absolute()
+        || !store.is_absolute()
+        || db.as_os_str().len() > 2048
+        || store.as_os_str().len() > 4096
+    {
+        return Err(invalid(
+            "Catalog and user store must be bounded absolute paths",
+        ));
+    }
+    if crate::text(v, "catalog_key")? != format!("sqlite:{db_text}") {
+        return Err(invalid("Catalog scope does not match the source"));
+    }
+    let canonical = db.canonicalize()?;
+    guard_store(&canonical, store)?;
+    crate::maintenance::validate(v)?;
+    let source = Connection::open_with_flags(&canonical, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    source.create_scalar_function(
+        "unicode_lower",
+        1,
+        rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC
+            | rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+        |ctx| Ok(ctx.get::<String>(0)?.to_lowercase()),
+    )?;
+    let exists: bool = source.query_row(
+        "SELECT EXISTS(SELECT 1 FROM volumes WHERE id=?1)",
+        [volume_id(v)?],
+        |r| r.get(0),
+    )?;
+    if !exists {
+        return Err(invalid("Volume does not exist in this catalog"));
+    }
+    if v.get("confirmed") != Some(&Value::Bool(true)) {
+        return Err(invalid("Explicit Save is required"));
+    }
+    let shelf = field(v, "shelf_label", 80, false)?;
+    let expected_shelf = field(v, "expected_shelf_label", 80, false)?;
+    let platform = match crate::text(v, "platform")? {
+        "windows" => "windows",
+        "macos" => "macos",
+        _ => return Err(invalid("Unsupported platform")),
+    };
+    if let Some(parent) = store.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut conn = Connection::open(store)?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    ensure_store(&conn)?;
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    crate::physical_disks::create_schema(&tx)?;
+    let key = format!("sqlite:{db_text}");
+    let id = volume_id(v)?;
+    let current = read_one(&tx, &key, platform, id)?;
+    if current["shelf_label"].as_str() != Some(expected_shelf.as_str()) {
+        return Err(Error::new(
+            "conflict",
+            "Sticker changed since opening; reload before saving",
+        ));
+    }
+    if shelf.is_empty() {
+        tx.execute("DELETE FROM physical_shelf_labels WHERE catalog_key=?1 AND platform=?2 AND volume_id=?3", params![key, platform, id])?;
+    } else {
+        tx.execute("INSERT INTO physical_shelf_labels(catalog_key,platform,volume_id,shelf_label) VALUES(?1,?2,?3,?4) ON CONFLICT(catalog_key,platform,volume_id) DO UPDATE SET shelf_label=excluded.shelf_label", params![key, platform, id, shelf])?;
+    }
+    tx.commit()?;
+    Ok(json!({"saved":true,"volume_id":id,"shelf_label":shelf}))
 }
 fn volume_id(v: &Value) -> Result<i64> {
     v.get("volume_id")
@@ -249,6 +346,50 @@ mod tests {
     use crate::dispatch_json;
     fn call(v: &Value) -> Value {
         serde_json::from_str(&dispatch_json(&v.to_string())).unwrap()
+    }
+    #[test]
+    fn legacy_shelf_fallback_preserves_catalog_and_rejects_aliases() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("legacy.sqlite");
+        let root = tmp.path().join("synthetic");
+        std::fs::create_dir(&root).unwrap();
+        assert_eq!(
+            call(&json!({"op":"scan","db":db,"root":root,"label":"one"}))["ok"],
+            true
+        );
+        Connection::open(&db)
+            .unwrap()
+            .pragma_update(None, "user_version", 2)
+            .unwrap();
+        let before = std::fs::read(&db).unwrap();
+        let key = format!("sqlite:{}", db.display());
+        let store = tmp.path().join("private.sqlite");
+        let mut req = json!({"op":"disk_preferences_legacy_shelf_set", "db":db, "user_store":store,
+            "catalog_key":key, "platform":"windows", "volume_id":1, "shelf_label":"BOX-17", "expected_shelf_label":"", "confirmed":true});
+        let saved = call(&req);
+        assert_eq!(saved["ok"], true, "{saved}");
+        assert_eq!(std::fs::read(&db).unwrap(), before);
+        req["shelf_label"] = json!("");
+        assert_eq!(call(&req)["error"]["code"], "conflict");
+        req["expected_shelf_label"] = json!("BOX-17");
+        assert_eq!(call(&req)["ok"], true);
+        let hardlink = tmp.path().join("alias.sqlite");
+        std::fs::hard_link(&db, &hardlink).unwrap();
+        req["user_store"] = json!(hardlink);
+        assert_eq!(call(&req)["ok"], false);
+        let journal = PathBuf::from(format!("{}-journal", db.display()));
+        assert!(!journal.exists());
+        req["user_store"] = json!(journal);
+        assert_eq!(call(&req)["ok"], false);
+        assert!(!journal.exists());
+        let unrelated = tmp.path().join("unrelated.sqlite");
+        Connection::open(&unrelated)
+            .unwrap()
+            .execute_batch("CREATE TABLE precious(x)")
+            .unwrap();
+        req["user_store"] = json!(unrelated);
+        assert_eq!(call(&req)["ok"], false);
+        assert_eq!(std::fs::read(&db).unwrap(), before);
     }
     #[test]
     fn save_round_trips_unicode_atomically_and_preserves_source() {

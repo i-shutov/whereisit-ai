@@ -93,6 +93,7 @@ fn dispatch(input: &str) -> Result<Value> {
         "disk_preferences_list" => disk_preferences::list(&v)?,
         "disk_preferences_get" => disk_preferences::get(&v)?,
         "disk_preferences_set" => disk_preferences::set(&v)?,
+        "disk_preferences_legacy_shelf_set" => disk_preferences::legacy_shelf_set(&v)?,
         "physical_status" => physical_disks::status(&v)?,
         "physical_pair" => physical_disks::pair(&v)?,
         "physical_unpair" => physical_disks::unpair(&v)?,

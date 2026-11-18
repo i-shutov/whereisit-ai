@@ -2,6 +2,7 @@
 //! no fictitious USB mount badges, byte-duplicate claims or on-disk delete operations.
 use crate::bridge::{new_scan_job_id, scan_request, CommandBus, ExportKind, Purpose, Route};
 use crate::model::{bytes_compact, parse_volumes, DiskPreferences, Entry, Page, Volume};
+use crate::shelf::{valid_label, ShelfContext, ShelfSnapshot};
 use eframe::egui::{self, Color32, RichText};
 use egui_extras::{Column, TableBuilder};
 use serde_json::{json, Value};
@@ -38,7 +39,11 @@ fn user_store() -> Option<std::path::PathBuf> {
         .map(std::path::PathBuf::from)
         .map(|p| p.join("Library/Application Support"));
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    let root: Option<std::path::PathBuf> = None;
+    let root = std::env::var_os("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|p| std::path::PathBuf::from(p).join(".local/share"))
+        });
     root.filter(|p| p.is_absolute()).map(|p| {
         p.join("AtlasCatalog")
             .join("physical-volume-bindings.sqlite")
@@ -51,7 +56,8 @@ fn preference_platform() -> Option<&'static str> {
     } else if cfg!(target_os = "macos") {
         Some("macos")
     } else {
-        None
+        // Match the pre-existing egui shelf-label adapter on Linux.
+        Some("macos")
     }
 }
 impl Language {
@@ -71,6 +77,10 @@ pub struct DesktopApp {
     path_input: String,
     query_input: String,
     volumes: Vec<Volume>,
+    shelf_context: Option<ShelfContext>,
+    shelf: ShelfSnapshot,
+    shelf_editor: String,
+    legacy_shelf_editable: bool,
     route: Route,
     history: Vec<(Route, u64)>,
     page: Page,
@@ -123,6 +133,10 @@ impl DesktopApp {
             path_input: startup_catalog.clone().unwrap_or_default(),
             query_input: String::new(),
             volumes: Vec::new(),
+            shelf_context: None,
+            shelf: ShelfSnapshot::default(),
+            shelf_editor: String::new(),
+            legacy_shelf_editable: false,
             route: Route::Search {
                 query: String::new(),
                 volume_id: None,
@@ -429,6 +443,7 @@ impl DesktopApp {
 
     fn load_disk_preferences(&mut self, ctx: &egui::Context) {
         self.preferences_ready = false;
+        self.legacy_shelf_editable = false;
         let (Some(db), Some(store), Some(platform)) =
             (self.db.clone(), user_store(), preference_platform())
         else {
@@ -439,7 +454,7 @@ impl DesktopApp {
                 )
                 .to_owned(),
             );
-            self.load_page(ctx);
+            self.load_shelf_labels(ctx, true);
             self.error = error;
             return;
         };
@@ -447,6 +462,26 @@ impl DesktopApp {
             Purpose::DiskPreferences,
             json!({"op":"disk_preferences_list","db":db,
             "user_store":store.to_string_lossy(),"platform":platform}),
+            ctx,
+        );
+    }
+
+    fn load_shelf_labels(&mut self, ctx: &egui::Context, initial: bool) {
+        let Some(scope) = self.shelf_context.clone() else {
+            self.shelf = ShelfSnapshot::default();
+            if initial {
+                self.load_page(ctx);
+            }
+            return;
+        };
+        let ids: Vec<i64> = self.volumes.iter().map(|v| v.id).collect();
+        let catalog_key = scope.catalog_key.clone();
+        self.queue(
+            Purpose::ShelfLabels {
+                catalog_key,
+                initial,
+            },
+            scope.list_request(&ids),
             ctx,
         );
     }
@@ -477,6 +512,7 @@ impl DesktopApp {
         };
         self.error = None;
         self.show_disk_properties = Some(id);
+        self.shelf_editor = self.shelf.label(id).to_owned();
         self.focus_disk_name = true;
     }
 
@@ -517,6 +553,54 @@ impl DesktopApp {
             "capacity_bytes":capacity, "note":values.note, "expected_revision":values.revision,
             "expected_shelf_label":self.disk_draft.original_shelf, "confirmed":true
         }), ctx);
+    }
+
+    fn save_shelf_label(&mut self, volume_id: i64, ctx: &egui::Context) {
+        if !self.legacy_shelf_editable
+            || self.active_request.is_some()
+            || !self.volumes.iter().any(|v| v.id == volume_id)
+        {
+            return;
+        }
+        let Some(db) = self.db.clone() else {
+            return;
+        };
+        let label = self.shelf_editor.trim().to_owned();
+        if !valid_label(&label) {
+            self.error = Some(
+                self.t(
+                    "Наклейка должна быть одной строкой, максимум 80 символов.",
+                    "A shelf tag must be a single line, maximum 80 characters.",
+                )
+                .to_owned(),
+            );
+            return;
+        }
+        let Some(scope) = self.shelf_context.clone() else {
+            self.error = Some(
+                self.t(
+                    "Личное хранилище наклеек недоступно; данные каталога не изменены.",
+                    "Private shelf-label store unavailable; catalog is unchanged.",
+                )
+                .to_owned(),
+            );
+            return;
+        };
+        let catalog_key = scope.catalog_key.clone();
+        self.status = self
+            .t(
+                "Сохраняем наклейку отдельно от каталога…",
+                "Saving the shelf tag outside the catalog…",
+            )
+            .to_owned();
+        self.queue(
+            Purpose::ShelfSave {
+                catalog_key,
+                volume_id,
+            },
+            scope.save_request(&db, volume_id, &label, self.shelf.label(volume_id)),
+            ctx,
+        );
     }
 
     fn load_page(&mut self, ctx: &egui::Context) {
@@ -673,10 +757,18 @@ impl DesktopApp {
                 .unwrap_or("Unknown service error");
             let error_message = message.to_owned();
             self.status = self.t("Операция отклонена", "Operation refused").to_owned();
-            if matches!(reply.purpose, Purpose::DiskPreferences) {
+            if matches!(&reply.purpose, Purpose::DiskPreferences) {
                 self.preferences_ready = false;
+                self.legacy_shelf_editable = reply
+                    .response
+                    .pointer("/error/code")
+                    .and_then(Value::as_str)
+                    == Some("schema_version");
                 self.disk_preferences.clear();
                 self.shelf_collisions.clear();
+                self.load_shelf_labels(ctx, true);
+            } else if matches!(&reply.purpose, Purpose::ShelfLabels { initial: true, .. }) {
+                self.shelf = ShelfSnapshot::default();
                 self.load_page(ctx);
             }
             self.error = Some(error_message);
@@ -685,6 +777,15 @@ impl DesktopApp {
         let data = &reply.response["data"];
         match reply.purpose {
             Purpose::Open { path } | Purpose::Create { path } => {
+                self.shelf_context = ShelfContext::from_sqlite(&path).ok();
+                if let Some(store) = user_store() {
+                    if let Some(scope) = &mut self.shelf_context {
+                        scope.user_store = store.to_string_lossy().into_owned();
+                    }
+                } else {
+                    self.shelf_context = None;
+                }
+                self.shelf = ShelfSnapshot::default();
                 self.db = Some(path);
                 self.disk_preferences.clear();
                 self.shelf_collisions.clear();
@@ -721,6 +822,19 @@ impl DesktopApp {
                     });
                 let error = match parsed {
                     Ok(preferences) => {
+                        let ids: Vec<i64> = self.volumes.iter().map(|v| v.id).collect();
+                        match ShelfSnapshot::parse(data, &ids) {
+                            Ok(snapshot) => self.shelf = snapshot,
+                            Err(e) => {
+                                self.preferences_ready = false;
+                                self.disk_preferences.clear();
+                                self.shelf_collisions.clear();
+                                self.shelf = ShelfSnapshot::default();
+                                self.load_page(ctx);
+                                self.error = Some(e);
+                                return;
+                            }
+                        }
                         self.disk_preferences = preferences;
                         self.shelf_collisions = data
                             .get("collisions")
@@ -740,6 +854,9 @@ impl DesktopApp {
                     }
                     Err(e) => {
                         self.preferences_ready = false;
+                        self.disk_preferences.clear();
+                        self.shelf_collisions.clear();
+                        self.shelf = ShelfSnapshot::default();
                         Some(e)
                     }
                 };
@@ -755,6 +872,53 @@ impl DesktopApp {
                     .t("Локальные свойства сохранены", "Local properties saved")
                     .to_owned();
                 self.load_volumes(ctx);
+            }
+            Purpose::ShelfLabels {
+                catalog_key,
+                initial,
+            } => {
+                if self
+                    .shelf_context
+                    .as_ref()
+                    .is_some_and(|scope| scope.catalog_key == catalog_key)
+                {
+                    let ids: Vec<i64> = self.volumes.iter().map(|v| v.id).collect();
+                    let error = match ShelfSnapshot::parse(data, &ids) {
+                        Ok(snapshot) => {
+                            self.shelf = snapshot;
+                            None
+                        }
+                        Err(e) => {
+                            self.shelf = ShelfSnapshot::default();
+                            Some(e)
+                        }
+                    };
+                    if initial {
+                        self.load_page(ctx);
+                    }
+                    if error.is_some() {
+                        self.error = error;
+                    }
+                }
+            }
+            Purpose::ShelfSave {
+                catalog_key,
+                volume_id,
+            } => {
+                if self
+                    .shelf_context
+                    .as_ref()
+                    .is_some_and(|scope| scope.catalog_key == catalog_key)
+                    && self.volumes.iter().any(|v| v.id == volume_id)
+                {
+                    self.status = self
+                        .t(
+                            "Наклейка сохранена; не является подтверждением подключения USB.",
+                            "Shelf label saved; it does not prove USB presence.",
+                        )
+                        .to_owned();
+                    self.load_shelf_labels(ctx, false);
+                }
             }
             Purpose::Scan { root, job_id } => {
                 let _ = (root, job_id);
@@ -999,11 +1163,9 @@ impl DesktopApp {
                     .iter()
                     .filter(|v| {
                         filter.is_empty()
+                            || v.label.to_lowercase().contains(&filter)
                             || self.display_name(v).to_lowercase().contains(&filter)
-                            || self
-                                .disk_preferences
-                                .get(&v.id)
-                                .is_some_and(|p| p.shelf_label.to_lowercase().contains(&filter))
+                            || self.shelf.label(v.id).to_lowercase().contains(&filter)
                             || v.id.to_string().contains(&filter)
                     })
                     .cloned()
@@ -1014,26 +1176,21 @@ impl DesktopApp {
                         for volume in &visible {
                             let selected = self.selected_volume == Some(volume.id);
                             ui.horizontal(|ui| {
-                                let shelf = self
-                                    .disk_preferences
-                                    .get(&volume.id)
-                                    .map(|p| p.shelf_label.as_str())
-                                    .filter(|s| !s.is_empty());
-                                let title = match shelf {
-                                    Some(shelf) => format!(
-                                        "#{} · {} [{}]{}",
+                                let sticker = self.shelf.label(volume.id);
+                                let title = if sticker.is_empty() {
+                                    format!("#{} · {}", volume.id, self.display_name(volume))
+                                } else {
+                                    format!(
+                                        "#{} · {} · 🏷 {}{}",
                                         volume.id,
                                         self.display_name(volume),
-                                        shelf,
-                                        if self.shelf_collisions.contains(&volume.id) {
-                                            " ⚠"
-                                        } else {
+                                        sticker,
+                                        if self.shelf.collision_other_disks(volume.id).is_empty() {
                                             ""
+                                        } else {
+                                            " ⚠"
                                         }
-                                    ),
-                                    None => {
-                                        format!("#{} · {}", volume.id, self.display_name(volume))
-                                    }
+                                    )
                                 };
                                 let label = ui.selectable_label(selected, title);
                                 if label.clicked() {
@@ -1054,6 +1211,7 @@ impl DesktopApp {
                                     .clicked()
                                 {
                                     self.open_disk_properties(volume.id);
+                                    self.shelf_editor = self.shelf.label(volume.id).to_owned();
                                 }
                             });
                             ui.horizontal(|ui| {
@@ -1423,16 +1581,22 @@ impl DesktopApp {
                     .collect::<Vec<_>>()
                     .join(" ")
                     .to_lowercase();
-                let collision = !normalized.is_empty()
-                    && self.disk_preferences.iter().any(|(other, p)| {
-                        *other != id
+                let mut conflicting: Vec<i64> = self
+                    .disk_preferences
+                    .iter()
+                    .filter_map(|(other, p)| {
+                        (*other != id
+                            && !normalized.is_empty()
                             && p.shelf_label
                                 .split_whitespace()
                                 .collect::<Vec<_>>()
                                 .join(" ")
                                 .to_lowercase()
-                                == normalized
-                    });
+                                == normalized)
+                            .then_some(*other)
+                    })
+                    .collect();
+                conflicting.sort_unstable();
                 let local_name = self.t("Локальное имя", "Local display name");
                 let shelf = self.t("Код / наклейка", "Sticker / code");
                 let model = self.t("Модель (указана пользователем)", "Model (user supplied)");
@@ -1453,6 +1617,7 @@ impl DesktopApp {
                     .resizable(true)
                     .default_width(520.0)
                     .show(ctx, |ui| {
+                        if self.preferences_ready {
                         egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
                             ui.strong(format!("#{} · {}", volume.id, volume.label));
                             ui.label(self.t("Локальное имя и свойства хранятся отдельно; исходный каталог и его экспортируемое имя не меняются.",
@@ -1461,8 +1626,11 @@ impl DesktopApp {
                             let name_response = ui.add(egui::TextEdit::singleline(&mut self.disk_draft.values.display_name).id(egui::Id::unique(DISK_NAME_INPUT_ID)).desired_width(f32::INFINITY));
                             if self.focus_disk_name { name_response.request_focus(); self.focus_disk_name = false; }
                             ui.label(shelf);
-                            ui.add(egui::TextEdit::singleline(&mut self.disk_draft.values.shelf_label).desired_width(f32::INFINITY));
-                            if collision { ui.colored_label(Color32::from_rgb(224, 160, 40), self.t("Такая наклейка указана и для другого диска.", "This sticker is also assigned to another disk.")); }
+                            ui.horizontal(|ui| {
+                                ui.add(egui::TextEdit::singleline(&mut self.disk_draft.values.shelf_label).desired_width((ui.available_width() - 90.0).max(80.0)));
+                                if ui.button(self.t("Очистить", "Clear")).clicked() { self.disk_draft.values.shelf_label.clear(); }
+                            });
+                            if !conflicting.is_empty() { ui.colored_label(Color32::from_rgb(224, 160, 40), format!("{}: {}", self.t("Одинаковая наклейка у дисков", "Shared sticker on disks"), conflicting.iter().map(|id| format!("#{id}")).collect::<Vec<_>>().join(", "))); }
                             ui.label(model);
                             ui.add(egui::TextEdit::singleline(&mut self.disk_draft.values.model).desired_width(f32::INFINITY));
                             ui.label(filesystem);
@@ -1481,6 +1649,79 @@ impl DesktopApp {
                                 if ui.add_enabled(self.active_request.is_none(), egui::Button::new(cancel)).clicked() { self.show_disk_properties = None; }
                             });
                         });
+                        } else {
+                        ui.label(self.t("Расширенные свойства недоступны; наклейку можно изменить только для поддерживаемого старого каталога.", "Extended properties are unavailable; sticker editing is available only for a supported legacy catalog."));
+                        ui.strong(format!("#{} · {}", volume.id, volume.label));
+                        ui.label(format!(
+                            "{}: {}",
+                            self.t("Записано файлов/папок", "Recorded entries"),
+                            volume.entry_count
+                        ));
+                        ui.label(format!(
+                            "{}: {}",
+                            self.t("Логический объём", "Logical total bytes"),
+                            bytes_compact(volume.total_bytes)
+                        ));
+                        ui.label(format!(
+                            "{}: {}",
+                            self.t("Исторический корень", "Recorded root"),
+                            volume.root_path
+                        ));
+                        ui.separator();
+                        ui.label(self.t(
+                            "Наклейка на полке (ваша заметка, не UUID и не USB-статус):",
+                            "Physical shelf sticker (your hint, not a UUID or USB status):",
+                        ));
+                        let hint = self.t("Например: BOX-17", "For example: BOX-17");
+                        ui.add_enabled(
+                            self.active_request.is_none(),
+                            egui::TextEdit::singleline(&mut self.shelf_editor).hint_text(hint),
+                        );
+                        let conflicting = self.shelf.collision_other_disks(volume.id);
+                        if !conflicting.is_empty() {
+                            ui.colored_label(
+                                Color32::from_rgb(230, 175, 55),
+                                format!(
+                                    "{}: {}",
+                                    self.t(
+                                        "Одинаковая наклейка у дисков",
+                                        "Shared sticker on disks"
+                                    ),
+                                    conflicting
+                                        .iter()
+                                        .map(|i| format!("#{i}"))
+                                        .collect::<Vec<_>>()
+                                        .join(", "),
+                                ),
+                            );
+                        }
+                        if ui
+                            .add_enabled(
+                                self.active_request.is_none() && self.shelf_context.is_some() && self.legacy_shelf_editable,
+                                egui::Button::new(
+                                    self.t("Сохранить наклейку", "Save shelf sticker"),
+                                ),
+                            )
+                            .clicked()
+                        {
+                            self.save_shelf_label(volume.id, ctx);
+                        }
+                        ui.label(
+                            RichText::new(self.t(
+                                "Это НЕ подтверждённый текущий путь или подключённый USB.",
+                                "This is NOT a verified current mount or physical USB connection.",
+                            ))
+                            .small()
+                            .weak(),
+                        );
+                        if let Some(error) = &self.error {
+                            ui.colored_label(Color32::from_rgb(224, 96, 88), error);
+                        }
+                        ui.add_space(3.0);
+                        if ui.button(self.t("Закрыть", "Close")).clicked() {
+                            self.show_disk_properties = None;
+                        }
+                        }
                     });
                 if !open && self.active_request.is_none() {
                     self.show_disk_properties = None;
@@ -1568,6 +1809,49 @@ impl eframe::App for DesktopApp {
 #[cfg(test)]
 mod shortcut_tests {
     use super::*;
+
+    #[test]
+    fn only_legacy_schema_failure_enables_shelf_fallback() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.active_request = Some(1);
+        app.apply_reply(crate::bridge::Reply { id:1, purpose:Purpose::DiskPreferences, response:json!({"ok":false,"error":{"code":"invalid_disk_properties","message":"unsafe store"}}) }, &ctx);
+        assert!(!app.legacy_shelf_editable);
+        app.active_request = Some(2);
+        app.apply_reply(
+            crate::bridge::Reply {
+                id: 2,
+                purpose: Purpose::DiskPreferences,
+                response: json!({"ok":false,"error":{"code":"schema_version","message":"legacy"}}),
+            },
+            &ctx,
+        );
+        assert!(app.legacy_shelf_editable);
+    }
+
+    #[test]
+    fn preferences_reply_keeps_shelf_labels_and_collision_ids_in_sync() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        for id in [1, 2] {
+            app.volumes.push(Volume {
+                id,
+                label: format!("Original {id}"),
+                root_path: String::new(),
+                entry_count: 0,
+                total_bytes: 0,
+            });
+        }
+        app.active_request = Some(7);
+        let item = |id, name| json!({"volume_id":id, "display_name":name, "shelf_label":"BOX-17", "model":"", "filesystem":"", "capacity_bytes":null, "note":"", "revision":1});
+        app.apply_reply(crate::bridge::Reply { id:7, purpose:Purpose::DiskPreferences, response:json!({"ok":true, "data":{"items":[item(1,"Local name"),item(2,"")],"collisions":[{"volume_ids":[1,2]}]}}) }, &ctx);
+        assert!(app.preferences_ready);
+        assert_eq!(app.display_name(&app.volumes[0]), "Local name");
+        assert_eq!(app.shelf.label(1), "BOX-17");
+        assert_eq!(app.shelf.collision_other_disks(1), vec![2]);
+        app.open_disk_properties(1);
+        assert_eq!(app.disk_draft.original_shelf, "BOX-17");
+    }
 
     #[test]
     fn rejected_scan_replaces_previous_status_and_keeps_dialog_open() {
