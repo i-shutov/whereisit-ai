@@ -4,12 +4,35 @@ if ($env:CI -ne 'true' -or $env:RUNNER_OS -ne 'Windows') { throw 'CI runner only
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $version = (Get-Content (Join-Path $root 'VERSION') -Raw).Trim()
 $exe = Join-Path $root 'target/release/atlas-desktop-egui.exe'
+$cli = Join-Path $root 'target/release/atlas.exe'
+$script = Join-Path $root 'tools/qa/windows10-egui/Invoke-WhereIsItEguiQA.ps1'
+$instructions = Join-Path $root 'tools/qa/windows10-egui/README.md'
+if (-not (Test-Path $cli -PathType Leaf) -or -not (Test-Path $script -PathType Leaf)) {
+    throw 'Matching native CLI or Windows 10 QA runner is missing.'
+}
 if (-not (Test-Path $exe -PathType Leaf)) { throw 'Native egui binary missing' }
 $out = Join-Path $root 'dist/qa-egui'
 $payload = Join-Path $out 'windows-x64'
 if (Test-Path $payload) { throw 'Refusing QA bundle overwrite' }
 New-Item -ItemType Directory $payload -Force | Out-Null
 Copy-Item $exe (Join-Path $payload 'WhereIsItAI-egui-preview.exe')
+Copy-Item $cli (Join-Path $payload 'whereisit-ai-cli.exe')
+# PowerShell 5.1 must read UTF-8 Cyrillic source with an explicit BOM.
+$scriptText = Get-Content -LiteralPath $script -Raw -Encoding UTF8
+[IO.File]::WriteAllText(
+    (Join-Path $payload 'Invoke-WhereIsItEguiQA.ps1'),
+    $scriptText,
+    [System.Text.UTF8Encoding]::new($true)
+)
+Copy-Item $instructions (Join-Path $payload 'README-Win10-QA.md')
+@{
+    schema = 'whereisit-egui-qa-bundle-v1'
+    commit = (git rev-parse HEAD)
+    version = $version
+    gui_sha256 = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+    cli_sha256 = (Get-FileHash -LiteralPath $cli -Algorithm SHA256).Hash.ToLowerInvariant()
+    scope = 'local QA preview only'
+} | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $payload 'QA_MANIFEST.json') -Encoding UTF8
 Copy-Item (Join-Path $root 'LICENSE') $payload
 Copy-Item (Join-Path $root 'THIRD_PARTY_NOTICES.md') $payload
 Copy-Item (Join-Path $root 'licenses') (Join-Path $payload 'licenses') -Recurse

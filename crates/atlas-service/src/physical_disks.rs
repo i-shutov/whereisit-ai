@@ -99,7 +99,7 @@ fn volume_id(request: &Value) -> Result<i64> {
         .ok_or_else(|| invalid("volume_id must be a positive catalog identifier"))
 }
 
-fn create_schema(conn: &Connection) -> Result<()> {
+pub(crate) fn create_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS physical_bindings (
            catalog_key TEXT NOT NULL,

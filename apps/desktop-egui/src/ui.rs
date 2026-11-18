@@ -1,20 +1,64 @@
 //! PR58-first native workbench. Every user-visible catalog fact comes from atlas-service;
 //! no fictitious USB mount badges, byte-duplicate claims or on-disk delete operations.
 use crate::bridge::{new_scan_job_id, scan_request, CommandBus, ExportKind, Purpose, Route};
-use crate::model::{bytes_compact, parse_volumes, Entry, Page, Volume};
+use crate::model::{bytes_compact, parse_volumes, DiskPreferences, Entry, Page, Volume};
 use crate::shelf::{valid_label, ShelfContext, ShelfSnapshot};
 use eframe::egui::{self, Color32, RichText};
 use egui_extras::{Column, TableBuilder};
 use serde_json::{json, Value};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 const PAGE_LIMIT: u64 = 250;
+const SEARCH_INPUT_ID: &str = "global_search_input";
+const DISK_NAME_INPUT_ID: &str = "disk_local_name_input";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Language {
     Russian,
     English,
+}
+
+#[derive(Clone, Debug, Default)]
+struct DiskPropertiesDraft {
+    values: DiskPreferences,
+    original_shelf: String,
+    capacity: String,
+}
+
+fn user_store() -> Option<std::path::PathBuf> {
+    if let Some(path) = std::env::var_os("WHEREISIT_USER_STORE") {
+        let path = std::path::PathBuf::from(path);
+        return path.is_absolute().then_some(path);
+    }
+    #[cfg(target_os = "windows")]
+    let root = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from);
+    #[cfg(target_os = "macos")]
+    let root = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .map(|p| p.join("Library/Application Support"));
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let root = std::env::var_os("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|p| std::path::PathBuf::from(p).join(".local/share"))
+        });
+    root.filter(|p| p.is_absolute()).map(|p| {
+        p.join("AtlasCatalog")
+            .join("physical-volume-bindings.sqlite")
+    })
+}
+
+fn preference_platform() -> Option<&'static str> {
+    if cfg!(target_os = "windows") {
+        Some("windows")
+    } else if cfg!(target_os = "macos") {
+        Some("macos")
+    } else {
+        // Match the pre-existing egui shelf-label adapter on Linux.
+        Some("macos")
+    }
 }
 impl Language {
     fn text(self, ru: &'static str, en: &'static str) -> &'static str {
@@ -36,6 +80,7 @@ pub struct DesktopApp {
     shelf_context: Option<ShelfContext>,
     shelf: ShelfSnapshot,
     shelf_editor: String,
+    legacy_shelf_editable: bool,
     route: Route,
     history: Vec<(Route, u64)>,
     page: Page,
@@ -59,6 +104,11 @@ pub struct DesktopApp {
     export_path: String,
     export_kind: ExportKind,
     show_disk_properties: Option<i64>,
+    focus_disk_name: bool,
+    disk_draft: DiskPropertiesDraft,
+    disk_preferences: HashMap<i64, DiskPreferences>,
+    shelf_collisions: HashSet<i64>,
+    preferences_ready: bool,
     status: String,
     error: Option<String>,
     lang: Language,
@@ -68,7 +118,11 @@ pub struct DesktopApp {
 
 impl DesktopApp {
     pub fn new(cc: &eframe::CreationContext<'_>, startup_catalog: Option<String>) -> Self {
-        cc.egui_ctx.all_styles_mut(|style| {
+        Self::with_context(&cc.egui_ctx, startup_catalog)
+    }
+
+    fn with_context(ctx: &egui::Context, startup_catalog: Option<String>) -> Self {
+        ctx.all_styles_mut(|style| {
             style.spacing.item_spacing = egui::vec2(6.0, 5.0);
             style.spacing.button_padding = egui::vec2(7.0, 4.0);
         });
@@ -82,6 +136,7 @@ impl DesktopApp {
             shelf_context: None,
             shelf: ShelfSnapshot::default(),
             shelf_editor: String::new(),
+            legacy_shelf_editable: false,
             route: Route::Search {
                 query: String::new(),
                 volume_id: None,
@@ -108,6 +163,11 @@ impl DesktopApp {
             export_path: String::new(),
             export_kind: ExportKind::Csv,
             show_disk_properties: None,
+            focus_disk_name: false,
+            disk_draft: DiskPropertiesDraft::default(),
+            disk_preferences: HashMap::new(),
+            shelf_collisions: HashSet::new(),
+            preferences_ready: false,
             status: "Ready · local metadata only".to_owned(),
             error: None,
             lang: Language::Russian,
@@ -171,6 +231,17 @@ impl DesktopApp {
             );
             return;
         }
+        let path = if Path::new(&path).is_absolute() {
+            path
+        } else {
+            match std::env::current_dir() {
+                Ok(current) => current.join(path).to_string_lossy().into_owned(),
+                Err(e) => {
+                    self.error = Some(e.to_string());
+                    return;
+                }
+            }
+        };
         let purpose = if create {
             Purpose::Create { path: path.clone() }
         } else {
@@ -189,6 +260,7 @@ impl DesktopApp {
         let Some(db) = self.db.clone() else {
             return;
         };
+        self.status = self.t("Операция отклонена", "Operation refused").to_owned();
         let path = self.export_path.trim().to_owned();
         if path.is_empty() {
             self.error = Some(
@@ -242,6 +314,7 @@ impl DesktopApp {
         let Some(db) = self.db.clone() else {
             return;
         };
+        self.status = self.t("Операция отклонена", "Operation refused").to_owned();
         let label = self.scan_label.trim().to_owned();
         if label.is_empty() {
             self.error = Some(
@@ -368,6 +441,31 @@ impl DesktopApp {
         }
     }
 
+    fn load_disk_preferences(&mut self, ctx: &egui::Context) {
+        self.preferences_ready = false;
+        self.legacy_shelf_editable = false;
+        let (Some(db), Some(store), Some(platform)) =
+            (self.db.clone(), user_store(), preference_platform())
+        else {
+            let error = Some(
+                self.t(
+                    "Локальные свойства дисков недоступны.",
+                    "Local disk properties are unavailable.",
+                )
+                .to_owned(),
+            );
+            self.load_shelf_labels(ctx, true);
+            self.error = error;
+            return;
+        };
+        self.queue(
+            Purpose::DiskPreferences,
+            json!({"op":"disk_preferences_list","db":db,
+            "user_store":store.to_string_lossy(),"platform":platform}),
+            ctx,
+        );
+    }
+
     fn load_shelf_labels(&mut self, ctx: &egui::Context, initial: bool) {
         let Some(scope) = self.shelf_context.clone() else {
             self.shelf = ShelfSnapshot::default();
@@ -388,10 +486,85 @@ impl DesktopApp {
         );
     }
 
-    fn save_shelf_label(&mut self, volume_id: i64, ctx: &egui::Context) {
-        if self.active_request.is_some() || !self.volumes.iter().any(|v| v.id == volume_id) {
+    fn display_name<'a>(&'a self, volume: &'a Volume) -> &'a str {
+        self.disk_preferences
+            .get(&volume.id)
+            .map(|p| p.display_name.as_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or(&volume.label)
+    }
+
+    fn open_disk_properties(&mut self, id: i64) {
+        let Some(volume) = self.volumes.iter().find(|v| v.id == id) else {
+            return;
+        };
+        let mut values = self.disk_preferences.get(&id).cloned().unwrap_or_default();
+        if values.display_name.is_empty() {
+            values.display_name = volume.label.clone();
+        }
+        self.disk_draft = DiskPropertiesDraft {
+            original_shelf: values.shelf_label.clone(),
+            capacity: values
+                .capacity_bytes
+                .map(|n| n.to_string())
+                .unwrap_or_default(),
+            values,
+        };
+        self.error = None;
+        self.show_disk_properties = Some(id);
+        self.shelf_editor = self.shelf.label(id).to_owned();
+        self.focus_disk_name = true;
+    }
+
+    fn save_disk_properties(&mut self, ctx: &egui::Context) {
+        if !self.preferences_ready || self.active_request.is_some() {
             return;
         }
+        let (Some(id), Some(db), Some(store), Some(platform)) = (
+            self.show_disk_properties,
+            self.db.clone(),
+            user_store(),
+            preference_platform(),
+        ) else {
+            return;
+        };
+        let capacity = if self.disk_draft.capacity.trim().is_empty() {
+            None
+        } else {
+            match self.disk_draft.capacity.trim().parse::<i64>() {
+                Ok(n) if n > 0 => Some(n),
+                _ => {
+                    self.error = Some(
+                        self.t(
+                            "Ёмкость должна быть положительным числом байт.",
+                            "Capacity must be a positive byte count.",
+                        )
+                        .to_owned(),
+                    );
+                    return;
+                }
+            }
+        };
+        let values = &self.disk_draft.values;
+        self.queue(Purpose::SaveDiskProperties { volume_id: id }, json!({
+            "op":"disk_preferences_set", "db":db, "user_store":store.to_string_lossy(),
+            "platform":platform, "volume_id":id, "display_name":values.display_name,
+            "shelf_label":values.shelf_label, "model":values.model, "filesystem":values.filesystem,
+            "capacity_bytes":capacity, "note":values.note, "expected_revision":values.revision,
+            "expected_shelf_label":self.disk_draft.original_shelf, "confirmed":true
+        }), ctx);
+    }
+
+    fn save_shelf_label(&mut self, volume_id: i64, ctx: &egui::Context) {
+        if !self.legacy_shelf_editable
+            || self.active_request.is_some()
+            || !self.volumes.iter().any(|v| v.id == volume_id)
+        {
+            return;
+        }
+        let Some(db) = self.db.clone() else {
+            return;
+        };
         let label = self.shelf_editor.trim().to_owned();
         if !valid_label(&label) {
             self.error = Some(
@@ -425,7 +598,7 @@ impl DesktopApp {
                 catalog_key,
                 volume_id,
             },
-            scope.save_request(volume_id, &label),
+            scope.save_request(&db, volume_id, &label, self.shelf.label(volume_id)),
             ctx,
         );
     }
@@ -582,20 +755,41 @@ impl DesktopApp {
                 .pointer("/error/message")
                 .and_then(Value::as_str)
                 .unwrap_or("Unknown service error");
-            self.error = Some(message.to_owned());
+            let error_message = message.to_owned();
             self.status = self.t("Операция отклонена", "Operation refused").to_owned();
-            if matches!(&reply.purpose, Purpose::ShelfLabels { initial: true, .. }) {
+            if matches!(&reply.purpose, Purpose::DiskPreferences) {
+                self.preferences_ready = false;
+                self.legacy_shelf_editable = reply
+                    .response
+                    .pointer("/error/code")
+                    .and_then(Value::as_str)
+                    == Some("schema_version");
+                self.disk_preferences.clear();
+                self.shelf_collisions.clear();
+                self.load_shelf_labels(ctx, true);
+            } else if matches!(&reply.purpose, Purpose::ShelfLabels { initial: true, .. }) {
                 self.shelf = ShelfSnapshot::default();
                 self.load_page(ctx);
             }
+            self.error = Some(error_message);
             return;
         }
         let data = &reply.response["data"];
         match reply.purpose {
             Purpose::Open { path } | Purpose::Create { path } => {
                 self.shelf_context = ShelfContext::from_sqlite(&path).ok();
+                if let Some(store) = user_store() {
+                    if let Some(scope) = &mut self.shelf_context {
+                        scope.user_store = store.to_string_lossy().into_owned();
+                    }
+                } else {
+                    self.shelf_context = None;
+                }
                 self.shelf = ShelfSnapshot::default();
                 self.db = Some(path);
+                self.disk_preferences.clear();
+                self.shelf_collisions.clear();
+                self.preferences_ready = false;
                 self.selected_volume = None;
                 self.query_input.clear();
                 self.route = Route::Search {
@@ -611,10 +805,74 @@ impl DesktopApp {
                 Ok(volumes) => {
                     self.volumes = volumes;
                     self.status = self.t("Каталог открыт", "Catalog opened").to_owned();
-                    self.load_shelf_labels(ctx, true);
+                    self.load_disk_preferences(ctx);
                 }
                 Err(e) => self.error = Some(e),
             },
+            Purpose::DiskPreferences => {
+                let parsed = data
+                    .get("items")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| "Missing disk preferences".to_owned())
+                    .and_then(|items| {
+                        items
+                            .iter()
+                            .map(DiskPreferences::parse)
+                            .collect::<Result<HashMap<_, _>, _>>()
+                    });
+                let error = match parsed {
+                    Ok(preferences) => {
+                        let ids: Vec<i64> = self.volumes.iter().map(|v| v.id).collect();
+                        match ShelfSnapshot::parse(data, &ids) {
+                            Ok(snapshot) => self.shelf = snapshot,
+                            Err(e) => {
+                                self.preferences_ready = false;
+                                self.disk_preferences.clear();
+                                self.shelf_collisions.clear();
+                                self.shelf = ShelfSnapshot::default();
+                                self.load_page(ctx);
+                                self.error = Some(e);
+                                return;
+                            }
+                        }
+                        self.disk_preferences = preferences;
+                        self.shelf_collisions = data
+                            .get("collisions")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .flat_map(|c| {
+                                c["volume_ids"]
+                                    .as_array()
+                                    .into_iter()
+                                    .flatten()
+                                    .filter_map(Value::as_i64)
+                            })
+                            .collect();
+                        self.preferences_ready = true;
+                        None
+                    }
+                    Err(e) => {
+                        self.preferences_ready = false;
+                        self.disk_preferences.clear();
+                        self.shelf_collisions.clear();
+                        self.shelf = ShelfSnapshot::default();
+                        Some(e)
+                    }
+                };
+                self.load_page(ctx);
+                if error.is_some() {
+                    self.error = error;
+                }
+            }
+            Purpose::SaveDiskProperties { volume_id } => {
+                let _ = volume_id;
+                self.show_disk_properties = None;
+                self.status = self
+                    .t("Локальные свойства сохранены", "Local properties saved")
+                    .to_owned();
+                self.load_volumes(ctx);
+            }
             Purpose::ShelfLabels {
                 catalog_key,
                 initial,
@@ -625,12 +883,21 @@ impl DesktopApp {
                     .is_some_and(|scope| scope.catalog_key == catalog_key)
                 {
                     let ids: Vec<i64> = self.volumes.iter().map(|v| v.id).collect();
-                    match ShelfSnapshot::parse(data, &ids) {
-                        Ok(snapshot) => self.shelf = snapshot,
-                        Err(e) => self.error = Some(e),
-                    }
+                    let error = match ShelfSnapshot::parse(data, &ids) {
+                        Ok(snapshot) => {
+                            self.shelf = snapshot;
+                            None
+                        }
+                        Err(e) => {
+                            self.shelf = ShelfSnapshot::default();
+                            Some(e)
+                        }
+                    };
                     if initial {
                         self.load_page(ctx);
+                    }
+                    if error.is_some() {
+                        self.error = error;
                     }
                 }
             }
@@ -740,6 +1007,7 @@ impl DesktopApp {
                         self.show_scan_dialog = true;
                         self.scan_root.clear();
                         self.scan_label.clear();
+                        self.error = None;
                         ui.close();
                     }
                     let can_export = self.db.is_some()
@@ -755,6 +1023,7 @@ impl DesktopApp {
                         .clicked()
                     {
                         self.export_path.clear();
+                        self.error = None;
                         self.show_export_dialog = true;
                         ui.close();
                     }
@@ -821,7 +1090,7 @@ impl DesktopApp {
                 let scope = self
                     .selected_volume
                     .and_then(|id| self.volumes.iter().find(|v| v.id == id))
-                    .map(|v| format!("#{} · {}", v.id, v.label))
+                    .map(|v| format!("#{} · {}", v.id, self.display_name(v)))
                     .unwrap_or_else(|| self.t("Все диски", "All disks").to_owned());
                 ui.label(RichText::new(scope).strong());
                 ui.separator();
@@ -831,7 +1100,9 @@ impl DesktopApp {
                 );
                 let response = ui.add_sized(
                     [ui.available_width().max(220.0) - 185.0, 25.0],
-                    egui::TextEdit::singleline(&mut self.query_input).hint_text(query_hint),
+                    egui::TextEdit::singleline(&mut self.query_input)
+                        .id(egui::Id::unique(SEARCH_INPUT_ID))
+                        .hint_text(query_hint),
                 );
                 let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 let clicked = ui
@@ -893,6 +1164,7 @@ impl DesktopApp {
                     .filter(|v| {
                         filter.is_empty()
                             || v.label.to_lowercase().contains(&filter)
+                            || self.display_name(v).to_lowercase().contains(&filter)
                             || self.shelf.label(v.id).to_lowercase().contains(&filter)
                             || v.id.to_string().contains(&filter)
                     })
@@ -906,9 +1178,19 @@ impl DesktopApp {
                             ui.horizontal(|ui| {
                                 let sticker = self.shelf.label(volume.id);
                                 let title = if sticker.is_empty() {
-                                    format!("#{} · {}", volume.id, volume.label)
+                                    format!("#{} · {}", volume.id, self.display_name(volume))
                                 } else {
-                                    format!("#{} · {} · 🏷 {}", volume.id, volume.label, sticker)
+                                    format!(
+                                        "#{} · {} · 🏷 {}{}",
+                                        volume.id,
+                                        self.display_name(volume),
+                                        sticker,
+                                        if self.shelf.collision_other_disks(volume.id).is_empty() {
+                                            ""
+                                        } else {
+                                            " ⚠"
+                                        }
+                                    )
                                 };
                                 let label = ui.selectable_label(selected, title);
                                 if label.clicked() {
@@ -928,7 +1210,7 @@ impl DesktopApp {
                                     .on_hover_text(self.t("Свойства диска", "Disk properties"))
                                     .clicked()
                                 {
-                                    self.show_disk_properties = Some(volume.id);
+                                    self.open_disk_properties(volume.id);
                                     self.shelf_editor = self.shelf.label(volume.id).to_owned();
                                 }
                             });
@@ -971,7 +1253,7 @@ impl DesktopApp {
                         ));
                         if ui.add_enabled(
                             self.scan_registered && !self.scan_cancel_requested,
-                            egui::Button::new(self.t("Отменить сканирование", "Cancel scan")),
+                            egui::Button::new(self.t("Отменить сканирование (Esc)", "Cancel scan (Esc)")),
                         ).clicked() {
                             self.request_scan_cancel(ctx);
                         }
@@ -1199,6 +1481,9 @@ impl DesktopApp {
                         "Файлы не читаются и не изменяются. Создаётся новый снимок в SQLite.",
                         "File contents are not read or changed. A new SQLite snapshot is created.",
                     )).small().weak());
+                    if let Some(error) = &self.error {
+                        ui.colored_label(Color32::from_rgb(224, 96, 88), error);
+                    }
                     ui.horizontal(|ui| {
                         if ui
                             .add_enabled(
@@ -1239,6 +1524,9 @@ impl DesktopApp {
                         "Укажите НОВЫЙ файл; существующие файлы не перезаписываются.",
                         "Enter a NEW file path; existing files are never overwritten.",
                     ));
+                    if let Some(error) = &self.error {
+                        ui.colored_label(Color32::from_rgb(224, 96, 88), error);
+                    }
                     ui.horizontal(|ui| {
                         if ui.add_enabled(self.active_request.is_none(),
                             egui::Button::new(self.t("Экспортировать", "Export"))
@@ -1285,11 +1573,84 @@ impl DesktopApp {
         if let Some(id) = self.show_disk_properties {
             if let Some(volume) = self.volumes.iter().find(|v| v.id == id).cloned() {
                 let mut open = true;
+                let normalized = self
+                    .disk_draft
+                    .values
+                    .shelf_label
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .to_lowercase();
+                let mut conflicting: Vec<i64> = self
+                    .disk_preferences
+                    .iter()
+                    .filter_map(|(other, p)| {
+                        (*other != id
+                            && !normalized.is_empty()
+                            && p.shelf_label
+                                .split_whitespace()
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                                .to_lowercase()
+                                == normalized)
+                            .then_some(*other)
+                    })
+                    .collect();
+                conflicting.sort_unstable();
+                let local_name = self.t("Локальное имя", "Local display name");
+                let shelf = self.t("Код / наклейка", "Sticker / code");
+                let model = self.t("Модель (указана пользователем)", "Model (user supplied)");
+                let filesystem = self.t(
+                    "Файловая система (указана пользователем)",
+                    "Filesystem (user supplied)",
+                );
+                let capacity = self.t(
+                    "Ёмкость в байтах (необязательно)",
+                    "Capacity in bytes (optional)",
+                );
+                let note = self.t("Описание / заметка", "Description / note");
+                let save = self.t("Сохранить", "Save");
+                let cancel = self.t("Отмена", "Cancel");
                 egui::Window::new(self.t("Свойства диска", "Disk properties"))
                     .open(&mut open)
                     .collapsible(false)
-                    .resizable(false)
+                    .resizable(true)
+                    .default_width(520.0)
                     .show(ctx, |ui| {
+                        if self.preferences_ready {
+                        egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+                            ui.strong(format!("#{} · {}", volume.id, volume.label));
+                            ui.label(self.t("Локальное имя и свойства хранятся отдельно; исходный каталог и его экспортируемое имя не меняются.",
+                                "Local name and properties are stored separately; the source catalog and its exported name stay unchanged."));
+                            ui.label(local_name);
+                            let name_response = ui.add(egui::TextEdit::singleline(&mut self.disk_draft.values.display_name).id(egui::Id::unique(DISK_NAME_INPUT_ID)).desired_width(f32::INFINITY));
+                            if self.focus_disk_name { name_response.request_focus(); self.focus_disk_name = false; }
+                            ui.label(shelf);
+                            ui.horizontal(|ui| {
+                                ui.add(egui::TextEdit::singleline(&mut self.disk_draft.values.shelf_label).desired_width((ui.available_width() - 90.0).max(80.0)));
+                                if ui.button(self.t("Очистить", "Clear")).clicked() { self.disk_draft.values.shelf_label.clear(); }
+                            });
+                            if !conflicting.is_empty() { ui.colored_label(Color32::from_rgb(224, 160, 40), format!("{}: {}", self.t("Одинаковая наклейка у дисков", "Shared sticker on disks"), conflicting.iter().map(|id| format!("#{id}")).collect::<Vec<_>>().join(", "))); }
+                            ui.label(model);
+                            ui.add(egui::TextEdit::singleline(&mut self.disk_draft.values.model).desired_width(f32::INFINITY));
+                            ui.label(filesystem);
+                            ui.add(egui::TextEdit::singleline(&mut self.disk_draft.values.filesystem).desired_width(f32::INFINITY));
+                            ui.label(capacity);
+                            ui.add(egui::TextEdit::singleline(&mut self.disk_draft.capacity).desired_width(f32::INFINITY));
+                            ui.label(note);
+                            ui.add(egui::TextEdit::multiline(&mut self.disk_draft.values.note).desired_rows(3).desired_width(f32::INFINITY));
+                            ui.label(format!("{}: {} · {}", self.t("Записано объектов / байт", "Recorded entries / bytes"), volume.entry_count, bytes_compact(volume.total_bytes)));
+                            ui.label(format!("{}: {}", self.t("Исторический корень", "Recorded root"), volume.root_path));
+                            ui.label(self.t("Наклейка и введённые свойства НЕ подтверждают подключение USB.", "Sticker and entered properties do NOT verify a connected USB device."));
+                            if !self.preferences_ready { ui.colored_label(Color32::from_rgb(224, 96, 88), self.t("Локальное хранилище не загружено; сохранение недоступно.", "Local store was not loaded; saving is unavailable.")); }
+                            if let Some(error) = &self.error { ui.colored_label(Color32::from_rgb(224, 96, 88), error); }
+                            ui.horizontal(|ui| {
+                                if ui.add_enabled(self.preferences_ready && self.active_request.is_none(), egui::Button::new(save)).clicked() { self.save_disk_properties(ctx); }
+                                if ui.add_enabled(self.active_request.is_none(), egui::Button::new(cancel)).clicked() { self.show_disk_properties = None; }
+                            });
+                        });
+                        } else {
+                        ui.label(self.t("Расширенные свойства недоступны; наклейку можно изменить только для поддерживаемого старого каталога.", "Extended properties are unavailable; sticker editing is available only for a supported legacy catalog."));
                         ui.strong(format!("#{} · {}", volume.id, volume.label));
                         ui.label(format!(
                             "{}: {}",
@@ -1336,7 +1697,7 @@ impl DesktopApp {
                         }
                         if ui
                             .add_enabled(
-                                self.active_request.is_none() && self.shelf_context.is_some(),
+                                self.active_request.is_none() && self.shelf_context.is_some() && self.legacy_shelf_editable,
                                 egui::Button::new(
                                     self.t("Сохранить наклейку", "Save shelf sticker"),
                                 ),
@@ -1353,12 +1714,16 @@ impl DesktopApp {
                             .small()
                             .weak(),
                         );
+                        if let Some(error) = &self.error {
+                            ui.colored_label(Color32::from_rgb(224, 96, 88), error);
+                        }
                         ui.add_space(3.0);
                         if ui.button(self.t("Закрыть", "Close")).clicked() {
                             self.show_disk_properties = None;
                         }
+                        }
                     });
-                if !open {
+                if !open && self.active_request.is_none() {
                     self.show_disk_properties = None;
                 }
             } else {
@@ -1368,17 +1733,49 @@ impl DesktopApp {
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        let search = ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::F));
-        let all = ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::L));
-        let back = ctx.input(|i| i.modifiers.alt && i.key_pressed(egui::Key::ArrowLeft));
+        let modal_open = self.show_catalog_dialog
+            || self.show_export_dialog
+            || self.show_scan_dialog
+            || self.show_disk_properties.is_some();
+        if modal_open {
+            return;
+        }
+        // Use modifiers attached to the key event: the user can release Ctrl
+        // before the next frame, leaving the frame's final modifiers empty.
+        let (search, properties, all, back, cancel_scan) = ctx.input(|i| {
+            let has = |key, modifier: fn(egui::Modifiers) -> bool| {
+                i.events.iter().any(|event| {
+                    matches!(event,
+                    egui::Event::Key { key: pressed_key, pressed: true, modifiers, .. }
+                        if *pressed_key == key && modifier(*modifiers))
+                })
+            };
+            (
+                has(egui::Key::F, |m| m.command),
+                has(egui::Key::F2, |_| true) || has(egui::Key::Enter, |m| m.alt),
+                has(egui::Key::L, |m| m.command),
+                has(egui::Key::ArrowLeft, |m| m.alt),
+                has(egui::Key::Escape, |m| {
+                    !m.alt && !m.ctrl && !m.shift && !m.command
+                }),
+            )
+        });
         if all {
             self.navigate_disk(None, ctx);
         }
         if search {
-            self.navigate_search(ctx);
+            ctx.memory_mut(|memory| memory.request_focus(egui::Id::unique(SEARCH_INPUT_ID)));
+        }
+        if properties && self.active_request.is_none() {
+            if let Some(id) = self.selected_volume {
+                self.open_disk_properties(id);
+            }
         }
         if back {
             self.go_back(ctx);
+        }
+        if cancel_scan {
+            self.request_scan_cancel(ctx);
         }
     }
 }
@@ -1406,5 +1803,267 @@ impl eframe::App for DesktopApp {
         self.inspector(root, &ctx);
         self.results_table(root, &ctx);
         self.dialogs(&ctx);
+    }
+}
+
+#[cfg(test)]
+mod shortcut_tests {
+    use super::*;
+
+    #[test]
+    fn only_legacy_schema_failure_enables_shelf_fallback() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.active_request = Some(1);
+        app.apply_reply(crate::bridge::Reply { id:1, purpose:Purpose::DiskPreferences, response:json!({"ok":false,"error":{"code":"invalid_disk_properties","message":"unsafe store"}}) }, &ctx);
+        assert!(!app.legacy_shelf_editable);
+        app.active_request = Some(2);
+        app.apply_reply(
+            crate::bridge::Reply {
+                id: 2,
+                purpose: Purpose::DiskPreferences,
+                response: json!({"ok":false,"error":{"code":"schema_version","message":"legacy"}}),
+            },
+            &ctx,
+        );
+        assert!(app.legacy_shelf_editable);
+    }
+
+    #[test]
+    fn preferences_reply_keeps_shelf_labels_and_collision_ids_in_sync() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        for id in [1, 2] {
+            app.volumes.push(Volume {
+                id,
+                label: format!("Original {id}"),
+                root_path: String::new(),
+                entry_count: 0,
+                total_bytes: 0,
+            });
+        }
+        app.active_request = Some(7);
+        let item = |id, name| json!({"volume_id":id, "display_name":name, "shelf_label":"BOX-17", "model":"", "filesystem":"", "capacity_bytes":null, "note":"", "revision":1});
+        app.apply_reply(crate::bridge::Reply { id:7, purpose:Purpose::DiskPreferences, response:json!({"ok":true, "data":{"items":[item(1,"Local name"),item(2,"")],"collisions":[{"volume_ids":[1,2]}]}}) }, &ctx);
+        assert!(app.preferences_ready);
+        assert_eq!(app.display_name(&app.volumes[0]), "Local name");
+        assert_eq!(app.shelf.label(1), "BOX-17");
+        assert_eq!(app.shelf.collision_other_disks(1), vec![2]);
+        app.open_disk_properties(1);
+        assert_eq!(app.disk_draft.original_shelf, "BOX-17");
+    }
+
+    #[test]
+    fn rejected_scan_replaces_previous_status_and_keeps_dialog_open() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.db = Some("synthetic.sqlite".to_owned());
+        app.scan_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("missing-synthetic-scan-root-test")
+            .to_string_lossy()
+            .into_owned();
+        assert!(!Path::new(&app.scan_root).exists());
+        app.scan_label = "Synthetic".to_owned();
+        app.status = "Previous operation succeeded".to_owned();
+        app.show_scan_dialog = true;
+
+        app.start_scan(&ctx);
+
+        assert_eq!(app.status, "Операция отклонена");
+        assert!(app.error.is_some());
+        assert!(app.show_scan_dialog);
+        assert!(app.active_request.is_none());
+    }
+
+    #[test]
+    fn escape_cancels_only_a_registered_scan_and_respects_modals() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.scan_job_id = Some("synthetic-test-job".to_owned());
+        let input = || key_input(egui::Key::Escape, egui::Modifiers::default());
+        let mut output = ctx.run_pass(input(), |ctx| app.handle_shortcuts(ctx));
+        output.textures_delta.clear();
+        assert!(!app.scan_cancel_requested);
+        app.scan_registered = true;
+        app.show_export_dialog = true;
+        let mut output = ctx.run_pass(input(), |ctx| app.handle_shortcuts(ctx));
+        output.textures_delta.clear();
+        assert!(!app.scan_cancel_requested);
+        app.show_export_dialog = false;
+        let mut output = ctx.run_pass(input(), |ctx| app.handle_shortcuts(ctx));
+        output.textures_delta.clear();
+        assert!(app.scan_cancel_requested);
+        assert!(app.scan_cancel_request.is_some());
+    }
+
+    #[test]
+    fn rejected_export_replaces_previous_success_status() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.db = Some("synthetic.sqlite".to_owned());
+        app.export_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("Cargo.toml")
+            .to_string_lossy()
+            .into_owned();
+        app.status = "Export completed".to_owned();
+        app.show_export_dialog = true;
+
+        app.start_export(&ctx);
+
+        assert_eq!(app.status, "Операция отклонена");
+        assert!(app.error.is_some());
+        assert!(app.show_export_dialog);
+        assert!(app.active_request.is_none());
+    }
+
+    fn key_input(key: egui::Key, modifiers: egui::Modifiers) -> egui::RawInput {
+        egui::RawInput {
+            focused: true,
+            events: vec![
+                egui::Event::ModifiersChanged(modifiers),
+                egui::Event::Key {
+                    key,
+                    physical_key: Some(key),
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                },
+                egui::Event::Key {
+                    key,
+                    physical_key: Some(key),
+                    pressed: false,
+                    repeat: false,
+                    modifiers,
+                },
+                egui::Event::ModifiersChanged(egui::Modifiers::default()),
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn ctrl_f_focuses_search_without_discarding_navigation() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.query_input = "pending query".into();
+        app.route = Route::Folder {
+            volume_id: 7,
+            parent_id: Some(13),
+        };
+        app.offset = 250;
+        let route = app.route.clone();
+        let modifiers = egui::Modifiers {
+            ctrl: true,
+            command: true,
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(key_input(egui::Key::F, modifiers), |root| {
+            let ctx = root.ctx().clone();
+            app.handle_shortcuts(&ctx);
+            app.search_toolbar(root, &ctx);
+        });
+        output.textures_delta.clear();
+        assert_eq!(app.route, route);
+        assert_eq!(app.offset, 250);
+        assert_eq!(app.query_input, "pending query");
+        assert_eq!(
+            ctx.memory(|m| m.focused()),
+            Some(egui::Id::unique(SEARCH_INPUT_ID))
+        );
+    }
+
+    #[test]
+    fn released_modifiers_still_trigger_all_disks_and_back() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.selected_volume = Some(60);
+        app.query_input = "video".into();
+        let ctrl = egui::Modifiers {
+            ctrl: true,
+            command: true,
+            ..Default::default()
+        };
+        let mut output = ctx.run_pass(key_input(egui::Key::L, ctrl), |ctx| {
+            app.handle_shortcuts(ctx)
+        });
+        output.textures_delta.clear();
+        assert_eq!(app.selected_volume, None);
+        assert_eq!(
+            app.route,
+            Route::Search {
+                query: "video".into(),
+                volume_id: None
+            }
+        );
+
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        let original = Route::Search {
+            query: "video".into(),
+            volume_id: Some(60),
+        };
+        app.route = Route::Copies { entry_id: 9 };
+        app.history.push((original.clone(), 250));
+        let alt = egui::Modifiers {
+            alt: true,
+            ..Default::default()
+        };
+        let mut output = ctx.run_pass(key_input(egui::Key::ArrowLeft, alt), |ctx| {
+            app.handle_shortcuts(ctx)
+        });
+        output.textures_delta.clear();
+        assert_eq!(app.route, original);
+        assert_eq!(app.offset, 250);
+    }
+
+    fn selected_volume(app: &mut DesktopApp) {
+        app.selected_volume = Some(60);
+        app.volumes.push(Volume {
+            id: 60,
+            label: "Disk 60".to_owned(),
+            root_path: "synthetic".to_owned(),
+            entry_count: 1,
+            total_bytes: 1,
+        });
+    }
+
+    #[test]
+    fn alt_enter_opens_selected_disk_properties() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        selected_volume(&mut app);
+        let modifiers = egui::Modifiers {
+            alt: true,
+            ..Default::default()
+        };
+        let mut output = ctx.run_pass(key_input(egui::Key::Enter, modifiers), |ctx| {
+            app.handle_shortcuts(ctx)
+        });
+        output.textures_delta.clear();
+        assert_eq!(app.show_disk_properties, Some(60));
+    }
+
+    #[test]
+    fn f2_opens_selected_disk_properties_and_respects_modal_dialogs() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        selected_volume(&mut app);
+        let mut output = ctx.run_pass(
+            key_input(egui::Key::F2, egui::Modifiers::default()),
+            |ctx| app.handle_shortcuts(ctx),
+        );
+        output.textures_delta.clear();
+        assert_eq!(app.show_disk_properties, Some(60));
+
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        selected_volume(&mut app);
+        app.show_export_dialog = true;
+        let mut output = ctx.run_pass(
+            key_input(egui::Key::F2, egui::Modifiers::default()),
+            |ctx| app.handle_shortcuts(ctx),
+        );
+        output.textures_delta.clear();
+        assert_eq!(app.show_disk_properties, None);
     }
 }

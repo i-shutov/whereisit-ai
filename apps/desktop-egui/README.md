@@ -59,9 +59,12 @@ not perform physical USB identity pairing, CTF parsing or content-based matching
 
 ## Private shelf sticker labels (R6)
 
-The egui disk register and properties now read and write real operator-authored
-shelf labels through the pre-existing `atlas-service` `physical_shelf_labels`
-and `physical_shelf_label_set` API. Labels use the **same private sidecar
+The egui disk register and properties read and write operator-authored
+shelf labels in the existing `physical_shelf_labels` sidecar table. For v3
+catalogs, the `disk_preferences` service saves the sticker and extended user
+properties atomically with stale-edit checks. For supported older catalogs,
+a guarded shelf-only fallback validates the catalog and protects the source
+from sidecar aliasing. Labels use the **same private sidecar
 location and SQLite-scoped catalog identity** as the legacy native clients:
 `LOCALAPPDATA/AtlasCatalog/physical-volume-bindings.sqlite` on Windows,
 `~/Library/Application Support/AtlasCatalog/physical-volume-bindings.sqlite`

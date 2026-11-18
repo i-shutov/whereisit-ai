@@ -47,6 +47,7 @@ jobs:
           if test -f tools/storage_layout_experiment.py; then python3 tools/storage_layout_experiment.py --self-test; fi
       - run: bash -n apps/macos/build.sh apps/desktop-egui/package-preview-macos.sh installers/macos/package.sh installers/macos/smoke-package.sh installers/macos/verify-dmg.sh installers/macos/test-verify-dmg.sh
       - run: python3 -m unittest discover -s tools/qa -p 'test_egui_preview_packaging.py' -v
+      - run: python3 -m unittest discover -s tools/qa -p 'test_win10_egui_host_qa.py' -v
       - run: bash installers/macos/test-verify-dmg.sh
   windows:
     needs: test
@@ -72,6 +73,21 @@ jobs:
       - name: Build isolated egui Windows QA preview ZIP
         shell: pwsh
         run: ./apps/desktop-egui/package-preview-windows.ps1
+      - name: Windows PowerShell 5.1 native CLI transport regression
+        shell: powershell
+        run: ./tools/qa/windows10-egui/Test-CliTransport.ps1 -Cli ./target/release/atlas.exe
+      - name: Offline synthetic egui integration smoke (headless Windows runner)
+        shell: powershell
+        run: |
+          ./dist/qa-egui/windows-x64/Invoke-WhereIsItEguiQA.ps1 -EvidenceRoot "$env:RUNNER_TEMP/WhereIsItAI-Egui-QA" -DiskCount 6 -SkipGui
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: WhereIsItAI-egui-qa-windows-synthetic-evidence
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/WhereIsItAI-Egui-QA/Run-*/qa_report.json
+            ${{ runner.temp }}/WhereIsItAI-Egui-QA/Run-*/qa_report.md
       - uses: actions/upload-artifact@v4
         with:
           name: WhereIsItAI-egui-qa-windows-x64

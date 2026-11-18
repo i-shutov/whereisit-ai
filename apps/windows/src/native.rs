@@ -1348,11 +1348,7 @@ mod current_page_register_tests {
 
 // Register audit works on an OS-probed, explicitly paired catalog ID only.
 // Historical mount paths, catalog labels and shelf tags cannot assert presence.
-fn audited_physical_state<'a>(
-    disk: i64,
-    states: &'a HashMap<i64, String>,
-    probe_ok: bool,
-) -> &'a str {
+fn audited_physical_state(disk: i64, states: &HashMap<i64, String>, probe_ok: bool) -> &str {
     if !probe_ok {
         return "unverified";
     }
@@ -3013,7 +3009,10 @@ mod physical_probe_freshness_and_pairing_tests {
             description: "USB at first mount".into(),
             mount_roots: vec!["first-mount".into()],
         };
-        assert!(unique_matching_live_mount(&candidate, &[candidate.clone()]));
+        assert!(unique_matching_live_mount(
+            &candidate,
+            std::slice::from_ref(&candidate)
+        ));
         assert!(!unique_matching_live_mount(&candidate, &[]));
         let clone = MountedPhysicalVolume {
             description: "clone at second mount".into(),
@@ -3052,6 +3051,7 @@ fn physical_state_label(state: &str) -> &'static str {
 // Preserve readable columns while displaying the USB disk locator at standard
 // laptop resolutions. The full recorded path remains in the inspector when its
 // redundant table column is collapsed.
+#[cfg(test)]
 fn explorer_geometry(window_width: i32) -> (i32, i32, i32) {
     explorer_geometry_for_width(window_width, 282, true)
 }
@@ -3090,6 +3090,7 @@ fn explorer_geometry_with_sidebar(
     };
     (sidebar, locator_width, file_width, path_column_width)
 }
+#[cfg(test)]
 fn explorer_geometry_for_width(
     window_width: i32,
     requested_locator: i32,
@@ -3134,6 +3135,7 @@ fn result_column_widths(file_width: i32, locator_visible: bool) -> [i32; 7] {
     }
 }
 
+#[cfg(test)]
 fn locator_splitter_hit_test(
     window_width: i32,
     window_height: i32,
@@ -5875,7 +5877,7 @@ impl App {
                         group,
                         &self.shelf_labels,
                         &safe_states,
-                        warning != "",
+                        !warning.is_empty(),
                     )
                 } else {
                     format!("#{disk_id} • candidate data unavailable")
@@ -6311,7 +6313,6 @@ impl App {
         } else {
             self.status("Pairing refused: disk is already bound, ambiguous, or OS identity changed. Unpair explicitly to replace.");
         }
-        return;
     }
 
     unsafe fn unpair_selected_physical_disk(&mut self) {

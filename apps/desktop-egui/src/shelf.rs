@@ -77,14 +77,15 @@ impl ShelfContext {
         })
     }
 
-    pub fn save_request(&self, volume_id: i64, label: &str) -> Value {
+    pub fn save_request(&self, db: &str, volume_id: i64, label: &str, expected: &str) -> Value {
         json!({
-            "op":"physical_shelf_label_set",
+            "op":"disk_preferences_legacy_shelf_set", "db":db,
             "user_store":self.user_store,
             "catalog_key":self.catalog_key,
             "platform":self.platform,
             "volume_id":volume_id,
             "shelf_label":label,
+            "expected_shelf_label":expected,
             "confirmed":true,
             "observed_ids":[],
             "probe_ok":false,
@@ -181,6 +182,12 @@ mod tests {
         let catalog = tmp.path().join("catalog.sqlite");
         let init = call(json!({"op":"init","db":catalog}));
         assert_eq!(init["ok"], true, "{init}");
+        let root = tmp.path().join("synthetic");
+        std::fs::create_dir(&root).unwrap();
+        for label in ["one", "two"] {
+            let scan = call(json!({"op":"scan", "db":catalog, "root":root, "label":label}));
+            assert_eq!(scan["ok"], true, "{scan}");
+        }
         let sqlite_before = std::fs::read(&catalog).unwrap();
 
         let ctx = ShelfContext {
@@ -195,10 +202,11 @@ mod tests {
         let no_sticker = call(ctx.list_request(&[1, 2]));
         assert_eq!(no_sticker["ok"], true, "{no_sticker}");
         assert!(no_sticker["data"]["items"].as_array().unwrap().is_empty());
-        let save = call(ctx.save_request(1, "BOX-17"));
+        let db = catalog.to_str().unwrap();
+        let save = call(ctx.save_request(db, 1, "BOX-17", ""));
         assert_eq!(save["ok"], true, "{save}");
         assert_eq!(save["data"]["saved"], true);
-        let other = call(ctx.save_request(2, "BOX-17"));
+        let other = call(ctx.save_request(db, 2, "BOX-17", ""));
         assert_eq!(other["ok"], true, "{other}");
         let response = call(ctx.list_request(&[1, 2]));
         assert_eq!(response["ok"], true, "{response}");
@@ -216,7 +224,7 @@ mod tests {
         assert_eq!(status["data"]["items"][0]["state"], "unverified");
         assert_eq!(status["data"]["items"][1]["state"], "unverified");
 
-        let clear = call(ctx.save_request(1, ""));
+        let clear = call(ctx.save_request(db, 1, "", "BOX-17"));
         assert_eq!(clear["ok"], true);
         assert_eq!(
             ShelfSnapshot::parse(&call(ctx.list_request(&[1, 2]))["data"], &[1, 2])

@@ -413,6 +413,7 @@ dependencies = [
  "ctf-format",
  "parquet",
  "rusqlite",
+ "same-file",
  "serde",
  "serde_json",
  "sha2",
