@@ -5,6 +5,7 @@ Windows 10 Pro, egui debug build with opt-in `qa-screenshots`, synthetic SQLite 
 | State | Native evidence | Reference / limitations |
 |---|---|---|
 | 62 generated volumes, page 1 (1–250) | [egui](pr58-egui-atlas/egui-62-disks-first-page.png) | PR58 pair not yet captured |
+| Same register in light theme | [egui](pr58-egui-atlas/egui-light-62-disks.png) | Toggled via keyboard; no theme persistence claim |
 | Global search, two synthetic disks | [egui](pr58-egui-atlas/egui-global-shared-film.png) | query `shared-film`, two records; exact-name/size candidates are not byte evidence |
 | Selected result / inspector | [egui](pr58-egui-atlas/egui-inspector.png) | `clip-001` generated name, no private data |
 | Containing folder | [egui](pr58-egui-atlas/egui-containing-folder.png) | selected file restored on the first folder page; Back was verified through accessibility state |
