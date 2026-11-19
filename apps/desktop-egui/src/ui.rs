@@ -13,6 +13,8 @@ use std::time::{Duration, Instant};
 const PAGE_LIMIT: u64 = 250;
 const SEARCH_INPUT_ID: &str = "global_search_input";
 const DISK_NAME_INPUT_ID: &str = "disk_local_name_input";
+const LANGUAGE_SETTING: &str = "whereisit.language.v1";
+const THEME_SETTING: &str = "whereisit.theme.v1";
 type HistoryEntry = (Route, u64, Option<Entry>, Option<i64>, f32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,7 +125,19 @@ pub struct DesktopApp {
 
 impl DesktopApp {
     pub fn new(cc: &eframe::CreationContext<'_>, startup_catalog: Option<String>) -> Self {
-        Self::with_context(&cc.egui_ctx, startup_catalog)
+        let mut app = Self::with_context(&cc.egui_ctx, startup_catalog);
+        app.restore_appearance(cc.storage);
+        app
+    }
+
+    fn restore_appearance(&mut self, storage: Option<&dyn eframe::Storage>) {
+        if let Some(storage) = storage {
+            self.lang = match storage.get_string(LANGUAGE_SETTING).as_deref() {
+                Some("en") => Language::English,
+                _ => Language::Russian,
+            };
+            self.dark = !matches!(storage.get_string(THEME_SETTING).as_deref(), Some("light"));
+        }
     }
 
     fn with_context(ctx: &egui::Context, startup_catalog: Option<String>) -> Self {
@@ -1872,6 +1886,25 @@ impl DesktopApp {
 }
 
 impl eframe::App for DesktopApp {
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        storage.set_string(
+            LANGUAGE_SETTING,
+            match self.lang {
+                Language::Russian => "ru",
+                Language::English => "en",
+            }
+            .to_owned(),
+        );
+        storage.set_string(
+            THEME_SETTING,
+            if self.dark { "dark" } else { "light" }.to_owned(),
+        );
+    }
+
+    fn persist_egui_memory(&self) -> bool {
+        false
+    }
+
     fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = root.ctx().clone();
         #[cfg(feature = "qa-screenshots")]
@@ -2203,4 +2236,45 @@ mod shortcut_tests {
         output.textures_delta.clear();
         assert_eq!(app.show_disk_properties, None);
     }
+}
+#[cfg(test)]
+#[derive(Default)]
+struct MemoryStorage(std::collections::HashMap<String, String>);
+#[cfg(test)]
+impl eframe::Storage for MemoryStorage {
+    fn get_string(&self, key: &str) -> Option<String> {
+        self.0.get(key).cloned()
+    }
+    fn set_string(&mut self, key: &str, value: String) {
+        self.0.insert(key.to_owned(), value);
+    }
+    fn remove_string(&mut self, key: &str) {
+        self.0.remove(key);
+    }
+    fn flush(&mut self) {}
+}
+
+#[test]
+fn appearance_round_trip_saves_only_language_and_theme() {
+    let ctx = egui::Context::default();
+    let mut app = DesktopApp::with_context(&ctx, None);
+    app.lang = Language::English;
+    app.dark = false;
+    app.query_input = "private search".into();
+    app.path_input = "private path".into();
+    let mut storage = MemoryStorage::default();
+    eframe::App::save(&mut app, &mut storage);
+    assert_eq!(storage.0.len(), 2);
+    assert!(!eframe::App::persist_egui_memory(&app));
+    let mut restarted = DesktopApp::with_context(&ctx, None);
+    restarted.restore_appearance(Some(&storage));
+    assert!(matches!(restarted.lang, Language::English));
+    assert!(!restarted.dark);
+    assert!(restarted.query_input.is_empty());
+    assert!(restarted.path_input.is_empty());
+    eframe::Storage::set_string(&mut storage, LANGUAGE_SETTING, "unknown".into());
+    eframe::Storage::set_string(&mut storage, THEME_SETTING, "unknown".into());
+    restarted.restore_appearance(Some(&storage));
+    assert!(matches!(restarted.lang, Language::Russian));
+    assert!(restarted.dark);
 }

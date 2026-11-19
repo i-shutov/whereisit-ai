@@ -8,7 +8,7 @@
 При отсутствии отдельного файла в архиве остаётся выражение лицензии
 из его манифеста. Наличие файла не заменяет юридического анализа.
 
-SHA-256 Cargo.lock: `e734d2c4e9aba63d04570ff27c877497cf1a832a92e442730fdec9f54050802c`.
+SHA-256 Cargo.lock: `69ab7651285a5ec3d243c84589006f6e6edc48c7f7d382b48b9167120d48a88f`.
 
 ## Встроенный SQLite
 
@@ -125,6 +125,7 @@ rusqlite 0.43.0 + libsqlite3-sys 0.40.0
 | enum-map-derive | 1.0.1 | `MIT OR Apache-2.0` | Отдельный файл в архиве отсутствует |
 | enumflags2 | 0.7.12 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/enumflags2-0.7.12/LICENSE-APACHE), [LICENSE-MIT](licenses/enumflags2-0.7.12/LICENSE-MIT) |
 | enumflags2_derive | 0.7.12 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/enumflags2_derive-0.7.12/LICENSE-APACHE), [LICENSE-MIT](licenses/enumflags2_derive-0.7.12/LICENSE-MIT) |
+| enumn | 0.1.14 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/enumn-0.1.14/LICENSE-APACHE), [LICENSE-MIT](licenses/enumn-0.1.14/LICENSE-MIT) |
 | epaint | 0.37.0 | `MIT OR Apache-2.0` | Отдельный файл в архиве отсутствует |
 | epaint_default_fonts | 0.37.0 | `(MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0` | Отдельный файл в архиве отсутствует |
 | equivalent | 1.0.3 | `Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/equivalent-1.0.3/LICENSE-APACHE), [LICENSE-MIT](licenses/equivalent-1.0.3/LICENSE-MIT) |
@@ -311,6 +312,7 @@ rusqlite 0.43.0 + libsqlite3-sys 0.40.0
 | redox_syscall | 0.5.18 | `MIT` | [LICENSE](licenses/redox_syscall-0.5.18/LICENSE) |
 | redox_syscall | 0.9.5 | `MIT` | [LICENSE](licenses/redox_syscall-0.9.5/LICENSE) |
 | renderdoc-sys | 1.1.0 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/renderdoc-sys-1.1.0/LICENSE-APACHE), [LICENSE-MIT](licenses/renderdoc-sys-1.1.0/LICENSE-MIT) |
+| ron | 0.12.3 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/ron-0.12.3/LICENSE-APACHE), [LICENSE-MIT](licenses/ron-0.12.3/LICENSE-MIT) |
 | roxmltree | 0.21.2 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/roxmltree-0.21.2/LICENSE-APACHE), [LICENSE-MIT](licenses/roxmltree-0.21.2/LICENSE-MIT) |
 | rsqlite-vfs | 0.2.0 | `MIT` | Отдельный файл в архиве отсутствует |
 | rusqlite | 0.43.0 | `MIT` | [LICENSE](licenses/rusqlite-0.43.0/LICENSE) |
@@ -381,6 +383,7 @@ rusqlite 0.43.0 + libsqlite3-sys 0.40.0
 | ttf-parser | 0.25.1 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/ttf-parser-0.25.1/LICENSE-APACHE), [LICENSE-MIT](licenses/ttf-parser-0.25.1/LICENSE-MIT) |
 | twox-hash | 2.1.5 | `MIT` | [LICENSE.txt](licenses/twox-hash-2.1.5/LICENSE.txt) |
 | type-map | 0.5.1 | `MIT/Apache-2.0` | [LICENSE-APACHE](licenses/type-map-0.5.1/LICENSE-APACHE), [LICENSE-MIT](licenses/type-map-0.5.1/LICENSE-MIT) |
+| typeid | 1.0.3 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/typeid-1.0.3/LICENSE-APACHE), [LICENSE-MIT](licenses/typeid-1.0.3/LICENSE-MIT) |
 | typenum | 1.20.1 | `MIT OR Apache-2.0` | [LICENSE](licenses/typenum-1.20.1/LICENSE), [LICENSE-APACHE](licenses/typenum-1.20.1/LICENSE-APACHE), [LICENSE-MIT](licenses/typenum-1.20.1/LICENSE-MIT) |
 | uds_windows | 1.2.1 | `MIT` | [LICENSE](licenses/uds_windows-1.2.1/LICENSE) |
 | unicode-general-category | 1.1.0 | `Apache-2.0` | [LICENSE](licenses/unicode-general-category-1.1.0/LICENSE) |

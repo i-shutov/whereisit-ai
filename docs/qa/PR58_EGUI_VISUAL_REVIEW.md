@@ -5,7 +5,7 @@ Windows 10 Pro, egui debug build with opt-in `qa-screenshots`, synthetic SQLite 
 | State | Native evidence | Reference / limitations |
 |---|---|---|
 | 62 generated volumes, page 1 (1–250) | [egui](pr58-egui-atlas/egui-62-disks-first-page.png) | PR58 pair not yet captured |
-| Same register in light theme | [egui](pr58-egui-atlas/egui-light-62-disks.png) | Toggled via keyboard; no theme persistence claim |
+| Same register in light theme | [egui](pr58-egui-atlas/egui-light-62-disks.png), [English/light after restart](pr58-egui-atlas/egui-en-light-after-restart.png) | Keyboard toggle and isolated-settings restart passed; no PR58 pair |
 | Global search, two synthetic disks | [egui](pr58-egui-atlas/egui-global-shared-film.png) | query `shared-film`, two records; exact-name/size candidates are not byte evidence |
 | Selected result / inspector | [egui](pr58-egui-atlas/egui-inspector.png) | `clip-001` generated name, no private data |
 | Containing folder | [egui](pr58-egui-atlas/egui-containing-folder.png) | selected file restored on the first folder page; Back was verified through accessibility state |
@@ -14,8 +14,10 @@ Windows 10 Pro, egui debug build with opt-in `qa-screenshots`, synthetic SQLite 
 | File beyond page 1 | [egui](pr58-egui-atlas/egui-large-folder-selection.png) | `page-270` selected on folder page 251–301 and Back verified |
 | Scan | [dialog](pr58-egui-atlas/egui-scan-dialog.png), [invalid root](pr58-egui-atlas/egui-scan-invalid-root.png), [cancelled](pr58-egui-atlas/egui-scan-cancelled.png) | progress 51,920 observed in accessibility output, but not captured in a PNG |
 | Local search, disk properties, scan dialog/progress/cancel/error, export/overwrite | NOT CAPTURED | prior PR #68 evidence does not substitute for an atlas of this build |
-| PR58 paired screens and analytical screens | BLOCKED | reference app source reviewed, runtime dependencies not installed; no paired screenshots claimed |
+| PR58 paired screens and analytical screens | BLOCKED | reference observed in isolated pnpm runtime, but reference PNG capture failed; no paired screenshots claimed |
 
 Update 2026-11-19: the reference search workspace was run and visually observed using an isolated pnpm install without the Bun lockfile; no reference PNG was saved. The source and runtime are a simulated UX reference and not evidence of real disk data or analytics.
+
+Further capture attempt: an isolated prototype copy used `html2canvas` to render the viewport to a loopback-only PNG sink. It failed on unsupported `oklab`/`oklch` colors; a conversion attempt made the browser tab unresponsive. No resulting PNG is accepted as evidence. This is separate from the working native egui renderer capture and does not prove reference parity.
 
 Observed navigation A/B: Ctrl+F, type `clip-001`, Enter; reverse Tab to result, Enter; reverse Tab to “Open containing folder”, Enter; Alt+Left. Search, selected record and inspector returned. Pointer/click count and reaction times were not measured. Windows Graphics Capture still timed out, and mouse input reported unavailable geometry; two automation calls stalled. No resolution workaround was applied. This renderer capture solves the PNG contamination problem, not the mouse-control problem or visual parity.
