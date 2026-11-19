@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 const PAGE_LIMIT: u64 = 250;
 const SEARCH_INPUT_ID: &str = "global_search_input";
 const DISK_NAME_INPUT_ID: &str = "disk_local_name_input";
+type HistoryEntry = (Route, u64, Option<Entry>, Option<i64>, f32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Language {
@@ -82,11 +83,14 @@ pub struct DesktopApp {
     shelf_editor: String,
     legacy_shelf_editable: bool,
     route: Route,
-    history: Vec<(Route, u64, Option<Entry>, Option<i64>)>,
+    history: Vec<HistoryEntry>,
     page: Page,
     offset: u64,
     selected: Option<Entry>,
     restore_selection: Option<Entry>,
+    reveal_selected: bool,
+    results_scroll: f32,
+    restore_scroll: Option<f32>,
     selected_volume: Option<i64>,
     disk_filter: String,
     show_catalog_dialog: bool,
@@ -147,6 +151,9 @@ impl DesktopApp {
             offset: 0,
             selected: None,
             restore_selection: None,
+            reveal_selected: false,
+            results_scroll: 0.0,
+            restore_scroll: None,
             selected_volume: None,
             disk_filter: String::new(),
             show_catalog_dialog: false,
@@ -622,6 +629,7 @@ impl DesktopApp {
         }
         self.history.clear();
         self.restore_selection = None;
+        self.reveal_selected = false;
         self.offset = 0;
         self.selected = None;
         self.route = Route::Search {
@@ -651,6 +659,7 @@ impl DesktopApp {
             self.offset,
             self.selected.clone(),
             self.selected_volume,
+            self.results_scroll,
         ));
         self.restore_selection = None;
         self.offset = 0;
@@ -675,6 +684,7 @@ impl DesktopApp {
                 self.offset,
                 self.selected.clone(),
                 self.selected_volume,
+                self.results_scroll,
             ));
             self.restore_selection = None;
             self.offset = 0;
@@ -688,7 +698,9 @@ impl DesktopApp {
         if self.active_request.is_some() {
             return;
         }
-        if let Some((route, offset, selection, selected_volume)) = self.history.pop() {
+        if let Some((route, offset, selection, selected_volume, scroll)) = self.history.pop() {
+            self.reveal_selected = false;
+            self.restore_scroll = Some(scroll);
             self.route = route;
             self.offset = offset;
             self.selected = None;
@@ -707,6 +719,7 @@ impl DesktopApp {
             self.offset,
             self.selected.clone(),
             self.selected_volume,
+            self.results_scroll,
         ));
         self.route = Route::Folder {
             volume_id: entry.volume_id,
@@ -716,7 +729,19 @@ impl DesktopApp {
         self.offset = 0;
         self.selected = None;
         self.restore_selection = Some(entry.clone());
-        self.load_page(ctx);
+        self.reveal_selected = true;
+        if let Some(db) = self.db.clone() {
+            self.queue(
+                Purpose::Page {
+                    route: self.route.clone(),
+                },
+                json!({
+                    "op":"children_focused", "db":db, "volume_id":entry.volume_id,
+                    "parent_id":entry.parent_id, "entry_id":entry.id, "limit":PAGE_LIMIT
+                }),
+                ctx,
+            );
+        }
     }
 
     fn apply_reply(&mut self, reply: crate::bridge::Reply, ctx: &egui::Context) {
@@ -1245,6 +1270,7 @@ impl DesktopApp {
                                         self.offset,
                                         self.selected.clone(),
                                         self.selected_volume,
+                                        self.results_scroll,
                                     ));
                                     self.restore_selection = None;
                                     self.route = Route::Folder {
@@ -1430,7 +1456,7 @@ impl DesktopApp {
             let selection = self.selected.as_ref().map(|e| e.id);
             let mut chosen: Option<Entry> = None;
             let mut open_folder: Option<Entry> = None;
-            TableBuilder::new(ui)
+            let mut table = TableBuilder::new(ui)
                 .striped(true)
                 .resizable(true)
                 .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
@@ -1438,7 +1464,19 @@ impl DesktopApp {
                 .column(Column::remainder().at_least(180.0))
                 .column(Column::initial(86.0).at_least(72.0))
                 .column(Column::initial(92.0).at_least(80.0))
-                .column(Column::initial(235.0).at_least(90.0))
+                .column(Column::initial(235.0).at_least(90.0));
+            if self.reveal_selected {
+                if let Some(index) = rows.iter().position(|row| Some(row.id) == selection) {
+                    table = table.scroll_to_row(index, Some(egui::Align::Center));
+                    self.reveal_selected = false;
+                }
+            }
+            if self.active_request.is_none() {
+                if let Some(scroll) = self.restore_scroll.take() {
+                    table = table.vertical_scroll_offset(scroll);
+                }
+            }
+            let output = table
                 .header(24.0, |mut header| {
                     header.col(|ui| {
                         ui.strong("Disk");
@@ -1498,6 +1536,7 @@ impl DesktopApp {
                         });
                     });
                 });
+            self.results_scroll = output.state.clamped_offset().y;
             if let Some(entry) = chosen {
                 self.selected = Some(entry);
             }
@@ -2057,7 +2096,8 @@ mod shortcut_tests {
             volume_id: Some(60),
         };
         app.route = Route::Copies { entry_id: 9 };
-        app.history.push((original.clone(), 250, None, Some(60)));
+        app.history
+            .push((original.clone(), 250, None, Some(60), 0.0));
         let alt = egui::Modifiers {
             alt: true,
             ..Default::default()
@@ -2083,6 +2123,7 @@ mod shortcut_tests {
         };
         app.route = original.clone();
         app.offset = 250;
+        app.results_scroll = 320.0;
         app.selected = Some(entry.clone());
         app.navigate_containing_folder(&entry, &ctx);
         assert_eq!(
@@ -2097,6 +2138,7 @@ mod shortcut_tests {
         assert_eq!(app.route, original);
         assert_eq!(app.offset, 250);
         assert_eq!(app.selected_volume, None);
+        assert_eq!(app.restore_scroll, Some(320.0));
         app.active_request = Some(1);
         app.apply_reply(
             crate::bridge::Reply {
