@@ -145,6 +145,19 @@ pub struct DesktopApp {
 }
 
 impl DesktopApp {
+    fn dialog_open(&self) -> bool {
+        self.show_catalog_dialog
+            || self.show_export_dialog
+            || self.show_scan_dialog
+            || self.show_disk_properties.is_some()
+    }
+
+    fn protect_background(&self, ui: &mut egui::Ui) {
+        if self.dialog_open() {
+            ui.disable();
+        }
+    }
+
     pub fn new(cc: &eframe::CreationContext<'_>, startup_catalog: Option<String>) -> Self {
         let mut app = Self::with_context(&cc.egui_ctx, startup_catalog);
         app.restore_appearance(cc.storage);
@@ -1059,6 +1072,7 @@ impl DesktopApp {
 
     fn menu(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
         egui::Panel::top("menu").show(root, |ui| {
+            self.protect_background(ui);
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.strong("WhereIsIt AI");
                 ui.separator();
@@ -1162,6 +1176,7 @@ impl DesktopApp {
 
     fn search_toolbar(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
         egui::Panel::top("search_toolbar").show(root, |ui| {
+            self.protect_background(ui);
             ui.add_space(5.0);
             ui.horizontal(|ui| {
                 let back = ui.add_enabled(
@@ -1217,6 +1232,7 @@ impl DesktopApp {
             .min_size(180.0)
             .max_size(420.0)
             .show(root, |ui| {
+                self.protect_background(ui);
                 ui.horizontal(|ui| {
                     ui.strong(self.t("Диски каталога", "Catalog disks"));
                     ui.label(RichText::new(self.volumes.len().to_string()).weak());
@@ -1329,6 +1345,7 @@ impl DesktopApp {
             .min_size(95.0)
             .max_size(320.0)
             .show(root, |ui| {
+                self.protect_background(ui);
                 ui.horizontal(|ui| {
                     ui.strong(self.t("Инспектор", "Inspector"));
                     ui.separator();
@@ -1393,6 +1410,7 @@ impl DesktopApp {
 
     fn results_table(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
         egui::CentralPanel::default().show(root, |ui| {
+            self.protect_background(ui);
             if self.db.is_none() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(75.0);
@@ -1840,11 +1858,7 @@ impl DesktopApp {
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        let modal_open = self.show_catalog_dialog
-            || self.show_export_dialog
-            || self.show_scan_dialog
-            || self.show_disk_properties.is_some();
-        if modal_open {
+        if self.dialog_open() {
             return;
         }
         // Use modifiers attached to the key event: the user can release Ctrl
@@ -1937,6 +1951,36 @@ impl eframe::App for DesktopApp {
 #[cfg(test)]
 mod shortcut_tests {
     use super::*;
+
+    #[test]
+    fn dialogs_disable_background_controls_until_closed() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        for dialog in 0..4 {
+            app.show_catalog_dialog = dialog == 0;
+            app.show_export_dialog = dialog == 1;
+            app.show_scan_dialog = dialog == 2;
+            app.show_disk_properties = (dialog == 3).then_some(1);
+            let mut output = ctx.run_pass(egui::RawInput::default(), |ctx| {
+                egui::Area::new(egui::Id::unique("background-test")).show(ctx, |ui| {
+                    app.protect_background(ui);
+                    assert!(!ui.button("Open another dialog").enabled());
+                });
+            });
+            output.textures_delta.clear();
+        }
+        app.show_catalog_dialog = false;
+        app.show_export_dialog = false;
+        app.show_scan_dialog = false;
+        app.show_disk_properties = None;
+        let mut output = ctx.run_pass(egui::RawInput::default(), |ctx| {
+            egui::Area::new(egui::Id::unique("background-test")).show(ctx, |ui| {
+                app.protect_background(ui);
+                assert!(ui.button("Open another dialog").enabled());
+            });
+        });
+        output.textures_delta.clear();
+    }
 
     #[test]
     fn only_legacy_schema_failure_enables_shelf_fallback() {
