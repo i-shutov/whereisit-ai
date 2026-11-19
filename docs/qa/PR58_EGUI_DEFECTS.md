@@ -8,6 +8,7 @@
 | UX-03 | P1 | Sidebar uses two lines per disk, lacks sorting and free-space visualization. | OPEN; compare with PR58 without inventing disk capacity. |
 | UX-04 | P1 | Archive slices, sunburst, local analyzer and category UI are absent. | OPEN; service-backed vertical slices required; prototype analytics are simulated. |
 | UX-05 | P0 | Containing-folder navigation lost the selected file when it was beyond the first page. Back scroll position was not restored. | FIXED: snapshot-consistent service rank/page and selected-row reveal; GUI verified item 270 and Back. Back scroll restoration is implemented and unit checked, but actual scrolled-position GUI verification remains OPEN. |
-| QA-02 | P1 | No paired PR58/egui visual atlas, complete mouse/timing or DPI/theme comparison. | OPEN; PR58 runtime dependencies unavailable during this block, system DPI unchanged. |
+| QA-02 | P1 | No paired PR58/egui visual atlas, complete mouse/timing or DPI/theme comparison. | OPEN; prototype was subsequently viewed with an isolated pnpm install, but reference PNGs remain unsaved; system DPI unchanged. |
+| UX-06 | P1 | Language and theme revert to Russian and dark on startup. | OPEN; default initialization confirmed in source; current-session light theme toggle verified. |
 
 Separate future research: video-header plugin, sparse/full hash match levels and asserted throughput have no validated real implementation in this audit; do not present the prototype's numbers as measured. Stable 1.0 remains NO-GO.

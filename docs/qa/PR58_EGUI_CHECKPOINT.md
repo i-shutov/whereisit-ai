@@ -13,7 +13,7 @@ Base `ddd9215b0926c5e74482a3cbf7f10c229a66fb88`; branch `qa/pr58-egui-parity-win
 
 ## Remaining work
 
-Paired PR58/reference atlas; GUI JSON/Parquet; pointer movement and timing; language and theme comparisons; small-window and DPI modes within owner constraints; measured scroll restoration; categories/analytics. See matrix and defects. USB hardware intentionally excluded. Full PR58 parity and stable 1.0 are **not accepted**.
+Paired PR58/reference atlas; pointer movement and timing; language and theme comparisons and persistence; small-window and DPI modes within owner constraints; measured scroll restoration; categories/analytics. See matrix and defects. USB hardware intentionally excluded. Full PR58 parity and stable 1.0 are **not accepted**.
 
 ## Continuation — 2026-11-19
 
@@ -27,3 +27,5 @@ Those changes were committed as `684ff551`; [exact-head CI #463](https://github.
 ## Subsequent theme check
 
 On `684ff551`, keyboard navigation via View → Dark mode switched the native app to light mode; [renderer image](pr58-egui-atlas/egui-light-62-disks.png) was reviewed and contains only synthetic data. WGC again returned `FrameArrived timed out`; mouse navigation, full RU/EN comparison, theme persistence and reference screenshots remain unverified. This is not a completed paired atlas or full visual acceptance.
+
+GUI JSON and Parquet continuation: using the same binary from `684ff551` (subsequent `048b41e2` changes only QA documentation and an image), exported the generated 482-entry catalog through the native dialogs. Both reported 482 rows; JSON was parsed independently and contained 482 entries, and an isolated DuckDB read counted 482 Parquet rows. Raw output and private paths remain local. CSV/no-clobber is recorded in the preceding PR comment. Source inspection shows theme and language initialize to dark and Russian at startup; preference persistence is not implemented. Only the current-session light toggle was visually verified.

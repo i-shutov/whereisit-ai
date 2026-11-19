@@ -14,8 +14,8 @@ Baseline main `ddd9215b0926c5e74482a3cbf7f10c229a66fb88`; PR #58 reference code 
 | Category browsing/editing | category service exists | No corresponding egui UI in inspected client | MISSING / P1 |
 | Metadata duplicate candidates | `copy_candidates`, exact normalized name+size | GUI and service other-disk result verified on two synthetic disks; Back restored original selection; no claim of byte equality | PARTIAL / P0 |
 | Scan, progress, Esc and rollback | `scan`, `scan_progress`, `scan_cancel` | Continuation GUI observed 51,920 entries and cancelled; 62 volumes/482 entries and quick_check=ok afterwards; progress PNG and exact-head hosted GUI retest pending | PARTIAL / P0 |
-| Export CSV/JSON/Parquet, no overwrite | `export_*`, scoped search/folder, `overwrite:false` | Prior hosted bundle passed synthetic runner; current-head GUI tests and screenshots pending; candidate export disabled | PARTIAL / P1 |
-| RU/EN, light/dark | language flag and egui visuals | Controls exist; neither persistence nor full side-by-side theme/localization comparison verified here | PARTIAL / P1 |
+| Export CSV/JSON/Parquet, no overwrite | `export_*`, scoped search/folder, `overwrite:false` | GUI CSV/no-clobber, JSON and Parquet passed on 482 synthetic entries; JSON and Parquet independently counted; screenshots with private output paths withheld; candidate export disabled | PARTIAL / P1 |
+| RU/EN, light/dark | language flag and egui visuals | Light toggle verified in current session; startup defaults are Russian/dark, preference persistence is not implemented; full bilingual comparison remains open | PARTIAL / P1 |
 | Keyboard control | Ctrl+F, Ctrl+L, Alt+Left, F2, Alt+Enter, Esc | Keyboard search/result/inspector/Back exercised; mouse timing/path blocked by WGC geometry; full traversal remains | PARTIAL / P1 |
 | Archive slices, sunburst | `ArchiveSlicesView`, `VolumeSunburstView` in prototype | No corresponding native screen or live aggregate binding | MISSING / P1 |
 | Local analyzer and review-only comparison | `LocalDiskAnalyzer` prototype only | No native equivalent; no backup or delete claim | MISSING / P1 |
