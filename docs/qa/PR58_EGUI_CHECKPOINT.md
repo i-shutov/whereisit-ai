@@ -36,3 +36,10 @@ GUI JSON and Parquet continuation: using the same binary from `684ff551` (subseq
 - PASS locally: workspace tests, `cargo fmt --all -- --check`, strict workspace Clippy and strict desktop Clippy with `qa-screenshots`. Dependency notices were regenerated and verified against the lockfile.
 - OPEN UX-07: a pre-existing status string remained Russian immediately after switching to English; after restart the status was English. Full bilingual GUI acceptance remains incomplete.
 - BLOCKED: paired prototype/egui atlas. An isolated prototype reference capture failed on unsupported color functions; a conversion attempt stalled the browser tab. No reference PNG is claimed. Pointer geometry remains unavailable; no system display settings were changed. Other remaining items are listed in the matrix and defects.
+
+## Reference capture and status-language continuation — 2026-11-19
+
+- PASS: actual prototype browser screenshots were captured and saved via a temporary loopback-only image sink, then converted from the returned JPEG to PNG. Six reference images are paired with native egui screenshots in the visual review; fixtures and viewport sizes differ and prototype values are simulated. PNGs were inspected for private data.
+- PASS: GUI switched RU → EN → RU while a `1–250` result status was already displayed; the same status changed languages immediately. A regression test covers page and export responses, numeric values and an export filename. This was a working-tree `qa-screenshots` build, not a hosted bundle.
+- PASS locally: workspace tests, fmt check, strict workspace Clippy, and strict desktop Clippy with the QA screenshot feature.
+- PARTIAL: progress/cancel/error/export/overwrite reference pairs remain absent; pointer geometry, scrolled Back measurement, systematic bilingual audit and DPI matrix remain open. No system display settings were changed and no physical USB was tested. Full GUI acceptance, parity and stable 1.0 are not claimed.

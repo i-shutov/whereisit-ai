@@ -23,6 +23,27 @@ enum Language {
     English,
 }
 
+struct StatusText {
+    ru: String,
+    en: String,
+}
+
+impl StatusText {
+    fn new(ru: impl Into<String>, en: impl Into<String>) -> Self {
+        Self {
+            ru: ru.into(),
+            en: en.into(),
+        }
+    }
+
+    fn text(&self, language: Language) -> &str {
+        match language {
+            Language::Russian => &self.ru,
+            Language::English => &self.en,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 struct DiskPropertiesDraft {
     values: DiskPreferences,
@@ -116,7 +137,7 @@ pub struct DesktopApp {
     disk_preferences: HashMap<i64, DiskPreferences>,
     shelf_collisions: HashSet<i64>,
     preferences_ready: bool,
-    status: String,
+    status: StatusText,
     error: Option<String>,
     lang: Language,
     dark: bool,
@@ -191,7 +212,10 @@ impl DesktopApp {
             disk_preferences: HashMap::new(),
             shelf_collisions: HashSet::new(),
             preferences_ready: false,
-            status: "Ready · local metadata only".to_owned(),
+            status: StatusText::new(
+                "Готово · только локальные метаданные",
+                "Ready · local metadata only",
+            ),
             error: None,
             lang: Language::Russian,
             dark: true,
@@ -271,7 +295,7 @@ impl DesktopApp {
             Purpose::Open { path: path.clone() }
         };
         let op = if create { "init" } else { "validate_catalog" };
-        self.status = self.t("Проверка каталога…", "Opening catalog…").to_owned();
+        self.status = StatusText::new("Проверка каталога…", "Opening catalog…");
         self.queue(purpose, json!({"op":op,"db":path}), ctx);
         self.show_catalog_dialog = false;
     }
@@ -283,7 +307,7 @@ impl DesktopApp {
         let Some(db) = self.db.clone() else {
             return;
         };
-        self.status = self.t("Операция отклонена", "Operation refused").to_owned();
+        self.status = StatusText::new("Операция отклонена", "Operation refused");
         let path = self.export_path.trim().to_owned();
         if path.is_empty() {
             self.error = Some(
@@ -320,12 +344,10 @@ impl DesktopApp {
             );
             return;
         };
-        self.status = self
-            .t(
-                "Экспорт полного набора метаданных…",
-                "Exporting full metadata scope…",
-            )
-            .to_owned();
+        self.status = StatusText::new(
+            "Экспорт полного набора метаданных…",
+            "Exporting full metadata scope…",
+        );
         self.show_export_dialog = false;
         self.queue(Purpose::Export { path }, request, ctx);
     }
@@ -337,7 +359,7 @@ impl DesktopApp {
         let Some(db) = self.db.clone() else {
             return;
         };
-        self.status = self.t("Операция отклонена", "Operation refused").to_owned();
+        self.status = StatusText::new("Операция отклонена", "Operation refused");
         let label = self.scan_label.trim().to_owned();
         if label.is_empty() {
             self.error = Some(
@@ -394,12 +416,10 @@ impl DesktopApp {
         self.scan_cancel_request = None;
         self.last_progress_poll = None;
         self.scan_job_id = Some(job_id.clone());
-        self.status = self
-            .t(
-                "Сканирование метаданных запущено…",
-                "Metadata scan started…",
-            )
-            .to_owned();
+        self.status = StatusText::new(
+            "Сканирование метаданных запущено…",
+            "Metadata scan started…",
+        );
         self.show_scan_dialog = false;
         self.queue(
             Purpose::Scan {
@@ -440,12 +460,10 @@ impl DesktopApp {
             return;
         };
         self.scan_cancel_requested = true;
-        self.status = self
-            .t(
-                "Запрос отмены сканирования…",
-                "Requesting scan cancellation…",
-            )
-            .to_owned();
+        self.status = StatusText::new(
+            "Запрос отмены сканирования…",
+            "Requesting scan cancellation…",
+        );
         self.scan_cancel_request = Some(self.bus.send(
             Purpose::ScanCancel {
                 job_id: job_id.clone(),
@@ -457,9 +475,7 @@ impl DesktopApp {
 
     fn load_volumes(&mut self, ctx: &egui::Context) {
         if let Some(db) = self.db.clone() {
-            self.status = self
-                .t("Загрузка реестра дисков…", "Loading disk register…")
-                .to_owned();
+            self.status = StatusText::new("Загрузка реестра дисков…", "Loading disk register…");
             self.queue(Purpose::Volumes, json!({"op":"volumes","db":db}), ctx);
         }
     }
@@ -610,12 +626,10 @@ impl DesktopApp {
             return;
         };
         let catalog_key = scope.catalog_key.clone();
-        self.status = self
-            .t(
-                "Сохраняем наклейку отдельно от каталога…",
-                "Saving the shelf tag outside the catalog…",
-            )
-            .to_owned();
+        self.status = StatusText::new(
+            "Сохраняем наклейку отдельно от каталога…",
+            "Saving the shelf tag outside the catalog…",
+        );
         self.queue(
             Purpose::ShelfSave {
                 catalog_key,
@@ -630,9 +644,7 @@ impl DesktopApp {
         if let Some(db) = self.db.clone() {
             let route = self.route.clone();
             let request = route.request(&db, self.offset, PAGE_LIMIT);
-            self.status = self
-                .t("Поиск по каталогу…", "Searching catalog…")
-                .to_owned();
+            self.status = StatusText::new("Поиск по каталогу…", "Searching catalog…");
             self.queue(Purpose::Page { route }, request, ctx);
         }
     }
@@ -781,17 +793,16 @@ impl DesktopApp {
                     self.scan_cancel_request = None;
                     if self.scan_job_id.as_deref() == Some(job_id.as_str()) {
                         self.status = if reply.response["ok"] == true {
-                            self.t(
+                            StatusText::new(
                                 "Отмена запрошена; ожидается откат транзакции.",
                                 "Cancellation requested; waiting for rollback.",
                             )
                         } else {
-                            self.t(
+                            StatusText::new(
                                 "Отмена уже невозможна: операция завершается.",
                                 "Cancellation is too late; operation is finishing.",
                             )
-                        }
-                        .to_owned();
+                        };
                     }
                 }
                 return;
@@ -818,12 +829,10 @@ impl DesktopApp {
                 .and_then(Value::as_str)
                 == Some("cancelled")
         {
-            self.status = self
-                .t(
-                    "Сканирование отменено: снимок не сохранён.",
-                    "Scan cancelled: no snapshot was saved.",
-                )
-                .to_owned();
+            self.status = StatusText::new(
+                "Сканирование отменено: снимок не сохранён.",
+                "Scan cancelled: no snapshot was saved.",
+            );
             return;
         }
         if reply.response.get("ok").and_then(Value::as_bool) != Some(true) {
@@ -833,7 +842,7 @@ impl DesktopApp {
                 .and_then(Value::as_str)
                 .unwrap_or("Unknown service error");
             let error_message = message.to_owned();
-            self.status = self.t("Операция отклонена", "Operation refused").to_owned();
+            self.status = StatusText::new("Операция отклонена", "Operation refused");
             if matches!(&reply.purpose, Purpose::DiskPreferences) {
                 self.preferences_ready = false;
                 self.legacy_shelf_editable = reply
@@ -881,7 +890,7 @@ impl DesktopApp {
             Purpose::Volumes => match parse_volumes(data) {
                 Ok(volumes) => {
                     self.volumes = volumes;
-                    self.status = self.t("Каталог открыт", "Catalog opened").to_owned();
+                    self.status = StatusText::new("Каталог открыт", "Catalog opened");
                     self.load_disk_preferences(ctx);
                 }
                 Err(e) => self.error = Some(e),
@@ -945,9 +954,8 @@ impl DesktopApp {
             Purpose::SaveDiskProperties { volume_id } => {
                 let _ = volume_id;
                 self.show_disk_properties = None;
-                self.status = self
-                    .t("Локальные свойства сохранены", "Local properties saved")
-                    .to_owned();
+                self.status =
+                    StatusText::new("Локальные свойства сохранены", "Local properties saved");
                 self.load_volumes(ctx);
             }
             Purpose::ShelfLabels {
@@ -988,12 +996,10 @@ impl DesktopApp {
                     .is_some_and(|scope| scope.catalog_key == catalog_key)
                     && self.volumes.iter().any(|v| v.id == volume_id)
                 {
-                    self.status = self
-                        .t(
-                            "Наклейка сохранена; не является подтверждением подключения USB.",
-                            "Shelf label saved; it does not prove USB presence.",
-                        )
-                        .to_owned();
+                    self.status = StatusText::new(
+                        "Наклейка сохранена; не является подтверждением подключения USB.",
+                        "Shelf label saved; it does not prove USB presence.",
+                    );
                     self.load_shelf_labels(ctx, false);
                 }
             }
@@ -1010,12 +1016,10 @@ impl DesktopApp {
                         volume_id: Some(id),
                     };
                 }
-                self.status = self
-                    .t(
-                        "Сканирование закончено; обновляем реестр.",
-                        "Scan complete; refreshing disk register.",
-                    )
-                    .to_owned();
+                self.status = StatusText::new(
+                    "Сканирование закончено; обновляем реестр.",
+                    "Scan complete; refreshing disk register.",
+                );
                 self.load_volumes(ctx);
             }
             Purpose::ScanProgress { .. } | Purpose::ScanCancel { .. } => {
@@ -1023,24 +1027,22 @@ impl DesktopApp {
             }
             Purpose::Export { path } => {
                 let rows = data.get("rows").and_then(Value::as_u64).unwrap_or(0);
-                self.status = format!(
-                    "{}: {} ({} {})",
-                    self.t("Экспорт завершён", "Export complete"),
-                    path,
-                    rows,
-                    self.t("записей", "rows")
+                self.status = StatusText::new(
+                    format!("Экспорт завершён: {path} ({rows} записей)"),
+                    format!("Export complete: {path} ({rows} rows)"),
                 );
             }
             Purpose::Page { route } => match Page::parse(data) {
                 Ok(page) => {
                     self.route = route;
                     self.offset = page.offset;
-                    self.status = format!(
-                        "{} {}–{}",
-                        self.t("Показаны строки", "Showing rows"),
+                    let start =
                         page.offset
-                            .saturating_add(if page.items.is_empty() { 0 } else { 1 }),
-                        page.offset.saturating_add(page.items.len() as u64),
+                            .saturating_add(if page.items.is_empty() { 0 } else { 1 });
+                    let end = page.offset.saturating_add(page.items.len() as u64);
+                    self.status = StatusText::new(
+                        format!("Показаны строки {start}–{end}"),
+                        format!("Showing rows {start}–{end}"),
                     );
                     self.selected = self.restore_selection.take().and_then(|selection| {
                         page.items
@@ -1330,7 +1332,7 @@ impl DesktopApp {
                 ui.horizontal(|ui| {
                     ui.strong(self.t("Инспектор", "Inspector"));
                     ui.separator();
-                    ui.label(RichText::new(&self.status).small().weak());
+                    ui.label(RichText::new(self.status.text(self.lang)).small().weak());
                     if self.active_request.is_some() { ui.spinner(); }
                 });
                 if self.scan_job_id.is_some() {
@@ -1990,12 +1992,15 @@ mod shortcut_tests {
             .into_owned();
         assert!(!Path::new(&app.scan_root).exists());
         app.scan_label = "Synthetic".to_owned();
-        app.status = "Previous operation succeeded".to_owned();
+        app.status = StatusText::new(
+            "Предыдущая операция успешна",
+            "Previous operation succeeded",
+        );
         app.show_scan_dialog = true;
 
         app.start_scan(&ctx);
 
-        assert_eq!(app.status, "Операция отклонена");
+        assert_eq!(app.status.text(app.lang), "Операция отклонена");
         assert!(app.error.is_some());
         assert!(app.show_scan_dialog);
         assert!(app.active_request.is_none());
@@ -2031,15 +2036,55 @@ mod shortcut_tests {
             .join("Cargo.toml")
             .to_string_lossy()
             .into_owned();
-        app.status = "Export completed".to_owned();
+        app.status = StatusText::new("Экспорт завершён", "Export completed");
         app.show_export_dialog = true;
 
         app.start_export(&ctx);
 
-        assert_eq!(app.status, "Операция отклонена");
+        assert_eq!(app.status.text(app.lang), "Операция отклонена");
         assert!(app.error.is_some());
         assert!(app.show_export_dialog);
         assert!(app.active_request.is_none());
+    }
+
+    #[test]
+    fn status_retranslates_existing_page_and_export_results() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.active_request = Some(7);
+        app.apply_reply(
+            crate::bridge::Reply {
+                id: 7,
+                purpose: Purpose::Page {
+                    route: app.route.clone(),
+                },
+                response: json!({"ok": true, "data": {"items": [], "offset": 250, "limit": 250}}),
+            },
+            &ctx,
+        );
+        assert_eq!(app.status.text(app.lang), "Показаны строки 250–250");
+        app.lang = Language::English;
+        assert_eq!(app.status.text(app.lang), "Showing rows 250–250");
+        app.active_request = Some(8);
+        app.apply_reply(
+            crate::bridge::Reply {
+                id: 8,
+                purpose: Purpose::Export {
+                    path: "synthetic.csv".to_owned(),
+                },
+                response: json!({"ok": true, "data": {"rows": 42}}),
+            },
+            &ctx,
+        );
+        assert_eq!(
+            app.status.text(app.lang),
+            "Export complete: synthetic.csv (42 rows)"
+        );
+        app.lang = Language::Russian;
+        assert_eq!(
+            app.status.text(app.lang),
+            "Экспорт завершён: synthetic.csv (42 записей)"
+        );
     }
 
     fn key_input(key: egui::Key, modifiers: egui::Modifiers) -> egui::RawInput {
