@@ -5,11 +5,11 @@ Baseline main `ddd9215b0926c5e74482a3cbf7f10c229a66fb88`; PR #58 reference code 
 | Reference screen / expected state | Native implementation and service | Actions, errors, navigation/persistence | Status / priority |
 |---|---|---|---|
 | Header, tabs and global search | `menu`, `search_toolbar`; SQLite `search_fast` | Ctrl+F, Enter, global query exercised on generated catalog; errors shown in inspector; prototype workspace tabs absent | PARTIAL / P1 |
-| 60+ compact disks, capacity and free space | `disk_sidebar`, `volumes`, sidecar preferences | 62 synthetic volumes shown; two lines per volume, no free-space bar, no sorting; label filter exists | PARTIAL / P1 |
-| Disk filter and sort | Sidebar name/id/sticker filter; volume metadata | Filter code exists; sort controls absent; no hardware state inferred | PARTIAL / P1 |
+| 60+ compact disks, capacity and free space | `disk_sidebar`, `volumes`, sidecar preferences | 62 synthetic volumes; compact single-line rows, ID or indexed-byte ordering; no free-space bar or physical capacity inferred | PARTIAL / P1 |
+| Disk filter and sort | Sidebar name/id/sticker/note filter; volume metadata | GUI verified `#61` and ID/size switch; PR58 page/candidate filter modes remain absent | PARTIAL / P1 |
 | Virtual results table and pages | `egui_extras::TableBuilder::body.rows`, service limit 250 | GUI moved from 1–250 to 251–300 for 300 generated files; FTS/Boolean supported by service, not all combinations GUI-tested here | PARTIAL / P1 |
 | File inspector and disk/folder navigation | selected `Entry`; `children_focused` and `copy_candidates` | Synthetic file on second folder page → containing folder → Alt+Left restored selection and query; nested/error cases remain | PARTIAL / P0 |
-| Back preserves scope, selection, scroll | history stores route, page, selection, selected volume and scroll offset | Back and selection verified; scroll restoration implemented and unit checked but not measured in a scrolled GUI session | PARTIAL / P0 |
+| Back preserves scope, selection, scroll | history stores route, page, selection, selected volume and scroll offset | GUI folder page 251–301 with selected `page-270` and top row `page-262` → candidates → Back restored page, selection and same top row. Mouse-wheel scroll remains untested | PARTIAL / P0 |
 | Disk properties, F2, sticker, note | `disk_preferences_*`, `physical_shelf_labels`, guarded legacy fallback | PR #68 merge GUI evidence covers Unicode save/reopen and clear; this block did not repeat restart/persistence | PARTIAL / P1 |
 | Category browsing/editing | category service exists | No corresponding egui UI in inspected client | MISSING / P1 |
 | Metadata duplicate candidates | `copy_candidates`, exact normalized name+size | GUI and service other-disk result verified on two synthetic disks; Back restored original selection; no claim of byte equality | PARTIAL / P0 |

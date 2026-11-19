@@ -23,6 +23,39 @@ enum Language {
     English,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RegisterOrder {
+    Id,
+    IndexedBytes,
+}
+
+fn sort_register(volumes: &mut [Volume], order: RegisterOrder) {
+    match order {
+        RegisterOrder::Id => volumes.sort_by_key(|volume| volume.id),
+        RegisterOrder::IndexedBytes => volumes.sort_by(|a, b| {
+            b.total_bytes
+                .cmp(&a.total_bytes)
+                .then_with(|| a.id.cmp(&b.id))
+        }),
+    }
+}
+
+fn register_matches(
+    volume: &Volume,
+    display_name: &str,
+    sticker: &str,
+    note: &str,
+    filter: &str,
+) -> bool {
+    filter.is_empty()
+        || volume.label.to_lowercase().contains(filter)
+        || display_name.to_lowercase().contains(filter)
+        || sticker.to_lowercase().contains(filter)
+        || note.to_lowercase().contains(filter)
+        || volume.id.to_string().contains(filter)
+        || format!("#{}", volume.id).contains(filter)
+}
+
 struct StatusText {
     ru: String,
     en: String,
@@ -116,6 +149,7 @@ pub struct DesktopApp {
     restore_scroll: Option<f32>,
     selected_volume: Option<i64>,
     disk_filter: String,
+    register_order: RegisterOrder,
     show_catalog_dialog: bool,
     create_catalog: bool,
     show_export_dialog: bool,
@@ -204,6 +238,7 @@ impl DesktopApp {
             restore_scroll: None,
             selected_volume: None,
             disk_filter: String::new(),
+            register_order: RegisterOrder::Id,
             show_catalog_dialog: false,
             create_catalog: false,
             show_export_dialog: false,
@@ -1236,6 +1271,23 @@ impl DesktopApp {
                 ui.horizontal(|ui| {
                     ui.strong(self.t("Диски каталога", "Catalog disks"));
                     ui.label(RichText::new(self.volumes.len().to_string()).weak());
+                    let order_label = match self.register_order {
+                        RegisterOrder::Id => "#ID",
+                        RegisterOrder::IndexedBytes => self.t("Объём↓", "Size↓"),
+                    };
+                    if ui
+                        .small_button(order_label)
+                        .on_hover_text(self.t(
+                            "Сортировать по ID или записанному объёму",
+                            "Sort by ID or indexed size",
+                        ))
+                        .clicked()
+                    {
+                        self.register_order = match self.register_order {
+                            RegisterOrder::Id => RegisterOrder::IndexedBytes,
+                            RegisterOrder::IndexedBytes => RegisterOrder::Id,
+                        };
+                    }
                 });
                 let disk_filter_hint = self.t("Фильтр дисков", "Filter disks");
                 ui.add(
@@ -1257,19 +1309,24 @@ impl DesktopApp {
                 }
                 ui.separator();
 
-                let filter = self.disk_filter.to_lowercase();
-                let visible: Vec<_> = self
+                let filter = self.disk_filter.trim().to_lowercase();
+                let mut visible: Vec<_> = self
                     .volumes
                     .iter()
                     .filter(|v| {
-                        filter.is_empty()
-                            || v.label.to_lowercase().contains(&filter)
-                            || self.display_name(v).to_lowercase().contains(&filter)
-                            || self.shelf.label(v.id).to_lowercase().contains(&filter)
-                            || v.id.to_string().contains(&filter)
+                        register_matches(
+                            v,
+                            self.display_name(v),
+                            self.shelf.label(v.id),
+                            self.disk_preferences
+                                .get(&v.id)
+                                .map_or("", |p| p.note.as_str()),
+                            &filter,
+                        )
                     })
                     .cloned()
                     .collect();
+                sort_register(&mut visible, self.register_order);
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
@@ -1292,7 +1349,19 @@ impl DesktopApp {
                                         }
                                     )
                                 };
-                                let label = ui.selectable_label(selected, title);
+                                let label_width = (ui.available_width() - 88.0).max(24.0);
+                                let label = ui
+                                    .add_sized(
+                                        [label_width, 20.0],
+                                        egui::Button::selectable(selected, title.clone())
+                                            .truncate(),
+                                    )
+                                    .on_hover_text(format!(
+                                        "{}\n{} · {}",
+                                        title,
+                                        volume.entry_count,
+                                        bytes_compact(volume.total_bytes)
+                                    ));
                                 if label.clicked() {
                                     self.navigate_disk(Some(volume.id), ctx);
                                 }
@@ -1312,6 +1381,11 @@ impl DesktopApp {
                                     self.offset = 0;
                                     self.load_page(ctx);
                                 }
+                                ui.label(
+                                    RichText::new(bytes_compact(volume.total_bytes))
+                                        .small()
+                                        .weak(),
+                                );
                                 if ui
                                     .small_button("⋯")
                                     .on_hover_text(self.t("Свойства диска", "Disk properties"))
@@ -1321,18 +1395,6 @@ impl DesktopApp {
                                     self.shelf_editor = self.shelf.label(volume.id).to_owned();
                                 }
                             });
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    RichText::new(format!(
-                                        "{} · {}",
-                                        volume.entry_count,
-                                        bytes_compact(volume.total_bytes)
-                                    ))
-                                    .small()
-                                    .weak(),
-                                );
-                            });
-                            ui.add_space(1.0);
                         }
                     });
             });
@@ -1951,6 +2013,61 @@ impl eframe::App for DesktopApp {
 #[cfg(test)]
 mod shortcut_tests {
     use super::*;
+
+    #[test]
+    fn register_order_matches_reference_and_breaks_size_ties_by_id() {
+        let volume = |id, total_bytes| Volume {
+            id,
+            label: format!("Fixture {id}"),
+            root_path: String::new(),
+            entry_count: 0,
+            total_bytes,
+        };
+        let mut volumes = vec![volume(9, 20), volume(3, 20), volume(1, 5)];
+        sort_register(&mut volumes, RegisterOrder::Id);
+        assert_eq!(volumes.iter().map(|v| v.id).collect::<Vec<_>>(), [1, 3, 9]);
+        sort_register(&mut volumes, RegisterOrder::IndexedBytes);
+        assert_eq!(volumes.iter().map(|v| v.id).collect::<Vec<_>>(), [3, 9, 1]);
+    }
+
+    #[test]
+    fn register_filter_matches_id_sticker_and_unicode_note() {
+        let volume = Volume {
+            id: 61,
+            label: "Original".into(),
+            root_path: String::new(),
+            entry_count: 0,
+            total_bytes: 0,
+        };
+        assert!(register_matches(
+            &volume,
+            "Локальный",
+            "BOX-17",
+            "Семейное Кино",
+            "#61"
+        ));
+        assert!(register_matches(
+            &volume,
+            "Локальный",
+            "BOX-17",
+            "Семейное Кино",
+            "box-17"
+        ));
+        assert!(register_matches(
+            &volume,
+            "Локальный",
+            "BOX-17",
+            "Семейное Кино",
+            "кино"
+        ));
+        assert!(!register_matches(
+            &volume,
+            "Локальный",
+            "BOX-17",
+            "Семейное Кино",
+            "#62"
+        ));
+    }
 
     #[test]
     fn dialogs_disable_background_controls_until_closed() {

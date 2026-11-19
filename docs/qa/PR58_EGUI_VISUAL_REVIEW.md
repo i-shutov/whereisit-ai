@@ -48,4 +48,10 @@ At this stage the prototype's background scan was simulated and completed before
 
 The images resolve the requested states where a reference exists; equivalent error/overwrite pairs and full GUI parity are not claimed. Reference screenshots were browser JPEGs converted to PNG, and the local scan and export frames were recorded before the subsequent modal-background fix, except the invalid-root and overwrite-refusal images, which were repeated after it. No system DPI/resolution or physical USB was changed.
 
+## Register and Back continuation
+
+- Native compact register: [ID ascending](pr58-egui-atlas/egui-register-compact-id.png), [indexed bytes descending](pr58-egui-atlas/egui-register-compact-size.png). GUI switched the order, filtered `#61`, selected the result and opened properties with F2. Recorded bytes are not free-space or live USB evidence. Images use the 62-volume synthetic SQLite catalog.
+- Scrolled Back: searching `page-270`, selecting the result and opening its containing folder placed it on page 251–301 and scrolled the first visible row to `page-262`. [Before](pr58-egui-atlas/egui-back-scroll-before.png); candidates on other disks; Alt+Left; [after](pr58-egui-atlas/egui-back-scroll-after.png). The top visible row, selected `page-270` and page number matched. The initial scroll was caused by selected-row reveal, not wheel input.
+- Mouse remains BLOCKED: clicking an accessibility element returned unavailable coordinate geometry and a fresh Windows Graphics Capture attempt timed out. No pointer trajectory or click-count claim is made. System DPI and resolution were not changed.
+
 Observed navigation A/B: Ctrl+F, type `clip-001`, Enter; reverse Tab to result, Enter; reverse Tab to “Open containing folder”, Enter; Alt+Left. Search, selected record and inspector returned. Pointer/click count and reaction times were not measured. Windows Graphics Capture still timed out, and mouse input reported unavailable geometry; two automation calls stalled. No resolution workaround was applied. This renderer capture solves the PNG contamination problem, not the mouse-control problem or visual parity.
