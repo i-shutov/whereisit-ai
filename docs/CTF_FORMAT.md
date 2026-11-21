@@ -54,6 +54,8 @@ Descriptions can be inline or referenced in a per-folder metadata blob. Type 1 t
 | Sentinel | `u32 = 0xffffffff` |
 | Observed empty metadata area | 9 zero bytes |
 
+The parser also accepts the fixed 184-byte offset-table declaration written by older Atlas exports. It still uses the catalog block count to read and validate the offsets and sentinel. Re-export writes the correct size for the table.
+
 No general category table or custom catalog-header variation is implemented. New output uses these observed numeric defaults.
 
 ## Disk header and data regions

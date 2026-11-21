@@ -1,5 +1,9 @@
 //! Bounded reader and writer for observed WhereIsIt Catalog 3.00 records.
 use serde::{Deserialize, Serialize};
+
+// Older Atlas exports declared a 45-block table regardless of the actual block count.
+const LEGACY_PACKED_OFFSET_TABLE_SIZE: u32 = 0x0400_00b8;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CtfCatalog {
     pub name: String,
@@ -335,9 +339,15 @@ pub fn parse_ctf(bytes: &[u8], limits: &Limits) -> Result<CtfCatalog, CtfError> 
     let n = r.u16()? as usize;
     let name = decode_name(r.take(n)?)?;
     let table_start = r.p;
-    if r.u8()? != 6 || r.u32()? != packed_offset_table_size(count as u32) {
+    let table_type = r.u8()?;
+    let table_size = r.u32()?;
+    if table_type != 6
+        || (table_size != packed_offset_table_size(count as u32)
+            && table_size != LEGACY_PACKED_OFFSET_TABLE_SIZE)
+    {
         return Err(err(table_start, "invalid catalog offset table extension"));
     }
+    // Use the actual block count for all reads, including when the old size was declared.
     let mut offsets = Vec::with_capacity(count);
     for _ in 0..count {
         offsets.push(r.u32()? as usize)
@@ -1211,6 +1221,26 @@ mod tests {
             assert_eq!(error.offset, extension_start);
             assert_eq!(error.message, "invalid catalog offset table extension");
         }
+    }
+
+    #[test]
+    fn reads_legacy_fixed_table_declaration_and_rewrites_the_correct_size() {
+        let catalog = sample();
+        let corrected = write_ctf(&catalog).unwrap();
+        let extension_start = 22 + catalog.name.len();
+        let mut legacy = corrected.clone();
+        legacy[extension_start + 1..extension_start + 5]
+            .copy_from_slice(&0x0400_00b8_u32.to_le_bytes());
+
+        let parsed = parse_ctf(&legacy, &Limits::default()).unwrap();
+        assert_eq!(parsed.disks.len(), 1);
+        assert_eq!(write_ctf(&parsed).unwrap(), corrected);
+
+        let sentinel = extension_start + 9;
+        legacy[sentinel] = 0;
+        let error = parse_ctf(&legacy, &Limits::default()).unwrap_err();
+        assert_eq!(error.offset, sentinel);
+        assert_eq!(error.message, "missing offset sentinel");
     }
 
     #[test]

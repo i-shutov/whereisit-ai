@@ -6,7 +6,7 @@ This report contains synthetic cases and aggregate outcomes only. Private catalo
 
 ## Problems and fixes
 
-- **P0: invalid catalog offset-table length.** A fixed 184-byte declaration described 45 blocks even when the exporter wrote 60. The table length is now `4 * (block_count + 1)` and the parser rejects inconsistent declarations. Synthetic format/service tests cover the block-count variation.
+- **P0: invalid catalog offset-table length.** A fixed 184-byte declaration described 45 blocks even when the exporter wrote 60. The writer now declares `4 * (block_count + 1)`. The parser still opens older Atlas exports with the fixed declaration and validates the actual offsets and sentinel. Synthetic format tests cover both declared lengths and reject unrelated mismatches.
 - **P0: vendor-save root metadata.** The disk-header word at offset 4 declares the root metadata-blob length. The parser validates the blob and range bounds, and the writer preserves blob bytes and existing references instead of rejecting a supported vendor save. Constructed synthetic records cover preservation and malformed range rejection.
 - **P1: inaccessible Path after narrowing the window.** Retained column widths could put Kind/Path outside the viewport. Bounded initial widths, clipped labels with full hover text and a shared horizontal scroller keep columns reachable. All five resize handles and virtualized rows remain. A real egui paint/input regression covers long Cyrillic strings, 250 rows, a 1366-to-1024 transition in the same Context, horizontal overflow at 880 points and vertical scrolling. The old layout failed this regression; the patched layout passed.
 

@@ -7,7 +7,7 @@ The Windows x64 artifact from Actions run 44891158178 (commit `40c6b695958e49cbd
 3. In installed WhereIsIt 2014 build 220, use Open and select the newly generated CTF. Expected: the catalog opens and all 60 synthetic disks and entries can be browsed. Failure or an error dialog is FAIL; no vendor application is BLOCKED. Record only synthetic screenshots locally.
 4. Positive control: use an independently created, explicitly authorized vendor CTF copy, located in a comparable local directory, to confirm the vendor application can open a catalog. Do not publish the control or its identifying data.
 
-The writer had declared a fixed 184-byte catalog offset table, the correct value for 45 blocks. The table contains one four-byte offset per block and a four-byte sentinel. A 60-block catalog requires 244 bytes. The writer now derives the length from the block count, and the parser rejects mismatches.
+The writer had declared a fixed 184-byte catalog offset table, the correct value for 45 blocks. The table contains one four-byte offset per block and a four-byte sentinel. A 60-block catalog requires 244 bytes. The writer now derives the length from the block count. The parser recognizes the previous fixed declaration for compatibility and still validates the actual table and sentinel.
 
 ## Verified result
 
