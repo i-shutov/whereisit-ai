@@ -51,10 +51,7 @@ pub fn parse_categories(value: &Value) -> Result<Vec<Category>, String> {
     let list = value
         .as_array()
         .ok_or_else(|| "Service category list is not an array".to_owned())?;
-    let categories: Vec<Category> = list
-        .iter()
-        .map(Category::parse)
-        .collect::<Result<_, _>>()?;
+    let categories: Vec<Category> = list.iter().map(Category::parse).collect::<Result<_, _>>()?;
     let mut ids = std::collections::HashSet::new();
     if categories.iter().any(|category| !ids.insert(category.id)) {
         return Err("Service returned duplicate category IDs".to_owned());
@@ -102,7 +99,8 @@ mod tests {
         assert!(parse_categories(&json!([
             {"id":2,"parent_id":null,"name":"A"},
             {"id":2,"parent_id":null,"name":"B"}
-        ])).is_err());
+        ]))
+        .is_err());
     }
 
     #[test]
@@ -147,7 +145,8 @@ mod tests {
         let scan = call(json!({"op":"scan","db":db,"root":disk,
             "label":"Synthetic","hash":false}));
         assert_eq!(scan["ok"], true, "{scan}");
-        let movies = call(json!({"op":"search_fast","db":db,"query":"ext:mkv","offset":0,"limit":250}));
+        let movies =
+            call(json!({"op":"search_fast","db":db,"query":"ext:mkv","offset":0,"limit":250}));
         let entry_id = movies["data"]["items"][0]["id"].as_i64().unwrap();
         let created = call(create_request(db.to_str().unwrap(), "Семейное Кино", None));
         assert_eq!(created["ok"], true, "{created}");
