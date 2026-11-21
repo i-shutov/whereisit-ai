@@ -188,6 +188,50 @@ fn integrity(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Check that an existing catalog has the schema required for normal operations.
+/// No catalog rows are read or checked here.
+pub fn probe(v: &Value) -> Result<Value> {
+    let conn = readonly(Path::new(text(v, "db")?))?;
+    conn.execute_batch("BEGIN")?;
+    let version = supported_version(&conn, "main")?;
+    let entries_kind = if version == 3 { "view" } else { "table" };
+    let required = [
+        ("volumes", "table", "SELECT id,label,root_path,scanned_at,entry_count,total_bytes,status FROM main.volumes LIMIT 0"),
+        ("entries", entries_kind, "SELECT id,volume_id,parent_id,name,relative_path,kind,size,modified_unix,description,tags,search_text,name_norm,ext FROM main.entries LIMIT 0"),
+        ("categories", "table", "SELECT id,parent_id,name,name_norm FROM main.categories LIMIT 0"),
+        ("entry_categories", "table", "SELECT entry_id,category_id FROM main.entry_categories LIMIT 0"),
+        ("entries_trigram", "virtual", "SELECT rowid,search_text FROM main.entries_trigram WHERE entries_trigram MATCH ?1 LIMIT 0"),
+    ];
+    let sparse = [
+        ("entries_core", "table", "SELECT id,volume_id,parent_id,name,relative_path,kind,size,modified_unix,name_norm,ext FROM main.entries_core LIMIT 0"),
+        ("entry_payload", "table", "SELECT entry_id,description,tags FROM main.entry_payload LIMIT 0"),
+    ];
+    {
+        let mut schema = conn.prepare(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_list(?1) WHERE schema='main' AND type=?2)",
+        )?;
+        for (name, kind, sql) in required
+            .into_iter()
+            .chain(sparse.into_iter().filter(|_| version == 3))
+        {
+            if !schema.query_row([name, kind], |row| row.get::<_, bool>(0))? {
+                return Err(Error::new(
+                    "catalog_schema",
+                    format!("Catalog requires {kind} {name}"),
+                ));
+            }
+            conn.prepare(sql).map_err(|e| {
+                Error::new(
+                    "catalog_schema",
+                    format!("Invalid catalog object {name}: {e}"),
+                )
+            })?;
+        }
+    }
+    conn.execute_batch("ROLLBACK")?;
+    Ok(json!({"schema_version":version,"readonly":true,"full_validation":false}))
+}
+
 /// Read-only structural validation, not a claim about original-app CTF acceptance.
 pub fn validate(v: &Value) -> Result<Value> {
     let conn = readonly(Path::new(text(v, "db")?))?;
