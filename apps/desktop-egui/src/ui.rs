@@ -161,6 +161,8 @@ pub struct DesktopApp {
     show_catalog_dialog: bool,
     show_categories_dialog: bool,
     categories: Vec<Category>,
+    category_assigned: HashSet<i64>,
+    category_assignments_ready: bool,
     category_name_input: String,
     category_parent_id: Option<i64>,
     create_catalog: bool,
@@ -255,6 +257,8 @@ impl DesktopApp {
             show_catalog_dialog: false,
             show_categories_dialog: false,
             categories: Vec::new(),
+            category_assigned: HashSet::new(),
+            category_assignments_ready: false,
             category_name_input: String::new(),
             category_parent_id: None,
             create_catalog: false,
@@ -720,6 +724,37 @@ impl DesktopApp {
         }
     }
 
+    fn load_assigned_categories(&mut self, ctx: &egui::Context) {
+        self.category_assigned.clear();
+        self.category_assignments_ready = false;
+        let (Some(db), Some(entry)) = (self.db.clone(), self.selected.as_ref()) else {
+            return;
+        };
+        self.queue(
+            Purpose::EntryCategoryIds { entry_id: entry.id },
+            categories::list_assigned_request(&db, entry.id),
+            ctx,
+        );
+    }
+
+    fn unassign_category(&mut self, entry_id: i64, category_id: i64, ctx: &egui::Context) {
+        if self.active_request.is_some()
+            || !self.category_assignments_ready
+            || !self.category_assigned.contains(&category_id)
+            || !self.selected.as_ref().is_some_and(|entry| entry.id == entry_id)
+        {
+            return;
+        }
+        let Some(db) = self.db.clone() else {
+            return;
+        };
+        self.queue(
+            Purpose::UnassignCategory { entry_id, category_id },
+            categories::unassign_request(&db, entry_id, category_id),
+            ctx,
+        );
+    }
+
     fn create_category(&mut self, ctx: &egui::Context) {
         if self.active_request.is_some() {
             return;
@@ -748,7 +783,13 @@ impl DesktopApp {
     }
 
     fn assign_category(&mut self, entry_id: i64, category_id: i64, ctx: &egui::Context) {
-        if self.active_request.is_some() || entry_id <= 0 || category_id <= 0 {
+        if self.active_request.is_some()
+            || entry_id <= 0
+            || category_id <= 0
+            || !self.category_assignments_ready
+            || self.category_assigned.contains(&category_id)
+            || !self.selected.as_ref().is_some_and(|entry| entry.id == entry_id)
+        {
             return;
         }
         let Some(db) = self.db.clone() else {
@@ -1037,6 +1078,8 @@ impl DesktopApp {
                 self.offset = 0;
                 self.selected = None;
                 self.categories.clear();
+                self.category_assigned.clear();
+                self.category_assignments_ready = false;
                 self.category_parent_id = None;
                 self.category_name_input.clear();
                 self.show_categories_dialog = false;
@@ -1189,8 +1232,30 @@ impl DesktopApp {
                     {
                         self.category_parent_id = None;
                     }
+                    if self.show_categories_dialog && self.selected.is_some() {
+                        self.load_assigned_categories(ctx);
+                    }
                 }
-                Err(error) => self.error = Some(error),
+                Err(error) => {
+                    self.category_assigned.clear();
+                    self.category_assignments_ready = false;
+                    self.error = Some(error);
+                }
+            },
+            Purpose::EntryCategoryIds { entry_id } => {
+                if self.selected.as_ref().is_some_and(|entry| entry.id == entry_id) {
+                    match categories::parse_assignment_ids(data) {
+                        Ok(ids) => {
+                            self.category_assigned = ids;
+                            self.category_assignments_ready = true;
+                        }
+                        Err(error) => {
+                            self.category_assigned.clear();
+                            self.category_assignments_ready = false;
+                            self.error = Some(error);
+                        }
+                    }
+                }
             },
             Purpose::CreateCategory { name } => {
                 self.category_name_input.clear();
@@ -1209,6 +1274,26 @@ impl DesktopApp {
                     format!("Категория #{category_id} назначена записи #{entry_id}"),
                     format!("Category #{category_id} assigned to entry #{entry_id}"),
                 );
+                self.load_assigned_categories(ctx);
+            }
+            Purpose::UnassignCategory {
+                entry_id,
+                category_id,
+            } => {
+                if data["removed"] != true {
+                    self.error = Some(
+                        self.t(
+                            "Назначение уже отсутствует; обновляем список.",
+                            "Assignment already absent; refreshing membership.",
+                        ).to_owned()
+                    );
+                } else {
+                    self.status = StatusText::new(
+                        format!("Назначение категории #{category_id} снято для записи #{entry_id}"),
+                        format!("Category #{category_id} removed from entry #{entry_id}"),
+                    );
+                }
+                self.load_assigned_categories(ctx);
             }
             Purpose::Export { path } => {
                 let rows = data.get("rows").and_then(Value::as_u64).unwrap_or(0);
@@ -1317,6 +1402,8 @@ impl DesktopApp {
                 {
                     self.category_name_input.clear();
                     self.category_parent_id = None;
+                    self.category_assigned.clear();
+                    self.category_assignments_ready = false;
                     self.error = None;
                     self.show_categories_dialog = true;
                     self.load_categories(ctx);
@@ -1863,6 +1950,15 @@ impl DesktopApp {
                             entry.id,
                             entry.name
                         ));
+                        if self.category_assignments_ready {
+                            ui.label(format!(
+                                "{}: {}",
+                                self.t("Назначено категорий", "Assigned categories"),
+                                self.category_assigned.len()
+                            ));
+                        } else {
+                            ui.label(self.t("Загрузка назначений…", "Loading assignments…"));
+                        }
                     } else {
                         ui.label(self.t(
                             "Чтобы назначить категорию, выделите файл в результатах до открытия окна.",
@@ -1902,21 +1998,39 @@ impl DesktopApp {
                                     self.show_categories_dialog = false;
                                 }
                                 if let Some(entry) = &selected {
+                                    let assigned = self.category_assigned.contains(&category.id);
+                                    let action_label = if assigned {
+                                        self.t("Снять", "Remove")
+                                    } else {
+                                        self.t("Назначить", "Assign")
+                                    };
+                                    let action_hint = if assigned {
+                                        self.t(
+                                            "Удалить только связь категории в SQLite, не файл; назначение можно восстановить",
+                                            "Remove only the SQLite category link, never the file; reversible",
+                                        )
+                                    } else {
+                                        self.t(
+                                            "Назначить категорию выбранной записи каталога SQLite",
+                                            "Assign this category to the selected SQLite entry",
+                                        )
+                                    };
+                                    if assigned {
+                                        ui.label("✓");
+                                    }
                                     if ui
                                         .add_enabled(
-                                            self.active_request.is_none(),
-                                            egui::Button::new(self.t(
-                                                "Назначить",
-                                                "Assign",
-                                            )),
+                                            self.active_request.is_none() && self.category_assignments_ready,
+                                            egui::Button::new(action_label),
                                         )
-                                        .on_hover_text(self.t(
-                                            "Явно записать назначение в текущий SQLite-каталог",
-                                            "Write this assignment into the current SQLite catalog",
-                                        ))
+                                        .on_hover_text(action_hint)
                                         .clicked()
                                     {
-                                        self.assign_category(entry.id, category.id, ctx);
+                                        if assigned {
+                                            self.unassign_category(entry.id, category.id, ctx);
+                                        } else {
+                                            self.assign_category(entry.id, category.id, ctx);
+                                        }
                                     }
                                 }
                             });
@@ -2353,6 +2467,22 @@ mod shortcut_tests {
             "Семейное Кино",
             "#62"
         ));
+    }
+
+    #[test]
+    fn category_membership_buttons_fail_closed_until_service_confirms() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.categories.push(Category {
+            id: 7,
+            parent_id: None,
+            name: "Synthetic".into(),
+        });
+        app.assign_category(12, 7, &ctx);
+        app.unassign_category(12, 7, &ctx);
+        assert!(app.active_request.is_none());
+        assert!(!app.category_assignments_ready);
+        assert!(app.category_assigned.is_empty());
     }
 
     #[test]
