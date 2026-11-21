@@ -579,7 +579,10 @@ impl Catalog {
     /// catalog entry is deleted; a later assign can restore the same link.
     pub fn unassign_category(&self, entry_id: i64, category_id: i64) -> Result<bool> {
         if entry_id <= 0 || category_id <= 0 {
-            return Err(Error::new("invalid_request", "Category and entry IDs must be positive"));
+            return Err(Error::new(
+                "invalid_request",
+                "Category and entry IDs must be positive",
+            ));
         }
         let removed = self.conn.execute(
             "DELETE FROM entry_categories WHERE entry_id=?1 AND category_id=?2",

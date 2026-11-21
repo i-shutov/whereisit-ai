@@ -727,9 +727,10 @@ impl DesktopApp {
     fn load_assigned_categories(&mut self, ctx: &egui::Context) {
         self.category_assigned.clear();
         self.category_assignments_ready = false;
-        let (Some(db), Some(entry_id)) =
-            (self.db.clone(), self.selected.as_ref().map(|entry| entry.id))
-        else {
+        let (Some(db), Some(entry_id)) = (
+            self.db.clone(),
+            self.selected.as_ref().map(|entry| entry.id),
+        ) else {
             return;
         };
         self.queue(
@@ -743,7 +744,10 @@ impl DesktopApp {
         if self.active_request.is_some()
             || !self.category_assignments_ready
             || !self.category_assigned.contains(&category_id)
-            || !self.selected.as_ref().is_some_and(|entry| entry.id == entry_id)
+            || !self
+                .selected
+                .as_ref()
+                .is_some_and(|entry| entry.id == entry_id)
         {
             return;
         }
@@ -751,7 +755,10 @@ impl DesktopApp {
             return;
         };
         self.queue(
-            Purpose::UnassignCategory { entry_id, category_id },
+            Purpose::UnassignCategory {
+                entry_id,
+                category_id,
+            },
             categories::unassign_request(&db, entry_id, category_id),
             ctx,
         );
@@ -790,7 +797,10 @@ impl DesktopApp {
             || category_id <= 0
             || !self.category_assignments_ready
             || self.category_assigned.contains(&category_id)
-            || !self.selected.as_ref().is_some_and(|entry| entry.id == entry_id)
+            || !self
+                .selected
+                .as_ref()
+                .is_some_and(|entry| entry.id == entry_id)
         {
             return;
         }
@@ -1245,7 +1255,11 @@ impl DesktopApp {
                 }
             },
             Purpose::EntryCategoryIds { entry_id } => {
-                if self.selected.as_ref().is_some_and(|entry| entry.id == entry_id) {
+                if self
+                    .selected
+                    .as_ref()
+                    .is_some_and(|entry| entry.id == entry_id)
+                {
                     match categories::parse_assignment_ids(data) {
                         Ok(ids) => {
                             self.category_assigned = ids;
@@ -1258,7 +1272,7 @@ impl DesktopApp {
                         }
                     }
                 }
-            },
+            }
             Purpose::CreateCategory { name } => {
                 self.category_name_input.clear();
                 self.category_parent_id = None;
@@ -1287,7 +1301,8 @@ impl DesktopApp {
                         self.t(
                             "Назначение уже отсутствует; обновляем список.",
                             "Assignment already absent; refreshing membership.",
-                        ).to_owned()
+                        )
+                        .to_owned(),
                     );
                 } else {
                     self.status = StatusText::new(

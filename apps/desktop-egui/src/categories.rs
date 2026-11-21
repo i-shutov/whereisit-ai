@@ -186,7 +186,9 @@ mod tests {
         assert_eq!(assigned["ok"], true, "{assigned}");
         let before = call(list_assigned_request(db.to_str().unwrap(), entry_id));
         assert_eq!(before["ok"], true, "{before}");
-        assert!(parse_assignment_ids(&before["data"]).unwrap().contains(&category_id));
+        assert!(parse_assignment_ids(&before["data"])
+            .unwrap()
+            .contains(&category_id));
         let matched = call(json!({"op":"search_fast","db":db,
             "query":parsed[0].search_query(),"offset":0,"limit":250}));
         assert_eq!(matched["ok"], true, "{matched}");
@@ -241,14 +243,24 @@ mod tests {
 
         // Explicit undo removes the relationship, not the file, and can be
         // restored without changing the generated SQLite catalog entries.
-        let unassigned = call(unassign_request(db.to_str().unwrap(), entry_id, category_id));
+        let unassigned = call(unassign_request(
+            db.to_str().unwrap(),
+            entry_id,
+            category_id,
+        ));
         assert_eq!(unassigned["ok"], true, "{unassigned}");
         assert_eq!(unassigned["data"]["removed"], true);
         let after = call(list_assigned_request(db.to_str().unwrap(), entry_id));
         assert_eq!(after["ok"], true, "{after}");
-        assert!(!parse_assignment_ids(&after["data"]).unwrap().contains(&category_id));
+        assert!(!parse_assignment_ids(&after["data"])
+            .unwrap()
+            .contains(&category_id));
         assert_eq!(
-            call(unassign_request(db.to_str().unwrap(), entry_id, category_id))["data"]["removed"],
+            call(unassign_request(
+                db.to_str().unwrap(),
+                entry_id,
+                category_id
+            ))["data"]["removed"],
             false
         );
         assert_eq!(
@@ -256,7 +268,9 @@ mod tests {
             true
         );
         let restored = call(list_assigned_request(db.to_str().unwrap(), entry_id));
-        assert!(parse_assignment_ids(&restored["data"]).unwrap().contains(&category_id));
+        assert!(parse_assignment_ids(&restored["data"])
+            .unwrap()
+            .contains(&category_id));
         let file_still_present = call(json!({"op":"search_fast","db":db,
             "query":"ext:mkv","offset":0,"limit":250}));
         assert_eq!(file_still_present["data"]["items"][0]["id"], entry_id);
