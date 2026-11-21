@@ -5,14 +5,14 @@
 ## What is and is not connected
 
 - GitHub self-hosted Windows runner is a GitHub Actions job executor. The existing runner named win11-whereisit belongs to a Windows 11 Pro host and has historically run as a local **administrator service account**. It is not an RDP, shell, or visual control channel for this chat.
-- Codex CLI is installed according to the owner, but whether it is available to the service account or a separate non-admin interactive account **has not been verified**. Installation does not establish authentication, CLI version, GUI automation or a shell connection to this chat.
+- The owner has installed Codex CLI. The owner's **Administrator account** is approved for Win11 RDP, PowerShell, native egui GUI QA and Codex. Availability to the service session or current interactive shell has not been verified. Installation does not establish authentication, CLI version, GUI automation or a shell connection to this chat.
 - The authorized existing admin workflow is .github/workflows/win11-runner-smoke.yml. It is intentionally manual workflow_dispatch, exact trusted main, repository+runner+machine+service identity checks, no code checkout, no third-party execution, no untrusted PR. An updated smoke reports whether the service can *find* the Codex command **without executing it**. Logs are limited to booleans, command names and OS build; do not publish host/account names, user paths, tokens or CTF.
 
-GitHub recommends avoiding long-lived self-hosted runners for untrusted public PRs. Do not weaken these guards. Do not use this admin runner to run codex exec, compile PR code, install QA binaries or automate a user desktop.
+Do not automatically execute unreviewed public PRs with Administrator privileges through the self-hosted service. That is distinct from the owner's authorized **interactive Administrator** QA and Codex work in dedicated WhereIsIt directories. A service-session headless job does not constitute physical GUI/RDP acceptance.
 
 ## Lane 1: inspect the existing runner safely
 
-After the reviewed smoke workflow is merged to main, use GitHub UI:
+After the reviewed smoke workflow is merged to main, use GitHub UI. In **Run workflow → Use workflow from**, select **main**, not a planning branch (the screenshot's error was caused by the branch selection):
 
 1. Actions -> **Windows 11 VPS runner smoke** -> **Run workflow**, select **main**.
 2. Inspect the exact run result, GitHub source SHA, and the log markers RUNNER_SMOKE_PASS, RUNNER_HOST_MATCH, SERVICE_ACCOUNT_MATCH, CODEX_CLI_VISIBLE_TO_SERVICE, CODEX_EXECUTED: false.
@@ -21,11 +21,11 @@ After the reviewed smoke workflow is merged to main, use GitHub UI:
 
 The current GitHub connector can inspect workflows and commits but cannot dispatch this manual workflow; a person with repository permission must use the Run workflow control. **Do not** change the trigger to push or pull_request to work around this.
 
-## Lane 2: separate local non-admin interactive Codex
+## Lane 2: existing interactive Administrator account — Codex QA
 
-In Windows Settings, use a **standard user account** for software QA rather than the existing administrator service identity. Do not migrate stored Codex credentials; sign in normally under that separate user if needed. Use an independent clean clone/worktree of WhereIsIt AI, never the working directories of FlowBridge or TikZarium.
+**Owner directive:** use the existing Administrator account for Codex and Win11 testing. Do not require a separate standard/non-admin account. Keep a separate clean WhereIsIt checkout/worktree, outside the FlowBridge and TikZarium projects.
 
-Under this standard user, in an interactive Win11 session, open PowerShell **7**. Checkout the exact SHA of the code to review. For category PR #73 this is currently 7bfdfb156d004f6e281e626ecd19e816a44dfe5e; refresh it before use. The checkout must be clean.
+Under the owner's **Administrator** account in an interactive Win11 session, open PowerShell **7**. Checkout the exact SHA of the code to review. For category PR #73 this is currently 7bfdfb156d004f6e281e626ecd19e816a44dfe5e; refresh it before use. The checkout must be clean.
 
 The launcher must be taken from a **separately reviewed trusted tooling checkout** (for example this PR after acceptance); the target under audit may be an older PR #73 checkout that does not yet contain the launcher. The following command is a **preflight** and does not launch an agent. Replace example paths with two separate local worktrees; do not check out unreviewed code into the trusted tooling directory:
 
@@ -35,9 +35,9 @@ $targetRepo = 'C:\WhereIsItQA\categories-review'
 pwsh -NoProfile -File "$toolsRepo\tools\qa\windows11-egui\Invoke-Win11CodexReadOnlyAudit.ps1" -RepositoryPath $targetRepo -ExpectedSha '7bfdfb156d004f6e281e626ecd19e816a44dfe5e' -Focus categories
 ~~~
 
-After reviewing the selected task, add -Execute to run the audit. The launcher refuses admin elevation, a service/CI session, dirty or wrong source checkout, and missing Codex. Codex uses **read-only** sandbox, ignores user/project config and does not persist an agent rollout; the final report stays in the standard user's LOCALAPPDATA/WhereIsItAI-QA/CodexAudits directory. Inspect and redact before sharing. The launcher does not push, commit, alter other projects, install software or perform GUI input.
+After reviewing the selected task, add -Execute to run the audit. The launcher **allows Administrator** but refuses a service/CI process, a noninteractive session, dirty or wrong source checkout, and missing Codex. Codex uses **read-only** sandbox, ignores user/project config and does not persist an agent rollout; the final report stays in the Administrator user's LOCALAPPDATA/WhereIsItAI-QA/CodexAudits directory. Inspect and redact before sharing. The launcher does not push, commit, alter other projects, install software or perform GUI input.
 
-Independent read-only review focuses: categories, win64-installer, release-risks. Run them from separate normal-user terminal sessions if desired. These reviews are not substitutes for automated Rust tests or human-independent GUI acceptance. Do not claim agents were launched merely because this documentation exists.
+Independent read-only review focuses: categories, win64-installer, release-risks. Run them from separate Administrator terminal sessions if desired. These reviews are not substitutes for automated Rust tests or human-independent GUI acceptance. Do not claim agents were launched merely because this documentation exists.
 
 ## Lane 3: interactive native Win11 RDP GUI / SQLite QA
 
@@ -49,13 +49,13 @@ For the side-by-side installed candidate, follow:
 - docs/qa/WIN11_WIN64_EGUI_MANUAL_CHECKLIST_20261121.md
 - docs/qa/EGUI_CATEGORY_P0_CHECKPOINT_20261121.md (in PR #73 while draft)
 
-For preview mode use tools/qa/windows10-egui/Invoke-WhereIsItEguiQA.ps1 (Win11 supported) under the **interactive** standard user. The script creates synthetic volumes/catalog only, checks SQLite/search/exports and opens a visible egui window; the -ManualReview option requires actual observations. The automated hosted Windows CI does NOT establish GUI parity, physical USB or 3M real CTF performance.
+For preview mode use tools/qa/windows10-egui/Invoke-WhereIsItEguiQA.ps1 (Win11 supported) under the owner's **interactive Administrator** account. The script creates synthetic volumes/catalog only, checks SQLite/search/exports and opens a visible egui window; the -ManualReview option requires actual observations. The automated hosted Windows CI does NOT establish GUI parity, physical USB or 3M real CTF performance.
 
 Only provide **redacted aggregate findings** to GitHub: source SHA, workflow run ID, installed EXE hash, OS build/architecture, per-scenario PASS/FAIL/BLOCKED, reviewed screenshot atlas and no personal paths. No private CTF bytes or metadata in public artifacts.
 
 ## Lane 4: future dedicated runner for agent development (not implemented)
 
-To run Codex unattended on the VM, create a **separate non-admin runner identity** and fresh isolated workspaces with no secrets, review/approval gates, strict paths and no access to other projects' services. Only after that can a separate trusted manual workflow run codex exec under this restricted identity. The existing administrator runner must remain manual inventory-only. The host is not an isolation boundary; do not allow arbitrary public PR code or unreviewed agent commands.
+Unattended Codex under the existing Administrator **runner service** is not enabled by this PR. It would need a separately reviewed trusted-main manual workflow, task scope, approvals and isolation from other project directories. The owner's **interactive Administrator Codex** testing needs no separate user account. Do not automatically execute unreviewed public PR code through the runner service.
 
 ## Current release gates
 

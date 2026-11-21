@@ -1,8 +1,9 @@
 #Requires -Version 7
 <#
 .SYNOPSIS
-  Opt-in local Codex audit on an interactive, NON-admin Win11 desktop.
+  Opt-in local Codex audit on the owner's interactive Administrator Win11 desktop.
 .DESCRIPTION
+  The owner's Administrator account is approved for Windows 11 QA.
   This script never runs inside a GitHub Actions runner service.
   Default mode is preflight only. -Execute is required to start Codex.
   Codex has a read-only sandbox and no user/project MCP configuration.
@@ -26,11 +27,11 @@ if ($env:RUNNER_NAME -or $env:CI -eq 'true') {
 if (-not [Environment]::UserInteractive) {
     throw 'Codex audit requires a real interactive Windows session.'
 }
+# Owner directive: Administrator is the established Win11 QA user.
+# Disallow noninteractive CI/service, NOT administrator membership.
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
-if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    throw 'Do not run Codex under an elevated/administrator account.'
-}
+$isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $root = (Resolve-Path -LiteralPath $RepositoryPath -ErrorAction Stop).Path
 if (-not (Test-Path -LiteralPath (Join-Path $root '.git'))) {
     throw 'An existing dedicated Git clone/worktree is required.'
@@ -47,16 +48,17 @@ $codex = @('codex.exe','codex.cmd','codex') |
     ForEach-Object { Get-Command $_ -CommandType Application -ErrorAction SilentlyContinue } |
     Select-Object -First 1
 if (-not $codex) {
-    throw 'Codex CLI is not visible in this non-admin user session.'
+    throw 'Codex CLI is not visible in this interactive Windows 11 QA session.'
 }
 $prompts = @{
     categories = 'Read-only independent review of the current WhereIsIt Rust/egui category interface and SQLite category_id query. Verify duplicate names, recursive selection, unassign/reassign, Back navigation, category list virtualization, RU/EN and error handling. Do not edit files, commit, push, or claim actual GUI evidence. Report exact code references and test gaps.'
     'win64-installer' = 'Read-only audit of the current WhereIsIt AMD64 native Rust/egui installer and PowerShell 5.1 QA. Check PE architecture, installer isolation, user catalog preservation, SHA/provenance and no-clobber. Do not run setup, execute project code, edit, commit, or publish. Output a concise PASS/PARTIAL/BLOCKED matrix with evidence.'
     'release-risks' = 'Read-only release risk assessment for WhereIsIt 1.0 on Windows x64. Review release plans, Acceptance JSON, PR58 UX parity, real CTF gaps, physical GUI/USB and signing; distinguish hosted CI from physical QA. Do not change files, execute project code, push, or claim unobserved tests.'
 }
-Write-Host 'WIN11_CODEX_PREFLIGHT_PASS: non-admin interactive account, clean exact checkout, Codex command visible'
+Write-Host 'WIN11_CODEX_PREFLIGHT_PASS: Administrator session permitted, clean exact checkout, Codex command visible'
 Write-Host "CHECKOUT_SHA: $($head.Trim())"
 Write-Host "AUDIT_FOCUS: $Focus"
+Write-Host "ACCOUNT_HAS_ADMIN_TOKEN: $isAdmin"
 if (-not $Execute) {
     Write-Host 'CODEX_NOT_STARTED: pass -Execute explicitly after reviewing the audit focus'
     return

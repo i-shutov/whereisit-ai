@@ -40,9 +40,11 @@ class Win11CodexRunnerContract(unittest.TestCase):
         self.assertIn("RUNNER_HOST_MATCH: true", self.smoke)
         self.assertIn("SERVICE_ACCOUNT_MATCH: true", self.smoke)
 
-    def test_local_codex_requires_nonadmin_interactive_explicit_execution(self):
+    def test_local_codex_allows_admin_interactive_but_rejects_service(self):
         self.assertIn("Administrator", self.script)
         self.assertIn("UserInteractive", self.script)
+        self.assertIn("ACCOUNT_HAS_ADMIN_TOKEN", self.script)
+        self.assertNotIn("Do not run Codex under an elevated/administrator account.", self.script)
         self.assertIn("RUNNER_NAME", self.script)
         self.assertIn("ExpectedSha", self.script)
         self.assertIn("git -C $root rev-parse HEAD", self.script)
