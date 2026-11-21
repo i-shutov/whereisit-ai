@@ -12,7 +12,7 @@ concurrency:
 jobs:
   win11-shell-template-hosted-probe:
     # A fast independent probe of custom shell syntax on GitHub-hosted Windows,
-    # NOT the privileged user Win11 self-hosted runner.
+    # NOT the privileged user Win11 runner service.
     name: Win11 shell template hosted probe
     runs-on: windows-2022
     timeout-minutes: 5
