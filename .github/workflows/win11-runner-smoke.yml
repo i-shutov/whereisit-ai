@@ -30,9 +30,9 @@ jobs:
           $actualUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
           $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
           $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-          if ($env:COMPUTERNAME -ine $env:EXPECTED_COMPUTER) { throw "Wrong host: $env:COMPUTERNAME" }
-          if ($env:RUNNER_NAME -ine $env:EXPECTED_RUNNER) { throw "Wrong runner: $env:RUNNER_NAME" }
-          if ($actualUser -ine $env:EXPECTED_ACCOUNT) { throw "Unexpected service identity: $actualUser" }
+          if ($env:COMPUTERNAME -ine $env:EXPECTED_COMPUTER) { throw "Runner host does not match the reviewed Windows 11 QA host" }
+          if ($env:RUNNER_NAME -ine $env:EXPECTED_RUNNER) { throw "Unexpected runner identity" }
+          if ($actualUser -ine $env:EXPECTED_ACCOUNT) { throw "Unexpected service identity" }
           if (-not $isAdmin) { throw 'Expected elevated administrator service token' }
           if ($os.Caption -notmatch 'Windows 11') { throw "Not Windows 11: $($os.Caption)" }
           if ($os.OSArchitecture -notmatch '64') { throw "Not x64: $($os.OSArchitecture)" }
