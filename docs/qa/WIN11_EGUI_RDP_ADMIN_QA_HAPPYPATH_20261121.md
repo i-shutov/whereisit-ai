@@ -2,6 +2,10 @@
 
 **Prepared: 2026-11-21. Source-only handoff: NOT_RUN on physical Win11 GUI.** Scope is native Rust/egui Windows x64 QA preview with the real category UI from PR #73, not legacy Win32 and not stable 1.0.
 
+## Codex downloads the program itself
+
+Codex must obtain the exact-source **WhereIsIt AI Windows x64 GUI/CLI and installed QA candidate** without asking the owner to transfer these binaries. Follow [WIN11_CODEX_GET_PROGRAM_20261121.md](WIN11_CODEX_GET_PROGRAM_20261121.md): trusted checkout, `gh auth`, `gh run download`, checksum/provenance verification, then GUI launcher. The owner's private CTF and legitimate original WhereIsIt are separate local prerequisites.
+
 ## Exact artifact origin
 
 From a successful exact-HEAD GitHub-hosted native CI workflow, download the artifact named **WhereIsItAI-egui-qa-windows-x64**. Extract this outer GitHub Actions archive into a fresh private directory; it must contain one preview ZIP, SHA256-windows-x64.txt and provenance-windows-x64.json. Independently confirm the repository, successful workflow run, source SHA and artifact download origin in GitHub before executing unsigned software. Hashes packaged alongside unsigned bytes establish consistency, not authenticity.
