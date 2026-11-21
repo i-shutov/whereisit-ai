@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import plistlib
 from pathlib import Path
 import shutil
 import subprocess
@@ -48,13 +49,15 @@ class EguiProductPackagingContract(unittest.TestCase):
     def test_macos_product_bundle_and_lifecycle_are_architecture_specific(self):
         package = (ROOT / "installers/macos/package-egui-product.sh").read_text(encoding="utf-8")
         smoke = (ROOT / "installers/macos/smoke-egui-product.sh").read_text(encoding="utf-8")
-        info = (ROOT / "apps/desktop-egui/Info.plist").read_text(encoding="utf-8")
+        info = plistlib.loads((ROOT / "apps/desktop-egui/Info.plist").read_bytes())
         components = (ROOT / "installers/macos/egui-components.plist").read_text(encoding="utf-8")
         legacy = (ROOT / "installers/macos/package.sh").read_text(encoding="utf-8")
         qa = (ROOT / "apps/desktop-egui/package-preview-macos.sh").read_text(encoding="utf-8")
         actions = (ROOT / ".github/workflows/build.yml").read_text(encoding="utf-8")
-        self.assertIn("CFBundleExecutable</key><string>WhereIsItAI", info)
-        self.assertIn("ai.whereisit.desktop.egui", info)
+        self.assertEqual(info["CFBundleExecutable"], "WhereIsItAI")
+        self.assertEqual(info["CFBundleIdentifier"], "ai.whereisit.desktop.egui")
+        self.assertEqual(info["CFBundleName"], "WhereIsIt AI")
+        self.assertEqual(info["LSMinimumSystemVersion"], "13.0")
         self.assertIn("WhereIsIt AI egui.app", components)
         self.assertIn('uname -m', package)
         self.assertIn('ad-hoc app; unsigned pkg/dmg; not notarized', package)
