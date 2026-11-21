@@ -290,21 +290,20 @@ impl Catalog {
         offset: u64,
         limit: u64,
     ) -> Result<Page> {
-        let (filter, mut args) = query::compile(query)?;
+        let (mut predicate, mut args) = query::compile_predicate(query)?;
         let table = self.query_table(query)?;
         let limit = limit.clamp(1, 1000);
         let off = offset.min(i64::MAX as u64) as i64;
-        let mut clauses = vec![filter];
         if let Some(id) = volume_id {
-            clauses.push("volume_id = ?".into());
+            predicate = predicate.within_volume();
             args.push(id.into());
         }
-        let filter = clauses.join(" AND ");
         let total = self.conn.query_row(
-            &format!("SELECT COUNT(*) FROM {table} WHERE {filter}"),
+            &predicate.count_sql(table),
             rusqlite::params_from_iter(args.iter()),
             |r| nonnegative_sql_u64(r, 0),
         )?;
+        let filter = predicate.sql;
         let sql=format!("WITH page AS MATERIALIZED (SELECT id FROM {table} WHERE {filter} ORDER BY name COLLATE NOCASE,id LIMIT ? OFFSET ?) SELECT e.id,e.volume_id,e.parent_id,e.name,e.relative_path,e.kind,e.size,e.modified_unix,e.description,e.tags FROM page p JOIN entries e ON e.id=p.id ORDER BY e.name COLLATE NOCASE,e.id");
         args.push((limit as i64).into());
         args.push(off.into());
