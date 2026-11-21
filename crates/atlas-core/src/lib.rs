@@ -587,10 +587,7 @@ impl Catalog {
         // The entry existence check and the membership write must be atomic
         // against a second process deleting the catalog entry. BEGIN IMMEDIATE
         // serializes concurrent writers without requiring an exclusive DB lock.
-        let tx = Transaction::new_unchecked(
-            &self.conn,
-            rusqlite::TransactionBehavior::Immediate,
-        )?;
+        let tx = Transaction::new_unchecked(&self.conn, rusqlite::TransactionBehavior::Immediate)?;
         Self::require_entry(&tx, entry_id)?;
         tx.execute(
             "INSERT OR IGNORE INTO entry_categories(entry_id,category_id) VALUES(?1,?2)",
@@ -629,10 +626,7 @@ impl Catalog {
                 "Category and entry IDs must be positive",
             ));
         }
-        let tx = Transaction::new_unchecked(
-            &self.conn,
-            rusqlite::TransactionBehavior::Immediate,
-        )?;
+        let tx = Transaction::new_unchecked(&self.conn, rusqlite::TransactionBehavior::Immediate)?;
         Self::require_entry(&tx, entry_id)?;
         let removed = tx.execute(
             "DELETE FROM entry_categories WHERE entry_id=?1 AND category_id=?2",

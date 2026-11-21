@@ -29,8 +29,7 @@ fn deleting_an_entry_before_competing_category_write_returns_not_found() {
     // Both processes obtain their own SQLite connection before the lock.
     let blocker = Catalog::open(&db).unwrap();
     let competitor = Catalog::open(&db).unwrap();
-    let tx =
-        Transaction::new_unchecked(blocker.conn(), TransactionBehavior::Immediate).unwrap();
+    let tx = Transaction::new_unchecked(blocker.conn(), TransactionBehavior::Immediate).unwrap();
     let barrier = Arc::new(Barrier::new(2));
     let barrier2 = Arc::clone(&barrier);
     let competing = std::thread::spawn(move || {
@@ -63,8 +62,11 @@ fn category_reads_observe_one_sqlite_snapshot_and_reject_deleted_entries() {
         serde_json::from_str(&api::dispatch_json(&req.to_string())).unwrap()
     };
     assert_eq!(call(json!({"op":"init","db":db}))["ok"], true);
-    assert_eq!(call(json!({"op":"scan","db":db,"root":media,
-        "label":"Synthetic","hash":false}))["ok"], true);
+    assert_eq!(
+        call(json!({"op":"scan","db":db,"root":media,
+        "label":"Synthetic","hash":false}))["ok"],
+        true
+    );
     let found = call(json!({"op":"search_fast","db":db,"query":"ext:mkv",
         "offset":0,"limit":250}));
     let id = found["data"]["items"][0]["id"].as_i64().unwrap();
@@ -73,7 +75,11 @@ fn category_reads_observe_one_sqlite_snapshot_and_reject_deleted_entries() {
     let writer = Catalog::open(&db).unwrap();
     let snapshot = reader.conn().unchecked_transaction().unwrap();
     let exists: i64 = snapshot
-        .query_row("SELECT EXISTS(SELECT 1 FROM entries WHERE id=?1)", [id], |r| r.get(0))
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM entries WHERE id=?1)",
+            [id],
+            |r| r.get(0),
+        )
         .unwrap();
     assert_eq!(exists, 1);
     writer
@@ -81,9 +87,16 @@ fn category_reads_observe_one_sqlite_snapshot_and_reject_deleted_entries() {
         .execute("DELETE FROM entries_core WHERE id=?1", [id])
         .unwrap();
     let still_visible: i64 = snapshot
-        .query_row("SELECT EXISTS(SELECT 1 FROM entries WHERE id=?1)", [id], |r| r.get(0))
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM entries WHERE id=?1)",
+            [id],
+            |r| r.get(0),
+        )
         .unwrap();
-    assert_eq!(still_visible, 1, "read snapshot must not mix old and new states");
+    assert_eq!(
+        still_visible, 1,
+        "read snapshot must not mix old and new states"
+    );
     snapshot.commit().unwrap();
 
     let result = reader.entry_category_ids(id);

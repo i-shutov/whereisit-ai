@@ -2726,7 +2726,8 @@ mod shortcut_tests {
             volume_id: 2,
             parent_id: None,
         };
-        app.history.push((category_route.clone(), 250, None, None, 0.0));
+        app.history
+            .push((category_route.clone(), 250, None, None, 0.0));
         app.go_back(&ctx);
         assert_eq!(app.offset, 250);
         assert!(!app.category_result_refresh_pending);
