@@ -17,9 +17,11 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'i-shutov/whereisit-ai' }}
     runs-on: [self-hosted, Windows, X64, win11-whereisit]
     timeout-minutes: 5
+    # Process-scoped policy bypass: runner generates temporary *.ps1; do not alter host ExecutionPolicy.
+    # Trusted-main manual smoke only; still no checkout or untrusted PR execution.
     steps:
       - name: Verify exact Windows host, user and native runtime
-        shell: powershell
+        shell: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {0}
         env:
           EXPECTED_RUNNER: win11-whereisit
           EXPECTED_COMPUTER: VM-326272
@@ -43,7 +45,7 @@ jobs:
           Write-Host "PWSH_VERSION: $($PSVersionTable.PSVersion.ToString())"
           Write-Host 'RUNNER_SMOKE_PASS'
       - name: Report project toolchain availability (non-blocking)
-        shell: powershell
+        shell: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {0}
         run: |
           $ErrorActionPreference = 'Stop'
           foreach ($tool in @('cargo.exe', 'rustc.exe', 'git.exe', 'python.exe', 'sqlite3.exe', 'cl.exe')) {
