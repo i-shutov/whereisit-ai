@@ -40,6 +40,7 @@ jobs:
           key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-1.100-test
       - run: rustup toolchain install 1.100.0 --profile minimal --component rustfmt,clippy
       - run: python3 tools/dev/verify_release_identity.py
+      - run: python3 -m unittest discover -s tools/qa -p 'test_prepare_release_identity.py' -v
       - run: python3 -m unittest discover -s tools/qa -p 'test_usb_disk_locator_contract.py' -v
       - run: cargo test --workspace --locked
       - run: cargo fmt --all -- --check

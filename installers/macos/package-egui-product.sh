@@ -18,7 +18,7 @@ chmod +x "$APP/Contents/MacOS/WhereIsItAI" "$APP/Contents/MacOS/whereisit-ai-cli
 cp apps/desktop-egui/Info.plist "$APP/Contents/Info.plist"
 NUMERIC="${VERSION%%-*}"
 RC="${VERSION##*.}"
-BUILD_VERSION="${NUMERIC//./}${RC}"
+BUILD_VERSION="$((10000 + 10#$RC))"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $NUMERIC" "$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_VERSION" "$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :WhereIsItReleaseVersion $VERSION" "$APP/Contents/Info.plist"

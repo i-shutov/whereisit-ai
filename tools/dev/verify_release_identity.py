@@ -48,6 +48,15 @@ assert plist["CFBundleGetInfoString"] == "WhereIsIt AI " + version, "macOS bundl
 iss = (ROOT / "installers/windows/WhereIsItAI.iss").read_text(encoding="utf-8")
 assert f'#define AppVersion "{version}"' in iss, "Inno Setup fallback version mismatch"
 assert f"VersionInfoVersion={numeric}.0" in iss, "Inno numeric version mismatch"
+with (ROOT / "apps/desktop-egui/Info.plist").open("rb") as handle:
+    egui_plist = plistlib.load(handle)
+assert egui_plist["CFBundleShortVersionString"] == numeric, "egui macOS numeric version mismatch"
+assert egui_plist["CFBundleVersion"] == expected_build, "egui macOS build mismatch"
+assert egui_plist["WhereIsItReleaseVersion"] == version, "egui macOS release identity mismatch"
+for name in ["WhereIsItAI-EguiWin64.iss", "WhereIsItAI-EguiWin64QA.iss"]:
+    egui_iss = (ROOT / "installers/windows" / name).read_text(encoding="utf-8")
+    assert f'#define AppVersion "{version}"' in egui_iss, ("egui Inno fallback version mismatch", name)
+    assert f"VersionInfoVersion={numeric}.0" in egui_iss, ("egui Inno numeric version mismatch", name)
 
 notes = ROOT / "docs/releases" / f"v{version}.md"
 assert notes.is_file(), "Missing exact versioned release notes"
