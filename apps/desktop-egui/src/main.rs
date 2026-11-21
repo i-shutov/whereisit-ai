@@ -1,6 +1,8 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod bridge;
 mod model;
+#[cfg(feature = "qa-screenshots")]
+mod qa_screenshot;
 mod shelf;
 mod ui;
 
@@ -20,7 +22,14 @@ fn main() -> eframe::Result<()> {
             }
         }
     }
+    #[cfg(feature = "qa-screenshots")]
+    let qa_persistence_path = std::env::var_os("WHEREISIT_QA_SETTINGS_PATH")
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_absolute());
     let native_options = eframe::NativeOptions {
+        persist_window: false,
+        #[cfg(feature = "qa-screenshots")]
+        persistence_path: qa_persistence_path,
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1320.0, 760.0])
             .with_min_inner_size([880.0, 520.0]),

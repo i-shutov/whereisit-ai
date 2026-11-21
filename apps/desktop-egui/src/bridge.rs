@@ -53,7 +53,7 @@ impl Route {
             }),
             Self::Copies { entry_id } => json!({
                 "op":"copy_candidates", "db":db, "entry_id":entry_id,
-                "offset":offset, "limit":limit
+                "other_disks_only":true, "offset":offset, "limit":limit
             }),
         }
     }
@@ -175,6 +175,14 @@ mod tests {
         assert_eq!(request["job_id"], first);
         assert_eq!(request["hash"], false);
         assert_eq!(request["db"], "catalog.sqlite");
+    }
+
+    #[test]
+    fn copy_navigation_requests_other_disks_before_pagination() {
+        let request = Route::Copies { entry_id: 42 }.request("catalog.sqlite", 250, 250);
+        assert_eq!(request["other_disks_only"], true);
+        assert_eq!(request["offset"], 250);
+        assert_eq!(request["entry_id"], 42);
     }
 
     #[test]

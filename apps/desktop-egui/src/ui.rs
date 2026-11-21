@@ -13,11 +13,68 @@ use std::time::{Duration, Instant};
 const PAGE_LIMIT: u64 = 250;
 const SEARCH_INPUT_ID: &str = "global_search_input";
 const DISK_NAME_INPUT_ID: &str = "disk_local_name_input";
+const LANGUAGE_SETTING: &str = "whereisit.language.v1";
+const THEME_SETTING: &str = "whereisit.theme.v1";
+type HistoryEntry = (Route, u64, Option<Entry>, Option<i64>, f32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Language {
     Russian,
     English,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RegisterOrder {
+    Id,
+    IndexedBytes,
+}
+
+fn sort_register(volumes: &mut [Volume], order: RegisterOrder) {
+    match order {
+        RegisterOrder::Id => volumes.sort_by_key(|volume| volume.id),
+        RegisterOrder::IndexedBytes => volumes.sort_by(|a, b| {
+            b.total_bytes
+                .cmp(&a.total_bytes)
+                .then_with(|| a.id.cmp(&b.id))
+        }),
+    }
+}
+
+fn register_matches(
+    volume: &Volume,
+    display_name: &str,
+    sticker: &str,
+    note: &str,
+    filter: &str,
+) -> bool {
+    filter.is_empty()
+        || volume.label.to_lowercase().contains(filter)
+        || display_name.to_lowercase().contains(filter)
+        || sticker.to_lowercase().contains(filter)
+        || note.to_lowercase().contains(filter)
+        || volume.id.to_string().contains(filter)
+        || format!("#{}", volume.id).contains(filter)
+}
+
+struct StatusText {
+    ru: String,
+    en: String,
+}
+
+impl StatusText {
+    fn new(ru: impl Into<String>, en: impl Into<String>) -> Self {
+        Self {
+            ru: ru.into(),
+            en: en.into(),
+        }
+    }
+
+    fn text(&self, language: Language) -> &str {
+        match language {
+            Language::Russian => &self.ru,
+            Language::English => &self.en,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -82,12 +139,17 @@ pub struct DesktopApp {
     shelf_editor: String,
     legacy_shelf_editable: bool,
     route: Route,
-    history: Vec<(Route, u64)>,
+    history: Vec<HistoryEntry>,
     page: Page,
     offset: u64,
     selected: Option<Entry>,
+    restore_selection: Option<Entry>,
+    reveal_selected: bool,
+    results_scroll: f32,
+    restore_scroll: Option<f32>,
     selected_volume: Option<i64>,
     disk_filter: String,
+    register_order: RegisterOrder,
     show_catalog_dialog: bool,
     create_catalog: bool,
     show_export_dialog: bool,
@@ -109,7 +171,7 @@ pub struct DesktopApp {
     disk_preferences: HashMap<i64, DiskPreferences>,
     shelf_collisions: HashSet<i64>,
     preferences_ready: bool,
-    status: String,
+    status: StatusText,
     error: Option<String>,
     lang: Language,
     dark: bool,
@@ -117,8 +179,33 @@ pub struct DesktopApp {
 }
 
 impl DesktopApp {
+    fn dialog_open(&self) -> bool {
+        self.show_catalog_dialog
+            || self.show_export_dialog
+            || self.show_scan_dialog
+            || self.show_disk_properties.is_some()
+    }
+
+    fn protect_background(&self, ui: &mut egui::Ui) {
+        if self.dialog_open() {
+            ui.disable();
+        }
+    }
+
     pub fn new(cc: &eframe::CreationContext<'_>, startup_catalog: Option<String>) -> Self {
-        Self::with_context(&cc.egui_ctx, startup_catalog)
+        let mut app = Self::with_context(&cc.egui_ctx, startup_catalog);
+        app.restore_appearance(cc.storage);
+        app
+    }
+
+    fn restore_appearance(&mut self, storage: Option<&dyn eframe::Storage>) {
+        if let Some(storage) = storage {
+            self.lang = match storage.get_string(LANGUAGE_SETTING).as_deref() {
+                Some("en") => Language::English,
+                _ => Language::Russian,
+            };
+            self.dark = !matches!(storage.get_string(THEME_SETTING).as_deref(), Some("light"));
+        }
     }
 
     fn with_context(ctx: &egui::Context, startup_catalog: Option<String>) -> Self {
@@ -145,8 +232,13 @@ impl DesktopApp {
             page: Page::default(),
             offset: 0,
             selected: None,
+            restore_selection: None,
+            reveal_selected: false,
+            results_scroll: 0.0,
+            restore_scroll: None,
             selected_volume: None,
             disk_filter: String::new(),
+            register_order: RegisterOrder::Id,
             show_catalog_dialog: false,
             create_catalog: false,
             show_export_dialog: false,
@@ -168,7 +260,10 @@ impl DesktopApp {
             disk_preferences: HashMap::new(),
             shelf_collisions: HashSet::new(),
             preferences_ready: false,
-            status: "Ready · local metadata only".to_owned(),
+            status: StatusText::new(
+                "Готово · только локальные метаданные",
+                "Ready · local metadata only",
+            ),
             error: None,
             lang: Language::Russian,
             dark: true,
@@ -248,7 +343,7 @@ impl DesktopApp {
             Purpose::Open { path: path.clone() }
         };
         let op = if create { "init" } else { "validate_catalog" };
-        self.status = self.t("Проверка каталога…", "Opening catalog…").to_owned();
+        self.status = StatusText::new("Проверка каталога…", "Opening catalog…");
         self.queue(purpose, json!({"op":op,"db":path}), ctx);
         self.show_catalog_dialog = false;
     }
@@ -260,7 +355,7 @@ impl DesktopApp {
         let Some(db) = self.db.clone() else {
             return;
         };
-        self.status = self.t("Операция отклонена", "Operation refused").to_owned();
+        self.status = StatusText::new("Операция отклонена", "Operation refused");
         let path = self.export_path.trim().to_owned();
         if path.is_empty() {
             self.error = Some(
@@ -297,12 +392,10 @@ impl DesktopApp {
             );
             return;
         };
-        self.status = self
-            .t(
-                "Экспорт полного набора метаданных…",
-                "Exporting full metadata scope…",
-            )
-            .to_owned();
+        self.status = StatusText::new(
+            "Экспорт полного набора метаданных…",
+            "Exporting full metadata scope…",
+        );
         self.show_export_dialog = false;
         self.queue(Purpose::Export { path }, request, ctx);
     }
@@ -314,7 +407,7 @@ impl DesktopApp {
         let Some(db) = self.db.clone() else {
             return;
         };
-        self.status = self.t("Операция отклонена", "Operation refused").to_owned();
+        self.status = StatusText::new("Операция отклонена", "Operation refused");
         let label = self.scan_label.trim().to_owned();
         if label.is_empty() {
             self.error = Some(
@@ -371,12 +464,10 @@ impl DesktopApp {
         self.scan_cancel_request = None;
         self.last_progress_poll = None;
         self.scan_job_id = Some(job_id.clone());
-        self.status = self
-            .t(
-                "Сканирование метаданных запущено…",
-                "Metadata scan started…",
-            )
-            .to_owned();
+        self.status = StatusText::new(
+            "Сканирование метаданных запущено…",
+            "Metadata scan started…",
+        );
         self.show_scan_dialog = false;
         self.queue(
             Purpose::Scan {
@@ -417,12 +508,10 @@ impl DesktopApp {
             return;
         };
         self.scan_cancel_requested = true;
-        self.status = self
-            .t(
-                "Запрос отмены сканирования…",
-                "Requesting scan cancellation…",
-            )
-            .to_owned();
+        self.status = StatusText::new(
+            "Запрос отмены сканирования…",
+            "Requesting scan cancellation…",
+        );
         self.scan_cancel_request = Some(self.bus.send(
             Purpose::ScanCancel {
                 job_id: job_id.clone(),
@@ -434,9 +523,7 @@ impl DesktopApp {
 
     fn load_volumes(&mut self, ctx: &egui::Context) {
         if let Some(db) = self.db.clone() {
-            self.status = self
-                .t("Загрузка реестра дисков…", "Loading disk register…")
-                .to_owned();
+            self.status = StatusText::new("Загрузка реестра дисков…", "Loading disk register…");
             self.queue(Purpose::Volumes, json!({"op":"volumes","db":db}), ctx);
         }
     }
@@ -587,12 +674,10 @@ impl DesktopApp {
             return;
         };
         let catalog_key = scope.catalog_key.clone();
-        self.status = self
-            .t(
-                "Сохраняем наклейку отдельно от каталога…",
-                "Saving the shelf tag outside the catalog…",
-            )
-            .to_owned();
+        self.status = StatusText::new(
+            "Сохраняем наклейку отдельно от каталога…",
+            "Saving the shelf tag outside the catalog…",
+        );
         self.queue(
             Purpose::ShelfSave {
                 catalog_key,
@@ -607,9 +692,7 @@ impl DesktopApp {
         if let Some(db) = self.db.clone() {
             let route = self.route.clone();
             let request = route.request(&db, self.offset, PAGE_LIMIT);
-            self.status = self
-                .t("Поиск по каталогу…", "Searching catalog…")
-                .to_owned();
+            self.status = StatusText::new("Поиск по каталогу…", "Searching catalog…");
             self.queue(Purpose::Page { route }, request, ctx);
         }
     }
@@ -619,6 +702,8 @@ impl DesktopApp {
             return;
         }
         self.history.clear();
+        self.restore_selection = None;
+        self.reveal_selected = false;
         self.offset = 0;
         self.selected = None;
         self.route = Route::Search {
@@ -643,7 +728,14 @@ impl DesktopApp {
         if !entry.is_directory() {
             return;
         }
-        self.history.push((self.route.clone(), self.offset));
+        self.history.push((
+            self.route.clone(),
+            self.offset,
+            self.selected.clone(),
+            self.selected_volume,
+            self.results_scroll,
+        ));
+        self.restore_selection = None;
         self.offset = 0;
         self.selected = None;
         self.route = Route::Folder {
@@ -661,7 +753,14 @@ impl DesktopApp {
             if entry.is_directory() {
                 return;
             }
-            self.history.push((self.route.clone(), self.offset));
+            self.history.push((
+                self.route.clone(),
+                self.offset,
+                self.selected.clone(),
+                self.selected_volume,
+                self.results_scroll,
+            ));
+            self.restore_selection = None;
             self.offset = 0;
             self.selected = None;
             self.route = Route::Copies { entry_id: entry.id };
@@ -673,11 +772,49 @@ impl DesktopApp {
         if self.active_request.is_some() {
             return;
         }
-        if let Some((route, offset)) = self.history.pop() {
+        if let Some((route, offset, selection, selected_volume, scroll)) = self.history.pop() {
+            self.reveal_selected = false;
+            self.restore_scroll = Some(scroll);
             self.route = route;
             self.offset = offset;
             self.selected = None;
+            self.restore_selection = selection;
+            self.selected_volume = selected_volume;
             self.load_page(ctx);
+        }
+    }
+
+    fn navigate_containing_folder(&mut self, entry: &Entry, ctx: &egui::Context) {
+        if self.active_request.is_some() || entry.is_directory() {
+            return;
+        }
+        self.history.push((
+            self.route.clone(),
+            self.offset,
+            self.selected.clone(),
+            self.selected_volume,
+            self.results_scroll,
+        ));
+        self.route = Route::Folder {
+            volume_id: entry.volume_id,
+            parent_id: entry.parent_id,
+        };
+        self.selected_volume = Some(entry.volume_id);
+        self.offset = 0;
+        self.selected = None;
+        self.restore_selection = Some(entry.clone());
+        self.reveal_selected = true;
+        if let Some(db) = self.db.clone() {
+            self.queue(
+                Purpose::Page {
+                    route: self.route.clone(),
+                },
+                json!({
+                    "op":"children_focused", "db":db, "volume_id":entry.volume_id,
+                    "parent_id":entry.parent_id, "entry_id":entry.id, "limit":PAGE_LIMIT
+                }),
+                ctx,
+            );
         }
     }
 
@@ -704,17 +841,16 @@ impl DesktopApp {
                     self.scan_cancel_request = None;
                     if self.scan_job_id.as_deref() == Some(job_id.as_str()) {
                         self.status = if reply.response["ok"] == true {
-                            self.t(
+                            StatusText::new(
                                 "Отмена запрошена; ожидается откат транзакции.",
                                 "Cancellation requested; waiting for rollback.",
                             )
                         } else {
-                            self.t(
+                            StatusText::new(
                                 "Отмена уже невозможна: операция завершается.",
                                 "Cancellation is too late; operation is finishing.",
                             )
-                        }
-                        .to_owned();
+                        };
                     }
                 }
                 return;
@@ -741,12 +877,10 @@ impl DesktopApp {
                 .and_then(Value::as_str)
                 == Some("cancelled")
         {
-            self.status = self
-                .t(
-                    "Сканирование отменено: снимок не сохранён.",
-                    "Scan cancelled: no snapshot was saved.",
-                )
-                .to_owned();
+            self.status = StatusText::new(
+                "Сканирование отменено: снимок не сохранён.",
+                "Scan cancelled: no snapshot was saved.",
+            );
             return;
         }
         if reply.response.get("ok").and_then(Value::as_bool) != Some(true) {
@@ -756,7 +890,7 @@ impl DesktopApp {
                 .and_then(Value::as_str)
                 .unwrap_or("Unknown service error");
             let error_message = message.to_owned();
-            self.status = self.t("Операция отклонена", "Operation refused").to_owned();
+            self.status = StatusText::new("Операция отклонена", "Operation refused");
             if matches!(&reply.purpose, Purpose::DiskPreferences) {
                 self.preferences_ready = false;
                 self.legacy_shelf_editable = reply
@@ -804,7 +938,7 @@ impl DesktopApp {
             Purpose::Volumes => match parse_volumes(data) {
                 Ok(volumes) => {
                     self.volumes = volumes;
-                    self.status = self.t("Каталог открыт", "Catalog opened").to_owned();
+                    self.status = StatusText::new("Каталог открыт", "Catalog opened");
                     self.load_disk_preferences(ctx);
                 }
                 Err(e) => self.error = Some(e),
@@ -868,9 +1002,8 @@ impl DesktopApp {
             Purpose::SaveDiskProperties { volume_id } => {
                 let _ = volume_id;
                 self.show_disk_properties = None;
-                self.status = self
-                    .t("Локальные свойства сохранены", "Local properties saved")
-                    .to_owned();
+                self.status =
+                    StatusText::new("Локальные свойства сохранены", "Local properties saved");
                 self.load_volumes(ctx);
             }
             Purpose::ShelfLabels {
@@ -911,12 +1044,10 @@ impl DesktopApp {
                     .is_some_and(|scope| scope.catalog_key == catalog_key)
                     && self.volumes.iter().any(|v| v.id == volume_id)
                 {
-                    self.status = self
-                        .t(
-                            "Наклейка сохранена; не является подтверждением подключения USB.",
-                            "Shelf label saved; it does not prove USB presence.",
-                        )
-                        .to_owned();
+                    self.status = StatusText::new(
+                        "Наклейка сохранена; не является подтверждением подключения USB.",
+                        "Shelf label saved; it does not prove USB presence.",
+                    );
                     self.load_shelf_labels(ctx, false);
                 }
             }
@@ -933,12 +1064,10 @@ impl DesktopApp {
                         volume_id: Some(id),
                     };
                 }
-                self.status = self
-                    .t(
-                        "Сканирование закончено; обновляем реестр.",
-                        "Scan complete; refreshing disk register.",
-                    )
-                    .to_owned();
+                self.status = StatusText::new(
+                    "Сканирование закончено; обновляем реестр.",
+                    "Scan complete; refreshing disk register.",
+                );
                 self.load_volumes(ctx);
             }
             Purpose::ScanProgress { .. } | Purpose::ScanCancel { .. } => {
@@ -946,27 +1075,30 @@ impl DesktopApp {
             }
             Purpose::Export { path } => {
                 let rows = data.get("rows").and_then(Value::as_u64).unwrap_or(0);
-                self.status = format!(
-                    "{}: {} ({} {})",
-                    self.t("Экспорт завершён", "Export complete"),
-                    path,
-                    rows,
-                    self.t("записей", "rows")
+                self.status = StatusText::new(
+                    format!("Экспорт завершён: {path} ({rows} записей)"),
+                    format!("Export complete: {path} ({rows} rows)"),
                 );
             }
             Purpose::Page { route } => match Page::parse(data) {
                 Ok(page) => {
                     self.route = route;
                     self.offset = page.offset;
-                    self.status = format!(
-                        "{} {}–{}",
-                        self.t("Показаны строки", "Showing rows"),
+                    let start =
                         page.offset
-                            .saturating_add(if page.items.is_empty() { 0 } else { 1 }),
-                        page.offset.saturating_add(page.items.len() as u64),
+                            .saturating_add(if page.items.is_empty() { 0 } else { 1 });
+                    let end = page.offset.saturating_add(page.items.len() as u64);
+                    self.status = StatusText::new(
+                        format!("Показаны строки {start}–{end}"),
+                        format!("Showing rows {start}–{end}"),
                     );
+                    self.selected = self.restore_selection.take().and_then(|selection| {
+                        page.items
+                            .iter()
+                            .find(|item| item.id == selection.id)
+                            .cloned()
+                    });
                     self.page = page;
-                    self.selected = None;
                 }
                 Err(e) => self.error = Some(e),
             },
@@ -975,6 +1107,7 @@ impl DesktopApp {
 
     fn menu(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
         egui::Panel::top("menu").show(root, |ui| {
+            self.protect_background(ui);
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.strong("WhereIsIt AI");
                 ui.separator();
@@ -1078,6 +1211,7 @@ impl DesktopApp {
 
     fn search_toolbar(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
         egui::Panel::top("search_toolbar").show(root, |ui| {
+            self.protect_background(ui);
             ui.add_space(5.0);
             ui.horizontal(|ui| {
                 let back = ui.add_enabled(
@@ -1133,9 +1267,27 @@ impl DesktopApp {
             .min_size(180.0)
             .max_size(420.0)
             .show(root, |ui| {
+                self.protect_background(ui);
                 ui.horizontal(|ui| {
                     ui.strong(self.t("Диски каталога", "Catalog disks"));
                     ui.label(RichText::new(self.volumes.len().to_string()).weak());
+                    let order_label = match self.register_order {
+                        RegisterOrder::Id => "#ID",
+                        RegisterOrder::IndexedBytes => self.t("Объём↓", "Size↓"),
+                    };
+                    if ui
+                        .small_button(order_label)
+                        .on_hover_text(self.t(
+                            "Сортировать по ID или записанному объёму",
+                            "Sort by ID or indexed size",
+                        ))
+                        .clicked()
+                    {
+                        self.register_order = match self.register_order {
+                            RegisterOrder::Id => RegisterOrder::IndexedBytes,
+                            RegisterOrder::IndexedBytes => RegisterOrder::Id,
+                        };
+                    }
                 });
                 let disk_filter_hint = self.t("Фильтр дисков", "Filter disks");
                 ui.add(
@@ -1157,19 +1309,24 @@ impl DesktopApp {
                 }
                 ui.separator();
 
-                let filter = self.disk_filter.to_lowercase();
-                let visible: Vec<_> = self
+                let filter = self.disk_filter.trim().to_lowercase();
+                let mut visible: Vec<_> = self
                     .volumes
                     .iter()
                     .filter(|v| {
-                        filter.is_empty()
-                            || v.label.to_lowercase().contains(&filter)
-                            || self.display_name(v).to_lowercase().contains(&filter)
-                            || self.shelf.label(v.id).to_lowercase().contains(&filter)
-                            || v.id.to_string().contains(&filter)
+                        register_matches(
+                            v,
+                            self.display_name(v),
+                            self.shelf.label(v.id),
+                            self.disk_preferences
+                                .get(&v.id)
+                                .map_or("", |p| p.note.as_str()),
+                            &filter,
+                        )
                     })
                     .cloned()
                     .collect();
+                sort_register(&mut visible, self.register_order);
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
@@ -1192,12 +1349,31 @@ impl DesktopApp {
                                         }
                                     )
                                 };
-                                let label = ui.selectable_label(selected, title);
+                                let label_width = (ui.available_width() - 88.0).max(24.0);
+                                let label = ui
+                                    .add_sized(
+                                        [label_width, 20.0],
+                                        egui::Button::selectable(selected, title.clone())
+                                            .truncate(),
+                                    )
+                                    .on_hover_text(format!(
+                                        "{}\n{} · {}",
+                                        title,
+                                        volume.entry_count,
+                                        bytes_compact(volume.total_bytes)
+                                    ));
                                 if label.clicked() {
                                     self.navigate_disk(Some(volume.id), ctx);
                                 }
                                 if label.double_clicked() && self.active_request.is_none() {
-                                    self.history.push((self.route.clone(), self.offset));
+                                    self.history.push((
+                                        self.route.clone(),
+                                        self.offset,
+                                        self.selected.clone(),
+                                        self.selected_volume,
+                                        self.results_scroll,
+                                    ));
+                                    self.restore_selection = None;
                                     self.route = Route::Folder {
                                         volume_id: volume.id,
                                         parent_id: None,
@@ -1205,6 +1381,11 @@ impl DesktopApp {
                                     self.offset = 0;
                                     self.load_page(ctx);
                                 }
+                                ui.label(
+                                    RichText::new(bytes_compact(volume.total_bytes))
+                                        .small()
+                                        .weak(),
+                                );
                                 if ui
                                     .small_button("⋯")
                                     .on_hover_text(self.t("Свойства диска", "Disk properties"))
@@ -1214,18 +1395,6 @@ impl DesktopApp {
                                     self.shelf_editor = self.shelf.label(volume.id).to_owned();
                                 }
                             });
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    RichText::new(format!(
-                                        "{} · {}",
-                                        volume.entry_count,
-                                        bytes_compact(volume.total_bytes)
-                                    ))
-                                    .small()
-                                    .weak(),
-                                );
-                            });
-                            ui.add_space(1.0);
                         }
                     });
             });
@@ -1238,10 +1407,11 @@ impl DesktopApp {
             .min_size(95.0)
             .max_size(320.0)
             .show(root, |ui| {
+                self.protect_background(ui);
                 ui.horizontal(|ui| {
                     ui.strong(self.t("Инспектор", "Inspector"));
                     ui.separator();
-                    ui.label(RichText::new(&self.status).small().weak());
+                    ui.label(RichText::new(self.status.text(self.lang)).small().weak());
                     if self.active_request.is_some() { ui.spinner(); }
                 });
                 if self.scan_job_id.is_some() {
@@ -1281,6 +1451,9 @@ impl DesktopApp {
                         let copies = ui.add_enabled(!selected.is_directory(),
                             egui::Button::new(self.t("Кандидаты на других дисках", "Copies on other disks")));
                         if copies.clicked() { self.navigate_copies(ctx); }
+                        if !selected.is_directory() && ui.button(self.t("Открыть папку файла", "Open containing folder")).clicked() {
+                            self.navigate_containing_folder(&selected, ctx);
+                        }
                         if selected.is_directory() && ui.button(self.t("Открыть папку", "Open folder")).clicked() {
                             self.navigate_folder(&selected, ctx);
                         }
@@ -1299,6 +1472,7 @@ impl DesktopApp {
 
     fn results_table(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
         egui::CentralPanel::default().show(root, |ui| {
+            self.protect_background(ui);
             if self.db.is_none() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(75.0);
@@ -1378,7 +1552,7 @@ impl DesktopApp {
             let selection = self.selected.as_ref().map(|e| e.id);
             let mut chosen: Option<Entry> = None;
             let mut open_folder: Option<Entry> = None;
-            TableBuilder::new(ui)
+            let mut table = TableBuilder::new(ui)
                 .striped(true)
                 .resizable(true)
                 .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
@@ -1386,7 +1560,19 @@ impl DesktopApp {
                 .column(Column::remainder().at_least(180.0))
                 .column(Column::initial(86.0).at_least(72.0))
                 .column(Column::initial(92.0).at_least(80.0))
-                .column(Column::initial(235.0).at_least(90.0))
+                .column(Column::initial(235.0).at_least(90.0));
+            if self.reveal_selected {
+                if let Some(index) = rows.iter().position(|row| Some(row.id) == selection) {
+                    table = table.scroll_to_row(index, Some(egui::Align::Center));
+                    self.reveal_selected = false;
+                }
+            }
+            if self.active_request.is_none() {
+                if let Some(scroll) = self.restore_scroll.take() {
+                    table = table.vertical_scroll_offset(scroll);
+                }
+            }
+            let output = table
                 .header(24.0, |mut header| {
                     header.col(|ui| {
                         ui.strong("Disk");
@@ -1446,6 +1632,7 @@ impl DesktopApp {
                         });
                     });
                 });
+            self.results_scroll = output.state.clamped_offset().y;
             if let Some(entry) = chosen {
                 self.selected = Some(entry);
             }
@@ -1733,11 +1920,7 @@ impl DesktopApp {
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        let modal_open = self.show_catalog_dialog
-            || self.show_export_dialog
-            || self.show_scan_dialog
-            || self.show_disk_properties.is_some();
-        if modal_open {
+        if self.dialog_open() {
             return;
         }
         // Use modifiers attached to the key event: the user can release Ctrl
@@ -1781,8 +1964,29 @@ impl DesktopApp {
 }
 
 impl eframe::App for DesktopApp {
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        storage.set_string(
+            LANGUAGE_SETTING,
+            match self.lang {
+                Language::Russian => "ru",
+                Language::English => "en",
+            }
+            .to_owned(),
+        );
+        storage.set_string(
+            THEME_SETTING,
+            if self.dark { "dark" } else { "light" }.to_owned(),
+        );
+    }
+
+    fn persist_egui_memory(&self) -> bool {
+        false
+    }
+
     fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = root.ctx().clone();
+        #[cfg(feature = "qa-screenshots")]
+        crate::qa_screenshot::capture_on_f12(&ctx);
         ctx.set_visuals(if self.dark {
             egui::Visuals::dark()
         } else {
@@ -1809,6 +2013,91 @@ impl eframe::App for DesktopApp {
 #[cfg(test)]
 mod shortcut_tests {
     use super::*;
+
+    #[test]
+    fn register_order_matches_reference_and_breaks_size_ties_by_id() {
+        let volume = |id, total_bytes| Volume {
+            id,
+            label: format!("Fixture {id}"),
+            root_path: String::new(),
+            entry_count: 0,
+            total_bytes,
+        };
+        let mut volumes = vec![volume(9, 20), volume(3, 20), volume(1, 5)];
+        sort_register(&mut volumes, RegisterOrder::Id);
+        assert_eq!(volumes.iter().map(|v| v.id).collect::<Vec<_>>(), [1, 3, 9]);
+        sort_register(&mut volumes, RegisterOrder::IndexedBytes);
+        assert_eq!(volumes.iter().map(|v| v.id).collect::<Vec<_>>(), [3, 9, 1]);
+    }
+
+    #[test]
+    fn register_filter_matches_id_sticker_and_unicode_note() {
+        let volume = Volume {
+            id: 61,
+            label: "Original".into(),
+            root_path: String::new(),
+            entry_count: 0,
+            total_bytes: 0,
+        };
+        assert!(register_matches(
+            &volume,
+            "Локальный",
+            "BOX-17",
+            "Семейное Кино",
+            "#61"
+        ));
+        assert!(register_matches(
+            &volume,
+            "Локальный",
+            "BOX-17",
+            "Семейное Кино",
+            "box-17"
+        ));
+        assert!(register_matches(
+            &volume,
+            "Локальный",
+            "BOX-17",
+            "Семейное Кино",
+            "кино"
+        ));
+        assert!(!register_matches(
+            &volume,
+            "Локальный",
+            "BOX-17",
+            "Семейное Кино",
+            "#62"
+        ));
+    }
+
+    #[test]
+    fn dialogs_disable_background_controls_until_closed() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        for dialog in 0..4 {
+            app.show_catalog_dialog = dialog == 0;
+            app.show_export_dialog = dialog == 1;
+            app.show_scan_dialog = dialog == 2;
+            app.show_disk_properties = (dialog == 3).then_some(1);
+            let mut output = ctx.run_pass(egui::RawInput::default(), |ctx| {
+                egui::Area::new(egui::Id::unique("background-test")).show(ctx, |ui| {
+                    app.protect_background(ui);
+                    assert!(!ui.button("Open another dialog").enabled());
+                });
+            });
+            output.textures_delta.clear();
+        }
+        app.show_catalog_dialog = false;
+        app.show_export_dialog = false;
+        app.show_scan_dialog = false;
+        app.show_disk_properties = None;
+        let mut output = ctx.run_pass(egui::RawInput::default(), |ctx| {
+            egui::Area::new(egui::Id::unique("background-test")).show(ctx, |ui| {
+                app.protect_background(ui);
+                assert!(ui.button("Open another dialog").enabled());
+            });
+        });
+        output.textures_delta.clear();
+    }
 
     #[test]
     fn only_legacy_schema_failure_enables_shelf_fallback() {
@@ -1864,12 +2153,15 @@ mod shortcut_tests {
             .into_owned();
         assert!(!Path::new(&app.scan_root).exists());
         app.scan_label = "Synthetic".to_owned();
-        app.status = "Previous operation succeeded".to_owned();
+        app.status = StatusText::new(
+            "Предыдущая операция успешна",
+            "Previous operation succeeded",
+        );
         app.show_scan_dialog = true;
 
         app.start_scan(&ctx);
 
-        assert_eq!(app.status, "Операция отклонена");
+        assert_eq!(app.status.text(app.lang), "Операция отклонена");
         assert!(app.error.is_some());
         assert!(app.show_scan_dialog);
         assert!(app.active_request.is_none());
@@ -1905,15 +2197,55 @@ mod shortcut_tests {
             .join("Cargo.toml")
             .to_string_lossy()
             .into_owned();
-        app.status = "Export completed".to_owned();
+        app.status = StatusText::new("Экспорт завершён", "Export completed");
         app.show_export_dialog = true;
 
         app.start_export(&ctx);
 
-        assert_eq!(app.status, "Операция отклонена");
+        assert_eq!(app.status.text(app.lang), "Операция отклонена");
         assert!(app.error.is_some());
         assert!(app.show_export_dialog);
         assert!(app.active_request.is_none());
+    }
+
+    #[test]
+    fn status_retranslates_existing_page_and_export_results() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.active_request = Some(7);
+        app.apply_reply(
+            crate::bridge::Reply {
+                id: 7,
+                purpose: Purpose::Page {
+                    route: app.route.clone(),
+                },
+                response: json!({"ok": true, "data": {"items": [], "offset": 250, "limit": 250}}),
+            },
+            &ctx,
+        );
+        assert_eq!(app.status.text(app.lang), "Показаны строки 250–250");
+        app.lang = Language::English;
+        assert_eq!(app.status.text(app.lang), "Showing rows 250–250");
+        app.active_request = Some(8);
+        app.apply_reply(
+            crate::bridge::Reply {
+                id: 8,
+                purpose: Purpose::Export {
+                    path: "synthetic.csv".to_owned(),
+                },
+                response: json!({"ok": true, "data": {"rows": 42}}),
+            },
+            &ctx,
+        );
+        assert_eq!(
+            app.status.text(app.lang),
+            "Export complete: synthetic.csv (42 rows)"
+        );
+        app.lang = Language::Russian;
+        assert_eq!(
+            app.status.text(app.lang),
+            "Экспорт завершён: synthetic.csv (42 записей)"
+        );
     }
 
     fn key_input(key: egui::Key, modifiers: egui::Modifiers) -> egui::RawInput {
@@ -2003,7 +2335,8 @@ mod shortcut_tests {
             volume_id: Some(60),
         };
         app.route = Route::Copies { entry_id: 9 };
-        app.history.push((original.clone(), 250));
+        app.history
+            .push((original.clone(), 250, None, Some(60), 0.0));
         let alt = egui::Modifiers {
             alt: true,
             ..Default::default()
@@ -2014,6 +2347,49 @@ mod shortcut_tests {
         output.textures_delta.clear();
         assert_eq!(app.route, original);
         assert_eq!(app.offset, 250);
+    }
+
+    #[test]
+    fn containing_folder_and_back_restore_selected_search_result() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        let entry = Entry::parse(&json!({"id":42,"volume_id":7,"parent_id":13,
+            "name":"film.mkv","relative_path":"Movies/film.mkv","kind":"file","size":42}))
+        .unwrap();
+        let original = Route::Search {
+            query: "film".into(),
+            volume_id: None,
+        };
+        app.route = original.clone();
+        app.offset = 250;
+        app.results_scroll = 320.0;
+        app.selected = Some(entry.clone());
+        app.navigate_containing_folder(&entry, &ctx);
+        assert_eq!(
+            app.route,
+            Route::Folder {
+                volume_id: 7,
+                parent_id: Some(13)
+            }
+        );
+        assert_eq!(app.selected_volume, Some(7));
+        app.go_back(&ctx);
+        assert_eq!(app.route, original);
+        assert_eq!(app.offset, 250);
+        assert_eq!(app.selected_volume, None);
+        assert_eq!(app.restore_scroll, Some(320.0));
+        app.active_request = Some(1);
+        app.apply_reply(
+            crate::bridge::Reply {
+                id: 1,
+                purpose: Purpose::Page { route: original },
+                response: json!({"ok":true,"data":{"items":[{"id":42,"volume_id":7,"parent_id":13,
+                "name":"film.mkv","relative_path":"Movies/film.mkv","kind":"file","size":42}],
+                "offset":250,"limit":250,"has_more":false}}),
+            },
+            &ctx,
+        );
+        assert_eq!(app.selected, Some(entry));
     }
 
     fn selected_volume(app: &mut DesktopApp) {
@@ -2066,4 +2442,45 @@ mod shortcut_tests {
         output.textures_delta.clear();
         assert_eq!(app.show_disk_properties, None);
     }
+}
+#[cfg(test)]
+#[derive(Default)]
+struct MemoryStorage(std::collections::HashMap<String, String>);
+#[cfg(test)]
+impl eframe::Storage for MemoryStorage {
+    fn get_string(&self, key: &str) -> Option<String> {
+        self.0.get(key).cloned()
+    }
+    fn set_string(&mut self, key: &str, value: String) {
+        self.0.insert(key.to_owned(), value);
+    }
+    fn remove_string(&mut self, key: &str) {
+        self.0.remove(key);
+    }
+    fn flush(&mut self) {}
+}
+
+#[test]
+fn appearance_round_trip_saves_only_language_and_theme() {
+    let ctx = egui::Context::default();
+    let mut app = DesktopApp::with_context(&ctx, None);
+    app.lang = Language::English;
+    app.dark = false;
+    app.query_input = "private search".into();
+    app.path_input = "private path".into();
+    let mut storage = MemoryStorage::default();
+    eframe::App::save(&mut app, &mut storage);
+    assert_eq!(storage.0.len(), 2);
+    assert!(!eframe::App::persist_egui_memory(&app));
+    let mut restarted = DesktopApp::with_context(&ctx, None);
+    restarted.restore_appearance(Some(&storage));
+    assert!(matches!(restarted.lang, Language::English));
+    assert!(!restarted.dark);
+    assert!(restarted.query_input.is_empty());
+    assert!(restarted.path_input.is_empty());
+    eframe::Storage::set_string(&mut storage, LANGUAGE_SETTING, "unknown".into());
+    eframe::Storage::set_string(&mut storage, THEME_SETTING, "unknown".into());
+    restarted.restore_appearance(Some(&storage));
+    assert!(matches!(restarted.lang, Language::Russian));
+    assert!(restarted.dark);
 }

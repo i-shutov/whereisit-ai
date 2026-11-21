@@ -14,6 +14,7 @@ mod dates;
 mod disk_preferences;
 mod duplicates;
 mod exports;
+mod focused_children;
 mod legacy;
 mod maintenance;
 mod physical_disks;
@@ -90,6 +91,7 @@ fn dispatch(input: &str) -> Result<Value> {
         "ctf_info" => legacy::info(&v)?,
         "duplicates" => duplicates::duplicates(&Catalog::open(text(&v, "db")?)?, &v)?,
         "copy_candidates" => copy_candidates::page(&Catalog::open(text(&v, "db")?)?, &v)?,
+        "children_focused" => focused_children::page(&Catalog::open(text(&v, "db")?)?, &v)?,
         "disk_preferences_list" => disk_preferences::list(&v)?,
         "disk_preferences_get" => disk_preferences::get(&v)?,
         "disk_preferences_set" => disk_preferences::set(&v)?,
