@@ -77,3 +77,5 @@ exact-ID Unicode category checks. Use -CategoryChecks -ManualReview only
 in a real unlocked RDP session for the additional category GUI questions.
 Older binaries without category_id/unassign_category do not support this
 flag. Hosted smoke is never physical Windows 11 GUI acceptance.
+
+**PowerShell 5.1 source parser:** `Test-CliTransport.ps1` parses the UTF-8 QA runner using `Parser.ParseInput` on explicitly decoded UTF-8 text. Never rely on the shell's machine ANSI codepage for the BOM-less repository source. The hosted Windows transport regression and packaged QA bundle are distinct checks.

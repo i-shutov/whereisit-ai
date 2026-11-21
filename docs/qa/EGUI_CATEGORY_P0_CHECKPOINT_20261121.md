@@ -34,7 +34,7 @@
 
 ## W2/W3 — протокол интерактивной Win11/Win64 приёмки
 
-Использовать **только** SHA/provenance-верифицированный egui Win64 артефакт из GitHub-hosted CI, в отдельном неадминистративном профиле. Каталог и медиа — генерируемые; не открывать личные CTF/SQLite. Зафиксировать следующий минимальный набор с screenshot pairs PR58/egui и PASS/FAIL/BLOCKED/NOT_RUN:
+Использовать **только** SHA/provenance-верифицированный egui Win64 артефакт из GitHub-hosted CI, в отдельной QA-папке интерактивной сессии Administrator. Каталог и медиа — генерируемые; не открывать личные CTF/SQLite. Зафиксировать следующий минимальный набор с screenshot pairs PR58/egui и PASS/FAIL/BLOCKED/NOT_RUN:
 
 | ID | Реальное действие | Критерий |
 |---|---|---|
@@ -68,3 +68,7 @@ are NOT automatically accepted. The separate sidecar byte-immutability check
 still executes after category mutations. No private CTF or USB hardware is used.
 
 Source change is not a PASS until exact new commit SHA CI is complete.
+
+## Regression: Windows PowerShell 5.1 UTF-8 source parser
+
+Hosted Win64 job on `b5bfe5f3` failed before the category smoke with `Runner parse error` and mojibake of Cyrillic category literals. `Test-CliTransport.ps1` used `Parser.ParseFile` on a BOM-less UTF-8 script; Windows PowerShell 5.1 can decode that as ANSI. This checkpoint changes the transport's **source parser only** to `Parser.ParseInput` with explicitly strict UTF-8 bytes. The packaged GUI QA runner already receives an explicit UTF-8 BOM when bundled. This is **NOT a PASS until exact-head hosted Windows CI has rerun**.

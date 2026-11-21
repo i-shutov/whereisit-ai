@@ -13,6 +13,11 @@ class Win10EguiQaHostContract(unittest.TestCase):
         self.assertIn("ManualReview", text)
         self.assertIn("CaptureScreenshot", text)
         self.assertIn("CategoryChecks", text)
+        cli_transport = (ROOT / "tools/qa/windows10-egui/Test-CliTransport.ps1").read_text(encoding="utf-8")
+        self.assertIn("Parser]::ParseInput", cli_transport)
+        self.assertIn("ReadAllText($source, $utf8NoBom)", cli_transport)
+        self.assertNotIn("Parser]::ParseFile", cli_transport)
+
         for op in ("categories", "create_category", "assign_category",
                    "entry_category_ids", "unassign_category", "category_id:"):
             self.assertIn(op, text)
