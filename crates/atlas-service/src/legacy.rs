@@ -1,17 +1,19 @@
 //! CTF is an interchange boundary; normal queries never open the CTF source.
-use crate::{exports, text};
+use crate::{ctf_job::Job, exports, maintenance, text};
 use atlas_core::{Catalog, Error, NewEntry, Result};
 use chrono::{Datelike, FixedOffset, Local, NaiveDate, TimeZone, Timelike, Utc};
 use ctf_format::{CtfCatalog, CtfDisk, CtfEntry, EntryKind, Limits};
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fs,
-    io::{Read, Write},
+    io::{ErrorKind, Read, Write},
     path::Path,
 };
+
+const CTF_BLOCK_BYTES: usize = 256 * 1024;
 
 const LEGACY_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS ctf_sources(id INTEGER PRIMARY KEY,sha256 TEXT NOT NULL UNIQUE,source_path TEXT NOT NULL,catalog_name TEXT NOT NULL,trailer BLOB NOT NULL,utc_offset_minutes INTEGER,disk_count INTEGER NOT NULL);
@@ -40,30 +42,45 @@ pub(crate) fn ensure_legacy_schema(c: &Catalog) -> Result<bool> {
 fn fail(e: impl std::fmt::Display) -> Error {
     Error::new("ctf", e)
 }
-fn read(v: &Value) -> Result<(Vec<u8>, String)> {
+fn read(v: &Value, job: &Job) -> Result<(Vec<u8>, String)> {
     let path = Path::new(text(v, "path")?);
-    let meta = fs::metadata(path)?;
-    if meta.len() > Limits::default().max_bytes as u64 {
+    let mut file = fs::File::open(path)?;
+    let meta = file.metadata()?;
+    let limit = Limits::default().max_bytes;
+    if !meta.is_file() {
+        return Err(Error::new(
+            "invalid_path",
+            "CTF source must be a regular file",
+        ));
+    }
+    if meta.len() > limit as u64 {
         return Err(Error::new(
             "ctf_limit",
             "CTF exceeds the supported 2 GB size limit",
         ));
     }
     let mut bytes = Vec::new();
-    fs::File::open(path)?
-        .take(Limits::default().max_bytes as u64 + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() > Limits::default().max_bytes {
-        return Err(Error::new(
-            "ctf_limit",
-            "CTF grew beyond the supported size limit while reading",
-        ));
+    let mut block = vec![0u8; CTF_BLOCK_BYTES];
+    let mut hash = Sha256::new();
+    loop {
+        job.check()?;
+        let count = file.read(&mut block)?;
+        if count == 0 {
+            break;
+        }
+        if count > limit - bytes.len() {
+            return Err(Error::new(
+                "ctf_limit",
+                "CTF grew beyond the supported size limit while reading",
+            ));
+        }
+        hash.update(&block[..count]);
+        bytes.extend_from_slice(&block[..count]);
     }
-    let hash = crate::digest_hex(Sha256::digest(&bytes));
-    Ok((bytes, hash))
+    Ok((bytes, crate::digest_hex(hash.finalize())))
 }
 pub fn info(v: &Value) -> Result<Value> {
-    let (bytes, sha) = read(v)?;
+    let (bytes, sha) = read(v, &Job::default())?;
     let catalog = ctf_format::parse_ctf(&bytes, &Limits::default()).map_err(fail)?;
     let entries: usize = catalog.disks.iter().map(|d| d.entries.len()).sum();
     let files: usize = catalog
@@ -81,6 +98,15 @@ pub fn info(v: &Value) -> Result<Value> {
     )
 }
 pub fn import(c: &mut Catalog, v: &Value) -> Result<Value> {
+    import_with_job(c, v, &Job::default(), None)
+}
+
+pub(crate) fn import_with_job(
+    c: &mut Catalog,
+    v: &Value,
+    job: &Job,
+    expected_sha: Option<&str>,
+) -> Result<Value> {
     let offset = match v.get("utc_offset_minutes") {
         None | Some(Value::Null) => None,
         Some(x) => Some(
@@ -94,7 +120,14 @@ pub fn import(c: &mut Catalog, v: &Value) -> Result<Value> {
                 })? as i32,
         ),
     };
-    let (bytes, sha) = read(v)?;
+    job.phase("reading_source")?;
+    let (bytes, sha) = read(v, job)?;
+    if expected_sha.is_some_and(|expected| !sha.eq_ignore_ascii_case(expected)) {
+        return Err(Error::new(
+            "source_changed",
+            "CTF bytes differ from the expected source",
+        ));
+    }
     let dense_opaque = ensure_legacy_schema(c)?;
     let seen: Option<i64> = c
         .conn()
@@ -108,7 +141,9 @@ pub fn import(c: &mut Catalog, v: &Value) -> Result<Value> {
             format!("This exact CTF is already imported as source {id}"),
         ));
     }
+    job.phase("parsing")?;
     let parsed = ctf_format::parse_ctf(&bytes, &Limits::default()).map_err(fail)?;
+    job.check()?;
     let source_path = Path::new(text(v, "path")?)
         .canonicalize()?
         .to_string_lossy()
@@ -119,17 +154,20 @@ pub fn import(c: &mut Catalog, v: &Value) -> Result<Value> {
     // Parsing completes before any catalog rows are changed. All volumes and legacy
     // metadata then commit together; a parser/SQL/validation error leaves no partial import.
     drop(bytes);
+    job.phase("importing")?;
     let result=c.bulk_import_many_fast_fts(|session|{
   session.transaction().execute("INSERT INTO ctf_sources(sha256,source_path,catalog_name,trailer,utc_offset_minutes,disk_count) VALUES(?1,?2,?3,?4,?5,?6)",params![sha,source_path,source_name,parsed.opaque_trailer,offset,disk_count as i64])?;
   let source_id=session.transaction().last_insert_rowid();
   let mut volumes=Vec::new();let mut entries=0u64;
   for (sequence,disk) in parsed.disks.iter().enumerate(){
+   job.check()?;
    let volume_id=session.start_volume(&disk.name,"")?;
    session.transaction().execute("INSERT INTO ctf_volumes(volume_id,source_id,source_order,header) VALUES(?1,?2,?3,?4)",params![volume_id,source_id,sequence as i64,disk.opaque_header])?;
    let mut ids=Vec::with_capacity(disk.entries.len());
    // Only directory paths need to remain in memory; paths for files are streamed.
    let mut directory_paths:Vec<Option<String>>=Vec::with_capacity(disk.entries.len());
    for (index,e) in disk.entries.iter().enumerate(){
+    job.entry()?;
     let (parent_id,path)=if let Some(parent)=e.parent{
      if parent>=index{return Err(Error::new("ctf_tree","CTF parent must precede its child"));}
      let prefix=directory_paths.get(parent).and_then(Option::as_ref).ok_or_else(||Error::new("ctf_tree","Missing CTF directory parent"))?;
@@ -150,8 +188,10 @@ pub fn import(c: &mut Catalog, v: &Value) -> Result<Value> {
    }
    volumes.push(session.finish_volume()?);
   }
+  job.phase("indexing")?;
   Ok(json!({"source_id":source_id,"sha256":sha,"volumes":volumes,"entries":entries}))
  })?;
+    job.check()?;
     let mut result = result;
     result["diagnostics"] = serde_json::to_value(diagnostics).map_err(fail)?;
     result["timestamp_policy"] = json!(if offset.is_some() {
@@ -166,11 +206,250 @@ pub fn import(c: &mut Catalog, v: &Value) -> Result<Value> {
     Ok(result)
 }
 
-pub fn export(c: &Catalog, v: &Value) -> Result<Value> {
-    let dense_opaque = ensure_legacy_schema(c)?;
+fn vacant(target: &Path) -> Result<()> {
+    match fs::symlink_metadata(target) {
+        Ok(_) => Err(Error::new(
+            "file_exists",
+            "Import needs a new filename with no existing SQLite sidecars",
+        )),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn check_import_destination(target: &Path) -> Result<()> {
+    for suffix in ["", "-wal", "-shm", "-journal"] {
+        let mut name = target.as_os_str().to_owned();
+        name.push(suffix);
+        vacant(Path::new(&name))?;
+    }
+    Ok(())
+}
+
+pub(crate) fn import_new(v: &Value) -> Result<Value> {
+    let job = Job::start(v)?;
+    if v["overwrite"] == true {
+        return Err(Error::new(
+            "invalid_request",
+            "CTF import needs a new database",
+        ));
+    }
+    let source = Path::new(text(v, "path")?);
+    let expected_sha = match v.get("expected_source_sha256") {
+        None => None,
+        Some(_) => {
+            let sha = text(v, "expected_source_sha256")?;
+            if sha.len() != 64 || !sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(Error::new(
+                    "invalid_request",
+                    "Expected a 64-character source SHA-256",
+                ));
+            }
+            Some(sha)
+        }
+    };
+    let requested = Path::new(text(v, "db")?);
+    let filename = requested
+        .file_name()
+        .ok_or_else(|| Error::new("invalid_path", "Import needs a database filename"))?;
+    let name = filename.to_string_lossy().to_ascii_lowercase();
+    if ["-wal", "-shm", "-journal"]
+        .iter()
+        .any(|suffix| name.ends_with(suffix))
+    {
+        return Err(Error::new(
+            "unsafe_output",
+            "Import cannot use a SQLite sidecar filename",
+        ));
+    }
+    let parent = requested
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+        .canonicalize()?;
+    let target = parent.join(filename);
+    check_import_destination(&target)?;
+    let stage = tempfile::Builder::new()
+        .prefix(".atlas-ctf-import-")
+        .tempfile_in(parent)?;
+    let mut catalog = Catalog::open(stage.path())?;
+    // A standalone staged SQLite file is published without any WAL sidecars.
+    catalog
+        .conn()
+        .execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;")?;
+    let mut result = import_with_job(&mut catalog, v, &job, expected_sha)?;
+    job.phase("validating")?;
+    catalog.conn().execute(
+        "INSERT INTO entries_trigram(entries_trigram,rank) VALUES('integrity-check',1)",
+        [],
+    )?;
+    drop(catalog);
+    job.check()?;
+    let checked = maintenance::validate(&json!({"db":stage.path()}))?;
+    if checked["entries"] != result["entries"]
+        || checked["volumes"].as_u64() != result["volumes"].as_array().map(|v| v.len() as u64)
+    {
+        return Err(Error::new(
+            "integrity",
+            "Imported catalog counts could not be verified",
+        ));
+    }
+    stage.as_file().sync_all()?;
+    job.phase("verifying_source")?;
+    let found = job.identity(source, Limits::default().max_bytes as u64)?;
+    if result["sha256"].as_str() != Some(found.sha256.as_str()) {
+        return Err(Error::new("source_changed", "CTF changed during import"));
+    }
+    check_import_destination(&target)?;
+    job.begin_publication()?;
+    exports::publish(stage, &target, false)?;
+    result["db"] = json!(target);
+    Ok(result)
+}
+
+pub(crate) fn update_description(v: &Value) -> Result<Value> {
+    let db = Path::new(text(v, "db")?);
+    let description = text(v, "description")?;
+    let entry_id = crate::optional_id(v, "entry_id")?
+        .ok_or_else(|| Error::new("invalid_request", "A positive entry_id is required"))?;
+    if description.contains('\0') {
+        return Err(Error::new(
+            "invalid_request",
+            "Description cannot contain NUL",
+        ));
+    }
+    let metadata = fs::symlink_metadata(db)?;
+    if !metadata.file_type().is_file() {
+        return Err(Error::new(
+            "invalid_path",
+            "A regular editable SQLite catalog is required",
+        ));
+    }
+    if metadata.permissions().readonly() {
+        return Err(Error::new("read_only", "The SQLite catalog is read-only"));
+    }
+    let catalog = Catalog::open(db)?;
+    let tx = Transaction::new_unchecked(catalog.conn(), TransactionBehavior::Immediate)?;
+    let (kind, current, tags) = tx
+        .query_row(
+            "SELECT kind,description,tags FROM entries WHERE id=?1",
+            [entry_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or_else(|| Error::new("not_found", "Entry not found"))?;
+    if current != description {
+        validate_imported_description(&tx, entry_id, &kind, description)?;
+        catalog.update_entry(entry_id, description, &tags)?;
+    }
+    tx.commit()?;
+    Ok(json!({"entry_id":entry_id,"description":description}))
+}
+
+fn validate_imported_description(
+    tx: &Transaction<'_>,
+    entry_id: i64,
+    kind: &str,
+    description: &str,
+) -> Result<()> {
+    let has_ctf: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='ctf_sources')",
+        [],
+        |r| r.get(0),
+    )?;
+    if !has_ctf {
+        return Ok(());
+    }
+    let version: i64 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
+    let opaque_query = if version == 2 {
+        "SELECT l.opaque,p.opaque,v.header,s.source_path,e.parent_id IS NOT NULL
+         FROM entries e JOIN ctf_volumes v ON v.volume_id=e.volume_id
+         JOIN ctf_sources s ON s.id=v.source_id
+         LEFT JOIN ctf_entry_payload l ON l.entry_id=e.id
+         LEFT JOIN ctf_entry_payload p ON p.entry_id=e.parent_id
+         WHERE e.id=?1"
+    } else {
+        "SELECT l.opaque,p.opaque,v.header,s.source_path,e.parent_id IS NOT NULL
+         FROM entries e JOIN ctf_volumes v ON v.volume_id=e.volume_id
+         JOIN ctf_sources s ON s.id=v.source_id
+         LEFT JOIN ctf_entries l ON l.entry_id=e.id
+         LEFT JOIN ctf_entries p ON p.entry_id=e.parent_id
+         WHERE e.id=?1"
+    };
+    let imported = tx
+        .query_row(opaque_query, [entry_id], |r| {
+            Ok((
+                r.get::<_, Option<Vec<u8>>>(0)?.unwrap_or_default(),
+                r.get::<_, Option<Vec<u8>>>(1)?,
+                r.get::<_, Vec<u8>>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, bool>(4)?,
+            ))
+        })
+        .optional()?;
+    if let Some((record, parent, disk, source, has_parent)) = imported {
+        if source.is_empty() {
+            return Err(Error::new("read_only", "Linked CTF mirrors are read-only"));
+        }
+        let kind = match kind {
+            "file" => EntryKind::File,
+            "directory" => EntryKind::Directory,
+            "archive" => EntryKind::Archive,
+            _ => {
+                return Err(Error::new(
+                    "ctf_unsupported",
+                    "Unsupported imported CTF entry kind",
+                ))
+            }
+        };
+        ctf_format::validate_description_edit(
+            kind,
+            &record,
+            if has_parent {
+                Some(parent.as_deref().unwrap_or_default())
+            } else {
+                None
+            },
+            &disk,
+            description,
+        )
+        .map_err(|e| Error::new("ctf_unsupported", e))?;
+    }
+    Ok(())
+}
+
+pub fn export(v: &Value) -> Result<Value> {
+    let job = Job::start(v)?;
+    let allow_lossy = v
+        .get("allow_lossy")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let db = Path::new(text(v, "db")?);
+    if v.get("job_id").is_some() {
+        if allow_lossy || v["overwrite"] == true {
+            return Err(Error::new(
+                "invalid_request",
+                "CTF jobs require a new output and preserve all supported metadata",
+            ));
+        }
+        if !db.is_file() {
+            return Err(Error::new("not_found", "SQLite catalog does not exist"));
+        }
+    }
+    let c = Catalog::open(db)?;
+    let dense_opaque = ensure_legacy_schema(&c)?;
     let snapshot = c.conn().unchecked_transaction()?;
-    let links: i64 =
-        snapshot.query_row("SELECT COUNT(*) FROM entry_categories", [], |r| r.get(0))?;
+    let has_categories: bool = snapshot.query_row(
+        "SELECT EXISTS(SELECT 1 FROM categories) OR EXISTS(SELECT 1 FROM entry_categories)",
+        [],
+        |r| r.get(0),
+    )?;
     let symlinks: i64 = snapshot.query_row(
         "SELECT COUNT(*) FROM entries WHERE kind='symlink'",
         [],
@@ -182,12 +461,8 @@ pub fn export(c: &Catalog, v: &Value) -> Result<Value> {
             "CTF export of symbolic links is not yet supported; use CSV or Parquet",
         ));
     }
-    let allow_lossy = v
-        .get("allow_lossy")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    if links > 0 && !allow_lossy {
-        return Err(Error::new("ctf_categories","New category assignments cannot yet be encoded in CTF; export CSV/Parquet, or explicitly set allow_lossy=true to export without those assignments"));
+    if has_categories && !allow_lossy {
+        return Err(Error::new("ctf_categories","Native categories cannot yet be encoded in CTF; export CSV/Parquet for category assignments, or explicitly set allow_lossy=true to export without native categories"));
     }
     let has_tags: bool = snapshot.query_row(
         "SELECT EXISTS(SELECT 1 FROM entries WHERE tags <> '')",
@@ -244,8 +519,10 @@ pub fn export(c: &Catalog, v: &Value) -> Result<Value> {
         })?;
         rows.collect::<std::result::Result<Vec<_>, _>>()?
     };
+    job.phase("reading_catalog")?;
     let mut entry_count = 0u64;
     for (volume_id, label, header) in volumes {
+        job.check()?;
         let mut disk = CtfDisk {
             name: label,
             entries: Vec::new(),
@@ -260,6 +537,7 @@ pub fn export(c: &Catalog, v: &Value) -> Result<Value> {
         let mut stmt = snapshot.prepare(sql)?;
         let mut rows = stmt.query([volume_id])?;
         while let Some(r) = rows.next()? {
+            job.entry()?;
             let id: i64 = r.get(0)?;
             let parent: Option<i64> = r.get(1)?;
             let kind: String = r.get(3)?;
@@ -304,16 +582,25 @@ pub fn export(c: &Catalog, v: &Value) -> Result<Value> {
         catalog.disks.push(disk);
     }
     snapshot.commit()?;
+    job.phase("encoding")?;
     let bytes = ctf_format::write_ctf(&catalog).map_err(fail)?;
-    let sha = crate::digest_hex(Sha256::digest(&bytes));
     let len = bytes.len();
     let disk_count = catalog.disks.len();
     drop(catalog);
+    job.phase("writing")?;
     let mut tmp = tmp;
-    tmp.write_all(&bytes)?;
-    exports::finish(tmp, &target, overwrite)?;
+    let mut digest = Sha256::new();
+    for block in bytes.chunks(CTF_BLOCK_BYTES) {
+        job.check()?;
+        tmp.write_all(block)?;
+        digest.update(block);
+    }
+    let sha = crate::digest_hex(digest.finalize());
+    tmp.as_file().sync_all()?;
+    job.begin_publication()?;
+    exports::publish(tmp, &target, overwrite)?;
     Ok(
-        json!({"path":target,"bytes":len,"sha256":sha,"disks":disk_count,"entries":entry_count,"format":"Catalog 3.00","new_categories_omitted":links>0,"new_tags_omitted":has_tags,"compatibility":"Observed variant; see validation report for original-application checks"}),
+        json!({"path":target,"bytes":len,"sha256":sha,"disks":disk_count,"entries":entry_count,"format":"Catalog 3.00","new_categories_omitted":has_categories,"new_tags_omitted":has_tags,"compatibility":"Observed variant; see validation report for original-application checks"}),
     )
 }
 

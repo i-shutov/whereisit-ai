@@ -57,7 +57,7 @@ jobs:
           set -euo pipefail
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID" > verified-run.json
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID/jobs?per_page=100" > verified-jobs.json
-          gh run download "$CI_RUN_ID" --repo "$GITHUB_REPOSITORY" --dir incoming --pattern 'WhereIsItAI-*-unsigned-candidate'
+          gh run download "$CI_RUN_ID" --repo "$GITHUB_REPOSITORY" --dir incoming --pattern 'WhereIsItAI-egui-*-unsigned-candidate'
           python3 tools/prepare_release_assets.py
       - name: Create draft, verify downloadable bytes, then publish prerelease
         if: steps.identity.outputs.publish == 'true'
@@ -69,7 +69,7 @@ jobs:
           tag="v$VERSION"
           gh release create "$tag" release-assets/* \
             --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" \
-            --title "WhereIsIt AI $VERSION — unsigned candidate" \
+            --title "WhereIsIt AI $VERSION — egui unsigned candidate" \
             --draft --prerelease --latest=false \
             --notes-file "docs/releases/$tag.md"
           gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir published-verification

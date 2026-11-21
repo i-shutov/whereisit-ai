@@ -2,6 +2,8 @@
 
 Only aggregate evidence is recorded here. No private catalogs, real filenames/paths/queries, source hashes, raw screenshots or licenses are included.
 
+Current integration: PR #79 merged as `e7ab4d5f6a1df6ea820b8b867dfe5255004fb4cd`, then plan PR #80 merged as `db6c1aeb1b426280175b583265e5e26c3812b643`. Exact current-main native 44950079896, upgrade 44950079910 and integration 44950079911 passed. Artifact-specific GUI measurements below retain their original source identity. New egui CTF/pairing/rescan/candidate-export/product-packaging code is in a separate validation branch; this paragraph does not certify its installed GUI.
+
 ## Main accepted scope
 
 Main `8cbb3b4f5e9f07537cbd0d42deeeee01ec4e35ef`, after ordered merges #73 and #78. Exact-main hosted [native platforms/installer](https://github.com/i-shutov/whereisit-ai/actions/runs/44929080959), [upgrade](https://github.com/i-shutov/whereisit-ai/actions/runs/44929080983), [integration](https://github.com/i-shutov/whereisit-ai/actions/runs/44929081025): PASS.
@@ -21,9 +23,9 @@ Main `8cbb3b4f5e9f07537cbd0d42deeeee01ec4e35ef`, after ordered merges #73 and #7
 
 Peak CLI working set 9.14 MiB; sampled private bytes 5.52 MiB. First responses reached 574.65 ms and are excluded from warm quantiles. SQLite size 1,675,427,840 bytes; snapshot content/generation unchanged. Windows process I/O counters were collected but are not physical disk traffic. PASS applies to these warm workloads, not every query/platform.
 
-## PR-only accepted scope
+## PR79 artifact accepted scope, subsequently integrated
 
-Draft [PR #79](https://github.com/i-shutov/whereisit-ai/pull/79), exact head `43b324644433b026a438b3abf4516119f19b8ac5`, is **not merged**. Local source-equivalent tree `2f3b947495a82b58873842baab46a4dadf813b38`: 179 tests passed. Hosted [native](https://github.com/i-shutov/whereisit-ai/actions/runs/44944080020), [offline](https://github.com/i-shutov/whereisit-ai/actions/runs/44944079977), [upgrade](https://github.com/i-shutov/whereisit-ai/actions/runs/44944080038), [integration](https://github.com/i-shutov/whereisit-ai/actions/runs/44944079944): PASS.
+[PR #79](https://github.com/i-shutov/whereisit-ai/pull/79), tested head `43b324644433b026a438b3abf4516119f19b8ac5`, is now merged. Local source-equivalent tree `2f3b947495a82b58873842baab46a4dadf813b38`: 179 tests passed. Hosted [native](https://github.com/i-shutov/whereisit-ai/actions/runs/44944080020), [offline](https://github.com/i-shutov/whereisit-ai/actions/runs/44944079977), [upgrade](https://github.com/i-shutov/whereisit-ai/actions/runs/44944080038), [integration](https://github.com/i-shutov/whereisit-ai/actions/runs/44944079944): PASS.
 
 The packaged Win64 candidate passed actual GUI installation, opening the full catalog before validation, explicit full-check success, catalog-switch status reset, failure cleanup on a generated count-invalid catalog, restart and uninstall with data unchanged. Schema probe + first unfiltered 250 rows: p50/p95 9.15/14.15 ms over 30 warm CLI iterations; first response 34.22 ms. This excludes GUI/sidebar and full validation. Full validation remains an explicit command; opening is not a data-integrity PASS. The CTF malformed-input refusal changes have generated red/green regressions.
 

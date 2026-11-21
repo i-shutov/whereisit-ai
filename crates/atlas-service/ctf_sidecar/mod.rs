@@ -95,7 +95,11 @@ fn bounded_bytes(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn stream_identity(path: &Path, limit: u64) -> io::Result<SourceIdentity> {
+fn stream_identity(
+    path: &Path,
+    limit: u64,
+    mut checkpoint: impl FnMut() -> io::Result<()>,
+) -> io::Result<SourceIdentity> {
     let mut file = File::open(path)?;
     if !file.metadata()?.is_file() {
         return Err(invalid("Source is not a regular file"));
@@ -104,6 +108,7 @@ fn stream_identity(path: &Path, limit: u64) -> io::Result<SourceIdentity> {
     let mut size = 0u64;
     let mut buffer = [0u8; 64 * 1024];
     loop {
+        checkpoint()?;
         let n = file.read(&mut buffer)?;
         if n == 0 {
             break;
@@ -124,10 +129,18 @@ fn stream_identity(path: &Path, limit: u64) -> io::Result<SourceIdentity> {
 
 /// Hash a live source using bounded memory; never trust name/mtime as identity.
 pub fn identity(path: &Path, max_bytes: u64) -> io::Result<SourceIdentity> {
+    identity_with_checkpoint(path, max_bytes, || Ok(()))
+}
+
+pub(crate) fn identity_with_checkpoint(
+    path: &Path,
+    max_bytes: u64,
+    checkpoint: impl FnMut() -> io::Result<()>,
+) -> io::Result<SourceIdentity> {
     if max_bytes == 0 || max_bytes > MAX_SOURCE_BYTES {
         return Err(invalid("Unsupported source size limit"));
     }
-    stream_identity(path, max_bytes)
+    stream_identity(path, max_bytes, checkpoint)
 }
 
 /// Capture bytes, reopen the path and verify a second full digest. Detects ordinary
@@ -149,7 +162,7 @@ fn capture_with_hook<F: FnOnce()>(path: &Path, max_bytes: u64, between: F) -> io
         .unwrap_or_default();
     let snapshot = Snapshot::from_bytes(name, bytes);
     between();
-    let verified = stream_identity(path, max_bytes)?;
+    let verified = stream_identity(path, max_bytes, || Ok(()))?;
     if verified != snapshot.identity {
         return Err(io::Error::new(
             io::ErrorKind::WouldBlock,
@@ -162,7 +175,7 @@ fn capture_with_hook<F: FnOnce()>(path: &Path, max_bytes: u64, between: F) -> io
 /// An optimistic conflict check, not an atomic compare-and-replace primitive.
 /// A later writer race is still possible; this module intentionally has NO CTF save API.
 pub fn verify_edit_base(path: &Path, base: &SourceIdentity, max_bytes: u64) -> io::Result<()> {
-    if stream_identity(path, max_bytes)? != *base {
+    if stream_identity(path, max_bytes, || Ok(()))? != *base {
         return Err(io::Error::new(
             io::ErrorKind::WouldBlock,
             "External CTF changes conflict with edit base",

@@ -2,7 +2,9 @@
 //! no fictitious USB mount badges, byte-duplicate claims or on-disk delete operations.
 use crate::bridge::{new_scan_job_id, scan_request, CommandBus, ExportKind, Purpose, Route};
 use crate::categories::{self, parse_categories, Category};
+use crate::linked::LinkedCtf;
 use crate::model::{bytes_compact, parse_volumes, DiskPreferences, Entry, Page, Volume};
+use crate::physical::PhysicalPanel;
 use crate::shelf::{valid_label, ShelfContext, ShelfSnapshot};
 use eframe::egui::{self, Color32, RichText};
 use egui_extras::{Column, TableBuilder};
@@ -142,12 +144,17 @@ enum CatalogIntegrity {
     Checking,
     Verified,
     Failed,
+    LinkedReadOnly,
 }
 
 impl CatalogIntegrity {
     fn text(self, lang: Language) -> Option<&'static str> {
         Some(match self {
             Self::Closed => return None,
+            Self::LinkedReadOnly => lang.text(
+                "CTF: связанный источник только для чтения",
+                "CTF: linked source is read-only",
+            ),
             Self::Unchecked => lang.text("Целостность не проверена", "Integrity not checked"),
             Self::Checking => lang.text("Проверка целостности…", "Checking integrity…"),
             Self::Verified => lang.text(
@@ -162,15 +169,36 @@ impl CatalogIntegrity {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CtfDialog {
+    Import,
+    Export,
+}
+
 pub struct DesktopApp {
     bus: CommandBus,
     active_request: Option<u64>,
     db: Option<String>,
     integrity: CatalogIntegrity,
+    linked_ctf: Option<LinkedCtf>,
+    ctf_dialog: Option<CtfDialog>,
+    ctf_source_input: String,
+    ctf_target_input: String,
+    ctf_job_id: Option<String>,
+    ctf_progress_request: Option<u64>,
+    ctf_cancel_request: Option<u64>,
+    ctf_cancel_requested: bool,
+    ctf_job_registered: bool,
+    ctf_phase: String,
+    ctf_entries: u64,
+    ctf_last_poll: Option<Instant>,
+    description_entry_id: Option<i64>,
+    description_input: String,
     path_input: String,
     query_input: String,
     volumes: Vec<Volume>,
     shelf_context: Option<ShelfContext>,
+    physical: PhysicalPanel,
     shelf: ShelfSnapshot,
     shelf_editor: String,
     legacy_shelf_editable: bool,
@@ -211,6 +239,7 @@ pub struct DesktopApp {
     export_path: String,
     export_kind: ExportKind,
     show_disk_properties: Option<i64>,
+    confirm_rescan: bool,
     focus_disk_name: bool,
     disk_draft: DiskPropertiesDraft,
     disk_preferences: HashMap<i64, DiskPreferences>,
@@ -225,11 +254,14 @@ pub struct DesktopApp {
 
 impl DesktopApp {
     fn dialog_open(&self) -> bool {
-        self.show_catalog_dialog
+        self.ctf_dialog.is_some()
+            || self.description_entry_id.is_some()
+            || self.show_catalog_dialog
             || self.show_categories_dialog
             || self.show_export_dialog
             || self.show_scan_dialog
             || self.show_disk_properties.is_some()
+            || self.physical.is_open()
     }
 
     fn protect_background(&self, ui: &mut egui::Ui) {
@@ -264,10 +296,25 @@ impl DesktopApp {
             active_request: None,
             db: None,
             integrity: CatalogIntegrity::Closed,
+            linked_ctf: None,
+            ctf_dialog: None,
+            ctf_source_input: String::new(),
+            ctf_target_input: String::new(),
+            ctf_job_id: None,
+            ctf_progress_request: None,
+            ctf_cancel_request: None,
+            ctf_cancel_requested: false,
+            ctf_job_registered: false,
+            ctf_phase: String::new(),
+            ctf_entries: 0,
+            ctf_last_poll: None,
+            description_entry_id: None,
+            description_input: String::new(),
             path_input: startup_catalog.clone().unwrap_or_default(),
             query_input: String::new(),
             volumes: Vec::new(),
             shelf_context: None,
+            physical: PhysicalPanel::default(),
             shelf: ShelfSnapshot::default(),
             shelf_editor: String::new(),
             legacy_shelf_editable: false,
@@ -311,6 +358,7 @@ impl DesktopApp {
             export_path: String::new(),
             export_kind: ExportKind::Csv,
             show_disk_properties: None,
+            confirm_rescan: false,
             focus_disk_name: false,
             disk_draft: DiskPropertiesDraft::default(),
             disk_preferences: HashMap::new(),
@@ -338,6 +386,37 @@ impl DesktopApp {
             self.error = Some("Previous catalog operation is still running.".to_owned());
             return;
         }
+        let (purpose, request) = if let Some(link) = &self.linked_ctf {
+            if matches!(
+                &purpose,
+                Purpose::Open { .. }
+                    | Purpose::Create { .. }
+                    | Purpose::LinkCtf { .. }
+                    | Purpose::ImportCtf { .. }
+                    | Purpose::ExportCtf { .. }
+                    | Purpose::ShelfLabels { .. }
+                    | Purpose::ShelfSave { .. }
+            ) {
+                (purpose, request)
+            } else {
+                let mapped = match link.rewrite(request) {
+                    Ok(mapped) => mapped,
+                    Err(error) => {
+                        self.error = Some(error);
+                        return;
+                    }
+                };
+                (
+                    Purpose::LinkedRead {
+                        inner: Box::new(purpose),
+                        generation: link.generation.clone(),
+                    },
+                    mapped,
+                )
+            }
+        } else {
+            (purpose, request)
+        };
         self.error = None;
         self.active_request = Some(self.bus.send(purpose, request, ctx));
     }
@@ -355,13 +434,6 @@ impl DesktopApp {
                 )
                 .to_owned(),
             );
-            return;
-        }
-        if path.to_ascii_lowercase().ends_with(".ctf") {
-            self.error = Some(self.t(
-                "Пока поддерживается SQLite. CTF откройте в существующем нативном клиенте; интеграция последует после каркаса.",
-                "SQLite is supported now. Open CTF in the existing native client; CTF integration follows the desktop foundation."
-            ).to_owned());
             return;
         }
         let exists = Path::new(&path).exists();
@@ -393,6 +465,20 @@ impl DesktopApp {
                 }
             }
         };
+        if path.to_ascii_lowercase().ends_with(".ctf") {
+            if create {
+                self.error = Some(
+                    self.t(
+                        "Новый рабочий каталог должен иметь расширение .sqlite.",
+                        "A new working catalog must use .sqlite.",
+                    )
+                    .to_owned(),
+                );
+            } else {
+                self.start_link_ctf(path, ctx);
+            }
+            return;
+        }
         let purpose = if create {
             Purpose::Create { path: path.clone() }
         } else {
@@ -402,6 +488,199 @@ impl DesktopApp {
         self.status = StatusText::new("Открытие каталога…", "Opening catalog…");
         self.queue(purpose, json!({"op":op,"db":path}), ctx);
         self.show_catalog_dialog = false;
+    }
+
+    fn begin_ctf_job(&mut self) -> String {
+        let id = new_scan_job_id();
+        self.ctf_job_id = Some(id.clone());
+        self.ctf_progress_request = None;
+        self.ctf_cancel_request = None;
+        self.ctf_cancel_requested = false;
+        self.ctf_job_registered = false;
+        self.ctf_phase = "preparing".into();
+        self.ctf_entries = 0;
+        self.ctf_last_poll = None;
+        id
+    }
+
+    fn ctf_phase_label(&self) -> &'static str {
+        match self.ctf_phase.as_str() {
+            "reading_source" | "verifying_source" => {
+                self.t("Проверка исходника", "Checking source")
+            }
+            "parsing" => self.t("Чтение структуры CTF", "Reading CTF structure"),
+            "importing" => self.t("Импорт записей", "Importing entries"),
+            "indexing" => self.t("Построение индекса", "Building index"),
+            "validating" | "verifying_cache" => self.t("Проверка результата", "Checking result"),
+            "reading_catalog" => self.t("Чтение каталога", "Reading catalog"),
+            "encoding" => self.t("Подготовка CTF", "Preparing CTF"),
+            "writing" | "publishing" => self.t("Сохранение результата", "Saving result"),
+            _ => self.t("Подготовка", "Preparing"),
+        }
+    }
+
+    fn start_link_ctf(&mut self, path: String, ctx: &egui::Context) {
+        let Some(store) = user_store() else {
+            self.error = Some(
+                self.t(
+                    "Не найден локальный каталог кэша.",
+                    "Local cache directory unavailable.",
+                )
+                .into(),
+            );
+            return;
+        };
+        let Some(parent) = store.parent() else {
+            return;
+        };
+        let cache_root = parent.join("ctf-cache").to_string_lossy().into_owned();
+        let job = self.begin_ctf_job();
+        self.show_catalog_dialog = false;
+        self.status = StatusText::new("Подготовка связанного CTF…", "Preparing linked CTF…");
+        self.queue(
+            Purpose::LinkCtf {
+                path: path.clone(),
+                cache_root: cache_root.clone(),
+            },
+            json!({"op":"ctf_sync","path":path,"cache_root":cache_root,"job_id":job}),
+            ctx,
+        );
+    }
+
+    fn start_ctf_transfer(&mut self, ctx: &egui::Context) {
+        if self.active_request.is_some() {
+            return;
+        }
+        let Some(mode) = self.ctf_dialog else {
+            return;
+        };
+        let target = self.ctf_target_input.trim().to_owned();
+        let file = Path::new(&target);
+        let expected = if mode == CtfDialog::Import {
+            "sqlite"
+        } else {
+            "ctf"
+        };
+        if target.is_empty()
+            || file
+                .extension()
+                .and_then(|x| x.to_str())
+                .is_none_or(|x| !x.eq_ignore_ascii_case(expected))
+            || file.exists()
+            || file.is_symlink()
+            || !file
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(Path::new("."))
+                .is_dir()
+        {
+            self.error = Some(self.t("Выберите существующую папку и новое имя с нужным расширением. Перезапись запрещена.", "Choose an existing folder and a new filename with the required extension. Overwrite is forbidden.").into());
+            return;
+        }
+        let target = if file.is_absolute() {
+            target
+        } else {
+            match std::env::current_dir() {
+                Ok(p) => p.join(file).to_string_lossy().into_owned(),
+                Err(e) => {
+                    self.error = Some(e.to_string());
+                    return;
+                }
+            }
+        };
+        if mode == CtfDialog::Import {
+            let source = self.ctf_source_input.trim().to_owned();
+            if !Path::new(&source).is_file() || !source.to_ascii_lowercase().ends_with(".ctf") {
+                self.error = Some(
+                    self.t("Выберите существующий CTF.", "Choose an existing CTF.")
+                        .into(),
+                );
+                return;
+            }
+            let job = self.begin_ctf_job();
+            let mut request = json!({"op":"import_ctf_new","path":source,"db":target,"job_id":job});
+            if let Some(link) = &self.linked_ctf {
+                if std::fs::canonicalize(&link.path)
+                    .ok()
+                    .zip(std::fs::canonicalize(&source).ok())
+                    .is_some_and(|(a, b)| a == b)
+                {
+                    request["expected_source_sha256"] = json!(link.source_sha256);
+                }
+            }
+            self.ctf_dialog = None;
+            self.status = StatusText::new(
+                "Импорт CTF в новый каталог…",
+                "Importing CTF into a new catalog…",
+            );
+            self.queue(Purpose::ImportCtf { output: target }, request, ctx);
+        } else {
+            if self.linked_ctf.is_some() {
+                self.error = Some(
+                    self.t(
+                        "Сначала импортируйте CTF в новый рабочий каталог.",
+                        "Import CTF into a new working catalog first.",
+                    )
+                    .into(),
+                );
+                return;
+            }
+            let Some(db) = self.db.clone() else {
+                return;
+            };
+            let job = self.begin_ctf_job();
+            self.ctf_dialog = None;
+            self.status = StatusText::new("Экспорт нового CTF…", "Exporting a new CTF…");
+            self.queue(Purpose::ExportCtf {output:target.clone()},json!({"op":"export_ctf","db":db,"path":target,"job_id":job,"overwrite":false,"allow_lossy":false}),ctx);
+        }
+    }
+
+    fn poll_ctf_progress(&mut self, ctx: &egui::Context) {
+        let Some(job) = self.ctf_job_id.clone() else {
+            return;
+        };
+        if self.ctf_progress_request.is_none()
+            && self
+                .ctf_last_poll
+                .is_none_or(|t| t.elapsed() >= Duration::from_millis(150))
+        {
+            self.ctf_last_poll = Some(Instant::now());
+            self.ctf_progress_request = Some(self.bus.send(
+                Purpose::CtfProgress {
+                    job_id: job.clone(),
+                },
+                json!({"op":"ctf_progress","job_id":job}),
+                ctx,
+            ));
+        }
+        ctx.request_repaint_after(Duration::from_millis(100));
+    }
+
+    fn cancel_ctf_job(&mut self, ctx: &egui::Context) {
+        let Some(job) = self.ctf_job_id.clone() else {
+            return;
+        };
+        if self.ctf_cancel_request.is_some() || !self.ctf_job_registered {
+            return;
+        }
+        self.ctf_cancel_requested = true;
+        self.ctf_cancel_request = Some(self.bus.send(
+            Purpose::CtfCancel {
+                job_id: job.clone(),
+            },
+            json!({"op":"ctf_cancel","job_id":job}),
+            ctx,
+        ));
+    }
+
+    fn save_description(&mut self, ctx: &egui::Context) {
+        if self.linked_ctf.is_some() || self.active_request.is_some() {
+            return;
+        }
+        let (Some(id), Some(db)) = (self.description_entry_id, self.db.clone()) else {
+            return;
+        };
+        self.queue(Purpose::SaveDescription {entry_id:id,db:db.clone()},json!({"op":"update_ctf_description","db":db,"entry_id":id,"description":self.description_input}),ctx);
     }
 
     fn check_catalog_integrity(&mut self, ctx: &egui::Context) {
@@ -417,7 +696,11 @@ impl DesktopApp {
     }
 
     fn clear_catalog(&mut self) {
+        self.physical.close_if_scope_changed(None);
         self.db = None;
+        self.linked_ctf = None;
+        self.ctf_dialog = None;
+        self.description_entry_id = None;
         self.integrity = CatalogIntegrity::Closed;
         self.volumes.clear();
         self.shelf_context = None;
@@ -588,6 +871,45 @@ impl DesktopApp {
         );
     }
 
+    fn start_rescan(&mut self, volume_id: i64, ctx: &egui::Context) {
+        if !self.confirm_rescan
+            || self.active_request.is_some()
+            || self.linked_ctf.is_some()
+            || !self.volumes.iter().any(|v| v.id == volume_id)
+        {
+            return;
+        }
+        let (Some(db), Some(scope)) = (self.db.clone(), self.shelf_context.clone()) else {
+            return;
+        };
+        let job_id = new_scan_job_id();
+        self.scan_registered = false;
+        self.scan_cancel_requested = false;
+        self.scan_progress_entries = 0;
+        self.scan_progress_request = None;
+        self.scan_cancel_request = None;
+        self.last_progress_poll = None;
+        self.scan_job_id = Some(job_id.clone());
+        self.confirm_rescan = false;
+        self.show_disk_properties = None;
+        self.status = StatusText::new(
+            "Проверка носителя перед обновлением снимка…",
+            "Checking device before updating snapshot…",
+        );
+        let request = json!({"op":"rescan_volume","db":db,"user_store":scope.user_store,
+            "catalog_key":scope.catalog_key,"platform":scope.platform,"volume_id":volume_id,
+            "job_id":job_id,"confirmed":true});
+        self.queue(
+            Purpose::Rescan {
+                db,
+                volume_id,
+                job_id,
+            },
+            request,
+            ctx,
+        );
+    }
+
     fn poll_scan_progress(&mut self, ctx: &egui::Context) {
         let Some(job_id) = self.scan_job_id.clone() else {
             return;
@@ -638,6 +960,12 @@ impl DesktopApp {
     }
 
     fn load_disk_preferences(&mut self, ctx: &egui::Context) {
+        if self.linked_ctf.is_some() {
+            self.preferences_ready = false;
+            self.legacy_shelf_editable = false;
+            self.load_shelf_labels(ctx, true);
+            return;
+        }
         self.preferences_ready = false;
         self.legacy_shelf_editable = false;
         let (Some(db), Some(store), Some(platform)) =
@@ -691,6 +1019,7 @@ impl DesktopApp {
     }
 
     fn open_disk_properties(&mut self, id: i64) {
+        self.confirm_rescan = false;
         let Some(volume) = self.volumes.iter().find(|v| v.id == id) else {
             return;
         };
@@ -1083,7 +1412,87 @@ impl DesktopApp {
         }
     }
 
-    fn apply_reply(&mut self, reply: crate::bridge::Reply, ctx: &egui::Context) {
+    fn apply_reply(&mut self, mut reply: crate::bridge::Reply, ctx: &egui::Context) {
+        if let Purpose::CtfProgress { job_id } = &reply.purpose {
+            if self.ctf_progress_request == Some(reply.id)
+                && self.ctf_job_id.as_ref() == Some(job_id)
+            {
+                self.ctf_progress_request = None;
+                if reply.response["ok"] == true {
+                    self.ctf_job_registered = true;
+                    self.ctf_phase = reply.response["data"]["phase"]
+                        .as_str()
+                        .unwrap_or("working")
+                        .to_owned();
+                    self.ctf_entries = reply.response["data"]["entries"].as_u64().unwrap_or(0);
+                }
+            }
+            return;
+        }
+        if let Purpose::CtfCancel { job_id } = &reply.purpose {
+            if self.ctf_cancel_request == Some(reply.id) && self.ctf_job_id.as_ref() == Some(job_id)
+            {
+                self.ctf_cancel_request = None;
+                if reply.response["ok"] != true {
+                    self.ctf_cancel_requested = false;
+                }
+            }
+            return;
+        }
+        if let Purpose::LinkedRead { inner, generation } = &reply.purpose {
+            if self.active_request != Some(reply.id) {
+                return;
+            }
+            let Some(link) = self
+                .linked_ctf
+                .clone()
+                .filter(|x| &x.generation == generation)
+            else {
+                self.active_request = None;
+                return;
+            };
+            if reply.response["ok"] != true {
+                let code = reply
+                    .response
+                    .pointer("/error/code")
+                    .and_then(Value::as_str);
+                if matches!(
+                    code,
+                    Some(
+                        "source_changed"
+                            | "cache_changed"
+                            | "cache_corrupt"
+                            | "cache_stale"
+                            | "not_pinned"
+                    )
+                ) {
+                    let error = reply
+                        .response
+                        .pointer("/error/message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("Linked CTF read failed")
+                        .to_owned();
+                    self.active_request = None;
+                    self.clear_catalog();
+                    self.error = Some(error);
+                    return;
+                }
+                reply.purpose = (**inner).clone();
+            } else {
+                match link.unwrap_reply(&reply.response) {
+                    Ok(normalized) => {
+                        reply.response = normalized;
+                        reply.purpose = (**inner).clone();
+                    }
+                    Err(error) => {
+                        self.active_request = None;
+                        self.clear_catalog();
+                        self.error = Some(error);
+                        return;
+                    }
+                }
+            }
+        }
         // Progress and cancel use independent short workers. They must NEVER
         // supersede the active scan worker or its transactional response.
         match &reply.purpose {
@@ -1127,6 +1536,29 @@ impl DesktopApp {
             return;
         }
         self.active_request = None;
+        let ctf_finished = matches!(
+            &reply.purpose,
+            Purpose::LinkCtf { .. } | Purpose::ImportCtf { .. } | Purpose::ExportCtf { .. }
+        );
+        if ctf_finished {
+            self.ctf_job_id = None;
+            self.ctf_progress_request = None;
+            self.ctf_cancel_request = None;
+            self.ctf_job_registered = false;
+        }
+        if ctf_finished
+            && reply
+                .response
+                .pointer("/error/code")
+                .and_then(Value::as_str)
+                == Some("cancelled")
+        {
+            self.status = StatusText::new(
+                "CTF-операция отменена; результат не опубликован.",
+                "CTF operation cancelled; no result was published.",
+            );
+            return;
+        }
         if let Purpose::CheckCatalogIntegrity { path } = &reply.purpose {
             if self.db.as_deref() != Some(path.as_str()) {
                 return;
@@ -1157,7 +1589,10 @@ impl DesktopApp {
             }
             return;
         }
-        let scan_finished = matches!(&reply.purpose, Purpose::Scan { .. });
+        let scan_finished = matches!(
+            &reply.purpose,
+            Purpose::Scan { .. } | Purpose::Rescan { .. }
+        );
         if scan_finished {
             self.scan_job_id = None;
             self.scan_progress_request = None;
@@ -1206,6 +1641,12 @@ impl DesktopApp {
             {
                 self.selected = None;
                 self.refresh_category_results(ctx);
+            } else if matches!(&reply.purpose, Purpose::SaveDescription { .. })
+                && code == Some("not_found")
+            {
+                self.description_entry_id = None;
+                self.selected = None;
+                self.load_page(ctx);
             } else if matches!(&reply.purpose, Purpose::Page { .. }) {
                 self.category_result_refresh_pending = false;
                 self.category_assigned.clear();
@@ -1231,6 +1672,55 @@ impl DesktopApp {
         let data = &reply.response["data"];
         let opening_existing = matches!(&reply.purpose, Purpose::Open { .. });
         match reply.purpose {
+            Purpose::LinkCtf { path, cache_root } => {
+                match LinkedCtf::parse_sync(path, cache_root, data) {
+                    Ok(link) => {
+                        self.clear_catalog();
+                        self.db = Some(link.path.clone());
+                        self.shelf_context =
+                            ShelfContext::from_sqlite(&link.path).ok().map(|mut scope| {
+                                scope.catalog_key = format!("ctf:{}", link.source_sha256);
+                                if let Some(store) = user_store() {
+                                    scope.user_store = store.to_string_lossy().into_owned();
+                                }
+                                scope
+                            });
+                        self.path_input = link.path.clone();
+                        self.integrity = CatalogIntegrity::LinkedReadOnly;
+                        self.linked_ctf = Some(link);
+                        self.load_volumes(ctx);
+                    }
+                    Err(error) => self.error = Some(error),
+                }
+            }
+            Purpose::ImportCtf { output } => {
+                let returned = data["db"].as_str().unwrap_or("");
+                let expected = std::fs::canonicalize(&output).ok();
+                if expected.is_none() || std::fs::canonicalize(returned).ok() != expected {
+                    self.error = Some("Import returned an unexpected catalog path".into());
+                    return;
+                }
+                self.path_input = output;
+                self.start_catalog(false, ctx);
+            }
+            Purpose::ExportCtf { output } => {
+                self.status = StatusText::new(
+                    format!("CTF сохранён: {output}"),
+                    format!("CTF saved: {output}"),
+                );
+            }
+            Purpose::SaveDescription { entry_id, db } => {
+                if self.db.as_deref() == Some(db.as_str())
+                    && data["entry_id"].as_i64() == Some(entry_id)
+                {
+                    self.description_entry_id = None;
+                    self.selected = None;
+                    self.load_page(ctx);
+                }
+            }
+            Purpose::LinkedRead { .. }
+            | Purpose::CtfProgress { .. }
+            | Purpose::CtfCancel { .. } => unreachable!("Handled above"),
             Purpose::Open { path } | Purpose::Create { path } => {
                 if opening_existing
                     && (!matches!(data["schema_version"].as_i64(), Some(1..=3))
@@ -1376,6 +1866,43 @@ impl DesktopApp {
                     );
                     self.load_shelf_labels(ctx, false);
                 }
+            }
+            Purpose::Rescan {
+                db,
+                volume_id,
+                job_id,
+            } => {
+                let _ = job_id;
+                if self.db.as_deref() != Some(db.as_str()) {
+                    return;
+                }
+                if data["id"].as_i64() != Some(volume_id) {
+                    self.clear_catalog();
+                    self.error = Some(
+                        self.t(
+                            "Неожиданный результат обновления снимка.",
+                            "Unexpected snapshot update result.",
+                        )
+                        .into(),
+                    );
+                    return;
+                }
+                self.selected_volume = Some(volume_id);
+                self.query_input.clear();
+                self.history.clear();
+                self.offset = 0;
+                self.selected = None;
+                self.restore_selection = None;
+                self.results_scroll = 0.0;
+                self.route = Route::Search {
+                    query: String::new(),
+                    volume_id: Some(volume_id),
+                };
+                self.status = StatusText::new(
+                    "Снимок обновлён; локальные заметки сохранены.",
+                    "Snapshot updated; local notes preserved.",
+                );
+                self.load_volumes(ctx);
             }
             Purpose::Scan { root, job_id } => {
                 let _ = (root, job_id);
@@ -1554,7 +2081,12 @@ impl DesktopApp {
                 ui.separator();
                 ui.menu_button(self.t("Каталог", "Catalog"), |ui| {
                     if ui
-                        .button(self.t("Открыть SQLite…", "Open SQLite…"))
+                        .add_enabled(
+                            self.active_request.is_none(),
+                            egui::Button::new(
+                                self.t("Открыть SQLite / CTF…", "Open SQLite / CTF…"),
+                            ),
+                        )
                         .clicked()
                     {
                         self.show_catalog_dialog = true;
@@ -1562,7 +2094,10 @@ impl DesktopApp {
                         ui.close();
                     }
                     if ui
-                        .button(self.t("Новый каталог…", "New catalog…"))
+                        .add_enabled(
+                            self.active_request.is_none(),
+                            egui::Button::new(self.t("Новый каталог…", "New catalog…")),
+                        )
                         .clicked()
                     {
                         self.show_catalog_dialog = true;
@@ -1571,7 +2106,41 @@ impl DesktopApp {
                     }
                     if ui
                         .add_enabled(
-                            self.db.is_some() && self.active_request.is_none(),
+                            self.active_request.is_none(),
+                            egui::Button::new(self.t(
+                                "Импорт CTF в новый каталог…",
+                                "Import CTF into a new catalog…",
+                            )),
+                        )
+                        .clicked()
+                    {
+                        self.ctf_source_input = self
+                            .linked_ctf
+                            .as_ref()
+                            .map(|l| l.path.clone())
+                            .unwrap_or_default();
+                        self.ctf_target_input.clear();
+                        self.ctf_dialog = Some(CtfDialog::Import);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.db.is_some()
+                                && self.linked_ctf.is_none()
+                                && self.active_request.is_none(),
+                            egui::Button::new(self.t("Экспорт нового CTF…", "Export new CTF…")),
+                        )
+                        .clicked()
+                    {
+                        self.ctf_target_input.clear();
+                        self.ctf_dialog = Some(CtfDialog::Export);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.db.is_some()
+                                && self.linked_ctf.is_none()
+                                && self.active_request.is_none(),
                             egui::Button::new(self.t("Проверить целостность…", "Check integrity…")),
                         )
                         .clicked()
@@ -1581,7 +2150,9 @@ impl DesktopApp {
                     }
                     if ui
                         .add_enabled(
-                            self.db.is_some() && self.active_request.is_none(),
+                            self.db.is_some()
+                                && self.linked_ctf.is_none()
+                                && self.active_request.is_none(),
                             egui::Button::new(
                                 self.t("Сканировать диск/папку…", "Scan disk/folder…"),
                             ),
@@ -1594,9 +2165,7 @@ impl DesktopApp {
                         self.error = None;
                         ui.close();
                     }
-                    let can_export = self.db.is_some()
-                        && self.active_request.is_none()
-                        && !matches!(self.route, Route::Copies { .. });
+                    let can_export = self.db.is_some() && self.active_request.is_none();
                     if ui
                         .add_enabled(
                             can_export,
@@ -1624,7 +2193,9 @@ impl DesktopApp {
                 });
                 if ui
                     .add_enabled(
-                        self.db.is_some() && self.active_request.is_none(),
+                        self.db.is_some()
+                            && self.linked_ctf.is_none()
+                            && self.active_request.is_none(),
                         egui::Button::new(self.t("Категории", "Categories")),
                     )
                     .clicked()
@@ -1646,7 +2217,7 @@ impl DesktopApp {
                     ui.checkbox(&mut self.dark, theme_label);
                 });
                 ui.menu_button(self.t("Справка", "Help"), |ui| {
-                    ui.label("WhereIsIt AI · native egui R2");
+                    ui.label(concat!("WhereIsIt AI · ", env!("CARGO_PKG_VERSION")));
                     ui.label(self.t(
                         "Локальные метаданные, без чтения видео.",
                         "Local metadata only; no video reads.",
@@ -1669,7 +2240,7 @@ impl DesktopApp {
                             Language::Russian
                         };
                     }
-                    ui.label(RichText::new("native egui · preview").small().weak());
+                    ui.label(RichText::new(env!("CARGO_PKG_VERSION")).small().weak());
                 });
             });
         });
@@ -1852,6 +2423,15 @@ impl DesktopApp {
                                         .small()
                                         .weak(),
                                 );
+                                if let Some(state) = self.physical.state(volume.id) {
+                                    ui.small(match state {
+                                        "connected" => self.t("Подключён ✓", "Online ✓"),
+                                        "offline" => self.t("Отключён", "Offline"),
+                                        "conflict" => self.t("Конфликт UUID", "UUID conflict"),
+                                        "unbound" => self.t("Не привязан", "Unbound"),
+                                        _ => self.t("Не проверен", "Unverified"),
+                                    });
+                                }
                                 if ui
                                     .small_button("⋯")
                                     .on_hover_text(self.t("Свойства диска", "Disk properties"))
@@ -1887,6 +2467,15 @@ impl DesktopApp {
                     ui.label(RichText::new(self.status.text(self.lang)).small().weak());
                     if self.active_request.is_some() { ui.spinner(); }
                 });
+                if self.ctf_job_id.is_some() {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(self.ctf_phase_label());
+                        ui.label(format!("{}: {}",self.t("Обработано записей","Entries processed"),self.ctf_entries));
+                        if ui.add_enabled(self.ctf_job_registered && !self.ctf_cancel_requested,egui::Button::new(self.t("Отменить CTF-операцию (Esc)","Cancel CTF operation (Esc)"))).clicked(){self.cancel_ctf_job(ctx);}
+                        if self.ctf_cancel_requested {ui.label(self.t("Отмена запрошена; ожидается откат.","Cancellation requested; waiting for rollback."));}
+                    });
+                }
                 if self.scan_job_id.is_some() {
                     ui.horizontal(|ui| {
                         ui.label(format!(
@@ -1921,6 +2510,7 @@ impl DesktopApp {
                         ui.label(format!("{}: {}", self.t("Описание", "Description"), selected.description));
                     }
                     ui.horizontal(|ui| {
+                        if ui.add_enabled(self.active_request.is_none(),egui::Button::new(self.t("Описание…","Description…")).small()).clicked(){self.description_input=selected.description.clone();self.description_entry_id=Some(selected.id);}
                         let copies = ui.add_enabled(!selected.is_directory(),
                             egui::Button::new(self.t("Кандидаты на других дисках", "Copies on other disks")));
                         if copies.clicked() { self.navigate_copies(ctx); }
@@ -1956,10 +2546,7 @@ impl DesktopApp {
                     ));
                     ui.add_space(10.0);
                     if ui
-                        .button(self.t(
-                            "Открыть существующий SQLite-каталог",
-                            "Open existing SQLite catalog",
-                        ))
+                        .button(self.t("Открыть SQLite или CTF", "Open SQLite or CTF"))
                         .clicked()
                     {
                         self.show_catalog_dialog = true;
@@ -2134,6 +2721,73 @@ impl DesktopApp {
     }
 
     fn dialogs(&mut self, ctx: &egui::Context) {
+        if let Some(mode) = self.ctf_dialog {
+            let mut open = true;
+            egui::Window::new(if mode == CtfDialog::Import {
+                self.t("Импорт CTF", "Import CTF")
+            } else {
+                self.t("Новый CTF", "New CTF")
+            })
+            .open(&mut open)
+            .collapsible(false)
+            .default_width(560.0)
+            .show(ctx, |ui| {
+                if mode == CtfDialog::Import {
+                    ui.label(self.t("Исходный CTF — только чтение:", "Source CTF — read-only:"));
+                    ui.text_edit_singleline(&mut self.ctf_source_input);
+                    ui.label(self.t(
+                        "Новый рабочий SQLite (.sqlite):",
+                        "New working SQLite (.sqlite):",
+                    ));
+                } else {
+                    ui.label(self.t(
+                        "Новый файл CTF (.ctf); исходники не перезаписываются:",
+                        "New CTF file (.ctf); sources are never overwritten:",
+                    ));
+                }
+                ui.text_edit_singleline(&mut self.ctf_target_input);
+                if let Some(error) = &self.error {
+                    ui.colored_label(Color32::from_rgb(224, 96, 88), error);
+                }
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(
+                            self.active_request.is_none(),
+                            egui::Button::new(if mode == CtfDialog::Import {
+                                self.t("Импортировать", "Import")
+                            } else {
+                                self.t("Экспортировать", "Export")
+                            }),
+                        )
+                        .clicked()
+                    {
+                        self.start_ctf_transfer(ctx);
+                    }
+                    if ui.button(self.t("Закрыть", "Close")).clicked() {
+                        self.ctf_dialog = None;
+                    }
+                });
+            });
+            if !open {
+                self.ctf_dialog = None;
+            }
+        }
+        if let Some(id) = self.description_entry_id {
+            let mut open = true;
+            egui::Window::new(self.t("Описание записи","Entry description")).open(&mut open).collapsible(false).default_width(560.0).show(ctx,|ui| {
+                if self.linked_ctf.is_some(){ui.label(self.t("Связанный CTF доступен только для чтения. Для изменений импортируйте его в новый каталог.","Linked CTF is read-only. Import it into a new catalog to edit."));}
+                ui.add_enabled(self.linked_ctf.is_none() && self.active_request.is_none(),egui::TextEdit::multiline(&mut self.description_input).desired_rows(6).desired_width(f32::INFINITY));
+                if let Some(error)=&self.error{ui.colored_label(Color32::from_rgb(224,96,88),error);}
+                ui.horizontal(|ui| {
+                    if ui.add_enabled(self.linked_ctf.is_none() && self.active_request.is_none(),egui::Button::new(self.t("Сохранить описание","Save description"))).clicked(){self.save_description(ctx);}
+                    if ui.button(self.t("Закрыть","Close")).clicked(){self.description_entry_id=None;}
+                });
+                ui.label(format!("ID: {id}"));
+            });
+            if !open {
+                self.description_entry_id = None;
+            }
+        }
         if self.show_scan_dialog {
             let mut open = self.show_scan_dialog;
             egui::Window::new(self.t("Сканирование диска", "Scan disk"))
@@ -2428,15 +3082,15 @@ impl DesktopApp {
         }
         if self.show_catalog_dialog {
             let mut open = self.show_catalog_dialog;
-            egui::Window::new(self.t("Каталог SQLite", "SQLite catalog"))
+            egui::Window::new(self.t("Открыть каталог", "Open catalog"))
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(true)
                 .default_width(510.0)
                 .show(ctx, |ui| {
                     ui.label(self.t(
-                        "Локальный путь к каталогу (SQLite). Не открывайте исходный CTF здесь.",
-                        "Local SQLite catalog path. Do not open source CTF here.",
+                        "SQLite открывается как рабочий каталог; CTF связывается только для чтения.",
+                        "SQLite opens as a working catalog; CTF is linked read-only.",
                     ));
                     ui.add(
                         egui::TextEdit::singleline(&mut self.path_input)
@@ -2503,7 +3157,18 @@ impl DesktopApp {
                     .resizable(true)
                     .default_width(520.0)
                     .show(ctx, |ui| {
+                        if ui.add_enabled(self.active_request.is_none() && self.shelf_context.is_some(), egui::Button::new(self.t("Проверить подключение / привязать…", "Check connection / pair…"))).clicked() {
+                            if let Some(scope) = self.shelf_context.clone() {
+                                self.physical.open(scope, id, self.volumes.iter().map(|v|v.id).collect());
+                                self.show_disk_properties = None;
+                            }
+                        }
                         if self.preferences_ready {
+                        ui.add_enabled_ui(self.active_request.is_none() && self.linked_ctf.is_none() && self.shelf_context.is_some(), |ui| {
+                            let text = self.t("Обновить снимок привязанного носителя. Отсутствующие пути исчезнут из каталога; файлы носителя не изменяются.", "Update the paired device snapshot. Missing paths leave the catalog; device files are unchanged.");
+                            ui.checkbox(&mut self.confirm_rescan, text);
+                            if ui.add_enabled(self.confirm_rescan,egui::Button::new(self.t("Пересканировать привязанный носитель", "Rescan paired device"))).clicked() { self.start_rescan(id,ctx); }
+                        });
                         egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
                             ui.strong(format!("#{} · {}", volume.id, volume.label));
                             ui.label(self.t("Локальное имя и свойства хранятся отдельно; исходный каталог и его экспортируемое имя не меняются.",
@@ -2657,7 +3322,11 @@ impl DesktopApp {
             self.go_back(ctx);
         }
         if cancel_scan {
-            self.request_scan_cancel(ctx);
+            if self.ctf_job_id.is_some() {
+                self.cancel_ctf_job(ctx);
+            } else {
+                self.request_scan_cancel(ctx);
+            }
         }
     }
 }
@@ -2699,6 +3368,7 @@ impl eframe::App for DesktopApp {
             self.apply_reply(reply, &ctx);
         }
         self.poll_scan_progress(&ctx);
+        self.poll_ctf_progress(&ctx);
         self.handle_shortcuts(&ctx);
         self.menu(root, &ctx);
         self.search_toolbar(root, &ctx);
@@ -2706,12 +3376,79 @@ impl eframe::App for DesktopApp {
         self.inspector(root, &ctx);
         self.results_table(root, &ctx);
         self.dialogs(&ctx);
+        self.physical
+            .close_if_scope_changed(self.shelf_context.as_ref().map(|s| s.catalog_key.as_str()));
+        self.physical.show(&ctx, self.lang == Language::Russian);
     }
 }
 
 #[cfg(test)]
+#[path = "ctf_workflow_tests.rs"]
+mod ctf_workflow_tests;
+
+#[cfg(test)]
 mod shortcut_tests {
     use super::*;
+
+    #[test]
+    fn rescan_requires_confirmation_and_uses_binding_scope_without_a_historical_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir
+            .path()
+            .join("generated.sqlite")
+            .to_string_lossy()
+            .into_owned();
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.db = Some(db.clone());
+        app.volumes.push(Volume {
+            id: 7,
+            label: "Synthetic".into(),
+            root_path: "DO_NOT_SCAN_HISTORICAL_ROOT".into(),
+            entry_count: 0,
+            total_bytes: 0,
+        });
+        app.shelf_context = Some(ShelfContext {
+            user_store: dir
+                .path()
+                .join("private.sqlite")
+                .to_string_lossy()
+                .into_owned(),
+            catalog_key: format!("sqlite:{db}"),
+            platform: "windows",
+        });
+        let (sent, received) = std::sync::mpsc::channel();
+        app.bus.set_handler(move |request| {
+            sent.send(request.clone()).unwrap();
+            json!({"ok":false,"error":{"code":"unpaired_volume","message":"No saved pairing"}})
+        });
+        app.start_rescan(7, &ctx);
+        assert!(app.active_request.is_none());
+        assert!(received.try_recv().is_err());
+        app.confirm_rescan = true;
+        app.start_rescan(7, &ctx);
+        let reply = wait_for_catalog_reply(&app);
+        let request = received.try_recv().unwrap();
+        assert_eq!(request["op"], "rescan_volume");
+        assert_eq!(request["confirmed"], true);
+        assert_eq!(request["volume_id"], 7);
+        assert_eq!(request["catalog_key"], format!("sqlite:{db}"));
+        assert!(request.get("root").is_none());
+        app.apply_reply(reply, &ctx);
+        assert!(app.scan_job_id.is_none());
+        assert_eq!(app.volumes.len(), 1);
+        assert_eq!(app.db.as_deref(), Some(db.as_str()));
+        app.linked_ctf = Some(LinkedCtf {
+            path: "source.ctf".into(),
+            cache_root: "cache".into(),
+            generation: "a".repeat(64),
+            source_sha256: "b".repeat(64),
+        });
+        app.confirm_rescan = true;
+        app.start_rescan(7, &ctx);
+        assert!(app.active_request.is_none());
+        assert!(received.try_recv().is_err());
+    }
 
     fn wait_for_catalog_reply(app: &DesktopApp) -> crate::bridge::Reply {
         let deadline = Instant::now() + Duration::from_secs(5);

@@ -308,6 +308,25 @@ fn ctf_export_rejects_native_tags_unless_loss_is_explicit() {
 }
 
 #[test]
+fn ctf_export_rejects_even_unassigned_native_category_definitions() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = temp.path().join("categories.sqlite");
+    fixture(&db);
+    let category = call(json!({"op":"create_category","db":db,"name":"Unassigned"}));
+    assert_eq!(category["ok"], true, "{category}");
+    let output = temp.path().join("categories.ctf");
+    let refused = call(json!({"op":"export_ctf","db":db,"path":output}));
+    assert_eq!(refused["error"]["code"], "ctf_categories", "{refused}");
+    assert!(!output.exists());
+    let permitted = call(json!({"op":"export_ctf","db":db,"path":output,"allow_lossy":true}));
+    assert_eq!(permitted["ok"], true, "{permitted}");
+    assert_eq!(permitted["data"]["new_categories_omitted"], true);
+    let definitions = call(json!({"op":"categories","db":db}));
+    assert_eq!(definitions["data"][0]["id"], category["data"]["id"]);
+    assert!(output.is_file());
+}
+
+#[test]
 fn other_disk_copy_candidates_dispatch_excludes_source_volume_before_paging() {
     let t = tempfile::tempdir().unwrap();
     let db = t.path().join("test.sqlite");

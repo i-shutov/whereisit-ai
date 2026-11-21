@@ -4,8 +4,7 @@
   "channel": "prerelease",
   "stable_ready": false,
   "known_open_gates": [
-    "PR79_review_and_main_integration_pending",
-    "direct_CTF_link_import_export_in_egui_missing",
+    "direct_CTF_new_egui_workflow_exact_candidate_installed_acceptance_pending",
     "remaining_PR58_P0_parity_not_accepted",
     "full_target_platform_GUI_DPI_accessibility_and_physical_USB_not_accepted",
     "Windows_Authenticode_and_Apple_Developer_ID_notarization_missing",
@@ -50,7 +49,8 @@
     69,
     70,
     73,
-    78
+    78,
+    79
   ],
   "integration_pr": 54,
   "native_annotations_implemented": true,
@@ -72,7 +72,7 @@
     "reference_ui_kind": "react_in_memory_design_not_rust_egui",
     "reference_ui_safety": "read_only_review_no_delete",
     "native_search_first_pr": 57,
-    "native_source_integration": "PR69_PR73_PR78_merged_main_8cbb3b4_exact_CI_PASS_PR79_not_merged",
+    "native_source_integration": "PR69_PR73_PR78_PR79_merged_main_db6c1ae_exact_native_upgrade_integration_CI_PASS",
     "physical_usb_real_hardware_verified": false,
     "rust_egui_frontend_implemented": true,
     "stable_release_decision": "NO_GO",
@@ -132,16 +132,21 @@
       "peak_cli_working_set_mib": 9.14,
       "cold_cache_verified": false
     },
-    "pending_pr": {
+    "integrated_pr79": {
       "number": 79,
       "sha": "43b324644433b026a438b3abf4516119f19b8ac5",
-      "merged": false,
+      "merged": true,
+      "merge_sha": "e7ab4d5f6a1df6ea820b8b867dfe5255004fb4cd",
       "ci": "PASS",
       "installed_win11_gui": "PASS",
       "probe_then_first_page_p95_ms": 14.15,
       "metric_excludes_gui_and_full_validation": true
     },
-    "next_functional_block": "Direct CTF workflow in egui",
+    "current_main": "db6c1aeb1b426280175b583265e5e26c3812b643",
+    "current_main_native_ci": 44950079896,
+    "release_work_branch": "feature/ctf-egui-release-1.0-20261121",
+    "release_work_status": "CTF_GUI_OS_pairing_explicit_rescan_candidate_exports_product_packaging_implemented_validation_in_progress_not_main_acceptance",
+    "next_functional_block": "Exact candidate installed GUI and original-app CTF acceptance",
     "stable_decision": "NO_GO"
   }
 }

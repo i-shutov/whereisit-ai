@@ -1,7 +1,9 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod bridge;
 mod categories;
+mod linked;
 mod model;
+mod physical;
 #[cfg(all(feature = "qa-isolated", target_os = "windows"))]
 mod qa_isolation;
 #[cfg(feature = "qa-screenshots")]
@@ -16,7 +18,7 @@ fn main() -> eframe::Result<()> {
         match arg.as_str() {
             "--catalog" => startup_catalog = args.next(),
             "--help" | "-h" => {
-                println!("WhereIsIt AI native egui preview\n  --catalog <existing.sqlite>");
+                println!("WhereIsIt AI\n  --catalog <existing.sqlite|existing.ctf>");
                 return Ok(());
             }
             other => {

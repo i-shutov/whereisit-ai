@@ -121,10 +121,19 @@ pub(crate) fn output_file(v: &Value) -> Result<(tempfile::NamedTempFile, PathBuf
 }
 pub(crate) fn finish(tmp: tempfile::NamedTempFile, target: &Path, overwrite: bool) -> Result<()> {
     tmp.as_file().sync_all()?;
+    publish(tmp, target, overwrite)
+}
+pub(crate) fn publish(tmp: tempfile::NamedTempFile, target: &Path, overwrite: bool) -> Result<()> {
     if overwrite {
         tmp.persist(target).map_err(export_error)?;
     } else {
-        tmp.persist_noclobber(target).map_err(export_error)?;
+        tmp.persist_noclobber(target).map_err(|error| {
+            if error.error.kind() == std::io::ErrorKind::AlreadyExists {
+                Error::new("file_exists", "Output already exists; choose another name")
+            } else {
+                export_error(error)
+            }
+        })?;
     }
     Ok(())
 }
@@ -181,7 +190,8 @@ impl ExportRow {
 }
 
 pub(crate) fn export(c: &Catalog, v: &Value, format: &str) -> Result<Value> {
-    export_impl(c, v, format, select(v, false)?, true)
+    let selection = select(v, false)?;
+    export_impl(c, v, format, selection, true, true)
 }
 
 /// Linked CTF duplicates use a read-only query, never a mutable duplicate cache.
@@ -190,8 +200,9 @@ pub(crate) fn export_pinned_selected(
     v: &Value,
     format: &str,
     selection: Selection,
+    private_stage: bool,
 ) -> Result<Value> {
-    export_impl(c, v, format, selection, false)
+    export_impl(c, v, format, selection, false, !private_stage)
 }
 
 fn export_impl(
@@ -200,13 +211,38 @@ fn export_impl(
     format: &str,
     s: Selection,
     use_editable_duplicate_cache: bool,
+    enforce_candidate_no_clobber: bool,
 ) -> Result<Value> {
+    // Keep candidate identity validation and the streamed result on one
+    // SQLite read snapshot, so the selected key cannot change mid-export.
+    let candidate_snapshot = if s.candidate {
+        Some(c.conn().unchecked_transaction()?)
+    } else {
+        None
+    };
+    let source_conn = candidate_snapshot.as_deref().unwrap_or_else(|| c.conn());
+    if s.candidate {
+        let entry_id = crate::optional_id(v, "entry_id")?
+            .ok_or_else(|| Error::new("invalid_request", "Select a positive file entry_id"))?;
+        let table = c.query_table("")?;
+        let exists: bool = source_conn.query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE id=?1 AND kind='file')"),
+            [entry_id],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Err(Error::new(
+                "not_found",
+                "Selected file is unavailable in this catalog snapshot",
+            ));
+        }
+    }
     let snapshot = if s.duplicate && use_editable_duplicate_cache {
         Some(crate::duplicates::export_snapshot(c, v)?)
     } else {
         None
     };
-    let conn = snapshot.as_deref().unwrap_or(c.conn());
+    let conn = snapshot.as_deref().unwrap_or(source_conn);
     conn.create_scalar_function(
         "ctf_local",
         1,
@@ -229,8 +265,19 @@ fn export_impl(
     } else {
         "NULL"
     };
-    let (mut tmp, target, overwrite) = output_file(v)?;
-    let sql=format!("{} SELECT {COLUMNS},(SELECT label FROM volumes WHERE id=matches.volume_id),COALESCE((SELECT group_concat(c.name,'; ') FROM entry_categories ec JOIN categories c ON c.id=ec.category_id WHERE ec.entry_id=matches.id),''),duplicate_count,duplicate_group,{local_sql} FROM matches ORDER BY volume_id,id",s.cte);
+    let (mut tmp, target, overwrite) = if s.candidate && enforce_candidate_no_clobber {
+        // Candidate exports are review artifacts and always publish without
+        // replacing an existing user file, even if a caller asks otherwise.
+        let mut safe = v.clone();
+        safe["overwrite"] = json!(false);
+        output_file(&safe)?
+    } else {
+        output_file(v)?
+    };
+    let sql = format!(
+        "{} SELECT {COLUMNS},(SELECT label FROM volumes WHERE id=matches.volume_id),COALESCE((SELECT group_concat(c.name,'; ') FROM entry_categories ec JOIN categories c ON c.id=ec.category_id WHERE ec.entry_id=matches.id),''),duplicate_count,duplicate_group,{local_sql} FROM matches ORDER BY volume_id,id",
+        s.cte
+    );
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query(rusqlite::params_from_iter(s.args.iter()))?;
     let mut count = 0u64;
@@ -294,11 +341,25 @@ fn export_impl(
     drop(rows);
     drop(stmt);
     drop(snapshot);
+    if let Some(transaction) = candidate_snapshot {
+        transaction.commit()?;
+    }
     let bytes = tmp.as_file().metadata()?.len();
     finish(tmp, &target, overwrite)?;
-    Ok(
-        json!({"path":target,"rows":count,"bytes":bytes,"format":format.trim_start_matches("export_"),"scope":v.get("mode").and_then(Value::as_str).unwrap_or("search"),"duplicate_candidates":s.duplicate}),
-    )
+    let mut result = json!({
+        "path":target,
+        "rows":count,
+        "bytes":bytes,
+        "format":format.trim_start_matches("export_"),
+        "scope":v.get("mode").and_then(Value::as_str).unwrap_or("search"),
+        "duplicate_candidates":s.duplicate
+    });
+    if s.candidate {
+        result["duplicate_candidates"] = json!(true);
+        result["verified"] = json!(false);
+        result["basis"] = json!("exact_normalized_name_and_size");
+    }
+    Ok(result)
 }
 
 fn write_group(writer: &mut SerializedFileWriter<&mut File>, rows: &[ExportRow]) -> Result<()> {
@@ -380,4 +441,138 @@ fn write_group(writer: &mut SerializedFileWriter<&mut File>, rows: &[ExportRow])
     }
     group.close().map_err(export_error)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod candidate_tests {
+    use super::*;
+    use atlas_core::{Catalog, NewEntry};
+    use std::fs;
+
+    fn entry(name: &str, size: u64, relative_path: &str) -> NewEntry {
+        NewEntry {
+            parent_id: None,
+            name: name.into(),
+            relative_path: relative_path.into(),
+            kind: "file".into(),
+            size,
+            modified_unix: None,
+            description: "候補".into(),
+            tags: "映画".into(),
+        }
+    }
+
+    fn seed() -> (tempfile::TempDir, Catalog, i64, i64) {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut catalog = Catalog::open(tmp.path().join("catalog.sqlite")).unwrap();
+        let mut selected = 0;
+        let mut second_volume = 0;
+        catalog
+            .bulk_import("Shelf A", "disk-A", |writer| {
+                selected = writer.insert(&entry("映画 🎬.mkv", 4096, "a/selected.mkv"))?;
+                for n in 0..149 {
+                    writer.insert(&entry("映画 🎬.mkv", 4096, &format!("a/{n:03}.mkv")))?;
+                }
+                writer.insert(&entry("別名.mkv", 4097, "a/other-size.mkv"))?;
+                Ok(())
+            })
+            .unwrap();
+        catalog
+            .bulk_import("Shelf B", "disk-B", |writer| {
+                second_volume = writer.insert(&entry("映画 🎬.mkv", 4096, "b/000.mkv"))?;
+                for n in 1..150 {
+                    writer.insert(&entry("映画 🎬.mkv", 4096, &format!("b/{n:03}.mkv")))?;
+                }
+                writer.insert(&entry("映画-other.mkv", 4096, "b/other-name.mkv"))?;
+                Ok(())
+            })
+            .unwrap();
+        (tmp, catalog, selected, second_volume)
+    }
+
+    #[test]
+    fn copy_candidates_export_all_metadata_matches_with_unicode_and_scopes() {
+        let (tmp, catalog, selected, second_entry) = seed();
+        let full_path = tmp.path().join("all.csv");
+        let full = export(
+            &catalog,
+            &json!({"mode":"copy_candidates","entry_id":selected,"path":full_path,"db":tmp.path().join("catalog.sqlite"),"other_disks_only":false}),
+            "export_csv",
+        )
+        .unwrap();
+        assert_eq!(full["rows"], 300);
+        assert_eq!(full["basis"], "exact_normalized_name_and_size");
+        assert_eq!(full["verified"], false);
+        assert_eq!(full["duplicate_candidates"], true);
+        let mut csv = csv::Reader::from_path(&full_path).unwrap();
+        let records = csv
+            .records()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(records.len(), 300);
+        assert!(records.iter().any(|row| row.get(3) == Some("映画 🎬.mkv")));
+        assert!(records.iter().all(|row| row.get(6) == Some("4096")));
+        assert!(records
+            .iter()
+            .all(|row| row.get(10) == Some("Shelf A") || row.get(10) == Some("Shelf B")));
+
+        let other_path = tmp.path().join("other.json");
+        let other = export(
+            &catalog,
+            &json!({"mode":"copy_candidates","entry_id":selected,"path":other_path,"db":tmp.path().join("catalog.sqlite"),"other_disks_only":true,"candidate_volume_id":catalog.conn().query_row("SELECT volume_id FROM entries WHERE id=?1",[second_entry],|r|r.get::<_,i64>(0)).unwrap()}),
+            "export_json",
+        )
+        .unwrap();
+        assert_eq!(other["rows"], 150);
+        let value: Value = serde_json::from_slice(&fs::read(other_path).unwrap()).unwrap();
+        let items = value["entries"].as_array().unwrap();
+        assert_eq!(items.len(), 150);
+        assert!(items
+            .iter()
+            .all(|item| item["volume_id"] == items[0]["volume_id"]));
+        assert_eq!(items[0]["volume_label"], "Shelf B");
+        assert!(items.iter().any(|item| item["name"] == "映画 🎬.mkv"));
+
+        let parquet_path = tmp.path().join("candidates.parquet");
+        let parquet = export(
+            &catalog,
+            &json!({"mode":"copy_candidates","entry_id":selected,"path":parquet_path,"db":tmp.path().join("catalog.sqlite"),"other_disks_only":true}),
+            "export_parquet",
+        )
+        .unwrap();
+        assert_eq!(parquet["rows"], 150);
+        assert!(parquet["bytes"].as_u64().unwrap() > 0);
+    }
+
+    #[test]
+    fn candidate_export_rejects_bad_selection_and_never_clobbers() {
+        let (tmp, catalog, selected, _) = seed();
+        let db = tmp.path().join("catalog.sqlite");
+        let target = tmp.path().join("preserve.csv");
+        fs::write(&target, b"keep existing bytes").unwrap();
+        let err = export(
+            &catalog,
+            &json!({"mode":"copy_candidates","entry_id":selected,"path":target,"db":db,"overwrite":true}),
+            "export_csv",
+        )
+        .unwrap_err();
+        assert_eq!(err.code, "file_exists");
+        assert_eq!(fs::read(&target).unwrap(), b"keep existing bytes");
+
+        for entry_id in [0, -1, 999_999] {
+            let err = export(
+                &catalog,
+                &json!({"mode":"copy_candidates","entry_id":entry_id,"path":tmp.path().join(format!("bad-{entry_id}.csv")),"db":db}),
+                "export_csv",
+            )
+            .unwrap_err();
+            assert!(matches!(err.code, "invalid_request" | "not_found"));
+        }
+        assert!(export(
+            &catalog,
+            &json!({"mode":"copy_candidates","entry_id":selected,"query":"name:movie","path":tmp.path().join("query.csv"),"db":db}),
+            "export_csv",
+        )
+        .is_err());
+    }
 }
