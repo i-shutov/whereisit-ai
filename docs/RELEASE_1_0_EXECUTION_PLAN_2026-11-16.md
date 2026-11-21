@@ -1,3 +1,5 @@
+> **Актуализация 2026-11-21:** Этот документ сохраняет исходный scope и критерии, но многие его промежуточные статусы устарели. PR #68 уже в `main ddd9215b` (postmerge native CI и upgrade PASS). PR #69 (PR58 egui parity) и PR #70 (ручной безопасный Win11 runner smoke) пока draft. Новый Windows 11 Pro стенд выделен для нативной GUI/NTFS, installer и perf QA. [Текущий порядок W0–W7, границы доверия runner, актуальная матрица](RELEASE_1_0_WIN11_ACTION_PLAN_2026-11-21.md). **Stable 1.0 NO-GO; USB hardware QA по запросу владельца отложена для текущего Windows блока, а не признана PASS.**
+
 # WhereIsIt AI — исполняемый план выпуска 1.0
 
 **Канонический UX:** [PR #58](https://github.com/i-shutov/whereisit-ai/pull/58) (`apps/ui-prototype/`, исходный `a899ac4`); все будущие UX-изменения вести в выбранном пользователем прототипе с visual review, затем портировать в Rust/egui. [Контракт](UX_REFERENCE_CONTRACT_PR58_2026-11-16.md). PR #57 — функциональный/сервисный донор, его старый дизайн не заменяет PR58.
