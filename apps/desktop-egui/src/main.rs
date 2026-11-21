@@ -1,11 +1,11 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod bridge;
 mod model;
+#[cfg(all(feature = "qa-isolated", target_os = "windows"))]
+mod qa_isolation;
 #[cfg(feature = "qa-screenshots")]
 mod qa_screenshot;
 mod shelf;
-#[cfg(all(feature = "qa-isolated", target_os = "windows"))]
-mod qa_isolation;
 mod ui;
 
 fn main() -> eframe::Result<()> {
