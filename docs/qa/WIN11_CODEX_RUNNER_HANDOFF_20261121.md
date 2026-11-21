@@ -70,3 +70,11 @@ The Win64 egui installed QA smoke passed in GitHub-hosted CI and PR #72 is in ma
 - PR #74 mirrors that shell fix and adds a hosted static regression guard. It does **not** enable running Codex on the admin service or PR-triggered jobs.
 - For a real verification, use **Actions → Windows 11 VPS runner smoke → Run workflow → Use workflow from: main**. A rerun of the failed historical attempt does not establish that the newly committed workflow source was used. Record the new run ID and exact source SHA. Require `RUNNER_SMOKE_PASS` with exit code 0; the Codex visibility step is only available after PR #74 is merged and checks pass.
 - If the new run still fails with a policy error, inspect `Get-ExecutionPolicy -List` locally for restrictive Group Policy (`MachinePolicy`/`UserPolicy`) and stop for a scoped decision. A process-only bypass cannot override enforced Group Policy. Do not globally disable PowerShell protection to make QA green.
+
+## 2026-11-21: second manual smoke exposed extensionless custom-shell file
+
+- Exact failed [run #44886507387](https://github.com/i-shutov/whereisit-ai/actions/runs/44886507387) used trusted main `2b6e63a948405394a26589fbf7ba1119d2cc0bc4`.
+- Runner was correctly assigned, but custom `-File {0}` received a GitHub-generated temporary file **without a .ps1 suffix** and PowerShell rejected it before executing the script body.
+- The first fix `2b6e63a` must **not** be treated as successful. New trusted-main hotfix uses a process-scoped PowerShell with `-Command` and `ScriptBlock.Create(File.ReadAllText(tempfile))`, which does not depend on the temporary filename extension.
+- PR #74 adds a small **GitHub-hosted Windows** job with this exact shell template and a static regression test before accepting the launcher. It never touches the self-hosted admin runner or Codex.
+- A future manual run against the new main source remains necessary to verify the actual Windows 11 runner. No runtime PASS has been claimed from a code fix alone.

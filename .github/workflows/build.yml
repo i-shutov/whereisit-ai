@@ -10,6 +10,19 @@ concurrency:
   group: native-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
+  win11-shell-template-hosted-probe:
+    # A fast independent probe of custom shell syntax on GitHub-hosted Windows,
+    # NOT the privileged user Win11 self-hosted runner.
+    name: Win11 shell template hosted probe
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - name: Execute an extensionless temp script with process-scoped PowerShell
+        shell: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create([IO.File]::ReadAllText('{0}')))"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([Environment]::Is64BitOperatingSystem -ne $true) { throw 'Expected x64' }
+          Write-Host 'WIN11_SHELL_TEMPLATE_HOSTED_PASS'
   test:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
