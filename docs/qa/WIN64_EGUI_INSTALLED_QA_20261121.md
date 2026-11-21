@@ -34,9 +34,7 @@ The VERSION value currently labels the historical RC3 source generation; QA cand
 After independently confirming a successful GitHub-hosted workflow run and the exact source SHA, download and extract the separate `WhereIsItAI-egui-Win64-installed-QA-unsigned` Actions artifact. From a trusted checkout **matching that SHA**, run the PowerShell 5.1 preflight script (read-only):
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\qa\windows11-egui\Verify-Win64EguiCandidate.ps1 \
-    -CandidateDirectory '<directory containing setup.exe, provenance.json, SHA256SUMS.txt>' \
-    -ExpectedCommit '<40-character exact source SHA>' -ExpectedRunId '<GitHub Actions run ID>'
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\qa\windows11-egui\Verify-Win64EguiCandidate.ps1 -CandidateDirectory 'C:\QA\ExtractedWin64Candidate' -ExpectedCommit '<exact-40-hex-SHA>' -ExpectedRunId '<Actions-run-id>'
 ```
 
 The preflight rejects wrong repository source SHA, run ID, non-Win64/egui provenance, missing manifests, unexpected additional setups, digest mismatch and any stable/signature misrepresentation. **Self-reported hashes inside an unsigned artifact alone do not establish publisher authenticity.** The operator must verify the trusted repository workflow URL, Actions run and artifact source independently; do not bypass OS security prompts or use unknown mirrors.

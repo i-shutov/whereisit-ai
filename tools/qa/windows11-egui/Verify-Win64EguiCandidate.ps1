@@ -60,23 +60,8 @@ if ($allSetups.Count -ne 1 -or $allSetups[0].Name -cne $expectedName) {
 }
 $lines = @(Get-Content -LiteralPath $sumFile -Encoding ASCII |
     Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-if ($lines.Count -ne 1) {
-    throw 'SHA256SUMS must contain exactly one checksum.'
-}
-if (-not ($lines[0] -cmatch '^([0-9a-fA-F]{64})  ([^\\/]+)
-$sumDigest = $matches[1]
-$sumName = $matches[2]
-if ($sumName -cne $expectedName) { throw 'SHA256SUMS filename mismatch.' }
-$actual = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
-if ($actual -ine $sumDigest -or $actual -ine [string]$p.installer_sha256) {
-    throw 'Win64 QA setup hash differs from SHA256SUMS or provenance.'
-}
-Write-Host 'WIN64_EGUI_QA_PREFLIGHT_PASS: artifact manifest and installer integrity'
-Write-Host "SOURCE_SHA: $($p.commit)"
-Write-Host "ACTIONS_RUN_ID: $($p.run_id)"
-Write-Host "INSTALLER_SHA256: $($actual.ToLowerInvariant())"
-Write-Host 'SIGNING: unsigned; compare this evidence with the trusted GitHub-hosted Actions run before execution'
-)) {
+if ($lines.Count -ne 1) { throw 'SHA256SUMS must contain exactly one checksum.' }
+if (-not ($lines[0] -cmatch '^([0-9a-fA-F]{64})  ([^\\/]+)$')) {
     throw 'Unexpected SHA256SUMS format; require hash and setup filename.'
 }
 $sumDigest = $matches[1]
