@@ -539,12 +539,43 @@ impl Catalog {
             Ok(())
         })
     }
+    fn require_entry(conn: &Connection, entry_id: i64) -> Result<()> {
+        if entry_id <= 0 {
+            return Err(Error::new("invalid_request", "Entry ID must be positive"));
+        }
+        let found: i64 = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM entries WHERE id=?1)",
+            [entry_id],
+            |row| row.get(0),
+        )?;
+        if found == 0 {
+            return Err(Error::new("not_found", "Catalog entry no longer exists"));
+        }
+        Ok(())
+    }
+
     pub fn create_category(&self, name: &str, parent_id: Option<i64>) -> Result<i64> {
         if name.trim().is_empty() {
             return Err(Error::new(
                 "invalid_request",
                 "Category name cannot be empty",
             ));
+        }
+        // A forward-reference equal to the next generated category ID
+        // could otherwise create a self-parent via a legal SQLite FK.
+        // Only already-existing positive parents are permitted.
+        if let Some(parent) = parent_id {
+            if parent <= 0 {
+                return Err(Error::new("invalid_request", "Parent ID must be positive"));
+            }
+            let exists: i64 = self.conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM categories WHERE id=?1)",
+                [parent],
+                |row| row.get(0),
+            )?;
+            if exists == 0 {
+                return Err(Error::new("not_found", "Parent category not found"));
+            }
         }
         self.conn.execute(
             "INSERT INTO categories(name,name_norm,parent_id) VALUES(?1,?2,?3)",
@@ -553,11 +584,56 @@ impl Catalog {
         Ok(self.conn.last_insert_rowid())
     }
     pub fn assign_category(&self, entry_id: i64, category_id: i64) -> Result<()> {
-        self.conn.execute(
+        // The entry existence check and the membership write must be atomic
+        // against a second process deleting the catalog entry. BEGIN IMMEDIATE
+        // serializes concurrent writers without requiring an exclusive DB lock.
+        let tx = Transaction::new_unchecked(&self.conn, rusqlite::TransactionBehavior::Immediate)?;
+        Self::require_entry(&tx, entry_id)?;
+        tx.execute(
             "INSERT OR IGNORE INTO entry_categories(entry_id,category_id) VALUES(?1,?2)",
             params![entry_id, category_id],
         )?;
+        tx.commit()?;
         Ok(())
+    }
+
+    /// IDs of categories explicitly assigned to one catalog entry.
+    /// Does not infer inherited categories and does not touch source media.
+    pub fn entry_category_ids(&self, entry_id: i64) -> Result<Value> {
+        // A deferred read transaction fixes one SQLite snapshot for both the
+        // existence check and memberships even while another process writes.
+        let tx = self.conn.unchecked_transaction()?;
+        Self::require_entry(&tx, entry_id)?;
+        let ids = {
+            let mut stmt = tx.prepare(
+                "SELECT category_id FROM entry_categories WHERE entry_id=?1 ORDER BY category_id",
+            )?;
+            let collected = stmt
+                .query_map([entry_id], |row| row.get::<_, i64>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            collected
+        };
+        tx.commit()?;
+        Ok(json!(ids))
+    }
+
+    /// Remove only an explicit SQLite category membership. No source file or
+    /// catalog entry is deleted; a later assign can restore the same link.
+    pub fn unassign_category(&self, entry_id: i64, category_id: i64) -> Result<bool> {
+        if entry_id <= 0 || category_id <= 0 {
+            return Err(Error::new(
+                "invalid_request",
+                "Category and entry IDs must be positive",
+            ));
+        }
+        let tx = Transaction::new_unchecked(&self.conn, rusqlite::TransactionBehavior::Immediate)?;
+        Self::require_entry(&tx, entry_id)?;
+        let removed = tx.execute(
+            "DELETE FROM entry_categories WHERE entry_id=?1 AND category_id=?2",
+            params![entry_id, category_id],
+        )?;
+        tx.commit()?;
+        Ok(removed > 0)
     }
     pub fn categories(&self) -> Result<Value> {
         let mut s = self
@@ -913,6 +989,10 @@ pub mod api {
                 c.assign_category(integer(&v, "entry_id")?, integer(&v, "category_id")?)?;
                 Ok(json!({}))
             }
+            "entry_category_ids" => c.entry_category_ids(integer(&v, "entry_id")?),
+            "unassign_category" => Ok(json!({"removed":c.unassign_category(
+                integer(&v, "entry_id")?, integer(&v, "category_id")?
+            )?})),
             "explain_query" => c.explain_query(string(&v, "query")?),
             "init" => Ok(
                 json!({"schema_version":c.conn().pragma_query_value(None,"user_version",|r|r.get::<_,i64>(0))?}),

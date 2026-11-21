@@ -6,8 +6,15 @@ $script:Cli = (Resolve-Path -LiteralPath $Cli).Path
 $utf8NoBom = [Text.UTF8Encoding]::new($false, $true)
 $source = Join-Path $PSScriptRoot 'Invoke-WhereIsItEguiQA.ps1'
 $tokens = $null; $errors = $null
-$ast = [System.Management.Automation.Language.Parser]::ParseFile($source,[ref]$tokens,[ref]$errors)
-if ($errors.Count) { throw 'Runner parse error' }
+# Windows PowerShell 5.1 ParseFile decodes BOM-less UTF-8 using the ANSI codepage.
+# ParseInput with an explicitly strict UTF-8 decoder preserves Cyrillic literals.
+$ast = [System.Management.Automation.Language.Parser]::ParseInput([IO.File]::ReadAllText($source, $utf8NoBom), $source, [ref]$tokens, [ref]$errors)
+if ($errors.Count) {
+    $details = @($errors | ForEach-Object {
+        'line ' + $_.Extent.StartLineNumber + ' [' + $_.ErrorId + '] ' + $_.Message
+    }) -join '; '
+    throw "Runner parse error: $details"
+}
 foreach ($name in @('Invoke-CliRaw','Invoke-Cli')) {
     $fn = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     if (-not $fn) { throw "Missing function $name" }

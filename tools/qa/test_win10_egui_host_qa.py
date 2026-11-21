@@ -12,6 +12,18 @@ class Win10EguiQaHostContract(unittest.TestCase):
         self.assertIn("SkipGui", text)
         self.assertIn("ManualReview", text)
         self.assertIn("CaptureScreenshot", text)
+        self.assertIn("CategoryChecks", text)
+        cli_transport = (ROOT / "tools/qa/windows10-egui/Test-CliTransport.ps1").read_text(encoding="utf-8")
+        self.assertIn("Parser]::ParseInput", cli_transport)
+        self.assertIn("ReadAllText($source, $utf8NoBom)", cli_transport)
+        self.assertNotIn("Parser]::ParseFile", cli_transport)
+
+        for op in ("categories", "create_category", "assign_category",
+                   "entry_category_ids", "unassign_category", "category_id:"):
+            self.assertIn(op, text)
+        for marker in ("CATEGORY_EXACT_SEARCH", "CATEGORY_INHERITANCE",
+                       "CATEGORY_UNASSIGN", "CATEGORY_RELINK", "CATEGORY_CATALOG"):
+            self.assertIn(marker, text)
         self.assertIn("Get-FileHash", text)
         self.assertIn("[System.Text.UTF8Encoding]::new($false)", text)
         self.assertIn("QA_MANIFEST.json", text)
@@ -36,7 +48,7 @@ class Win10EguiQaHostContract(unittest.TestCase):
         bundler = (ROOT / "apps/desktop-egui/package-preview-windows.ps1").read_text(encoding="utf-8")
         self.assertIn("test_win10_egui_host_qa.py", workflow)
         self.assertIn("Windows runner", workflow)
-        self.assertIn("-DiskCount 6 -SkipGui", workflow)
+        self.assertIn("-DiskCount 6 -SkipGui -CategoryChecks", workflow)
         self.assertIn("headless Windows runner)\n        shell: powershell", workflow)
         self.assertIn("./dist/qa-egui/windows-x64/Invoke-WhereIsItEguiQA.ps1", workflow)
         self.assertIn("[System.Text.UTF8Encoding]::new($true)", bundler)
