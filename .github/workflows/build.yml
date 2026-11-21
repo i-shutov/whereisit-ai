@@ -58,9 +58,10 @@ jobs:
       - run: |
           if test -f tools/storage_audit.py; then python3 tools/storage_audit.py --self-test; fi
           if test -f tools/storage_layout_experiment.py; then python3 tools/storage_layout_experiment.py --self-test; fi
-      - run: bash -n apps/macos/build.sh apps/desktop-egui/package-preview-macos.sh installers/macos/package.sh installers/macos/smoke-package.sh installers/macos/verify-dmg.sh installers/macos/test-verify-dmg.sh
+      - run: bash -n apps/macos/build.sh apps/desktop-egui/package-preview-macos.sh installers/macos/package.sh installers/macos/smoke-package.sh installers/macos/package-egui-product.sh installers/macos/smoke-egui-product.sh installers/macos/verify-dmg.sh installers/macos/test-verify-dmg.sh
       - run: python3 -m unittest discover -s tools/qa -p 'test_egui_preview_packaging.py' -v
       - run: python3 -m unittest discover -s tools/qa -p 'test_egui_win64_installer_contract.py' -v
+      - run: python3 -m unittest discover -s tools/qa -p 'test_egui_product_packaging.py' -v
       - run: python3 -m unittest discover -s tools/qa -p 'test_win10_egui_host_qa.py' -v
       - run: python3 -m unittest discover -s tools/qa -p 'test_win11_codex_handoff_contract.py' -v
       - run: bash installers/macos/test-verify-dmg.sh
@@ -83,8 +84,15 @@ jobs:
       - run: rustup toolchain install 1.100.0 --profile minimal
       - run: cargo test --workspace --locked
       - run: cargo build --release --locked -p atlas-windows -p atlas-cli
-      - name: Compile native Rust/egui desktop preview
+      - name: Compile standard egui product binary before QA feature builds
         run: cargo build --release --locked -p atlas-desktop-egui
+      - name: Preserve standard egui product payload
+        shell: powershell
+        run: |
+          $payload = 'dist/windows-egui-product/payload'
+          New-Item -ItemType Directory -Path $payload -Force | Out-Null
+          Copy-Item -LiteralPath 'target/release/atlas-desktop-egui.exe' -Destination (Join-Path $payload 'atlas-desktop-egui.exe')
+          Copy-Item -LiteralPath 'target/release/atlas.exe' -Destination (Join-Path $payload 'atlas.exe')
       - name: Build isolated egui Windows QA preview ZIP
         shell: pwsh
         run: ./apps/desktop-egui/package-preview-windows.ps1
@@ -129,6 +137,56 @@ jobs:
       - name: Verify install, installed CLI and safe uninstall
         shell: pwsh
         run: ./installers/windows/smoke-installer.ps1
+      - name: Build side-by-side egui product installer
+        shell: pwsh
+        run: ./installers/windows/build-egui-product.ps1
+      - name: Parse egui product PowerShell scripts
+        shell: powershell
+        run: |
+          $scripts = @('installers/windows/build-egui-product.ps1', 'installers/windows/smoke-egui-product.ps1')
+          foreach ($script in $scripts) {
+            $tokens = @(); $errors = @()
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $script).Path, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) { throw "PowerShell syntax error in $script" }
+          }
+      - name: Verify egui product install and external catalog preservation
+        shell: pwsh
+        run: ./installers/windows/smoke-egui-product.ps1
+      - name: Create exact-source egui Windows product manifest
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = 'dist/windows-egui-product'
+          $version = (Get-Content VERSION -Raw).Trim()
+          $exe = Join-Path $dir "WhereIsItAI-egui-$version-windows-x64-setup.exe"
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'Missing egui product setup.' }
+          $sha = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$sha  $(Split-Path $exe -Leaf)" | Set-Content (Join-Path $dir 'SHA256SUMS.txt') -Encoding ascii
+          @{
+            schema = 'whereisit-egui-product-candidate-v1'
+            channel = 'prerelease'
+            target_ui = 'Rust/egui'
+            platform = 'windows'
+            architecture = 'x64'
+            version = $version
+            commit = (git rev-parse HEAD).Trim()
+            run_id = $env:GITHUB_RUN_ID
+            installer_sha256 = $sha
+            gui_sha256 = (Get-FileHash 'dist/windows-egui-product/payload/atlas-desktop-egui.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+            cli_sha256 = (Get-FileHash 'dist/windows-egui-product/payload/atlas.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+            signing = 'unsigned'
+            stable_ready = $false
+            personal_catalogs_included = $false
+          } | ConvertTo-Json | Set-Content (Join-Path $dir 'provenance.json') -Encoding utf8
+          if ((Get-Content -Raw (Join-Path $dir 'provenance.json') | ConvertFrom-Json).stable_ready -ne $false) { throw 'Egui candidate must remain prerelease.' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WhereIsItAI-egui-windows-x64-unsigned-candidate
+          if-no-files-found: error
+          path: |
+            dist/windows-egui-product/WhereIsItAI-egui-*-windows-x64-setup.exe
+            dist/windows-egui-product/SHA256SUMS.txt
+            dist/windows-egui-product/provenance.json
       - name: Build isolated Win64 egui QA app (dedicated settings and sidecar)
         shell: powershell
         run: |
@@ -229,8 +287,12 @@ jobs:
           key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-1.100-release
       - run: rustup toolchain install 1.100.0 --profile minimal
       - run: cargo test --workspace --locked
-      - name: Compile native Rust/egui desktop preview
-        run: cargo build --release --locked -p atlas-desktop-egui
+      - name: Compile standard Rust/egui product binary
+        run: cargo build --release --locked -p atlas-desktop-egui -p atlas-cli
+      - name: Package egui product PKG and DMG
+        run: bash installers/macos/package-egui-product.sh
+      - name: Verify egui product package and generated catalog lifecycle
+        run: bash installers/macos/smoke-egui-product.sh
       - name: Build isolated egui macOS QA preview app
         run: bash apps/desktop-egui/package-preview-macos.sh
       - uses: actions/upload-artifact@v4
@@ -254,3 +316,12 @@ jobs:
           path: |
             dist/macos/installers/*
             target/release/atlas-desktop-egui
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WhereIsItAI-egui-${{ matrix.os }}-unsigned-candidate
+          if-no-files-found: error
+          path: |
+            dist/macos-egui/installers/WhereIsItAI-egui-*.pkg
+            dist/macos-egui/installers/WhereIsItAI-egui-*.dmg
+            dist/macos-egui/installers/SHA256-egui-*.txt
+            dist/macos-egui/installers/provenance-egui-*.json

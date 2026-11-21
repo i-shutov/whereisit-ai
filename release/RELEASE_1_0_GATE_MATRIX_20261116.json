@@ -2,7 +2,8 @@
   "schema": "whereisit-v1-release-gates-2026-11-16",
   "created_date": "2026-11-16",
   "source_baseline": "main 8cbb3b4f5e9f07537cbd0d42deeeee01ec4e35ef",
-  "integration_candidate": "PR79 43b324644433b026a438b3abf4516119f19b8ac5: CI and installed Win11 GUI PASS, draft, not merged",
+  "current_main": "db6c1aeb1b426280175b583265e5e26c3812b643",
+  "integration_candidate": "PR79 merged e7ab4d5; current main native 44950079896, upgrade 44950079910, integration 44950079911 PASS. New egui release workflow code is in a separate validation branch, not yet accepted.",
   "published_candidate": "v1.0.0-rc.3",
   "stable_ready": false,
   "status_definitions": {
@@ -30,8 +31,8 @@
       "name": "PR57+PR58 integrated source in main and exact SHA CI",
       "status": "PASS",
       "evidence": [
-        "PR64/65/69/70/73/78 merged",
-        "Exact main native run 44929080959, upgrade 44929080983, integration 44929081025 PASS"
+        "PR64/65/69/70/73/78/79 merged",
+        "Exact main db6c1ae native run 44950079896, upgrade 44950079910, integration 44950079911 PASS"
       ],
       "missing": [],
       "owner": "Integrator"

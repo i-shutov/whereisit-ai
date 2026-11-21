@@ -1,6 +1,6 @@
 # WhereIsIt AI — текущий исполняемый план релиза 1.0
 
-**Срез 21.11.2026, после интеграции #73/#78 и проверки #79.** Main: `8cbb3b4f5e9f07537cbd0d42deeeee01ec4e35ef`. Готовый, но не слитый draft [#79](https://github.com/i-shutov/whereisit-ai/pull/79): `43b324644433b026a438b3abf4516119f19b8ac5`. **Stable NO-GO, `stable_ready=false`.** Это текущая очередь работ, заменяющая прежние статусы W0–W7; [мастер-план](RELEASE_1_0_MASTER_PLAN_2026-11-16.md) сохраняет scope.
+**Срез 21.11.2026, после интеграции #79 и #80.** Main: `db6c1aeb1b426280175b583265e5e26c3812b643`; exact-main native [44950079896](https://github.com/i-shutov/whereisit-ai/actions/runs/44950079896), upgrade 44950079910 и integration 44950079911 — PASS. **Stable NO-GO, `stable_ready=false`.** Новый функциональный код находится в `feature/ctf-egui-release-1.0-20261121` и проходит отдельную приёмку. [Мастер-план](RELEASE_1_0_MASTER_PLAN_2026-11-16.md) сохраняет scope.
 
 ## Что уже сделано и не требуется начинать заново
 
@@ -16,7 +16,7 @@
 
 | Блок | Сейчас | Конкретная оставшаяся работа | Критерий выхода |
 |---|---|---|---|
-| W0 — интеграция | MAIN PASS; #79 PR_ONLY PASS | Ревью #79, интеграция по разрешению владельца, postmerge CI на новом main | Нет pending локального/PR-only исправления P0/P1; точный интегрированный SHA |
+| W0 — интеграция | MAIN PASS; #79 MERGED | Готовая интеграция завершена; новый функциональный кандидат проверяется отдельно | Не смешивать принятую базу и ещё не принятый релизный diff |
 | W1 — Win11 стенд | PASS в выполненном scope | Использовать готовую Administrator RDP-сессию и проверенные инструменты; не регистрировать runner заново | Не отдельный повторный проект; переоценка только при изменении среды |
 | W2 — Win11 GUI/lifecycle | SCOPED PASS | Регресс только изменённых сценариев; финальный продуктовый RC проверить отдельно от isolated QA-пакета | Неперезаписываемое evidence exact binary, сохранность внешних данных |
 | W3 — native P0 | **ACTIVE / следующий функциональный блок** | **CTF в egui**, затем остальные P0 из [parity matrix](qa/PR58_EGUI_PARITY_MATRIX.md) | Полный повседневный пользовательский маршрут без CLI и mock |
@@ -41,9 +41,9 @@
 
 | Пункт | Класс | Действие |
 |---|---|---|
-| Прямой CTF link/import/export в egui отсутствует | P0 missing workflow | Следующий функциональный PR W3 |
-| Два malformed-input CTF случая на main | P1, фикс PR #79 готов | Ревью/интеграция; синтетические red/green тесты и CI уже есть |
-| Полная валидация до первой страницы в main | P1 readiness, фикс #79 готов | Принять explicit integrity workflow, не выдавать schema probe за полную проверку |
+| Прямой CTF link/import/export в egui | P0, реализован в релизной ветке | Сквозные синтетические тесты проходят; installed exact-candidate GUI и original-app проверка ещё требуются |
+| Два malformed-input CTF случая | Исправлено в main, PR #79 | Сохранены red/green регрессии; новые bounds/opaque guards проверяются в функциональном кандидате |
+| Полная валидация до первой страницы | Исправлено в main, PR #79 | Explicit integrity workflow; schema probe не объявляется полной проверкой |
 | Остальная P0 parity | PARTIAL | Закрыть конкретные отсутствующие маршруты по матрице; работающие категории/Back/Path не переписывать |
 | Реальные USB, Mac/Win10 и полная DPI/accessibility матрица | Внешнее evidence BLOCKED/PARTIAL | Подготовить стенды параллельно разработке; не менять аккаунт Administrator и настройки безопасности ради PASS |
 | Signing/notarization | Внешний release BLOCKER | Подготовить защищённый signing path параллельно W3; ключи не передавать в чат/Git |

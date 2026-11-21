@@ -600,6 +600,346 @@ impl Catalog {
             Ok(())
         })
     }
+
+    /// Replace one native directory snapshot in place while retaining its
+    /// volume ID and every exact-path entry ID. Caller supplies an OS identity
+    /// recheck performed inside the transaction immediately before commit.
+    /// Existing scan semantics are intentionally unchanged.
+    pub fn rescan_volume<F>(
+        &mut self,
+        volume_id: i64,
+        root: &Path,
+        job_id: Option<&str>,
+        validate_before_commit: F,
+    ) -> Result<Volume>
+    where
+        F: FnOnce() -> Result<()>,
+    {
+        if volume_id <= 0 {
+            return Err(Error::new("invalid_request", "Volume ID must be positive"));
+        }
+        let root_meta = fs::symlink_metadata(root)
+            .map_err(|e| Error::new("invalid_root", format!("{}: {e}", root.display())))?;
+        if !root_meta.file_type().is_dir() {
+            return Err(Error::new(
+                "invalid_root",
+                "Rescan root must be a directory and cannot be a symbolic link",
+            ));
+        }
+        let root = fs::canonicalize(root)?;
+        let root_text = root.to_string_lossy().into_owned();
+        let job = Arc::new(Job::default());
+        let _guard = JobGuard::register(job_id, job.clone())?;
+
+        let tx = self
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let label: String = tx
+            .query_row(
+                "SELECT label FROM volumes WHERE id=?1",
+                [volume_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or_else(|| Error::new("not_found", "Volume does not exist"))?;
+
+        // Imported CTF volumes carry opaque per-volume and per-entry records.
+        // Even though this method only targets the selected volume, changing
+        // its rows could invalidate an exact CTF round trip.
+        let has_ctf_volumes: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='ctf_volumes')",
+            [],
+            |row| row.get(0),
+        )?;
+        if has_ctf_volumes {
+            let is_ctf: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM ctf_volumes WHERE volume_id=?1)",
+                [volume_id],
+                |row| row.get(0),
+            )?;
+            if is_ctf {
+                return Err(Error::new(
+                    "ctf_volume_read_only",
+                    "Imported CTF volumes cannot be rescanned from a filesystem",
+                ));
+            }
+        }
+
+        let schema_version: i64 = tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        let sparse = schema_version >= 3;
+        tx.execute_batch(
+            "CREATE TEMP TABLE rescan_old_paths(
+                 relative_path TEXT NOT NULL,
+                 kind TEXT NOT NULL,
+                 entry_id INTEGER NOT NULL UNIQUE,
+                 PRIMARY KEY(relative_path,kind)
+             ) WITHOUT ROWID;
+             CREATE TEMP TABLE rescan_seen(
+                 entry_id INTEGER PRIMARY KEY
+             ) WITHOUT ROWID;",
+        )?;
+        if let Err(_error) = tx.execute(
+            "INSERT INTO temp.rescan_old_paths(relative_path,kind,entry_id)
+             SELECT relative_path,kind,id FROM entries WHERE volume_id=?1",
+            [volume_id],
+        ) {
+            return Err(Error::new(
+                "rescan_ambiguous_paths",
+                "Existing snapshot has duplicate paths and cannot be replaced safely",
+            ));
+        }
+
+        let mut old_id = tx.prepare_cached(
+            "SELECT entry_id FROM temp.rescan_old_paths WHERE relative_path=?1 AND kind=?2",
+        )?;
+        let mut old_payload =
+            tx.prepare_cached("SELECT description,tags FROM entries WHERE id=?1 AND volume_id=?2")?;
+        let mut update_core = if sparse {
+            Some(tx.prepare_cached(
+                "UPDATE entries_core SET parent_id=?1,name=?2,relative_path=?3,kind=?4,
+                 size=?5,modified_unix=?6,name_norm=?7,ext=?8 WHERE id=?9 AND volume_id=?10",
+            )?)
+        } else {
+            None
+        };
+        let mut update_legacy = if sparse {
+            None
+        } else {
+            Some(tx.prepare_cached(
+                "UPDATE entries SET parent_id=?1,name=?2,relative_path=?3,kind=?4,
+                 size=?5,modified_unix=?6,description=?7,tags=?8,search_text=?9,
+                 name_norm=?10,ext=?11 WHERE id=?12 AND volume_id=?13",
+            )?)
+        };
+        let mut mark_seen =
+            tx.prepare_cached("INSERT INTO temp.rescan_seen(entry_id) VALUES(?1)")?;
+        let mut writer = BulkWriter {
+            tx: &tx,
+            volume_id,
+            count: 0,
+            bytes: 0,
+            sparse,
+        };
+        let mut parents: Vec<i64> = Vec::new();
+        let mut count = 0u64;
+        let mut bytes = 0u64;
+
+        for item in WalkDir::new(&root)
+            .follow_links(false)
+            .same_file_system(true)
+            .min_depth(1)
+        {
+            if job.state.load(Ordering::Acquire) == 1 {
+                return Err(Error::new(
+                    "cancelled",
+                    "Rescan cancelled; the previous snapshot is unchanged",
+                ));
+            }
+            let item = item.map_err(|e| Error::new("scan", e))?;
+            let meta = fs::symlink_metadata(item.path())
+                .map_err(|e| Error::new("scan", format!("{}: {e}", item.path().display())))?;
+            let depth = item.depth();
+            parents.truncate(depth.saturating_sub(1));
+            let parent = if depth == 1 {
+                None
+            } else {
+                Some(
+                    *parents
+                        .last()
+                        .ok_or_else(|| Error::new("scan", "Invalid directory hierarchy"))?,
+                )
+            };
+            let ty = meta.file_type();
+            let kind = if ty.is_symlink() {
+                "symlink"
+            } else if ty.is_dir() {
+                "directory"
+            } else if ty.is_file() {
+                "file"
+            } else {
+                continue;
+            };
+            let relative_path = item
+                .path()
+                .strip_prefix(&root)
+                .map_err(|e| Error::new("scan", e))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let entry = NewEntry {
+                parent_id: parent,
+                name: item.file_name().to_string_lossy().into_owned(),
+                relative_path: relative_path.clone(),
+                kind: kind.into(),
+                size: if kind == "file" { meta.len() } else { 0 },
+                modified_unix: meta.modified().ok().and_then(to_unix),
+                description: String::new(),
+                tags: String::new(),
+            };
+
+            let matched: Option<i64> = old_id
+                .query_row(params![&relative_path, &entry.kind], |row| row.get(0))
+                .optional()?;
+            let id = if let Some(id) = matched {
+                let size = i64::try_from(entry.size)
+                    .map_err(|_| Error::new("invalid_entry", "Entry size is too large"))?;
+                let name_norm = entry.name.to_lowercase();
+                let ext = Path::new(&entry.name)
+                    .extension()
+                    .and_then(|x| x.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                if sparse {
+                    update_core
+                        .as_mut()
+                        .expect("v3 update statement")
+                        .execute(params![
+                            entry.parent_id,
+                            entry.name,
+                            entry.relative_path,
+                            entry.kind,
+                            size,
+                            entry.modified_unix,
+                            name_norm,
+                            ext,
+                            id,
+                            volume_id
+                        ])?;
+                } else {
+                    let (description, tags): (String, String) = old_payload
+                        .query_row(params![id, volume_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+                    let document =
+                        search_text(&entry.name, &entry.relative_path, &description, &tags);
+                    update_legacy
+                        .as_mut()
+                        .expect("legacy update statement")
+                        .execute(params![
+                            entry.parent_id,
+                            entry.name,
+                            entry.relative_path,
+                            entry.kind,
+                            size,
+                            entry.modified_unix,
+                            description,
+                            tags,
+                            document,
+                            name_norm,
+                            ext,
+                            id,
+                            volume_id
+                        ])?;
+                }
+                mark_seen.execute([id])?;
+                id
+            } else {
+                let id = writer.insert(&entry)?;
+                mark_seen.execute([id])?;
+                id
+            };
+            count = count
+                .checked_add(1)
+                .ok_or_else(|| Error::new("range", "Entry count overflow"))?;
+            if kind == "file" {
+                bytes = bytes
+                    .checked_add(meta.len())
+                    .ok_or_else(|| Error::new("range", "Total size overflow"))?;
+                if bytes > i64::MAX as u64 {
+                    return Err(Error::new(
+                        "range",
+                        "Total size exceeds SQLite INTEGER range",
+                    ));
+                }
+            }
+            if kind == "directory" {
+                parents.push(id);
+            }
+            job.count.fetch_add(1, Ordering::Relaxed);
+        }
+
+        if job.state.load(Ordering::Acquire) == 1 {
+            return Err(Error::new(
+                "cancelled",
+                "Rescan cancelled; the previous snapshot is unchanged",
+            ));
+        }
+        let missing_annotated: bool = tx.query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM temp.rescan_old_paths old
+               JOIN entries e ON e.id=old.entry_id
+               WHERE old.entry_id NOT IN (SELECT entry_id FROM temp.rescan_seen)
+                 AND (e.description<>'' OR e.tags<>'' OR EXISTS(
+                   SELECT 1 FROM entry_categories ec WHERE ec.entry_id=e.id))
+             )",
+            [],
+            |row| row.get(0),
+        )?;
+        if missing_annotated {
+            return Err(Error::new(
+                "rescan_missing_annotations",
+                "Missing entries contain notes, tags, or categories; review or back up the previous snapshot before rescanning",
+            ));
+        }
+
+        let deleted = if sparse { "entries_core" } else { "entries" };
+        let delete_sql = format!(
+            "DELETE FROM {deleted} WHERE volume_id=?1 AND id IN (
+               SELECT entry_id FROM temp.rescan_old_paths
+               WHERE entry_id NOT IN (SELECT entry_id FROM temp.rescan_seen)
+             )"
+        );
+        tx.execute(&delete_sql, [volume_id])?;
+
+        let scanned_at = unix_now();
+        tx.execute(
+            "UPDATE volumes SET root_path=?1,scanned_at=?2,entry_count=?3,total_bytes=?4,status='complete' WHERE id=?5",
+            params![
+                root_text,
+                scanned_at,
+                signed_sql_u64(count, "entry_count")?,
+                signed_sql_u64(bytes, "total_bytes")?,
+                volume_id
+            ],
+        )?;
+        drop(old_id);
+        drop(old_payload);
+        drop(update_core);
+        drop(update_legacy);
+        drop(mark_seen);
+        tx.execute_batch(
+            "DROP TABLE temp.rescan_seen;
+             DROP TABLE temp.rescan_old_paths;
+             PRAGMA optimize=0x10002;",
+        )?;
+        // The OS identity callback runs after the transactional snapshot is
+        // complete, while it is still uncommitted. A changed UUID, root, mount
+        // state, clone collision, or saved binding rolls every row update back.
+        validate_before_commit()?;
+        if job.state.load(Ordering::Acquire) == 1 {
+            return Err(Error::new(
+                "cancelled",
+                "Rescan cancelled; the previous snapshot is unchanged",
+            ));
+        }
+        if job
+            .state
+            .compare_exchange(0, 2, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err(Error::new(
+                "cancelled",
+                "Rescan cancelled; the previous snapshot is unchanged",
+            ));
+        }
+        tx.commit()?;
+        Ok(Volume {
+            id: volume_id,
+            label,
+            root_path: root_text,
+            scanned_at,
+            entry_count: count,
+            total_bytes: bytes,
+            status: "complete".into(),
+        })
+    }
     fn require_entry(conn: &Connection, entry_id: i64) -> Result<()> {
         if entry_id <= 0 {
             return Err(Error::new("invalid_request", "Entry ID must be positive"));

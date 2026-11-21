@@ -77,8 +77,8 @@ impl ExportKind {
 }
 
 impl Route {
-    /// Exact current selection, never just the rendered page. CTF operations are
-    /// intentionally excluded until the real native linked-source contract is wired.
+    /// Exact current selection, never just the rendered page. The linked CTF
+    /// adapter pins these same scope fields to its immutable source generation.
     pub fn export_request(&self, db: &str, path: &str, kind: ExportKind) -> Option<Value> {
         match self {
             Self::Search { query, volume_id } => Some(json!({
@@ -92,31 +92,98 @@ impl Route {
                 "op":kind.operation(), "db":db, "path":path, "mode":"children",
                 "volume_id":volume_id, "parent_id":parent_id, "overwrite":false
             })),
-            Self::Copies { .. } => None,
+            Self::Copies { entry_id } => Some(json!({
+                "op":kind.operation(), "db":db, "path":path, "mode":"copy_candidates",
+                "entry_id":entry_id, "other_disks_only":true, "overwrite":false
+            })),
         }
     }
 }
 
 #[derive(Clone, Debug)]
 pub enum Purpose {
-    Open { path: String },
-    Create { path: String },
-    CheckCatalogIntegrity { path: String },
+    Open {
+        path: String,
+    },
+    Create {
+        path: String,
+    },
+    CheckCatalogIntegrity {
+        path: String,
+    },
+    LinkCtf {
+        path: String,
+        cache_root: String,
+    },
+    ImportCtf {
+        output: String,
+    },
+    ExportCtf {
+        output: String,
+    },
+    SaveDescription {
+        entry_id: i64,
+        db: String,
+    },
+    LinkedRead {
+        inner: Box<Purpose>,
+        generation: String,
+    },
+    CtfProgress {
+        job_id: String,
+    },
+    CtfCancel {
+        job_id: String,
+    },
     Volumes,
     DiskPreferences,
-    SaveDiskProperties { volume_id: i64 },
-    Page { route: Route },
+    SaveDiskProperties {
+        volume_id: i64,
+    },
+    Page {
+        route: Route,
+    },
     Categories,
-    EntryCategoryIds { entry_id: i64 },
-    CreateCategory { name: String },
-    AssignCategory { entry_id: i64, category_id: i64 },
-    UnassignCategory { entry_id: i64, category_id: i64 },
-    Export { path: String },
-    Scan { root: String, job_id: String },
-    ScanProgress { job_id: String },
-    ScanCancel { job_id: String },
-    ShelfLabels { catalog_key: String, initial: bool },
-    ShelfSave { catalog_key: String, volume_id: i64 },
+    EntryCategoryIds {
+        entry_id: i64,
+    },
+    CreateCategory {
+        name: String,
+    },
+    AssignCategory {
+        entry_id: i64,
+        category_id: i64,
+    },
+    UnassignCategory {
+        entry_id: i64,
+        category_id: i64,
+    },
+    Export {
+        path: String,
+    },
+    Scan {
+        root: String,
+        job_id: String,
+    },
+    Rescan {
+        db: String,
+        volume_id: i64,
+        job_id: String,
+    },
+    ScanProgress {
+        job_id: String,
+    },
+    ScanCancel {
+        job_id: String,
+    },
+    ShelfLabels {
+        catalog_key: String,
+        initial: bool,
+    },
+    ShelfSave {
+        catalog_key: String,
+        volume_id: i64,
+    },
 }
 
 pub struct Reply {
@@ -241,9 +308,14 @@ mod tests {
         assert_eq!(csv["parent_id"], 204);
         assert_eq!(csv["op"], "export_csv");
         assert_eq!(ExportKind::Parquet.operation(), "export_parquet");
-        assert!(Route::Copies { entry_id: 22 }
+        let candidates = Route::Copies { entry_id: 22 }
             .export_request("/catalog.sqlite", "/copies.csv", ExportKind::Csv)
-            .is_none());
+            .unwrap();
+        assert_eq!(candidates["mode"], "copy_candidates");
+        assert_eq!(candidates["entry_id"], 22);
+        assert_eq!(candidates["other_disks_only"], true);
+        assert_eq!(candidates["overwrite"], false);
+        assert!(candidates.get("limit").is_none());
     }
 
     #[test]

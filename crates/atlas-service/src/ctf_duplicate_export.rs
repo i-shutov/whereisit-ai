@@ -83,6 +83,7 @@ impl Plan {
             cte,
             args,
             duplicate: true,
+            candidate: false,
         })
     }
 }

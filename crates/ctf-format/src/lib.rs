@@ -39,6 +39,8 @@ pub enum EntryKind {
 }
 #[derive(Debug, Clone, Copy)]
 pub struct Limits {
+    /// Maximum source size and, separately, aggregate description bytes
+    /// examined before decoding. Each external reference uses this budget.
     pub max_bytes: usize,
     pub max_entries: usize,
     pub max_disks: usize,
@@ -253,6 +255,7 @@ fn read_file(
     r: &mut Reader<'_>,
     parent: Option<usize>,
     blob: &[u8],
+    description_budget: &mut usize,
 ) -> Result<(CtfEntry, usize), CtfError> {
     let start = r.p;
     let f = r.u16()?;
@@ -286,7 +289,7 @@ fn read_file(
     if f & 128 != 0 {
         for (ty, packed, b) in extensions(r)? {
             if ty == 1 {
-                description = decode_description(packed, &b, blob).unwrap_or_default();
+                description = decode_description_bounded(packed, &b, blob, description_budget)?;
             }
             if ty == 12 {
                 if packed & 0x08000000 != 0 {
@@ -367,6 +370,7 @@ pub fn parse_ctf(bytes: &[u8], limits: &Limits) -> Result<CtfCatalog, CtfError> 
     let mut disks = Vec::new();
     let mut opaque_trailer = Vec::new();
     let mut total = 0usize;
+    let mut description_budget = limits.max_bytes;
     for (i, &start) in offsets.iter().enumerate() {
         let end = offsets.get(i + 1).copied().unwrap_or(bytes.len());
         if start > end || end > bytes.len() {
@@ -407,6 +411,7 @@ pub fn parse_ctf(bytes: &[u8], limits: &Limits) -> Result<CtfCatalog, CtfError> 
         let disk_name = decode_name(r.take(n)?)?;
         let mut entries = Vec::new();
         let mut ranges = vec![root];
+        let mut folder_records = Vec::new();
         let mut stack = Vec::<usize>::new();
         let mut rd = Reader::new(b, dirs);
         let mut first_data = if root.offset != u32::MAX as usize {
@@ -446,30 +451,14 @@ pub fn parse_ctf(bytes: &[u8], limits: &Limits) -> Result<CtfCatalog, CtfError> 
             } else {
                 Vec::new()
             };
-            let mut opaque = Vec::new();
-            put32(&mut opaque, (rd.p - rec_start) as u32);
-            opaque.extend_from_slice(&b[rec_start..rd.p]);
-            if blob > 0 {
-                let end = fr
-                    .offset
-                    .checked_add(blob)
-                    .ok_or_else(|| err(start, "blob overflow"))?;
-                opaque.extend_from_slice(
-                    b.get(fr.offset..end)
-                        .ok_or_else(|| err(start + fr.offset, "invalid metadata blob"))?,
-                )
-            }
             if fr.offset != u32::MAX as usize {
                 first_data = first_data.min(fr.offset)
             }
-            let description = ext
-                .iter()
-                .find(|x| x.0 == 1)
-                .and_then(|x| decode_description(x.1, &x.2, &opaque[4 + rd.p - rec_start..]))
-                .unwrap_or_default();
+            let description = ext.into_iter().find(|x| x.0 == 1);
+            folder_records.push((rec_start..rd.p, description));
             entries.push(CtfEntry {
                 name,
-                description,
+                description: String::new(),
                 parent,
                 kind: if marker & 0x10 != 0 {
                     EntryKind::Archive
@@ -481,7 +470,7 @@ pub fn parse_ctf(bytes: &[u8], limits: &Limits) -> Result<CtfCatalog, CtfError> 
                 modified_dos: m,
                 created_dos: c,
                 accessed_dos: a,
-                opaque,
+                opaque: Vec::new(),
             });
             stack.push(index);
             ranges.push(fr);
@@ -490,7 +479,6 @@ pub fn parse_ctf(bytes: &[u8], limits: &Limits) -> Result<CtfCatalog, CtfError> 
         if first_data < r.p || first_data > dirs {
             return Err(err(start + first_data, "invalid data start"));
         }
-        let mut opaque_header = b[..first_data].to_vec();
         let mut intervals = Vec::new();
         for fr in &ranges {
             if fr.offset == u32::MAX as usize {
@@ -525,6 +513,29 @@ pub fn parse_ctf(bytes: &[u8], limits: &Limits) -> Result<CtfCatalog, CtfError> 
         if cursor != dirs {
             return Err(err(start + cursor, "unaccounted data before folder table"));
         }
+
+        // Do not copy or decode a folder blob until the complete data layout
+        // has been validated. Malformed overlapping ranges could otherwise
+        // make many folders allocate copies of the same source bytes.
+        for (index, (record, description)) in folder_records.into_iter().enumerate() {
+            let range = ranges[index + 1];
+            let blob = if range.blob == 0 {
+                &[][..]
+            } else {
+                &b[range.offset..range.offset + range.blob]
+            };
+            let entry = &mut entries[index];
+            if let Some((_, packed, data)) = description {
+                entry.description =
+                    decode_description_bounded(packed, &data, blob, &mut description_budget)
+                        .map_err(|e| err(start + record.start, e.message))?;
+            }
+            entry.opaque.reserve_exact(4 + record.len() + blob.len());
+            put32(&mut entry.opaque, record.len() as u32);
+            entry.opaque.extend_from_slice(&b[record]);
+            entry.opaque.extend_from_slice(blob);
+        }
+        let mut opaque_header = b[..first_data].to_vec();
         if root.blob != 0 {
             // The validated range includes the leading blob.
             opaque_header.extend_from_slice(&b[root.offset..root.offset + root.blob]);
@@ -553,8 +564,13 @@ pub fn parse_ctf(bytes: &[u8], limits: &Limits) -> Result<CtfCatalog, CtfError> 
             let mut rf = Reader::new(slice, fr.blob);
             let mut names = 0;
             for _ in 0..fr.count {
-                let (e, n) = read_file(&mut rf, fr.parent, &slice[..fr.blob])
-                    .map_err(|e| err(start + fr.offset + e.offset, e.message))?;
+                let (e, n) = read_file(
+                    &mut rf,
+                    fr.parent,
+                    &slice[..fr.blob],
+                    &mut description_budget,
+                )
+                .map_err(|e| err(start + fr.offset + e.offset, e.message))?;
                 names += n;
                 entries.push(e);
                 total += 1;
@@ -589,16 +605,20 @@ fn same(a: &CtfEntry, b: &CtfEntry) -> bool {
         && a.accessed_dos == b.accessed_dos
 }
 fn file_encode(e: &CtfEntry, blob: &[u8]) -> Result<(Vec<u8>, usize), CtfError> {
-    if !e.opaque.is_empty() {
+    let original_description = if e.opaque.is_empty() {
+        String::new()
+    } else {
         let mut r = Reader::new(&e.opaque, 0);
-        let (old, n) = read_file(&mut r, e.parent, blob)?;
+        let mut description_budget = usize::MAX;
+        let (old, n) = read_file(&mut r, e.parent, blob, &mut description_budget)?;
         if r.p != e.opaque.len() {
             return Err(err(0, "opaque file has trailing bytes"));
         }
         if same(&old, e) {
             return Ok((e.opaque.clone(), n));
         }
-    }
+        old.description
+    };
     let raw = encode_name(&e.name)?;
     if raw.is_empty() {
         return Err(err(0, "empty file name"));
@@ -626,17 +646,13 @@ fn file_encode(e: &CtfEntry, blob: &[u8]) -> Result<(Vec<u8>, usize), CtfError> 
             archive_body = Some((f, e.opaque[body_start..r.p].to_vec()));
         }
         if f & 128 != 0 {
-            ext = extensions(&mut r)?
-                .into_iter()
-                .filter(|x| x.0 != 12)
-                .collect();
+            ext = extensions(&mut r)?;
+        }
+        if e.description != original_description {
+            validate_description_fields(EntryKind::File, f, &ext, blob)?;
         }
     }
-    let original_description = ext
-        .iter()
-        .find(|x| x.0 == 1)
-        .and_then(|x| decode_description(x.1, &x.2, blob))
-        .unwrap_or_default();
+    ext.retain(|x| x.0 != 12);
     if e.description != original_description {
         ext.retain(|x| x.0 != 1);
         if !e.description.is_empty() {
@@ -701,7 +717,35 @@ fn file_encode(e: &CtfEntry, blob: &[u8]) -> Result<(Vec<u8>, usize), CtfError> 
     }
     Ok((out, raw.len()))
 }
-type FolderParts = (u16, Vec<(u8, u32, Vec<u8>)>, Vec<u8>);
+type Extensions = Vec<(u8, u32, Vec<u8>)>;
+type FolderParts = (u16, Extensions, Vec<u8>);
+
+fn file_extensions(opaque: &[u8]) -> Result<(u16, Extensions), CtfError> {
+    let mut r = Reader::new(opaque, 0);
+    let flags = r.u16()?;
+    let name_len = r.u8()? as usize;
+    r.take(name_len)?;
+    if flags & 0x30 == 0 {
+        r.u8()?;
+    }
+    dates(&mut r, flags)?;
+    r.u32()?;
+    if flags & 0x400 != 0 {
+        r.u16()?;
+    }
+    if flags & 0x100 != 0 {
+        r.u32()?;
+    }
+    let ext = if flags & 0x80 != 0 {
+        extensions(&mut r)?
+    } else {
+        Vec::new()
+    };
+    if r.p != opaque.len() {
+        return Err(err(r.p, "opaque file has trailing bytes"));
+    }
+    Ok((flags, ext))
+}
 
 fn folder_parts(e: &CtfEntry) -> Result<FolderParts, CtfError> {
     if e.opaque.is_empty() {
@@ -715,10 +759,15 @@ fn folder_parts(e: &CtfEntry) -> Result<FolderParts, CtfError> {
             Vec::new(),
         ));
     }
-    let mut q = Reader::new(&e.opaque, 0);
+    let (marker, extensions, blob) = read_folder_parts(&e.opaque)?;
+    Ok((marker, extensions, blob.to_vec()))
+}
+
+fn read_folder_parts(opaque: &[u8]) -> Result<(u16, Extensions, &[u8]), CtfError> {
+    let mut q = Reader::new(opaque, 0);
     let len = q.u32()? as usize;
     let rec = q.take(len)?;
-    let blob = e.opaque[q.p..].to_vec();
+    let blob = &opaque[q.p..];
     let mut r = Reader::new(rec, 0);
     let marker = r.u16()?;
     let f = r.u16()?;
@@ -743,6 +792,17 @@ fn folder_parts(e: &CtfEntry) -> Result<FolderParts, CtfError> {
         return Err(err(r.p, "opaque folder trailing bytes"));
     }
     Ok((marker, ext, blob))
+}
+
+fn root_metadata_blob(header: &[u8]) -> Result<&[u8], CtfError> {
+    let mut reader = Reader::new(header, 4);
+    let len = reader.u32()? as usize;
+    let start = header
+        .len()
+        .checked_sub(len)
+        .filter(|start| *start >= 34)
+        .ok_or_else(|| err(4, "root metadata blob exceeds opaque disk data"))?;
+    Ok(&header[start..])
 }
 fn write_disk(d: &CtfDisk) -> Result<Vec<u8>, CtfError> {
     let mut child = vec![Vec::<usize>::new(); d.entries.len() + 1];
@@ -792,18 +852,16 @@ fn write_disk(d: &CtfDisk) -> Result<Vec<u8>, CtfError> {
         let mut r = Reader::new(&d.opaque_header, 32);
         let old = r.u16()? as usize;
         r.take(old)?;
-        let blob_len = u32::from_le_bytes(d.opaque_header[4..8].try_into().unwrap()) as usize;
-        let blob_start = d
-            .opaque_header
-            .len()
-            .checked_sub(blob_len)
-            .filter(|&start| start >= r.p)
-            .ok_or_else(|| err(4, "root metadata blob exceeds opaque disk data"))?;
+        let blob = root_metadata_blob(&d.opaque_header)?;
+        let blob_start = d.opaque_header.len() - blob.len();
+        if blob_start < r.p {
+            return Err(err(4, "root metadata blob overlaps the disk name"));
+        }
         let mut h = d.opaque_header[..32].to_vec();
         put16(&mut h, namelen);
         h.extend(&rawname);
         h.extend(&d.opaque_header[r.p..blob_start]);
-        (h, d.opaque_header[blob_start..].to_vec())
+        (h, blob.to_vec())
     } else {
         (generic_disk_header(&rawname)?, Vec::new())
     };
@@ -816,15 +874,19 @@ fn write_disk(d: &CtfDisk) -> Result<Vec<u8>, CtfError> {
             (0, Vec::new(), std::mem::take(&mut root_blob))
         };
         if let Some(i) = parent {
+            let entry = &d.entries[i];
             let old = ext
                 .iter()
                 .find(|x| x.0 == 1)
                 .and_then(|x| decode_description(x.1, &x.2, &blob))
                 .unwrap_or_default();
-            if old != d.entries[i].description {
+            if old != entry.description {
+                if !entry.opaque.is_empty() {
+                    validate_description_fields(entry.kind, marker, &ext, &blob)?;
+                }
                 ext.retain(|x| x.0 != 1);
-                if !d.entries[i].description.is_empty() {
-                    let mut text = encode_name(&d.entries[i].description)?;
+                if !entry.description.is_empty() {
+                    let mut text = encode_name(&entry.description)?;
                     text.push(0);
                     if text.len() > 0xffffff {
                         return Err(err(i, "description too long"));
@@ -938,7 +1000,7 @@ pub fn write_ctf(c: &CtfCatalog) -> Result<Vec<u8>, CtfError> {
     Ok(out)
 }
 
-fn decode_description(packed: u32, data: &[u8], blob: &[u8]) -> Option<String> {
+fn description_bytes<'a>(packed: u32, data: &'a [u8], blob: &'a [u8]) -> Option<&'a [u8]> {
     if packed >> 24 & !0x0c != 0 {
         return None;
     }
@@ -948,8 +1010,101 @@ fn decode_description(packed: u32, data: &[u8], blob: &[u8]) -> Option<String> {
     } else {
         data
     };
-    let raw = raw.strip_suffix(&[0]).unwrap_or(raw);
-    decode_name(raw).ok()
+    Some(raw.strip_suffix(&[0]).unwrap_or(raw))
+}
+
+fn decode_description(packed: u32, data: &[u8], blob: &[u8]) -> Option<String> {
+    decode_name(description_bytes(packed, data, blob)?).ok()
+}
+
+fn decode_description_bounded(
+    packed: u32,
+    data: &[u8],
+    blob: &[u8],
+    budget: &mut usize,
+) -> Result<String, CtfError> {
+    let Some(raw) = description_bytes(packed, data, blob) else {
+        return Ok(String::new());
+    };
+    *budget = budget
+        .checked_sub(raw.len())
+        .ok_or_else(|| err(0, "aggregate description byte limit exceeded"))?;
+    Ok(decode_name(raw).unwrap_or_default())
+}
+
+/// Check a description edit before mutating the editable copy of an imported
+/// CTF. The writer preserves the enclosing blob, so a single recognized
+/// external description can be replaced without removing other blob data.
+pub fn validate_description_edit(
+    kind: EntryKind,
+    opaque: &[u8],
+    parent_opaque: Option<&[u8]>,
+    disk_opaque: &[u8],
+    description: &str,
+) -> Result<(), CtfError> {
+    if encode_name(description)?.len() >= 0xffffff {
+        return Err(err(0, "description too long"));
+    }
+    if opaque.is_empty() {
+        return Err(err(0, "Unsupported imported entry for description editing"));
+    }
+    let (record_flags, extensions, blob) = match kind {
+        EntryKind::File => {
+            let (flags, extensions) = file_extensions(opaque)?;
+            let has_reference = extensions
+                .iter()
+                .any(|(kind, packed, _)| *kind == 1 && packed & 0x0800_0000 != 0);
+            let blob = if !has_reference {
+                &[][..]
+            } else if let Some(opaque) = parent_opaque {
+                let mut parent = Reader::new(opaque, 0);
+                let len = parent.u32()? as usize;
+                parent.take(len)?;
+                &opaque[parent.p..]
+            } else {
+                root_metadata_blob(disk_opaque)?
+            };
+            (flags, extensions, blob)
+        }
+        EntryKind::Directory => read_folder_parts(opaque)?,
+        EntryKind::Archive => return Err(err(0, "Archive description editing is unsupported")),
+    };
+    validate_description_fields(kind, record_flags, &extensions, blob)
+}
+
+fn validate_description_fields(
+    kind: EntryKind,
+    record_flags: u16,
+    extensions: &Extensions,
+    blob: &[u8],
+) -> Result<(), CtfError> {
+    match kind {
+        // The mask excludes archived members and ambiguous attributes.
+        EntryKind::File if record_flags & !0x04fc != 0 || record_flags & 0x30 == 0x30 => {
+            return Err(err(0, "Unsupported file flags for description editing"));
+        }
+        EntryKind::Directory if record_flags != 2 => {
+            return Err(err(0, "Unsupported folder marker for description editing"));
+        }
+        EntryKind::Archive => return Err(err(0, "Archive description editing is unsupported")),
+        _ => {}
+    }
+    let mut has_description = false;
+    for &(extension, packed, ref data) in extensions {
+        match extension {
+            1 if !has_description && decode_description(packed, data, blob).is_some() => {
+                has_description = true;
+            }
+            12 if kind == EntryKind::File && matches!(packed >> 24, 0 | 4) => {}
+            _ => {
+                return Err(err(
+                    0,
+                    "Description edit would rewrite opaque entry metadata",
+                ))
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Construct a metadata-only disk header from numeric fields observed in Catalog 3.00.
@@ -1304,6 +1459,106 @@ mod tests {
     }
 
     #[test]
+    fn validates_disjoint_folder_blob_ranges_before_decoding_descriptions() {
+        let mut catalog = sample();
+        let disk = &mut catalog.disks[0];
+        disk.entries = vec![
+            item("One", None, EntryKind::Directory, 0),
+            item("Two", None, EntryKind::Directory, 0),
+        ];
+        for folder in &mut disk.entries {
+            let blob = b"\xffnote\0";
+            let range = Range {
+                offset: 0,
+                len: blob.len(),
+                count: 0,
+                names: 0,
+                blob: blob.len(),
+                parent: None,
+            };
+            let record = folder_encode(
+                folder,
+                1,
+                range,
+                2,
+                &[(1, 0x0800_0005, 1_u32.to_le_bytes().to_vec())],
+            )
+            .unwrap();
+            folder.description = "note".into();
+            put32(&mut folder.opaque, record.len() as u32);
+            folder.opaque.extend(record);
+            folder.opaque.extend(blob);
+        }
+        let bytes = write_ctf(&catalog).unwrap();
+        let parsed = parse_ctf(&bytes, &Limits::default()).unwrap();
+        assert!(parsed.disks[0]
+            .entries
+            .iter()
+            .all(|e| e.description == "note"));
+        assert_eq!(write_ctf(&parsed).unwrap(), bytes);
+
+        let read_u32 =
+            |offset| u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+        let disk_offset = read_u32(27 + catalog.name.len());
+        let directory_table = disk_offset + read_u32(disk_offset + 12);
+        let first_record_len =
+            u32::from_le_bytes(parsed.disks[0].entries[0].opaque[..4].try_into().unwrap()) as usize;
+        // Two u16 fields, depth, name length, three name bytes, and blob length.
+        let first_blob_offset_field = directory_table + 2 + 2 + 1 + 2 + 3 + 4;
+        let second_blob_offset_field = first_blob_offset_field + first_record_len;
+        let mut malformed = bytes.clone();
+        patch32(
+            &mut malformed,
+            second_blob_offset_field,
+            read_u32(first_blob_offset_field),
+        )
+        .unwrap();
+        let error = parse_ctf(&malformed, &Limits::default()).unwrap_err();
+        assert_eq!(error.message, "overlapping or unaccounted data ranges");
+
+        patch32(&mut malformed, second_blob_offset_field, bytes.len()).unwrap();
+        let error = parse_ctf(&malformed, &Limits::default()).unwrap_err();
+        assert_eq!(error.message, "invalid data range");
+    }
+
+    #[test]
+    fn repeated_external_descriptions_each_use_aggregate_decode_budget() {
+        let mut catalog = sample();
+        let disk = &mut catalog.disks[0];
+        let text = "Shared description ".repeat(64);
+        let blob = [text.as_bytes(), &[0]].concat();
+        disk.opaque_header = generic_disk_header(disk.name.as_bytes()).unwrap();
+        patch32(&mut disk.opaque_header, 4, blob.len()).unwrap();
+        disk.opaque_header.extend(blob);
+        disk.entries.clear();
+        for index in 0..4 {
+            let mut file = item(&format!("file-{index}.txt"), None, EntryKind::File, 10);
+            let (mut record, _) = file_encode(&file, &[]).unwrap();
+            record[0] |= 128;
+            let packed = 0x0800_0000 | (text.len() as u32 + 1);
+            write_extensions(&mut record, &[(1, packed, 0_u32.to_le_bytes().to_vec())]);
+            file.description = text.clone();
+            file.opaque = record;
+            disk.entries.push(file);
+        }
+        let bytes = write_ctf(&catalog).unwrap();
+        let roundtrip = parse_ctf(&bytes, &Limits::default()).unwrap();
+        assert!(roundtrip.disks[0]
+            .entries
+            .iter()
+            .all(|e| e.description == text));
+        assert_eq!(write_ctf(&roundtrip).unwrap(), bytes);
+
+        assert!(bytes.len() < 4 * text.len());
+        let limits = Limits {
+            max_bytes: bytes.len(),
+            ..Limits::default()
+        };
+        let refused = parse_ctf(&bytes, &limits).unwrap_err();
+        assert_eq!(refused.message, "aggregate description byte limit exceeded");
+    }
+
+    #[test]
     fn rejects_directory_table_past_disk_end_with_no_root_files() {
         let mut catalog = sample();
         catalog.disks[0].entries.clear();
@@ -1528,29 +1783,11 @@ pub fn diagnostics(c: &CtfCatalog) -> Result<ImportDiagnostics, CtfError> {
             } else if e.opaque.is_empty() {
                 Vec::new()
             } else {
-                let mut r = Reader::new(&e.opaque, 0);
-                let f = r.u16()?;
-                if f & 256 != 0 {
+                let (flags, ext) = file_extensions(&e.opaque)?;
+                if flags & 256 != 0 {
                     d.archived_files += 1;
                 }
-                let n = r.u8()? as usize;
-                r.take(n)?;
-                if f & 0x30 == 0 {
-                    r.u8()?;
-                }
-                dates(&mut r, f)?;
-                r.u32()?;
-                if f & 1024 != 0 {
-                    r.u16()?;
-                }
-                if f & 256 != 0 {
-                    r.u32()?;
-                }
-                if f & 128 != 0 {
-                    extensions(&mut r)?
-                } else {
-                    Vec::new()
-                }
+                ext
             };
             if e.description.is_empty() {
                 let mut gap_found = false;

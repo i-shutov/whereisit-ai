@@ -7,6 +7,7 @@ mod ctf_annotations;
 mod ctf_duplicate_export;
 mod ctf_duplicates;
 mod ctf_export;
+mod ctf_job;
 mod ctf_mirror;
 #[path = "../ctf_sidecar/mod.rs"]
 mod ctf_sidecar;
@@ -17,7 +18,9 @@ mod exports;
 mod focused_children;
 mod legacy;
 mod maintenance;
+mod os_probe;
 mod physical_disks;
+mod rescan;
 mod selection;
 
 /// The actual SQLite library linked into each installed native executable.
@@ -68,10 +71,15 @@ fn dispatch(input: &str) -> Result<Value> {
         .ok_or_else(|| Error::new("invalid_request", "op must be a string"))?;
     let mut data = match op {
         "ctf_sync" => ctf_mirror::sync(&v)?,
+        "ctf_progress" => ctf_job::progress(&v)?,
+        "ctf_cancel" => ctf_job::cancel(&v)?,
         "ctf_search" => ctf_mirror::search(&v)?,
         "ctf_search_pinned" => ctf_mirror::search_pinned(&v)?,
         "ctf_volumes_pinned" => ctf_mirror::volumes_pinned(&v)?,
         "ctf_children_pinned" => ctf_mirror::children_pinned(&v)?,
+        "ctf_children_focused_pinned" => {
+            ctf_mirror::read_pinned(&v, |db| focused_children::page(db, &v))?
+        }
         "ctf_export_pinned" => ctf_export::export(&v)?,
         "ctf_annotations_list_pinned" => ctf_annotations::list(&v)?,
         "ctf_annotations_preview_pinned" => ctf_annotations::preview(&v)?,
@@ -88,7 +96,9 @@ fn dispatch(input: &str) -> Result<Value> {
         "probe_catalog" => maintenance::probe(&v)?,
         "validate_catalog" => maintenance::validate(&v)?,
         "import_ctf" => legacy::import(&mut Catalog::open(text(&v, "db")?)?, &v)?,
-        "export_ctf" => legacy::export(&Catalog::open(text(&v, "db")?)?, &v)?,
+        "import_ctf_new" => legacy::import_new(&v)?,
+        "export_ctf" => legacy::export(&v)?,
+        "update_ctf_description" => legacy::update_description(&v)?,
         "ctf_info" => legacy::info(&v)?,
         "duplicates" => duplicates::duplicates(&Catalog::open(text(&v, "db")?)?, &v)?,
         "copy_candidates" => copy_candidates::page(&Catalog::open(text(&v, "db")?)?, &v)?,
@@ -98,6 +108,8 @@ fn dispatch(input: &str) -> Result<Value> {
         "disk_preferences_set" => disk_preferences::set(&v)?,
         "disk_preferences_legacy_shelf_set" => disk_preferences::legacy_shelf_set(&v)?,
         "physical_status" => physical_disks::status(&v)?,
+        "physical_probe_os" => os_probe::probe(),
+        "rescan_volume" => rescan::run(&v)?,
         "physical_pair" => physical_disks::pair(&v)?,
         "physical_unpair" => physical_disks::unpair(&v)?,
         "physical_shelf_labels" => physical_disks::shelf_labels(&v)?,

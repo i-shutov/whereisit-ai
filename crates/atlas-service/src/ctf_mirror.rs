@@ -1,6 +1,6 @@
 //! On-demand read-only CTF mirror. The original file is authoritative.
 //! A disposable SQLite v3 generation is keyed by source bytes and parser recipe.
-use crate::{ctf_sidecar, legacy, maintenance, optional_id, text, unsigned};
+use crate::{ctf_job::Job, ctf_sidecar, legacy, maintenance, optional_id, text, unsigned};
 use atlas_core::{Catalog, Error, Result};
 use ctf_sidecar::{Recipe, SourceIdentity};
 use serde::{Deserialize, Serialize};
@@ -133,12 +133,12 @@ fn recipe() -> Recipe {
         index_format_version: 3,
         normalization_version: "rust-unicode-lower-v1".into(),
         sort_version: "sqlite-nocase-id-v1".into(),
-        index_kind: "read-only-ctf-sqlite-v3-r1".into(),
+        index_kind: "read-only-ctf-sqlite-v3-r2".into(),
         options_sha256: ctf_sidecar::sha256(b"no-plugins;no-native-annotations"),
         overlay_sha256: None,
     }
 }
-fn hash_file(path: &Path) -> Result<SourceIdentity> {
+fn hash_file(path: &Path, job: &Job) -> Result<SourceIdentity> {
     let metadata = fs::symlink_metadata(path).map_err(io_error)?;
     if !metadata.file_type().is_file() || metadata.len() > DB_LIMIT {
         return Err(failure(
@@ -151,6 +151,7 @@ fn hash_file(path: &Path) -> Result<SourceIdentity> {
     let mut bytes = 0u64;
     let mut block = [0u8; 262_144];
     loop {
+        job.check()?;
         let n = stream.read(&mut block).map_err(io_error)?;
         if n == 0 {
             break;
@@ -178,7 +179,7 @@ fn sync_dir(path: &Path) -> Result<()> {
     let _ = path;
     Ok(())
 }
-fn verify(target: &Path, source: &SourceIdentity, recipe: &Recipe) -> Result<Manifest> {
+fn verify(target: &Path, source: &SourceIdentity, recipe: &Recipe, job: &Job) -> Result<Manifest> {
     if !fs::symlink_metadata(target)
         .map_err(io_error)?
         .file_type()
@@ -205,7 +206,7 @@ fn verify(target: &Path, source: &SourceIdentity, recipe: &Recipe) -> Result<Man
     {
         return Err(failure("cache_stale", "Mirror recipe or source mismatch"));
     }
-    let actual = hash_file(&target.join("catalog.sqlite"))?;
+    let actual = hash_file(&target.join("catalog.sqlite"), job)?;
     if actual.sha256 != manifest.db_sha256 || actual.size_bytes != manifest.db_bytes {
         return Err(failure(
             "cache_corrupt",
@@ -214,7 +215,7 @@ fn verify(target: &Path, source: &SourceIdentity, recipe: &Recipe) -> Result<Man
     }
     Ok(manifest)
 }
-fn ensure(v: &Value) -> Result<Generation> {
+fn ensure(v: &Value, job: &Job) -> Result<Generation> {
     let source_path = path(v, "path")?;
     let metadata = fs::symlink_metadata(&source_path).map_err(io_error)?;
     if !metadata.file_type().is_file()
@@ -229,7 +230,8 @@ fn ensure(v: &Value) -> Result<Generation> {
             "Expected an unlinked regular .CTF file",
         ));
     }
-    let source = identity(&source_path)?;
+    job.phase("reading_source")?;
+    let source = job.identity(&source_path, CTF_LIMIT)?;
     let recipe = recipe();
     let key = ctf_sidecar::cache_key(&source, &recipe).map_err(io_error)?;
     let root = path(v, "cache_root")?;
@@ -246,8 +248,10 @@ fn ensure(v: &Value) -> Result<Generation> {
     }
     let target = root.join(&key);
     if target.exists() {
-        let manifest = verify(&target, &source, &recipe)?;
-        if identity(&source_path)? != source {
+        job.phase("verifying_cache")?;
+        let manifest = verify(&target, &source, &recipe, job)?;
+        job.phase("verifying_source")?;
+        if job.identity(&source_path, CTF_LIMIT)? != source {
             return Err(failure(
                 "source_changed",
                 "CTF changed while opening cached generation",
@@ -267,10 +271,13 @@ fn ensure(v: &Value) -> Result<Generation> {
         .map_err(io_error)?;
     let db_path = temp.path().join("catalog.sqlite");
     let mut db = Catalog::open(&db_path)?;
-    let imported = legacy::import(
+    let imported = legacy::import_with_job(
         &mut db,
         &json!({"path":source_path.to_string_lossy().to_string()}),
+        job,
+        Some(&source.sha256),
     )?;
+    job.phase("validating")?;
     let entries = imported["entries"]
         .as_u64()
         .ok_or_else(|| failure("ctf", "Importer did not report entries"))?;
@@ -306,13 +313,12 @@ fn ensure(v: &Value) -> Result<Generation> {
     {
         return Err(failure("integrity", "Mirror validation failed"));
     }
-    if identity(&source_path)? != source {
+    job.phase("verifying_source")?;
+    if job.identity(&source_path, CTF_LIMIT)? != source {
         return Err(failure("source_changed", "CTF changed during mirror build"));
     }
-    let mut perms = fs::metadata(&db_path).map_err(io_error)?.permissions();
-    perms.set_readonly(true);
-    fs::set_permissions(&db_path, perms).map_err(io_error)?;
-    let image = hash_file(&db_path)?;
+    job.phase("verifying_cache")?;
+    let image = hash_file(&db_path, job)?;
     let manifest = Manifest {
         version: FORMAT,
         source: source.clone(),
@@ -338,13 +344,21 @@ fn ensure(v: &Value) -> Result<Generation> {
     file.sync_all().map_err(io_error)?;
     drop(file);
     sync_dir(temp.path())?;
+    job.begin_publication()?;
+    let original_permissions = fs::metadata(&db_path).map_err(io_error)?.permissions();
+    let mut readonly = original_permissions.clone();
+    readonly.set_readonly(true);
+    fs::set_permissions(&db_path, readonly).map_err(io_error)?;
     if let Err(error) = fs::rename(temp.path(), &target) {
+        // Windows cannot remove the temporary read-only database if this
+        // concurrent build lost the publication race.
+        fs::set_permissions(&db_path, original_permissions).map_err(io_error)?;
         if !target.exists() {
             return Err(io_error(error));
         }
         // A concurrently built generation is usable only if its manifest and
         // derived bytes are identical. Never delete a conflicting generation.
-        let other = verify(&target, &source, &recipe)?;
+        let other = verify(&target, &source, &recipe, job)?;
         if other.db_sha256 != manifest.db_sha256 {
             return Err(failure(
                 "cache_conflict",
@@ -381,7 +395,9 @@ fn ensure(v: &Value) -> Result<Generation> {
     })
 }
 pub fn sync(v: &Value) -> Result<Value> {
-    let generation = ensure(v)?;
+    let job = Job::start(v)?;
+    let generation = ensure(v, &job)?;
+    job.begin_publication()?;
     remember(&generation)?;
     Ok(json!({
         "state":"ready",
@@ -408,7 +424,7 @@ pub fn search(v: &Value) -> Result<Value> {
         Some(Value::Bool(value)) => *value,
         _ => return Err(failure("invalid_request", "full_count must be boolean")),
     };
-    let generation = ensure(v)?;
+    let generation = ensure(v, &Job::default())?;
     remember(&generation)?;
     let db_path = generation.root.join(&generation.key).join("catalog.sqlite");
     let catalog = Catalog::open_readonly(&db_path)?;
@@ -516,7 +532,7 @@ where
     }
     let mut full_cache_recheck = false;
     if pinned.checked_at.elapsed() >= PIN_REFRESH_INTERVAL {
-        verify(&cache_dir, &original, &used_recipe)?;
+        verify(&cache_dir, &original, &used_recipe, &Job::default())?;
         let after_verify = stamp(&db_path)?;
         if after_verify != first_stamp {
             forget(&root, &current_key);
@@ -611,4 +627,59 @@ pub fn children_pinned(v: &Value) -> Result<Value> {
         serde_json::to_value(db.children(volume_id, parent_id, offset, limit)?)
             .map_err(|_| failure("internal", "Cannot encode CTF directory page"))
     })
+}
+
+#[cfg(test)]
+mod recipe_tests {
+    use super::*;
+    use ctf_format::{CtfCatalog, CtfDisk};
+
+    #[test]
+    fn previous_parser_recipe_cannot_supply_a_new_pin() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source.CTF");
+        let root = temp.path().join("cache");
+        let source = CtfCatalog {
+            name: "Synthetic catalog".into(),
+            disks: vec![CtfDisk {
+                name: "Synthetic disk".into(),
+                entries: Vec::new(),
+                opaque_header: Vec::new(),
+            }],
+            opaque_trailer: Vec::new(),
+        };
+        fs::write(&source_path, ctf_format::write_ctf(&source).unwrap()).unwrap();
+        let args = json!({"path":source_path,"cache_root":root});
+
+        let first = sync(&args).unwrap();
+        let generation = first["generation"].as_str().unwrap();
+        let current_path = root.join(generation);
+        let mut previous_recipe = recipe();
+        previous_recipe.index_kind = "read-only-ctf-sqlite-v3-r1".into();
+        let identity = identity(&source_path).unwrap();
+        let previous_key = ctf_sidecar::cache_key(&identity, &previous_recipe).unwrap();
+        assert_ne!(generation, previous_key);
+        let previous_path = root.join(previous_key);
+        let manifest_path = current_path.join("manifest.json");
+        let mut published: Manifest =
+            serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        published.recipe = previous_recipe.clone();
+        fs::write(manifest_path, serde_json::to_vec(&published).unwrap()).unwrap();
+        fs::rename(&current_path, &previous_path).unwrap();
+        assert!(verify(&previous_path, &identity, &previous_recipe, &Job::default()).is_ok());
+
+        let rebuilt = sync(&args).unwrap();
+        assert_eq!(rebuilt["generation"], generation);
+        assert_eq!(rebuilt["rebuilt"], true);
+        assert!(previous_path.join("catalog.sqlite").is_file());
+        assert!(current_path.join("catalog.sqlite").is_file());
+
+        #[cfg(windows)]
+        {
+            let writable = fs::metadata(&source_path).unwrap().permissions();
+            for dir in [current_path, previous_path] {
+                fs::set_permissions(dir.join("catalog.sqlite"), writable.clone()).unwrap();
+            }
+        }
+    }
 }

@@ -28,6 +28,8 @@ The reader is read-only, contains no `unsafe`, never executes source programs or
 
 `Limits` bounds input bytes, number of entries, number of disks and tree depth. Checked reads reject truncation and invalid offsets. Unknown file flags, unsupported header variants, overlapping ranges, unaccounted data, inconsistent counts, invalid encodings, invalid parents and excessive depth produce errors. The observed uncompressed layout is supported. Compression and encryption variants are rejected rather than guessed. The parser currently returns a materialized catalog; memory use is proportional to the catalog and its retained metadata. It is not a streaming parser.
 
+Data ranges are validated before retaining root/folder blobs. Decoded descriptions also share an aggregate byte budget bounded by `Limits.max_bytes`; repeated references to a shared description are charged before allocation. This prevents a small referenced blob from causing unbounded decoded-text amplification. The updated mirror recipe invalidates caches admitted by the earlier parser policy.
+
 The only supported disk group is the observed final **empty** group. Populated groups and multiple groups are rejected. An empty final group contains no disk-membership references, so it can be retained when disks are added. General group remapping is not implemented.
 
 Categories, flags, icons and other unknown extended fields are preserved when present in unchanged records/blobs, but their semantics have not been identified. Native category assignment conversion is not claimed. Application categories should remain in the application's own database until their WhereIsIt mapping has been verified.
@@ -129,6 +131,8 @@ An extension has:
 Observed decoded types: 1 = description, 12 = filename continuation. Other types are preserved. A cap of 4,096 fields per extension list prevents unbounded extension iteration.
 
 When an entry's description changes, the writer emits a new inline type-1 string, retaining other extension types. Changing a name regenerates its continuation record. Unchanged file records are reused verbatim. Folder pointers and hierarchy fields are rebuilt while unchanged metadata representations remain byte-preserved.
+
+Description edits require a supported ordinary file/folder layout and an unambiguous recognized description representation. Unknown extensions, multiple description fields, archived members and unsupported flags are refused for rewriting; untouched opaque records remain preserved. This guard applies inside the writer as well as the GUI service, so an older caller cannot bypass it by editing a SQLite description first. `allow_lossy` does not authorize rewriting unknown opaque fields.
 
 Moving an imported file between parents with external metadata references is not a supported interchange operation: its blob-relative unknown fields require semantic remapping. The application should not expose such a move until it resolves or migrates those references. Renaming or editing metadata in place, adding new scans, and re-exporting the original tree are supported by this implementation.
 
