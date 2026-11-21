@@ -33,15 +33,15 @@ jobs:
           $actualUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
           $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
           $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-          if ($env:COMPUTERNAME -ine $env:EXPECTED_COMPUTER) { throw "Wrong host: $env:COMPUTERNAME" }
-          if ($env:RUNNER_NAME -ine $env:EXPECTED_RUNNER) { throw "Wrong runner: $env:RUNNER_NAME" }
-          if ($actualUser -ine $env:EXPECTED_ACCOUNT) { throw "Unexpected service identity: $actualUser" }
+          if ($env:COMPUTERNAME -ine $env:EXPECTED_COMPUTER) { throw "Runner host does not match the reviewed Windows 11 QA host" }
+          if ($env:RUNNER_NAME -ine $env:EXPECTED_RUNNER) { throw "Unexpected runner identity" }
+          if ($actualUser -ine $env:EXPECTED_ACCOUNT) { throw "Unexpected service identity" }
           if (-not $isAdmin) { throw 'Expected elevated administrator service token' }
           if ($os.Caption -notmatch 'Windows 11') { throw "Not Windows 11: $($os.Caption)" }
           if ($os.OSArchitecture -notmatch '64') { throw "Not x64: $($os.OSArchitecture)" }
-          Write-Host "RUNNER_HOST: $env:COMPUTERNAME"
-          Write-Host "RUNNER_NAME: $env:RUNNER_NAME"
-          Write-Host "SERVICE_ACCOUNT: $actualUser"
+          Write-Host 'RUNNER_HOST_MATCH: true'
+          Write-Host 'RUNNER_LABEL_MATCH: true'
+          Write-Host 'SERVICE_ACCOUNT_MATCH: true'
           Write-Host "WINDOWS_VERSION: $($os.Caption) build $($os.BuildNumber)"
           Write-Host "PWSH_VERSION: $($PSVersionTable.PSVersion.ToString())"
           Write-Host 'RUNNER_SMOKE_PASS'
@@ -54,6 +54,22 @@ jobs:
             if ($null -eq $c) {
               Write-Host "TOOL_MISSING: $tool"
             } else {
-              Write-Host "TOOL_FOUND: $tool @ $($c.Source)"
+              Write-Host "TOOL_FOUND: $tool"
             }
           }
+      - name: Inspect Codex CLI availability without running Codex
+        shell: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create([IO.File]::ReadAllText('{0}')))"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The service account may have a different PATH/profile than RDP.
+          # Never execute the discovered binary from this privileged runner.
+          $codex = @('codex.exe', 'codex.cmd', 'codex') |
+            ForEach-Object { Get-Command $_ -CommandType Application -ErrorAction SilentlyContinue } |
+            Select-Object -First 1
+          if ($null -eq $codex) {
+            Write-Host 'CODEX_CLI_VISIBLE_TO_SERVICE: false'
+          } else {
+            Write-Host 'CODEX_CLI_VISIBLE_TO_SERVICE: true'
+          }
+          Write-Host 'CODEX_EXECUTED: false'
+          Write-Host 'INTERACTIVE_GUI_TESTED: false'

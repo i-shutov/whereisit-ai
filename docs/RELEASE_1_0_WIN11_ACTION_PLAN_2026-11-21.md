@@ -4,6 +4,8 @@
 
 > **Privacy:** IP/учётные данные нового Windows 11 VPS, RDP, приватные пути, CTF и реальные имена файлов не сохранять в открытом GitHub. Внешний адрес передан владельцем только для локальной настройки. GitHub-hosted CI и self-hosted runner — разные доверенные контуры.
 
+**Owner directive 2026-11-21:** The owner runs Win11 RDP, PowerShell, egui GUI QA and Codex **as Administrator**. Do not require or insist on a separate non-admin account. Interactive Administrator and the privileged self-hosted runner service are separate execution contexts: avoid automatically executing unreviewed public-PR code through the latter.
+
 ## 1. Зафиксированные факты и незакрытые проверки
 
 | Область | Доказанный статус | Чего НЕ следует утверждать |
