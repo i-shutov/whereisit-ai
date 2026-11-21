@@ -197,7 +197,7 @@ mod tests {
             display_path(&items[2], &lookup),
             "Видео / Документальные · #31"
         );
-        let cycle = vec![
+        let cycle = [
             Category {
                 id: 50,
                 parent_id: Some(51),
