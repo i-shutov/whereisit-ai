@@ -7,7 +7,12 @@ $utf8NoBom = [Text.UTF8Encoding]::new($false, $true)
 $source = Join-Path $PSScriptRoot 'Invoke-WhereIsItEguiQA.ps1'
 $tokens = $null; $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($source,[ref]$tokens,[ref]$errors)
-if ($errors.Count) { throw 'Runner parse error' }
+if ($errors.Count) {
+    $details = @($errors | ForEach-Object {
+        'line ' + $_.Extent.StartLineNumber + ' [' + $_.ErrorId + '] ' + $_.Message
+    }) -join '; '
+    throw "Runner parse error: $details"
+}
 foreach ($name in @('Invoke-CliRaw','Invoke-Cli')) {
     $fn = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     if (-not $fn) { throw "Missing function $name" }
