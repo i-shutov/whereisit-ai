@@ -1,6 +1,7 @@
 //! PR58-first native workbench. Every user-visible catalog fact comes from atlas-service;
 //! no fictitious USB mount badges, byte-duplicate claims or on-disk delete operations.
 use crate::bridge::{new_scan_job_id, scan_request, CommandBus, ExportKind, Purpose, Route};
+use crate::categories::{self, parse_categories, Category};
 use crate::model::{bytes_compact, parse_volumes, DiskPreferences, Entry, Page, Volume};
 use crate::shelf::{valid_label, ShelfContext, ShelfSnapshot};
 use eframe::egui::{self, Color32, RichText};
@@ -158,6 +159,10 @@ pub struct DesktopApp {
     disk_filter: String,
     register_order: RegisterOrder,
     show_catalog_dialog: bool,
+    show_categories_dialog: bool,
+    categories: Vec<Category>,
+    category_name_input: String,
+    category_parent_id: Option<i64>,
     create_catalog: bool,
     show_export_dialog: bool,
     show_scan_dialog: bool,
@@ -188,6 +193,7 @@ pub struct DesktopApp {
 impl DesktopApp {
     fn dialog_open(&self) -> bool {
         self.show_catalog_dialog
+            || self.show_categories_dialog
             || self.show_export_dialog
             || self.show_scan_dialog
             || self.show_disk_properties.is_some()
@@ -247,6 +253,10 @@ impl DesktopApp {
             disk_filter: String::new(),
             register_order: RegisterOrder::Id,
             show_catalog_dialog: false,
+            show_categories_dialog: false,
+            categories: Vec::new(),
+            category_name_input: String::new(),
+            category_parent_id: None,
             create_catalog: false,
             show_export_dialog: false,
             show_scan_dialog: false,
@@ -704,6 +714,89 @@ impl DesktopApp {
         }
     }
 
+
+    fn load_categories(&mut self, ctx: &egui::Context) {
+        if let Some(db) = self.db.clone() {
+            self.queue(
+                Purpose::Categories,
+                categories::list_request(&db),
+                ctx,
+            );
+        }
+    }
+
+    fn create_category(&mut self, ctx: &egui::Context) {
+        if self.active_request.is_some() {
+            return;
+        }
+        let name = match categories::new_name(&self.category_name_input) {
+            Ok(name) => name.to_owned(),
+            Err(_) => {
+                self.error = Some(
+                    self.t(
+                        "Название категории должно содержать 1–80 печатных символов.",
+                        "Category name must contain 1–80 printable characters.",
+                    )
+                    .to_owned(),
+                );
+                return;
+            }
+        };
+        let Some(db) = self.db.clone() else {
+            return;
+        };
+        self.queue(
+            Purpose::CreateCategory { name: name.clone() },
+            categories::create_request(&db, &name, self.category_parent_id),
+            ctx,
+        );
+    }
+
+    fn assign_category(&mut self, entry_id: i64, category_id: i64, ctx: &egui::Context) {
+        if self.active_request.is_some() || entry_id <= 0 || category_id <= 0 {
+            return;
+        }
+        let Some(db) = self.db.clone() else {
+            return;
+        };
+        if !self.categories.iter().any(|category| category.id == category_id) {
+            return;
+        }
+        self.queue(
+            Purpose::AssignCategory {
+                entry_id,
+                category_id,
+            },
+            categories::assign_request(&db, entry_id, category_id),
+            ctx,
+        );
+    }
+
+    fn navigate_category(&mut self, category: &Category, ctx: &egui::Context) {
+        if self.active_request.is_some() {
+            return;
+        }
+        self.history.push((
+            self.route.clone(),
+            self.offset,
+            self.selected.clone(),
+            self.selected_volume,
+            self.results_scroll,
+        ));
+        self.query_input = category.search_query();
+        self.route = Route::Search {
+            query: self.query_input.clone(),
+            volume_id: None,
+        };
+        self.selected_volume = None;
+        self.offset = 0;
+        self.selected = None;
+        self.restore_selection = None;
+        self.reveal_selected = false;
+        self.restore_scroll = None;
+        self.load_page(ctx);
+    }
+
     fn navigate_search(&mut self, ctx: &egui::Context) {
         if self.active_request.is_some() {
             return;
@@ -782,6 +875,9 @@ impl DesktopApp {
         if let Some((route, offset, selection, selected_volume, scroll)) = self.history.pop() {
             self.reveal_selected = false;
             self.restore_scroll = Some(scroll);
+            if let Route::Search { query, .. } = &route {
+                self.query_input = query.clone();
+            }
             self.route = route;
             self.offset = offset;
             self.selected = None;
@@ -940,6 +1036,10 @@ impl DesktopApp {
                 self.history.clear();
                 self.offset = 0;
                 self.selected = None;
+                self.categories.clear();
+                self.category_parent_id = None;
+                self.category_name_input.clear();
+                self.show_categories_dialog = false;
                 self.load_volumes(ctx);
             }
             Purpose::Volumes => match parse_volumes(data) {
@@ -1080,6 +1180,36 @@ impl DesktopApp {
             Purpose::ScanProgress { .. } | Purpose::ScanCancel { .. } => {
                 unreachable!("Auxiliary scan reply must be processed before active worker");
             }
+            Purpose::Categories => match parse_categories(data) {
+                Ok(categories) => {
+                    self.categories = categories;
+                    if !self
+                        .category_parent_id
+                        .is_none_or(|id| self.categories.iter().any(|c| c.id == id))
+                    {
+                        self.category_parent_id = None;
+                    }
+                }
+                Err(error) => self.error = Some(error),
+            },
+            Purpose::CreateCategory { name } => {
+                self.category_name_input.clear();
+                self.category_parent_id = None;
+                self.status = StatusText::new(
+                    format!("Категория «{name}» создана"),
+                    format!("Category “{name}” created"),
+                );
+                self.load_categories(ctx);
+            }
+            Purpose::AssignCategory {
+                entry_id,
+                category_id,
+            } => {
+                self.status = StatusText::new(
+                    format!("Категория #{category_id} назначена записи #{entry_id}"),
+                    format!("Category #{category_id} assigned to entry #{entry_id}"),
+                );
+            }
             Purpose::Export { path } => {
                 let rows = data.get("rows").and_then(Value::as_u64).unwrap_or(0);
                 self.status = StatusText::new(
@@ -1178,6 +1308,19 @@ impl DesktopApp {
                         ui.close();
                     }
                 });
+                if ui
+                    .add_enabled(
+                        self.db.is_some() && self.active_request.is_none(),
+                        egui::Button::new(self.t("Категории", "Categories")),
+                    )
+                    .clicked()
+                {
+                    self.category_name_input.clear();
+                    self.category_parent_id = None;
+                    self.error = None;
+                    self.show_categories_dialog = true;
+                    self.load_categories(ctx);
+                }
                 ui.menu_button(self.t("Вид", "View"), |ui| {
                     if ui.button(self.t("Все диски", "All disks")).clicked() {
                         self.navigate_disk(None, ctx);
@@ -1695,6 +1838,132 @@ impl DesktopApp {
                 });
             self.show_scan_dialog &= open;
         }
+        if self.show_categories_dialog {
+            let mut open = self.show_categories_dialog;
+            egui::Window::new(self.t("Категории каталога", "Catalog categories"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(true)
+                .default_width(560.0)
+                .show(ctx, |ui| {
+                    ui.label(self.t(
+                        "Категории и назначения изменяют открытый SQLite. Исходный CTF не открывается.",
+                        "Categories and assignments modify the open SQLite. Original CTF is not opened.",
+                    ));
+                    let selected = self.selected.clone();
+                    let catalog_categories = self.categories.clone();
+                    if let Some(entry) = &selected {
+                        ui.label(format!(
+                            "{}: #{} · {}",
+                            self.t("Выбрана запись", "Selected entry"),
+                            entry.id,
+                            entry.name
+                        ));
+                    } else {
+                        ui.label(self.t(
+                            "Чтобы назначить категорию, выделите файл в результатах до открытия окна.",
+                            "To assign a category, select a result before opening this dialog.",
+                        ));
+                    }
+                    ui.separator();
+                    egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+                        if catalog_categories.is_empty() && self.active_request.is_none() {
+                            ui.label(self.t("Категорий пока нет.", "No categories yet."));
+                        }
+                        for category in &catalog_categories {
+                            let parent = category
+                                .parent_id
+                                .and_then(|id| catalog_categories.iter().find(|c| c.id == id))
+                                .map(|c| format!("{} / ", c.name))
+                                .unwrap_or_default();
+                            ui.horizontal(|ui| {
+                                let title = format!("{parent}{}", category.name);
+                                if ui
+                                    .add_enabled(
+                                        self.active_request.is_none(),
+                                        egui::Button::new(title),
+                                    )
+                                    .on_hover_text(self.t(
+                                        "Показать записи этой категории на всех дисках",
+                                        "Show this category across all catalog disks",
+                                    ))
+                                    .clicked()
+                                {
+                                    self.navigate_category(category, ctx);
+                                    self.show_categories_dialog = false;
+                                }
+                                if let Some(entry) = &selected {
+                                    if ui
+                                        .add_enabled(
+                                            self.active_request.is_none(),
+                                            egui::Button::new(self.t(
+                                                "Назначить",
+                                                "Assign",
+                                            )),
+                                        )
+                                        .on_hover_text(self.t(
+                                            "Явно записать назначение в текущий SQLite-каталог",
+                                            "Write this assignment into the current SQLite catalog",
+                                        ))
+                                        .clicked()
+                                    {
+                                        self.assign_category(entry.id, category.id, ctx);
+                                    }
+                                }
+                            });
+                        }
+                    });
+                    ui.separator();
+                    ui.strong(self.t("Новая категория", "New category"));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.category_name_input)
+                            .hint_text(self.t("Название", "Name"))
+                            .desired_width(f32::INFINITY),
+                    );
+                    let parent_name = self.category_parent_id.and_then(|id| {
+                        catalog_categories.iter().find(|category| category.id == id)
+                    }).map(|category| category.name.as_str())
+                    .unwrap_or(self.t("Без родителя", "No parent"));
+                    let no_parent = self.t("Без родителя", "No parent");
+                    ui.horizontal(|ui| {
+                        ui.label(self.t("Родитель", "Parent"));
+                        egui::ComboBox::from_id_salt("new_category_parent")
+                            .selected_text(parent_name)
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut self.category_parent_id,
+                                    None,
+                                    no_parent,
+                                );
+                                for category in &catalog_categories {
+                                    ui.selectable_value(
+                                        &mut self.category_parent_id,
+                                        Some(category.id),
+                                        category.name.as_str(),
+                                    );
+                                }
+                            });
+                    });
+                    let can_create = self.active_request.is_none()
+                        && categories::new_name(&self.category_name_input).is_ok();
+                    if ui
+                        .add_enabled(
+                            can_create,
+                            egui::Button::new(self.t("Создать категорию", "Create category")),
+                        )
+                        .clicked()
+                    {
+                        self.create_category(ctx);
+                    }
+                    if let Some(error) = &self.error {
+                        ui.colored_label(Color32::from_rgb(224, 96, 88), error);
+                    }
+                    if ui.button(self.t("Закрыть", "Close")).clicked() {
+                        self.show_categories_dialog = false;
+                    }
+                });
+            self.show_categories_dialog &= open;
+        }
         if self.show_export_dialog {
             let mut open = self.show_export_dialog;
             egui::Window::new(self.t("Экспорт метаданных", "Metadata export"))
@@ -2076,15 +2345,45 @@ mod shortcut_tests {
         ));
     }
 
+
+    #[test]
+    fn category_navigation_is_all_disk_scoped_and_back_restores_query() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.query_input = "clip-001".to_owned();
+        app.route = Route::Search {
+            query: app.query_input.clone(),
+            volume_id: Some(61),
+        };
+        app.selected_volume = Some(61);
+        let category = Category {
+            id: 3,
+            parent_id: None,
+            name: "Семейное Кино".into(),
+        };
+        app.navigate_category(&category, &ctx);
+        assert_eq!(app.query_input, "category:\"Семейное Кино\"");
+        assert_eq!(app.selected_volume, None);
+        assert_eq!(app.history.len(), 1);
+        assert_eq!(app.route, Route::Search {
+            query: "category:\"Семейное Кино\"".into(),
+            volume_id: None,
+        });
+        app.go_back(&ctx);
+        assert_eq!(app.query_input, "clip-001");
+        assert_eq!(app.selected_volume, Some(61));
+    }
+
     #[test]
     fn dialogs_disable_background_controls_until_closed() {
         let ctx = egui::Context::default();
         let mut app = DesktopApp::with_context(&ctx, None);
-        for dialog in 0..4 {
+        for dialog in 0..5 {
             app.show_catalog_dialog = dialog == 0;
             app.show_export_dialog = dialog == 1;
             app.show_scan_dialog = dialog == 2;
             app.show_disk_properties = (dialog == 3).then_some(1);
+            app.show_categories_dialog = dialog == 4;
             let mut output = ctx.run_pass(egui::RawInput::default(), |ctx| {
                 egui::Area::new(egui::Id::unique("background-test")).show(ctx, |ui| {
                     app.protect_background(ui);
@@ -2097,6 +2396,7 @@ mod shortcut_tests {
         app.show_export_dialog = false;
         app.show_scan_dialog = false;
         app.show_disk_properties = None;
+        app.show_categories_dialog = false;
         let mut output = ctx.run_pass(egui::RawInput::default(), |ctx| {
             egui::Area::new(egui::Id::unique("background-test")).show(ctx, |ui| {
                 app.protect_background(ui);

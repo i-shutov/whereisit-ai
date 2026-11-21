@@ -1,5 +1,6 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod bridge;
+mod categories;
 mod model;
 #[cfg(all(feature = "qa-isolated", target_os = "windows"))]
 mod qa_isolation;
