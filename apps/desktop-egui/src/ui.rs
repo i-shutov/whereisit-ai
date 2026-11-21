@@ -727,12 +727,14 @@ impl DesktopApp {
     fn load_assigned_categories(&mut self, ctx: &egui::Context) {
         self.category_assigned.clear();
         self.category_assignments_ready = false;
-        let (Some(db), Some(entry)) = (self.db.clone(), self.selected.as_ref()) else {
+        let (Some(db), Some(entry_id)) =
+            (self.db.clone(), self.selected.as_ref().map(|entry| entry.id))
+        else {
             return;
         };
         self.queue(
-            Purpose::EntryCategoryIds { entry_id: entry.id },
-            categories::list_assigned_request(&db, entry.id),
+            Purpose::EntryCategoryIds { entry_id },
+            categories::list_assigned_request(&db, entry_id),
             ctx,
         );
     }
