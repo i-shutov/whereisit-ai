@@ -47,6 +47,7 @@ jobs:
           if test -f tools/storage_layout_experiment.py; then python3 tools/storage_layout_experiment.py --self-test; fi
       - run: bash -n apps/macos/build.sh apps/desktop-egui/package-preview-macos.sh installers/macos/package.sh installers/macos/smoke-package.sh installers/macos/verify-dmg.sh installers/macos/test-verify-dmg.sh
       - run: python3 -m unittest discover -s tools/qa -p 'test_egui_preview_packaging.py' -v
+      - run: python3 -m unittest discover -s tools/qa -p 'test_egui_win64_installer_contract.py' -v
       - run: python3 -m unittest discover -s tools/qa -p 'test_win10_egui_host_qa.py' -v
       - run: bash installers/macos/test-verify-dmg.sh
   windows:
@@ -105,6 +106,65 @@ jobs:
       - name: Verify install, installed CLI and safe uninstall
         shell: pwsh
         run: ./installers/windows/smoke-installer.ps1
+      - name: Build isolated Win64 egui QA app (dedicated settings and sidecar)
+        shell: powershell
+        run: |
+          cargo test --locked -p atlas-desktop-egui --features qa-isolated
+          if ($LASTEXITCODE -ne 0) { throw 'QA-isolated egui tests failed' }
+          cargo build --release --locked -p atlas-desktop-egui --features qa-isolated
+          if ($LASTEXITCODE -ne 0) { throw 'QA-isolated egui build failed' }
+      - name: Build native egui Win64 installed QA candidate (hosted AMD64 only)
+        shell: powershell
+        run: ./installers/windows/build-egui-win64-qa.ps1
+      - name: Verify installed AMD64 egui GUI, CLI and safe uninstall
+        shell: powershell
+        run: ./installers/windows/smoke-egui-win64-qa.ps1
+      - name: Win64 installed egui QA SHA-256 and provenance
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = 'dist/windows-egui-win64-qa'
+          $version = (Get-Content VERSION -Raw).Trim()
+          $exe = Join-Path $dir "WhereIsItAI-egui-win64-QA-$version-setup.exe"
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'Missing Win64 egui QA setup' }
+          $sha = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$sha  $(Split-Path $exe -Leaf)" | Set-Content (Join-Path $dir 'SHA256SUMS.txt') -Encoding ascii
+          @{
+            channel = 'unsigned-isolated-qa'
+            platform = 'windows-x64'
+            binary_machine = 'AMD64'
+            target_ui = 'Rust/egui'
+            version = $version
+            commit = (git rev-parse HEAD).Trim()
+            run_id = $env:GITHUB_RUN_ID
+            installer_sha256 = $sha
+            egui_sha256 = (Get-FileHash 'target/release/atlas-desktop-egui.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+            cli_sha256 = (Get-FileHash 'target/release/atlas.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+            signing = 'unsigned'
+            stable_ready = $false
+            user_catalogs_included = $false
+          } | ConvertTo-Json | Set-Content (Join-Path $dir 'provenance.json') -Encoding utf8
+      - name: Verify exact SHA/run Win64 candidate payload before upload
+        shell: powershell
+        run: |
+          $head = (git rev-parse HEAD).Trim()
+          ./tools/qa/windows11-egui/Verify-Win64EguiCandidate.ps1 -CandidateDirectory 'dist/windows-egui-win64-qa' -ExpectedCommit $head -ExpectedRunId $env:GITHUB_RUN_ID
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WhereIsItAI-egui-Win64-installed-QA-unsigned
+          if-no-files-found: error
+          path: |
+            dist/windows-egui-win64-qa/WhereIsItAI-egui-win64-QA-*-setup.exe
+            dist/windows-egui-win64-qa/SHA256SUMS.txt
+            dist/windows-egui-win64-qa/provenance.json
+      - name: Restore default preview GUI binary for the existing generic artifact
+        shell: powershell
+        run: |
+          $preview = 'dist/qa-egui/windows-x64/WhereIsItAI-egui-preview.exe'
+          if (-not (Test-Path -LiteralPath $preview -PathType Leaf)) {
+            throw 'Missing default egui preview executable for generic artifact'
+          }
+          Copy-Item -LiteralPath $preview -Destination 'target/release/atlas-desktop-egui.exe' -Force
       - name: Checksums and provenance
         shell: pwsh
         run: |

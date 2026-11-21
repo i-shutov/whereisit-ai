@@ -1,6 +1,8 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod bridge;
 mod model;
+#[cfg(all(feature = "qa-isolated", target_os = "windows"))]
+mod qa_isolation;
 #[cfg(feature = "qa-screenshots")]
 mod qa_screenshot;
 mod shelf;
@@ -22,13 +24,17 @@ fn main() -> eframe::Result<()> {
             }
         }
     }
-    #[cfg(feature = "qa-screenshots")]
+    #[cfg(all(feature = "qa-screenshots", not(feature = "qa-isolated")))]
     let qa_persistence_path = std::env::var_os("WHEREISIT_QA_SETTINGS_PATH")
         .map(std::path::PathBuf::from)
         .filter(|path| path.is_absolute());
+    #[cfg(all(feature = "qa-isolated", target_os = "windows"))]
+    let qa_settings_path = crate::qa_isolation::persistence_path();
     let native_options = eframe::NativeOptions {
         persist_window: false,
-        #[cfg(feature = "qa-screenshots")]
+        #[cfg(all(feature = "qa-isolated", target_os = "windows"))]
+        persistence_path: Some(qa_settings_path),
+        #[cfg(all(feature = "qa-screenshots", not(feature = "qa-isolated")))]
         persistence_path: qa_persistence_path,
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1320.0, 760.0])

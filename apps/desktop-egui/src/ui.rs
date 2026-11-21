@@ -85,26 +85,33 @@ struct DiskPropertiesDraft {
 }
 
 fn user_store() -> Option<std::path::PathBuf> {
-    if let Some(path) = std::env::var_os("WHEREISIT_USER_STORE") {
-        let path = std::path::PathBuf::from(path);
-        return path.is_absolute().then_some(path);
+    #[cfg(all(feature = "qa-isolated", target_os = "windows"))]
+    {
+        crate::qa_isolation::user_store_path()
     }
-    #[cfg(target_os = "windows")]
-    let root = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from);
-    #[cfg(target_os = "macos")]
-    let root = std::env::var_os("HOME")
-        .map(std::path::PathBuf::from)
-        .map(|p| p.join("Library/Application Support"));
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    let root = std::env::var_os("XDG_DATA_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|p| std::path::PathBuf::from(p).join(".local/share"))
-        });
-    root.filter(|p| p.is_absolute()).map(|p| {
-        p.join("AtlasCatalog")
-            .join("physical-volume-bindings.sqlite")
-    })
+    #[cfg(not(all(feature = "qa-isolated", target_os = "windows")))]
+    {
+        if let Some(path) = std::env::var_os("WHEREISIT_USER_STORE") {
+            let path = std::path::PathBuf::from(path);
+            return path.is_absolute().then_some(path);
+        }
+        #[cfg(target_os = "windows")]
+        let root = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from);
+        #[cfg(target_os = "macos")]
+        let root = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .map(|p| p.join("Library/Application Support"));
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        let root = std::env::var_os("XDG_DATA_HOME")
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME").map(|p| std::path::PathBuf::from(p).join(".local/share"))
+            });
+        root.filter(|p| p.is_absolute()).map(|p| {
+            p.join("AtlasCatalog")
+                .join("physical-volume-bindings.sqlite")
+        })
+    }
 }
 
 fn preference_platform() -> Option<&'static str> {
