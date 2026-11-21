@@ -749,10 +749,9 @@ impl DesktopApp {
         );
     }
 
-    /// After a category membership write, the existing search/folder result
-    /// table must be read again from SQLite. Never display stale category hits.
-    /// The selection survives only when the entry still matches that query.
-    fn refresh_after_category_write(&mut self, ctx: &egui::Context) {
+    /// Reload results from SQLite after a category write or a stale-entry reply.
+    /// An existing selection survives only when the refreshed page contains it.
+    fn refresh_category_results(&mut self, ctx: &egui::Context) {
         self.category_assigned.clear();
         self.category_assignments_ready = false;
         self.category_assignments_error = false;
@@ -1068,6 +1067,10 @@ impl DesktopApp {
             return;
         }
         if reply.response.get("ok").and_then(Value::as_bool) != Some(true) {
+            let code = reply
+                .response
+                .pointer("/error/code")
+                .and_then(Value::as_str);
             let message = reply
                 .response
                 .pointer("/error/message")
@@ -1084,6 +1087,13 @@ impl DesktopApp {
                 self.category_assigned.clear();
                 self.category_assignments_ready = false;
                 self.category_assignments_error = true;
+            } else if matches!(
+                &reply.purpose,
+                Purpose::AssignCategory { .. } | Purpose::UnassignCategory { .. }
+            ) && code == Some("not_found")
+            {
+                self.selected = None;
+                self.refresh_category_results(ctx);
             } else if matches!(&reply.purpose, Purpose::Page { .. }) {
                 self.category_result_refresh_pending = false;
                 self.category_assigned.clear();
@@ -1095,11 +1105,7 @@ impl DesktopApp {
             }
             if matches!(&reply.purpose, Purpose::DiskPreferences) {
                 self.preferences_ready = false;
-                self.legacy_shelf_editable = reply
-                    .response
-                    .pointer("/error/code")
-                    .and_then(Value::as_str)
-                    == Some("schema_version");
+                self.legacy_shelf_editable = code == Some("schema_version");
                 self.disk_preferences.clear();
                 self.shelf_collisions.clear();
                 self.load_shelf_labels(ctx, true);
@@ -1344,7 +1350,7 @@ impl DesktopApp {
                     format!("Категория #{category_id} назначена записи #{entry_id}"),
                     format!("Category #{category_id} assigned to entry #{entry_id}"),
                 );
-                self.refresh_after_category_write(ctx);
+                self.refresh_category_results(ctx);
             }
             Purpose::UnassignCategory {
                 entry_id,
@@ -1364,7 +1370,7 @@ impl DesktopApp {
                         format!("Category #{category_id} removed from entry #{entry_id}"),
                     );
                 }
-                self.refresh_after_category_write(ctx);
+                self.refresh_category_results(ctx);
             }
             Purpose::Export { path } => {
                 let rows = data.get("rows").and_then(Value::as_u64).unwrap_or(0);
@@ -2635,6 +2641,87 @@ mod shortcut_tests {
     }
 
     #[test]
+    fn category_mutation_missing_entry_discards_selection_and_refreshes_page() {
+        let ctx = egui::Context::default();
+        let candidate = json!({
+            "id": 19, "volume_id": 2, "kind": "file", "size": 42,
+            "name": "Кино.mkv", "relative_path": "Кино.mkv",
+        });
+        let entry = Entry::parse(&candidate).unwrap();
+        let route = Route::Search {
+            query: "category_id:7".into(),
+            volume_id: None,
+        };
+        for purpose in [
+            Purpose::AssignCategory {
+                entry_id: 19,
+                category_id: 7,
+            },
+            Purpose::UnassignCategory {
+                entry_id: 19,
+                category_id: 7,
+            },
+        ] {
+            let mut app = DesktopApp::with_context(&ctx, None);
+            app.route = route.clone();
+            app.offset = PAGE_LIMIT;
+            app.history.push((route.clone(), 0, None, None, 0.0));
+            app.show_categories_dialog = true;
+            app.selected = Some(entry.clone());
+            app.page.items = vec![entry.clone()];
+            app.category_assigned.insert(7);
+            app.category_assignments_ready = true;
+
+            for (id, code) in [(33, "database_busy"), (34, "not_found")] {
+                app.active_request = Some(id);
+                app.apply_reply(
+                    crate::bridge::Reply {
+                        id,
+                        purpose: purpose.clone(),
+                        response: json!({"ok":false, "error":{"code":code,"message":"Failed"}}),
+                    },
+                    &ctx,
+                );
+                assert_eq!(app.error.as_deref(), Some("Failed"));
+                if code != "not_found" {
+                    assert!(app.category_assignments_ready);
+                    assert_eq!(app.selected.as_ref().map(|entry| entry.id), Some(19));
+                    assert_eq!(app.page.items.len(), 1);
+                }
+            }
+
+            assert!(!app.category_assignments_ready);
+            assert!(app.category_assigned.is_empty());
+            assert!(app.selected.is_none());
+            assert!(app.restore_selection.is_none());
+            assert!(app.page.items.is_empty());
+            assert!(app.category_result_refresh_pending);
+            assert_eq!(app.offset, PAGE_LIMIT);
+            assert_eq!(app.history.len(), 1);
+
+            let mut fresh = candidate.clone();
+            fresh["id"] = json!(20);
+            app.active_request = Some(35);
+            app.apply_reply(
+                crate::bridge::Reply {
+                    id: 35,
+                    purpose: Purpose::Page {
+                        route: route.clone(),
+                    },
+                    response: json!({"ok":true, "data":{"items":[fresh],
+                        "offset":PAGE_LIMIT, "limit":PAGE_LIMIT, "has_more":false}}),
+                },
+                &ctx,
+            );
+            assert!(!app.category_result_refresh_pending);
+            assert!(app.selected.is_none());
+            assert_eq!(app.page.items[0].id, 20);
+            assert_eq!(app.offset, PAGE_LIMIT);
+            assert_eq!(app.history.len(), 1);
+        }
+    }
+
+    #[test]
     fn membership_write_invalidates_stale_results_and_selected_entry() {
         let ctx = egui::Context::default();
         let mut app = DesktopApp::with_context(&ctx, None);
@@ -2658,7 +2745,7 @@ mod shortcut_tests {
         app.page.items = vec![entry];
         app.category_assigned.insert(7);
         app.category_assignments_ready = true;
-        app.refresh_after_category_write(&ctx);
+        app.refresh_category_results(&ctx);
         assert!(
             app.page.items.is_empty(),
             "stale category results must disappear"
