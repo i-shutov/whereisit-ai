@@ -80,6 +80,31 @@ pub fn assign_request(db: &str, entry_id: i64, category_id: i64) -> Value {
     json!({"op":"assign_category","db":db,"entry_id":entry_id,"category_id":category_id})
 }
 
+pub fn list_assigned_request(db: &str, entry_id: i64) -> Value {
+    json!({"op":"entry_category_ids","db":db,"entry_id":entry_id})
+}
+
+pub fn unassign_request(db: &str, entry_id: i64, category_id: i64) -> Value {
+    json!({"op":"unassign_category","db":db,"entry_id":entry_id,"category_id":category_id})
+}
+
+pub fn parse_assignment_ids(value: &Value) -> Result<std::collections::HashSet<i64>, String> {
+    let ids = value
+        .as_array()
+        .ok_or_else(|| "Service category assignments must be an array".to_owned())?;
+    let mut parsed = std::collections::HashSet::new();
+    for id in ids {
+        let id = id
+            .as_i64()
+            .filter(|id| *id > 0)
+            .ok_or_else(|| "Service returned an invalid category assignment".to_owned())?;
+        if !parsed.insert(id) {
+            return Err("Service returned duplicate category assignment".to_owned());
+        }
+    }
+    Ok(parsed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,6 +149,12 @@ mod tests {
         let assigned = assign_request("catalog.sqlite", 42, 7);
         assert_eq!(assigned["entry_id"], 42);
         assert_eq!(assigned["category_id"], 7);
+        assert_eq!(list_assigned_request("catalog.sqlite", 42)["entry_id"], 42);
+        assert_eq!(unassign_request("catalog.sqlite", 42, 7)["category_id"], 7);
+        assert_eq!(parse_assignment_ids(&json!([5, 7])).unwrap().len(), 2);
+        assert!(parse_assignment_ids(&json!([5, 5])).is_err());
+        assert!(parse_assignment_ids(&json!([0])).is_err());
+        assert!(parse_assignment_ids(&json!({"id":5})).is_err());
     }
 
     #[test]
@@ -153,6 +184,9 @@ mod tests {
         assert_eq!(parsed[0].name, "Семейное Кино");
         let assigned = call(assign_request(db.to_str().unwrap(), entry_id, category_id));
         assert_eq!(assigned["ok"], true, "{assigned}");
+        let before = call(list_assigned_request(db.to_str().unwrap(), entry_id));
+        assert_eq!(before["ok"], true, "{before}");
+        assert!(parse_assignment_ids(&before["data"]).unwrap().contains(&category_id));
         let matched = call(json!({"op":"search_fast","db":db,
             "query":parsed[0].search_query(),"offset":0,"limit":250}));
         assert_eq!(matched["ok"], true, "{matched}");
@@ -204,5 +238,27 @@ mod tests {
                 "query":invalid,"offset":0,"limit":250}));
             assert_eq!(result["ok"], false, "Accepted invalid {invalid}: {result}");
         }
+
+        // Explicit undo removes the relationship, not the file, and can be
+        // restored without changing the generated SQLite catalog entries.
+        let unassigned = call(unassign_request(db.to_str().unwrap(), entry_id, category_id));
+        assert_eq!(unassigned["ok"], true, "{unassigned}");
+        assert_eq!(unassigned["data"]["removed"], true);
+        let after = call(list_assigned_request(db.to_str().unwrap(), entry_id));
+        assert_eq!(after["ok"], true, "{after}");
+        assert!(!parse_assignment_ids(&after["data"]).unwrap().contains(&category_id));
+        assert_eq!(
+            call(unassign_request(db.to_str().unwrap(), entry_id, category_id))["data"]["removed"],
+            false
+        );
+        assert_eq!(
+            call(assign_request(db.to_str().unwrap(), entry_id, category_id))["ok"],
+            true
+        );
+        let restored = call(list_assigned_request(db.to_str().unwrap(), entry_id));
+        assert!(parse_assignment_ids(&restored["data"]).unwrap().contains(&category_id));
+        let file_still_present = call(json!({"op":"search_fast","db":db,
+            "query":"ext:mkv","offset":0,"limit":250}));
+        assert_eq!(file_still_present["data"]["items"][0]["id"], entry_id);
     }
 }

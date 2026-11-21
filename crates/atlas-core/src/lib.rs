@@ -559,6 +559,34 @@ impl Catalog {
         )?;
         Ok(())
     }
+
+    /// IDs of categories explicitly assigned to one catalog entry.
+    /// Does not infer inherited categories and does not touch source media.
+    pub fn entry_category_ids(&self, entry_id: i64) -> Result<Value> {
+        if entry_id <= 0 {
+            return Err(Error::new("invalid_request", "Entry ID must be positive"));
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT category_id FROM entry_categories WHERE entry_id=?1 ORDER BY category_id",
+        )?;
+        let ids = stmt
+            .query_map([entry_id], |row| row.get::<_, i64>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(json!(ids))
+    }
+
+    /// Remove only an explicit SQLite category membership. No source file or
+    /// catalog entry is deleted; a later assign can restore the same link.
+    pub fn unassign_category(&self, entry_id: i64, category_id: i64) -> Result<bool> {
+        if entry_id <= 0 || category_id <= 0 {
+            return Err(Error::new("invalid_request", "Category and entry IDs must be positive"));
+        }
+        let removed = self.conn.execute(
+            "DELETE FROM entry_categories WHERE entry_id=?1 AND category_id=?2",
+            params![entry_id, category_id],
+        )?;
+        Ok(removed > 0)
+    }
     pub fn categories(&self) -> Result<Value> {
         let mut s = self
             .conn
@@ -913,6 +941,10 @@ pub mod api {
                 c.assign_category(integer(&v, "entry_id")?, integer(&v, "category_id")?)?;
                 Ok(json!({}))
             }
+            "entry_category_ids" => c.entry_category_ids(integer(&v, "entry_id")?),
+            "unassign_category" => Ok(json!({"removed":c.unassign_category(
+                integer(&v, "entry_id")?, integer(&v, "category_id")?
+            )?})),
             "explain_query" => c.explain_query(string(&v, "query")?),
             "init" => Ok(
                 json!({"schema_version":c.conn().pragma_query_value(None,"user_version",|r|r.get::<_,i64>(0))?}),
