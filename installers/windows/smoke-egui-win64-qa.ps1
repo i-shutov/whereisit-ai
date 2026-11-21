@@ -68,9 +68,18 @@ if ($LASTEXITCODE -ne 0 -or $installedVersion -ne "WhereIsIt AI $version") {
     throw 'Installed CLI version mismatch.'
 }
 $request = @{op='init'; db=$Catalog} | ConvertTo-Json -Compress
-$reply = & $cli request $request
-if ($LASTEXITCODE -ne 0 -or ($reply | ConvertFrom-Json).ok -ne $true) {
-    throw 'Installed CLI could not create generated SQLite outside app directory.'
+$answer = & $cli request $request
+$exitCode = $LASTEXITCODE
+if ($exitCode -ne 0) { throw "Installed CLI request failed (exit=$exitCode)." }
+if (-not $answer) { throw 'Installed CLI returned no response.' }
+try {
+    $response = $answer | ConvertFrom-Json -ErrorAction Stop
+} catch {
+    throw 'Installed CLI returned non-JSON data.'
+}
+if ($response.ok -ne $true) {
+    $code = if ($response.error -and $response.error.code) { [string]$response.error.code } else { 'unavailable' }
+    throw "Installed CLI refused synthetic SQLite init (error_code=$code)."
 }
 if (-not (Test-Path -LiteralPath $Catalog -PathType Leaf)) { throw 'External SQLite missing.' }
 $before = (Get-FileHash -LiteralPath $Catalog -Algorithm SHA256).Hash
