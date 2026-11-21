@@ -191,6 +191,59 @@ fn ctf_create_import_edit_export_preserves_structure() {
 }
 
 #[test]
+fn ctf_database_normal_export_preserves_root_blob_and_external_description() {
+    use ctf_format::{CtfCatalog, CtfDisk, CtfEntry, EntryKind, Limits};
+
+    let t = tempfile::tempdir().unwrap();
+    let db = t.path().join("root.sqlite");
+    let source = t.path().join("source.ctf");
+    let output = t.path().join("output.ctf");
+    let limits = Limits::default();
+    let seed = CtfCatalog {
+        name: "Root metadata catalog".into(),
+        disks: vec![CtfDisk {
+            name: "Synthetic disk".into(),
+            entries: vec![CtfEntry {
+                name: "root.txt".into(),
+                description: String::new(),
+                parent: None,
+                kind: EntryKind::File,
+                size: 20,
+                attributes: 32,
+                modified_dos: 0,
+                created_dos: 0,
+                accessed_dos: 0,
+                opaque: Vec::new(),
+            }],
+            opaque_header: Vec::new(),
+        }],
+        opaque_trailer: Vec::new(),
+    };
+    let mut fixture =
+        ctf_format::parse_ctf(&ctf_format::write_ctf(&seed).unwrap(), &limits).unwrap();
+    let disk = &mut fixture.disks[0];
+    let metadata = b"\xfftext\0\xfe";
+    disk.opaque_header[4..8].copy_from_slice(&(metadata.len() as u32).to_le_bytes());
+    disk.opaque_header.extend(metadata);
+    let file = &mut disk.entries[0];
+    file.description = "text".into();
+    file.opaque[0] |= 128;
+    file.opaque.extend([1, 5, 0, 0, 8, 1, 0, 0, 0, 0]);
+    let original = ctf_format::write_ctf(&fixture).unwrap();
+    std::fs::write(&source, &original).unwrap();
+
+    let imported = call(json!({"op":"import_ctf","db":db,"path":source}));
+    assert_eq!(imported["ok"], true, "{imported}");
+    let exported = call(json!({"op":"export_ctf","db":db,"path":output}));
+    assert_eq!(exported["ok"], true, "{exported}");
+    let bytes = std::fs::read(output).unwrap();
+    assert_eq!(bytes, original);
+    let parsed = ctf_format::parse_ctf(&bytes, &limits).unwrap();
+    assert_eq!(parsed.disks[0].entries[0].description, "text");
+    assert!(parsed.disks[0].opaque_header.ends_with(metadata));
+}
+
+#[test]
 fn malformed_export_scope_fails_before_creating_file() {
     let t = tempfile::tempdir().unwrap();
     let db = t.path().join("test.sqlite");

@@ -16,7 +16,7 @@ The parser consumed and cross-checked:
 
 A full parse → rebuild → parse verified all entry names, parent indices, kinds, sizes, attributes, and date fields. The rebuilt file was **byte-for-byte identical** to the 144,766,574-byte input. The writer actually rebuilds catalog offset tables, disk blocks, file batches and folder records; it is not a function that returns the original file wholesale. Separate synthetic tests create new catalogs and disks, change names/sizes/descriptions, include names longer than 255 encoded bytes, CESU-8 supplementary characters, and files larger than 4 GiB.
 
-**External compatibility remains pending.** Attempts to open the produced sample in the original Windows application were blocked by the execution environment's 32-bit/WoW64 incompatibility. Matching our own reader, even with exact reproduction of one large original file, does not prove that arbitrary new output will be accepted by every WhereIsIt version. The generic header for newly scanned disks has no private values or plugin state, but still needs validation in a supported Windows installation.
+**External compatibility has been measured in WhereIsIt 2014 build 220 on Windows 11 x64.** The original application opened a corrected 60-volume synthetic export and displayed a changed description. Separate authorized private-copy checks verified an exported description edit in the original application and a vendor-saved description edit through native import. These observations cover the tested layouts and version, not arbitrary catalogs or every WhereIsIt version. See [sanitized acceptance results](qa/WIN11_CTF_PATH_ACCEPTANCE_REDACTED_20261121.md).
 
 The vendor's supplied `Readme.txt` states that catalogs store textual data as UTF-8; the actual file also contains CESU-8-encoded UTF-16 surrogate pairs. The supplied `FAQ.txt` describes compression, a 2 GB catalog limit and Report Generator export. Neither text document publishes the binary record layout.
 
@@ -49,10 +49,12 @@ Descriptions can be inline or referenced in a per-folder metadata blob. Type 1 t
 | Number of blocks | `u16`, includes the empty group |
 | Display/order identifiers | `count × u16`; observed sequential IDs |
 | Catalog name | `u16` byte length, followed by bytes |
-| Observed settings | 5 bytes `06 b8 00 00 04` |
+| Offset-table extension | Type byte `0x06`, then a packed `u32` with inline flag `0x04` in the high byte and payload length `4 × (count + 1)` in the low 24 bits |
 | Absolute block offsets | `count × u32` |
 | Sentinel | `u32 = 0xffffffff` |
 | Observed empty metadata area | 9 zero bytes |
+
+The parser also accepts the fixed 184-byte offset-table declaration written by older Atlas exports. It still uses the catalog block count to read and validate the offsets and sentinel. Re-export writes the correct size for the table.
 
 No general category table or custom catalog-header variation is implemented. New output uses these observed numeric defaults.
 
@@ -62,7 +64,7 @@ No general category table or custom catalog-header variation is implemented. New
 |---:|---|
 | 0 | `u16 = 3`, disk record marker |
 | 2 | `u16` observed flags `0x80` or `0xc0` |
-| 4 | Reserved `u32`, observed zero |
+| 4 | Root metadata-blob length (`u32`) |
 | 8 | Entire disk-block byte length (`u32`) |
 | 12 | Directory-table offset (`u32`) |
 | 16 | Root-file range offset (`u32`) |
@@ -72,7 +74,7 @@ No general category table or custom catalog-header variation is implemented. New
 | 32 | Disk-name byte length (`u16`) |
 | 34 | Disk-name bytes, then variable disk metadata |
 
-The opaque header continues until the earliest referenced data range. The data area consists of the root file batch and each directory's metadata blob/file batch. The directory table runs to the exact end of the disk block.
+The opaque header continues until the earliest referenced data range. The root batch starts with its metadata blob, if present, followed by file records. Each directory batch has the same arrangement. The declared length of each range includes its blob. Just as in a directory batch, external root-file descriptions reference bytes within the root blob. The directory table runs to the exact end of the disk block.
 
 Within the observed disk metadata, counters follow the name: normal file count (including archive containers), archived-member count and ordinary-directory count. Counts are rebuilt on export. Additional disk properties and optional plugin-state bytes remain opaque for imported disks. A newly created disk gets a sanitized numeric header with no source serial number, source path or enabled plugin records. Unknown filesystem information is left empty.
 

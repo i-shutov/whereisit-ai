@@ -1899,86 +1899,104 @@ impl DesktopApp {
             let selection = self.selected.as_ref().map(|e| e.id);
             let mut chosen: Option<Entry> = None;
             let mut open_folder: Option<Entry> = None;
-            let mut table = TableBuilder::new(ui)
-                .striped(true)
-                .resizable(true)
-                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                .column(Column::initial(42.0).at_least(35.0))
-                .column(Column::remainder().at_least(180.0))
-                .column(Column::initial(86.0).at_least(72.0))
-                .column(Column::initial(92.0).at_least(80.0))
-                .column(Column::initial(235.0).at_least(90.0));
-            if self.reveal_selected {
-                if let Some(index) = rows.iter().position(|row| Some(row.id) == selection) {
-                    table = table.scroll_to_row(index, Some(egui::Align::Center));
-                    self.reveal_selected = false;
-                }
-            }
-            if self.active_request.is_none() {
-                if let Some(scroll) = self.restore_scroll.take() {
-                    table = table.vertical_scroll_offset(scroll);
-                }
-            }
-            let output = table
-                .header(24.0, |mut header| {
-                    header.col(|ui| {
-                        ui.strong("Disk");
-                    });
-                    header.col(|ui| {
-                        ui.strong(self.t("Имя", "Name"));
-                    });
-                    header.col(|ui| {
-                        ui.strong(self.t("Размер", "Size"));
-                    });
-                    header.col(|ui| {
-                        ui.strong(self.t("Тип", "Kind"));
-                    });
-                    header.col(|ui| {
-                        ui.strong(self.t("Путь", "Path"));
-                    });
+            // Scroll the headers and rows together when resized columns cannot fit.
+            let output = egui::ScrollArea::horizontal()
+                .id_salt("results_horizontal_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    let mut table = TableBuilder::new(ui)
+                        .striped(true)
+                        .resizable(true)
+                        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                        .column(Column::initial(42.0).at_least(35.0))
+                        .column(Column::initial(260.0).at_least(180.0).clip(true))
+                        .column(Column::initial(86.0).at_least(72.0))
+                        .column(Column::initial(92.0).at_least(80.0))
+                        .column(Column::initial(235.0).at_least(90.0).clip(true));
+                    if self.reveal_selected {
+                        if let Some(index) = rows.iter().position(|row| Some(row.id) == selection) {
+                            table = table.scroll_to_row(index, Some(egui::Align::Center));
+                            self.reveal_selected = false;
+                        }
+                    }
+                    if self.active_request.is_none() {
+                        if let Some(scroll) = self.restore_scroll.take() {
+                            table = table.vertical_scroll_offset(scroll);
+                        }
+                    }
+                    table
+                        .header(24.0, |mut header| {
+                            header.col(|ui| {
+                                ui.strong("Disk");
+                            });
+                            header.col(|ui| {
+                                ui.strong(self.t("Имя", "Name"));
+                            });
+                            header.col(|ui| {
+                                ui.strong(self.t("Размер", "Size"));
+                            });
+                            header.col(|ui| {
+                                ui.strong(self.t("Тип", "Kind"));
+                            });
+                            header.col(|ui| {
+                                ui.strong(self.t("Путь", "Path"));
+                            });
+                        })
+                        .body(|body| {
+                            body.rows(24.0, rows.len(), |mut row| {
+                                let entry = &rows[row.index()];
+                                row.col(|ui| {
+                                    ui.label(format!("#{}", entry.volume_id));
+                                });
+                                row.col(|ui| {
+                                    let name = if entry.is_directory() {
+                                        format!("▸ {}", entry.name)
+                                    } else {
+                                        entry.name.clone()
+                                    };
+                                    let result = ui
+                                        .add(
+                                            egui::Button::selectable(
+                                                selection == Some(entry.id),
+                                                &name,
+                                            )
+                                            .truncate(),
+                                        )
+                                        .on_hover_text(name);
+                                    if result.clicked() {
+                                        chosen = Some(entry.clone());
+                                    }
+                                    if result.double_clicked() && entry.is_directory() {
+                                        open_folder = Some(entry.clone());
+                                    }
+                                });
+                                row.col(|ui| {
+                                    ui.label(bytes_compact(entry.size));
+                                });
+                                row.col(|ui| {
+                                    let kind = if entry.is_directory() {
+                                        "Folder"
+                                    } else if ["mkv", "mp4", "avi", "m2ts", "mov", "webm"]
+                                        .iter()
+                                        .any(|ext| {
+                                            entry.name.to_lowercase().ends_with(&format!(".{ext}"))
+                                        })
+                                    {
+                                        "Video*"
+                                    } else {
+                                        "File"
+                                    };
+                                    ui.label(kind)
+                                        .on_hover_text("Video* = filename extension only");
+                                });
+                                row.col(|ui| {
+                                    ui.add(egui::Label::new(&entry.relative_path).truncate())
+                                        .on_hover_text(&entry.relative_path);
+                                });
+                            });
+                        })
                 })
-                .body(|body| {
-                    body.rows(24.0, rows.len(), |mut row| {
-                        let entry = &rows[row.index()];
-                        row.col(|ui| {
-                            ui.label(format!("#{}", entry.volume_id));
-                        });
-                        row.col(|ui| {
-                            let name = if entry.is_directory() {
-                                format!("▸ {}", entry.name)
-                            } else {
-                                entry.name.clone()
-                            };
-                            let result = ui.selectable_label(selection == Some(entry.id), name);
-                            if result.clicked() {
-                                chosen = Some(entry.clone());
-                            }
-                            if result.double_clicked() && entry.is_directory() {
-                                open_folder = Some(entry.clone());
-                            }
-                        });
-                        row.col(|ui| {
-                            ui.label(bytes_compact(entry.size));
-                        });
-                        row.col(|ui| {
-                            let kind = if entry.is_directory() {
-                                "Folder"
-                            } else if ["mkv", "mp4", "avi", "m2ts", "mov", "webm"]
-                                .iter()
-                                .any(|ext| entry.name.to_lowercase().ends_with(&format!(".{ext}")))
-                            {
-                                "Video*"
-                            } else {
-                                "File"
-                            };
-                            ui.label(kind)
-                                .on_hover_text("Video* = filename extension only");
-                        });
-                        row.col(|ui| {
-                            ui.label(&entry.relative_path);
-                        });
-                    });
-                });
+                .inner;
             self.results_scroll = output.state.clamped_offset().y;
             if let Some(entry) = chosen {
                 self.selected = Some(entry);
@@ -2583,6 +2601,94 @@ mod shortcut_tests {
         assert_eq!(volumes.iter().map(|v| v.id).collect::<Vec<_>>(), [1, 3, 9]);
         sort_register(&mut volumes, RegisterOrder::IndexedBytes);
         assert_eq!(volumes.iter().map(|v| v.id).collect::<Vec<_>>(), [3, 9, 1]);
+    }
+
+    #[test]
+    fn results_path_stays_visible_when_window_narrows() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.db = Some("synthetic.sqlite".into());
+        app.lang = Language::English;
+        app.page.items.push(
+            Entry::parse(&json!({
+                "id": 1, "volume_id": 1, "kind": "file", "size": 1,
+                "name": format!("{}.mkv", "ДлинноеИмя".repeat(24)),
+                "relative_path": format!("Папка/{}", "Вложенная/".repeat(24)),
+            }))
+            .unwrap(),
+        );
+        let first = app.page.items[0].clone();
+        app.page.items.extend((2..=250).map(|id| Entry {
+            id,
+            name: format!("Файл-{id}.mkv"),
+            relative_path: format!("Папка/Файл-{id}.mkv"),
+            ..first.clone()
+        }));
+
+        let mut paint = |width, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, 768.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |root| {
+                    app.disk_sidebar(root, &ctx);
+                    app.results_table(root, &ctx);
+                },
+            );
+            output.textures_delta.clear();
+            output.shapes
+        };
+        let fully_visible = |shapes: &[egui::epaint::ClippedShape], text: &str| {
+            shapes.iter().any(|clipped| match &clipped.shape {
+                egui::epaint::Shape::Text(shape) if shape.galley.text().starts_with(text) => {
+                    shape.pos.x >= clipped.clip_rect.min.x
+                        && shape.pos.x + shape.galley.size().x <= clipped.clip_rect.max.x
+                }
+                _ => false,
+            })
+        };
+        for width in [1366.0, 1366.0, 1024.0, 1024.0] {
+            let shapes = paint(width, Vec::new());
+            if width == 1024.0 {
+                for text in ["Path", "Папка/"] {
+                    assert!(
+                        fully_visible(&shapes, text),
+                        "{text} is clipped at width {width}"
+                    );
+                }
+            }
+        }
+        let wheel = |delta| {
+            vec![
+                egui::Event::PointerMoved(egui::pos2(550.0, 170.0)),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta,
+                    phase: egui::TouchPhase::Move,
+                    source: egui::MouseWheelSource::Unknown,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        let width = 880.0;
+        let _ = paint(width, Vec::new());
+        let shapes = paint(width, Vec::new());
+        assert!(!fully_visible(&shapes, "Папка/Вложенная/"));
+        let _ = paint(width, wheel(egui::vec2(-300.0, 0.0)));
+        let shapes = (0..30).map(|_| paint(width, Vec::new())).last().unwrap();
+        assert!(fully_visible(&shapes, "Path"));
+        assert!(fully_visible(&shapes, "Папка/Вложенная/"));
+
+        let _ = paint(width, wheel(egui::vec2(0.0, -500.0)));
+        for _ in 0..30 {
+            let _ = paint(width, Vec::new());
+        }
+        assert!(app.results_scroll > 0.0);
     }
 
     #[test]

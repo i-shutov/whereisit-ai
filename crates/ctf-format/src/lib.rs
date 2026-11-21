@@ -1,5 +1,9 @@
 //! Bounded reader and writer for observed WhereIsIt Catalog 3.00 records.
 use serde::{Deserialize, Serialize};
+
+// Older Atlas exports declared a 45-block table regardless of the actual block count.
+const LEGACY_PACKED_OFFSET_TABLE_SIZE: u32 = 0x0400_00b8;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CtfCatalog {
     pub name: String,
@@ -10,6 +14,7 @@ pub struct CtfCatalog {
 pub struct CtfDisk {
     pub name: String,
     pub entries: Vec<CtfEntry>,
+    /// Disk header followed by the root metadata blob, whose length is at header offset 4.
     pub opaque_header: Vec<u8>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -333,9 +338,16 @@ pub fn parse_ctf(bytes: &[u8], limits: &Limits) -> Result<CtfCatalog, CtfError> 
     }
     let n = r.u16()? as usize;
     let name = decode_name(r.take(n)?)?;
-    if r.take(5)? != [6, 184, 0, 0, 4] {
-        return Err(err(r.p - 5, "unsupported catalog settings"));
+    let table_start = r.p;
+    let table_type = r.u8()?;
+    let table_size = r.u32()?;
+    if table_type != 6
+        || (table_size != packed_offset_table_size(count as u32)
+            && table_size != LEGACY_PACKED_OFFSET_TABLE_SIZE)
+    {
+        return Err(err(table_start, "invalid catalog offset table extension"));
     }
+    // Use the actual block count for all reads, including when the old size was declared.
     let mut offsets = Vec::with_capacity(count);
     for _ in 0..count {
         offsets.push(r.u32()? as usize)
@@ -379,14 +391,15 @@ pub fn parse_ctf(bytes: &[u8], limits: &Limits) -> Result<CtfCatalog, CtfError> 
         if flags != 128 && flags != 192 {
             return Err(err(start + 2, "compressed/encrypted disk unsupported"));
         }
-        if r.u32()? != 0 {
-            return Err(err(start + 4, "unsupported disk header"));
-        }
+        let root_blob_len = r.u32()? as usize;
         if r.u32()? as usize != b.len() {
             return Err(err(start + 8, "disk length mismatch"));
         }
         let dirs = r.u32()? as usize;
-        let root = range(&mut r, 0, None)?;
+        if dirs > b.len() {
+            return Err(err(start + 12, "invalid directory table offset"));
+        }
+        let root = range(&mut r, root_blob_len, None)?;
         let n = r.u16()? as usize;
         let disk_name = decode_name(r.take(n)?)?;
         let mut entries = Vec::new();
@@ -474,7 +487,7 @@ pub fn parse_ctf(bytes: &[u8], limits: &Limits) -> Result<CtfCatalog, CtfError> 
         if first_data < r.p || first_data > dirs {
             return Err(err(start + first_data, "invalid data start"));
         }
-        let opaque_header = b[..first_data].to_vec();
+        let mut opaque_header = b[..first_data].to_vec();
         let mut intervals = Vec::new();
         for fr in &ranges {
             if fr.offset == u32::MAX as usize {
@@ -490,6 +503,9 @@ pub fn parse_ctf(bytes: &[u8], limits: &Limits) -> Result<CtfCatalog, CtfError> 
             if fr.offset < first_data || end > dirs || fr.blob > fr.len {
                 return Err(err(start + fr.offset, "invalid data range"));
             }
+            if fr.count == 0 && (fr.len != fr.blob || fr.names != 0) {
+                return Err(err(start + fr.offset, "invalid metadata-only range"));
+            }
             intervals.push((fr.offset, end));
         }
         intervals.sort_unstable();
@@ -502,6 +518,10 @@ pub fn parse_ctf(bytes: &[u8], limits: &Limits) -> Result<CtfCatalog, CtfError> 
         }
         if cursor != dirs {
             return Err(err(start + cursor, "unaccounted data before folder table"));
+        }
+        if root.blob != 0 {
+            // The validated range includes the leading blob.
+            opaque_header.extend_from_slice(&b[root.offset..root.offset + root.blob]);
         }
         for fr in ranges {
             if fr.count == 0 {
@@ -762,24 +782,32 @@ fn write_disk(d: &CtfDisk) -> Result<Vec<u8>, CtfError> {
     }
     let rawname = encode_name(&d.name)?;
     let namelen = u16::try_from(rawname.len()).map_err(|_| err(0, "disk name too long"))?;
-    let mut out = if d.opaque_header.len() >= 34 {
+    let (mut out, mut root_blob) = if d.opaque_header.len() >= 34 {
         let mut r = Reader::new(&d.opaque_header, 32);
         let old = r.u16()? as usize;
         r.take(old)?;
+        let blob_len = u32::from_le_bytes(d.opaque_header[4..8].try_into().unwrap()) as usize;
+        let blob_start = d
+            .opaque_header
+            .len()
+            .checked_sub(blob_len)
+            .filter(|&start| start >= r.p)
+            .ok_or_else(|| err(4, "root metadata blob exceeds opaque disk data"))?;
         let mut h = d.opaque_header[..32].to_vec();
         put16(&mut h, namelen);
         h.extend(&rawname);
-        h.extend(&d.opaque_header[r.p..]);
-        h
+        h.extend(&d.opaque_header[r.p..blob_start]);
+        (h, d.opaque_header[blob_start..].to_vec())
     } else {
-        generic_disk_header(&rawname)?
+        (generic_disk_header(&rawname)?, Vec::new())
     };
+    let header_len = out.len();
     let mut batches = Vec::<(Option<usize>, Range, u16, Vec<(u8, u32, Vec<u8>)>)>::new();
     for parent in std::iter::once(None).chain(order.iter().map(|x| Some(x.0))) {
         let (marker, mut ext, blob) = if let Some(i) = parent {
             folder_parts(&d.entries[i])?
         } else {
-            (0, Vec::new(), Vec::new())
+            (0, Vec::new(), std::mem::take(&mut root_blob))
         };
         if let Some(i) = parent {
             let old = ext
@@ -857,13 +885,18 @@ fn write_disk(d: &CtfDisk) -> Result<Vec<u8>, CtfError> {
         .iter()
         .filter(|x| x.kind == EntryKind::Directory)
         .count();
-    if count_base + 10 <= out.len() {
+    if count_base + 10 <= header_len {
         patch32(&mut out, count_base, files)?;
         patch32(&mut out, count_base + 4, archived)?;
         out[count_base + 8..count_base + 10].copy_from_slice(&(folders as u16).to_le_bytes());
     }
     Ok(out)
 }
+fn packed_offset_table_size(count: u32) -> u32 {
+    // The inline extension includes all four-byte offsets plus the sentinel.
+    0x0400_0000 | ((count + 1) * 4)
+}
+
 /// Rebuild catalog tables and file/folder records, preserving opaque extension blobs.
 /// Compatibility is restricted to the observed variant; caller must validate with WhereIsIt.
 pub fn write_ctf(c: &CtfCatalog) -> Result<Vec<u8>, CtfError> {
@@ -880,7 +913,8 @@ pub fn write_ctf(c: &CtfCatalog) -> Result<Vec<u8>, CtfError> {
     }
     put16(&mut out, n);
     out.extend(name);
-    out.extend([6, 184, 0, 0, 4]);
+    out.push(6);
+    put32(&mut out, packed_offset_table_size(u32::from(count16)));
     let table = out.len();
     out.resize(out.len() + count * 4, 0);
     put32(&mut out, u32::MAX);
@@ -1131,6 +1165,175 @@ mod tests {
             Some(&1)
         );
         assert_eq!(found.description_gap_flag_histogram.get("1c"), Some(&1));
+    }
+
+    #[test]
+    fn sixty_generated_disks_preserve_distinct_entries() {
+        let disks: Vec<_> = (1..=60)
+            .map(|i| CtfDisk {
+                name: format!("Synthetic disk {i:02}"),
+                entries: vec![item(&format!("Файл-{i:02}.txt"), None, EntryKind::File, i)],
+                opaque_header: Vec::new(),
+            })
+            .collect();
+        let original = CtfCatalog {
+            name: "Synthetic 60".into(),
+            disks,
+            opaque_trailer: Vec::new(),
+        };
+        let bytes = write_ctf(&original).unwrap();
+        let actual = parse_ctf(&bytes, &Limits::default()).unwrap();
+        assert_eq!(actual.disks.len(), 60);
+        for (index, disk) in actual.disks.iter().enumerate() {
+            let number = index as u64 + 1;
+            assert_eq!(disk.name, format!("Synthetic disk {number:02}"));
+            assert_eq!(disk.entries.len(), 1);
+            assert_eq!(disk.entries[0].name, format!("Файл-{number:02}.txt"));
+            assert_eq!(disk.entries[0].size, number);
+        }
+    }
+
+    #[test]
+    fn catalog_offset_table_size_matches_record_count_including_groups() {
+        for (count, size) in [(1, 8_u32), (2, 12), (44, 180), (45, 184), (60, 244)] {
+            let mut catalog = sample();
+            let includes_group = count == 2;
+            if includes_group {
+                catalog.opaque_trailer = vec![37, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, b'G', 0];
+            }
+            catalog.disks.resize(
+                count - usize::from(includes_group),
+                catalog.disks[0].clone(),
+            );
+            let mut bytes = write_ctf(&catalog).unwrap();
+            let extension_start = 20 + 2 * count + catalog.name.len();
+            assert_eq!(bytes[extension_start], 6);
+            assert_eq!(
+                bytes[extension_start + 1..extension_start + 5],
+                (0x0400_0000 | size).to_le_bytes()
+            );
+            let parsed = parse_ctf(&bytes, &Limits::default()).unwrap();
+            assert_eq!(parsed.disks.len(), catalog.disks.len());
+            assert_eq!(parsed.opaque_trailer, catalog.opaque_trailer);
+
+            bytes[extension_start + 1] ^= 4;
+            let error = parse_ctf(&bytes, &Limits::default()).unwrap_err();
+            assert_eq!(error.offset, extension_start);
+            assert_eq!(error.message, "invalid catalog offset table extension");
+        }
+    }
+
+    #[test]
+    fn reads_legacy_fixed_table_declaration_and_rewrites_the_correct_size() {
+        let catalog = sample();
+        let corrected = write_ctf(&catalog).unwrap();
+        let extension_start = 22 + catalog.name.len();
+        let mut legacy = corrected.clone();
+        legacy[extension_start + 1..extension_start + 5]
+            .copy_from_slice(&0x0400_00b8_u32.to_le_bytes());
+
+        let parsed = parse_ctf(&legacy, &Limits::default()).unwrap();
+        assert_eq!(parsed.disks.len(), 1);
+        assert_eq!(write_ctf(&parsed).unwrap(), corrected);
+
+        let sentinel = extension_start + 9;
+        legacy[sentinel] = 0;
+        let error = parse_ctf(&legacy, &Limits::default()).unwrap_err();
+        assert_eq!(error.offset, sentinel);
+        assert_eq!(error.message, "missing offset sentinel");
+    }
+
+    #[test]
+    fn root_blob_preserves_external_file_descriptions_and_unreferenced_bytes() {
+        let mut catalog = sample();
+        let disk = &mut catalog.disks[0];
+        let blob = b"\xff\x80description\0\xfe";
+        disk.opaque_header = generic_disk_header(disk.name.as_bytes()).unwrap();
+        disk.opaque_header[4..8].copy_from_slice(&(blob.len() as u32).to_le_bytes());
+        disk.opaque_header.extend(blob);
+        let file = &mut disk.entries[1];
+        let mut record = file_encode(file, &[]).unwrap().0;
+        record[0] |= 128;
+        write_extensions(
+            &mut record,
+            &[(1, 0x0800_000c, 2_u32.to_le_bytes().to_vec())],
+        );
+        file.description = "description".into();
+        file.opaque = record;
+        let mut sibling = file.clone();
+        sibling.name = "sibling.txt".into();
+        disk.entries.push(sibling);
+
+        let mut bytes = write_ctf(&catalog).unwrap();
+        let mut parsed = parse_ctf(&bytes, &Limits::default()).unwrap();
+        assert_eq!(parsed.disks[0].entries[1].description, "description");
+        assert!(parsed.disks[0].opaque_header.ends_with(blob));
+        assert_eq!(write_ctf(&parsed).unwrap(), bytes);
+        let original_sibling = parsed.disks[0].entries[2].opaque.clone();
+        parsed.disks[0].entries[1].description = "edited root description".into();
+        let edited = write_ctf(&parsed).unwrap();
+        let roundtrip = parse_ctf(&edited, &Limits::default()).unwrap();
+        assert_eq!(
+            roundtrip.disks[0].entries[1].description,
+            "edited root description"
+        );
+        assert_eq!(roundtrip.disks[0].entries[2].description, "description");
+        assert_eq!(roundtrip.disks[0].entries[2].opaque, original_sibling);
+        assert!(roundtrip.disks[0].opaque_header.ends_with(blob));
+
+        let table_offset = 27 + catalog.name.len();
+        let disk_offset =
+            u32::from_le_bytes(bytes[table_offset..table_offset + 4].try_into().unwrap()) as usize;
+        let root_len = bytes[disk_offset + 20..disk_offset + 24]
+            .try_into()
+            .unwrap();
+        let invalid_blob_len = u32::from_le_bytes(root_len) + 1;
+        bytes[disk_offset + 4..disk_offset + 8].copy_from_slice(&invalid_blob_len.to_le_bytes());
+        let error = parse_ctf(&bytes, &Limits::default()).unwrap_err();
+        assert_eq!(error.message, "invalid data range");
+
+        catalog.disks[0].opaque_header[4..8].copy_from_slice(&u32::MAX.to_le_bytes());
+        let error = write_ctf(&catalog).unwrap_err();
+        assert_eq!(error.message, "root metadata blob exceeds opaque disk data");
+    }
+
+    #[test]
+    fn rejects_directory_table_past_disk_end_with_no_root_files() {
+        let mut catalog = sample();
+        catalog.disks[0].entries.clear();
+        let mut bytes = write_ctf(&catalog).unwrap();
+        let table_offset = 27 + catalog.name.len();
+        let disk_offset =
+            u32::from_le_bytes(bytes[table_offset..table_offset + 4].try_into().unwrap()) as usize;
+        bytes[disk_offset + 12..disk_offset + 16].copy_from_slice(&u32::MAX.to_le_bytes());
+        let error = parse_ctf(&bytes, &Limits::default()).unwrap_err();
+        assert_eq!(error.offset, disk_offset + 12);
+        assert_eq!(error.message, "invalid directory table offset");
+    }
+
+    #[test]
+    fn metadata_only_root_range_requires_exact_blob_length_and_zero_name_bytes() {
+        let mut catalog = sample();
+        let disk = &mut catalog.disks[0];
+        disk.entries.clear();
+        let blob = [0xff, 0x80];
+        disk.opaque_header = generic_disk_header(disk.name.as_bytes()).unwrap();
+        disk.opaque_header[4..8].copy_from_slice(&(blob.len() as u32).to_le_bytes());
+        disk.opaque_header.extend(blob);
+
+        let bytes = write_ctf(&catalog).unwrap();
+        let parsed = parse_ctf(&bytes, &Limits::default()).unwrap();
+        assert_eq!(write_ctf(&parsed).unwrap(), bytes);
+        let table_offset = 27 + catalog.name.len();
+        let disk_offset =
+            u32::from_le_bytes(bytes[table_offset..table_offset + 4].try_into().unwrap()) as usize;
+        for field_offset in [4, 28] {
+            let mut malformed = bytes.clone();
+            malformed[disk_offset + field_offset..disk_offset + field_offset + 4]
+                .copy_from_slice(&1_u32.to_le_bytes());
+            let error = parse_ctf(&malformed, &Limits::default()).unwrap_err();
+            assert_eq!(error.message, "invalid metadata-only range");
+        }
     }
 
     #[test]
