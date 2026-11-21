@@ -164,6 +164,7 @@ pub struct DesktopApp {
     categories_loaded: bool,
     category_assigned: HashSet<i64>,
     category_assignments_ready: bool,
+    category_result_refresh_pending: bool,
     category_name_input: String,
     category_parent_id: Option<i64>,
     create_catalog: bool,
@@ -261,6 +262,7 @@ impl DesktopApp {
             categories_loaded: false,
             category_assigned: HashSet::new(),
             category_assignments_ready: false,
+            category_result_refresh_pending: false,
             category_name_input: String::new(),
             category_parent_id: None,
             create_catalog: false,
@@ -744,6 +746,18 @@ impl DesktopApp {
         );
     }
 
+    /// After a category membership write, the existing search/folder result
+    /// table must be read again from SQLite. Never display stale category hits.
+    /// The selection survives only when the entry still matches that query.
+    fn refresh_after_category_write(&mut self, ctx: &egui::Context) {
+        self.category_assigned.clear();
+        self.category_assignments_ready = false;
+        self.category_result_refresh_pending = true;
+        self.restore_selection = self.selected.clone();
+        self.page = Page::default();
+        self.load_page(ctx);
+    }
+
     fn unassign_category(&mut self, entry_id: i64, category_id: i64, ctx: &egui::Context) {
         if self.active_request.is_some()
             || !self.category_assignments_ready
@@ -1065,6 +1079,15 @@ impl DesktopApp {
             } else if matches!(&reply.purpose, Purpose::EntryCategoryIds { .. }) {
                 self.category_assigned.clear();
                 self.category_assignments_ready = false;
+            } else if self.category_result_refresh_pending
+                && matches!(&reply.purpose, Purpose::Page { .. })
+            {
+                self.category_result_refresh_pending = false;
+                self.category_assigned.clear();
+                self.category_assignments_ready = false;
+                self.restore_selection = None;
+                self.selected = None;
+                self.page = Page::default();
             }
             if matches!(&reply.purpose, Purpose::DiskPreferences) {
                 self.preferences_ready = false;
@@ -1112,6 +1135,7 @@ impl DesktopApp {
                 self.categories_loaded = false;
                 self.category_assigned.clear();
                 self.category_assignments_ready = false;
+                self.category_result_refresh_pending = false;
                 self.category_parent_id = None;
                 self.category_name_input.clear();
                 self.show_categories_dialog = false;
@@ -1313,7 +1337,7 @@ impl DesktopApp {
                     format!("Категория #{category_id} назначена записи #{entry_id}"),
                     format!("Category #{category_id} assigned to entry #{entry_id}"),
                 );
-                self.load_assigned_categories(ctx);
+                self.refresh_after_category_write(ctx);
             }
             Purpose::UnassignCategory {
                 entry_id,
@@ -1333,7 +1357,7 @@ impl DesktopApp {
                         format!("Category #{category_id} removed from entry #{entry_id}"),
                     );
                 }
-                self.load_assigned_categories(ctx);
+                self.refresh_after_category_write(ctx);
             }
             Purpose::Export { path } => {
                 let rows = data.get("rows").and_then(Value::as_u64).unwrap_or(0);
@@ -1360,9 +1384,34 @@ impl DesktopApp {
                             .find(|item| item.id == selection.id)
                             .cloned()
                     });
+                    let empty_page = page.items.is_empty();
                     self.page = page;
+                    if self.category_result_refresh_pending {
+                        if empty_page && self.offset > 0 {
+                            // The mutation might have removed the last hit on
+                            // this page. Step back instead of showing an empty
+                            // high-offset result as if it were current.
+                            self.offset = self.offset.saturating_sub(PAGE_LIMIT);
+                            self.selected = None;
+                            self.restore_selection = None;
+                            self.load_page(ctx);
+                        } else {
+                            self.category_result_refresh_pending = false;
+                            if self.show_categories_dialog && self.selected.is_some() {
+                                self.load_assigned_categories(ctx);
+                            } else {
+                                self.category_assigned.clear();
+                                self.category_assignments_ready = false;
+                            }
+                        }
+                    }
                 }
-                Err(e) => self.error = Some(e),
+                Err(e) => {
+                    self.category_result_refresh_pending = false;
+                    self.category_assigned.clear();
+                    self.category_assignments_ready = false;
+                    self.error = Some(e);
+                }
             },
         }
     }
@@ -2551,6 +2600,81 @@ mod shortcut_tests {
         assert!(app.active_request.is_none());
         assert!(!app.category_assignments_ready);
         assert!(app.category_assigned.is_empty());
+    }
+
+    #[test]
+    fn membership_write_invalidates_stale_results_and_selected_entry() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        let entry = Entry {
+            id: 19,
+            volume_id: 2,
+            parent_id: None,
+            name: "Кино.mkv".into(),
+            relative_path: "Кино.mkv".into(),
+            kind: "file".into(),
+            size: 42,
+            modified_unix: None,
+            description: String::new(),
+            tags: String::new(),
+        };
+        app.route = Route::Search {
+            query: "category_id:7".into(),
+            volume_id: None,
+        };
+        app.selected = Some(entry.clone());
+        app.page.items = vec![entry];
+        app.category_assigned.insert(7);
+        app.category_assignments_ready = true;
+        app.refresh_after_category_write(&ctx);
+        assert!(app.page.items.is_empty(), "stale category results must disappear");
+        assert!(app.category_result_refresh_pending);
+        assert!(!app.category_assignments_ready);
+        assert!(app.category_assigned.is_empty());
+        assert_eq!(app.restore_selection.as_ref().map(|e| e.id), Some(19));
+
+        // SQLite no longer returns the unassigned item. UI selection must
+        // disappear, and reloading the result must not claim an old category.
+        app.active_request = Some(33);
+        app.apply_reply(
+            crate::bridge::Reply {
+                id: 33,
+                purpose: Purpose::Page {
+                    route: app.route.clone(),
+                },
+                response: json!({"ok":true, "data":{"items":[],
+                    "offset":0, "limit":250, "has_more":false}}),
+            },
+            &ctx,
+        );
+        assert!(!app.category_result_refresh_pending);
+        assert!(app.selected.is_none());
+        assert!(app.page.items.is_empty());
+        assert!(!app.category_assignments_ready);
+    }
+
+    #[test]
+    fn membership_refresh_steps_back_from_empty_high_offset_page() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.route = Route::Search {
+            query: "category_id:7".into(),
+            volume_id: None,
+        };
+        app.offset = 250;
+        app.category_result_refresh_pending = true;
+        app.active_request = Some(34);
+        app.apply_reply(
+            crate::bridge::Reply {
+                id: 34,
+                purpose: Purpose::Page { route: app.route.clone() },
+                response: json!({"ok":true, "data":{"items":[],
+                    "offset":250, "limit":250, "has_more":false}}),
+            },
+            &ctx,
+        );
+        assert_eq!(app.offset, 0);
+        assert!(app.category_result_refresh_pending);
     }
 
     #[test]
