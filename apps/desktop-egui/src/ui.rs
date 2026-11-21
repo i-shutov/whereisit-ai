@@ -1915,9 +1915,10 @@ impl DesktopApp {
                     });
                     ui.separator();
                     ui.strong(self.t("Новая категория", "New category"));
+                    let name_hint = self.t("Название", "Name");
                     ui.add(
                         egui::TextEdit::singleline(&mut self.category_name_input)
-                            .hint_text(self.t("Название", "Name"))
+                            .hint_text(name_hint)
                             .desired_width(f32::INFINITY),
                     );
                     let parent_name = self.category_parent_id.and_then(|id| {
