@@ -611,8 +611,10 @@ impl Catalog {
             let mut stmt = tx.prepare(
                 "SELECT category_id FROM entry_categories WHERE entry_id=?1 ORDER BY category_id",
             )?;
-            stmt.query_map([entry_id], |row| row.get::<_, i64>(0))?
-                .collect::<std::result::Result<Vec<_>, _>>()?
+            let collected = stmt
+                .query_map([entry_id], |row| row.get::<_, i64>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            collected
         };
         tx.commit()?;
         Ok(json!(ids))
