@@ -789,6 +789,7 @@ impl DesktopApp {
         };
         self.selected_volume = None;
         self.offset = 0;
+        self.page = Page::default();
         self.selected = None;
         self.restore_selection = None;
         self.reveal_selected = false;
@@ -2361,13 +2362,13 @@ mod shortcut_tests {
             name: "Семейное Кино".into(),
         };
         app.navigate_category(&category, &ctx);
-        assert_eq!(app.query_input, "category:\"Семейное Кино\"");
+        assert_eq!(app.query_input, "category_id:3");
         assert_eq!(app.selected_volume, None);
         assert_eq!(app.history.len(), 1);
         assert_eq!(
             app.route,
             Route::Search {
-                query: "category:\"Семейное Кино\"".into(),
+                query: "category_id:3".into(),
                 volume_id: None,
             }
         );

@@ -39,11 +39,9 @@ impl Category {
         })
     }
 
-    /// The query parser accepts quoted field values and escaped quotes/backslashes.
-    /// Search stays in atlas-service/SQLite and includes recorded file descendants.
+    /// Categories can share a name. The ID is the only stable search address.
     pub fn search_query(&self) -> String {
-        let quoted = self.name.replace('\\', "\\\\").replace('"', "\\\"");
-        format!("category:\"{quoted}\"")
+        format!("category_id:{}", self.id)
     }
 }
 
@@ -94,7 +92,7 @@ mod tests {
         ]);
         let parsed = parse_categories(&list).unwrap();
         assert_eq!(parsed[1].parent_id, Some(2));
-        assert_eq!(parsed[0].search_query(), "category:\"Кино\"");
+        assert_eq!(parsed[0].search_query(), "category_id:2");
         assert!(parse_categories(&json!([{"id":2,"parent_id":2,"name":"Cycle"}])).is_err());
         assert!(parse_categories(&json!([
             {"id":2,"parent_id":null,"name":"A"},
@@ -104,7 +102,7 @@ mod tests {
     }
 
     #[test]
-    fn category_query_quotes_unicode_and_escapes_special_characters() {
+    fn category_query_uses_id_not_ambiguous_unicode_name() {
         let category = Category {
             id: 4,
             parent_id: None,
@@ -112,7 +110,7 @@ mod tests {
         };
         assert_eq!(
             category.search_query(),
-            "category:\"Sci-Fi / Кино \\\"Director's\\\\cut\\\"\""
+            "category_id:4"
         );
         assert_eq!(new_name("  Кино  "), Ok("Кино"));
         assert_eq!(new_name(" \t\n"), Err("empty"));
@@ -166,5 +164,45 @@ mod tests {
             call(assign_request(db.to_str().unwrap(), entry_id, category_id))["ok"],
             true
         );
+        // Two distinct categories may share an identical display name.
+        let home = call(create_request(db.to_str().unwrap(), "Видео", None));
+        let work = call(create_request(db.to_str().unwrap(), "Видео", None));
+        assert_eq!(home["ok"], true, "{home}");
+        assert_eq!(work["ok"], true, "{work}");
+        let home_id = home["data"]["id"].as_i64().unwrap();
+        let work_id = work["data"]["id"].as_i64().unwrap();
+        assert_ne!(home_id, work_id);
+        assert_eq!(
+            call(assign_request(db.to_str().unwrap(), entry_id, home_id))["ok"],
+            true
+        );
+        let home_results = call(json!({"op":"search_fast","db":db,
+            "query":format!("category_id:{home_id}"),"offset":0,"limit":250}));
+        let work_results = call(json!({"op":"search_fast","db":db,
+            "query":format!("category_id:{work_id}"),"offset":0,"limit":250}));
+        assert_eq!(home_results["ok"], true, "{home_results}");
+        assert_eq!(work_results["ok"], true, "{work_results}");
+        assert_eq!(home_results["data"]["items"][0]["id"], entry_id);
+        assert_eq!(work_results["data"]["items"].as_array().unwrap().len(), 0);
+
+        // A selected parent includes assignments made to child categories.
+        let parent = call(create_request(db.to_str().unwrap(), "Архив", None));
+        let parent_id = parent["data"]["id"].as_i64().unwrap();
+        let child = call(create_request(db.to_str().unwrap(), "Видео", Some(parent_id)));
+        let child_id = child["data"]["id"].as_i64().unwrap();
+        assert_eq!(
+            call(assign_request(db.to_str().unwrap(), entry_id, child_id))["ok"],
+            true
+        );
+        let inherited = call(json!({"op":"search_fast","db":db,
+            "query":format!("category_id:{parent_id}"),"offset":0,"limit":250}));
+        assert_eq!(inherited["ok"], true, "{inherited}");
+        assert_eq!(inherited["data"]["items"][0]["id"], entry_id);
+        for invalid in ["category_id:0", "category_id:-5", "category_id:unknown"] {
+            let result = call(json!({"op":"search_fast","db":db,
+                "query":invalid,"offset":0,"limit":250}));
+            assert_eq!(result["ok"], false, "Accepted invalid {invalid}: {result}");
+        }
+
     }
 }
