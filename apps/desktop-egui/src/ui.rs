@@ -1,6 +1,7 @@
 //! PR58-first native workbench. Every user-visible catalog fact comes from atlas-service;
 //! no fictitious USB mount badges, byte-duplicate claims or on-disk delete operations.
 use crate::bridge::{new_scan_job_id, scan_request, CommandBus, ExportKind, Purpose, Route};
+use crate::categories::{self, parse_categories, Category};
 use crate::model::{bytes_compact, parse_volumes, DiskPreferences, Entry, Page, Volume};
 use crate::shelf::{valid_label, ShelfContext, ShelfSnapshot};
 use eframe::egui::{self, Color32, RichText};
@@ -158,6 +159,15 @@ pub struct DesktopApp {
     disk_filter: String,
     register_order: RegisterOrder,
     show_catalog_dialog: bool,
+    show_categories_dialog: bool,
+    categories: Vec<Category>,
+    categories_loaded: bool,
+    category_assigned: HashSet<i64>,
+    category_assignments_ready: bool,
+    category_assignments_error: bool,
+    category_result_refresh_pending: bool,
+    category_name_input: String,
+    category_parent_id: Option<i64>,
     create_catalog: bool,
     show_export_dialog: bool,
     show_scan_dialog: bool,
@@ -188,6 +198,7 @@ pub struct DesktopApp {
 impl DesktopApp {
     fn dialog_open(&self) -> bool {
         self.show_catalog_dialog
+            || self.show_categories_dialog
             || self.show_export_dialog
             || self.show_scan_dialog
             || self.show_disk_properties.is_some()
@@ -247,6 +258,15 @@ impl DesktopApp {
             disk_filter: String::new(),
             register_order: RegisterOrder::Id,
             show_catalog_dialog: false,
+            show_categories_dialog: false,
+            categories: Vec::new(),
+            categories_loaded: false,
+            category_assigned: HashSet::new(),
+            category_assignments_ready: false,
+            category_assignments_error: false,
+            category_result_refresh_pending: false,
+            category_name_input: String::new(),
+            category_parent_id: None,
             create_catalog: false,
             show_export_dialog: false,
             show_scan_dialog: false,
@@ -704,6 +724,159 @@ impl DesktopApp {
         }
     }
 
+    fn load_categories(&mut self, ctx: &egui::Context) {
+        self.categories_loaded = false;
+        self.categories.clear();
+        if let Some(db) = self.db.clone() {
+            self.queue(Purpose::Categories, categories::list_request(&db), ctx);
+        }
+    }
+
+    fn load_assigned_categories(&mut self, ctx: &egui::Context) {
+        self.category_assigned.clear();
+        self.category_assignments_ready = false;
+        self.category_assignments_error = false;
+        let (Some(db), Some(entry_id)) = (
+            self.db.clone(),
+            self.selected.as_ref().map(|entry| entry.id),
+        ) else {
+            return;
+        };
+        self.queue(
+            Purpose::EntryCategoryIds { entry_id },
+            categories::list_assigned_request(&db, entry_id),
+            ctx,
+        );
+    }
+
+    /// Reload results from SQLite after a category write or a stale-entry reply.
+    /// An existing selection survives only when the refreshed page contains it.
+    fn refresh_category_results(&mut self, ctx: &egui::Context) {
+        self.category_assigned.clear();
+        self.category_assignments_ready = false;
+        self.category_assignments_error = false;
+        self.category_result_refresh_pending = true;
+        self.restore_selection = self.selected.clone();
+        self.page = Page::default();
+        self.load_page(ctx);
+    }
+
+    fn unassign_category(&mut self, entry_id: i64, category_id: i64, ctx: &egui::Context) {
+        if self.active_request.is_some()
+            || !self.category_assignments_ready
+            || !self.category_assigned.contains(&category_id)
+            || !self
+                .selected
+                .as_ref()
+                .is_some_and(|entry| entry.id == entry_id)
+        {
+            return;
+        }
+        let Some(db) = self.db.clone() else {
+            return;
+        };
+        self.queue(
+            Purpose::UnassignCategory {
+                entry_id,
+                category_id,
+            },
+            categories::unassign_request(&db, entry_id, category_id),
+            ctx,
+        );
+    }
+
+    fn create_category(&mut self, ctx: &egui::Context) {
+        if self.active_request.is_some() || !self.categories_loaded {
+            return;
+        }
+        let name = match categories::new_name(&self.category_name_input) {
+            Ok(name) => name.to_owned(),
+            Err(_) => {
+                self.error = Some(
+                    self.t(
+                        "Название категории должно содержать 1–80 печатных символов.",
+                        "Category name must contain 1–80 printable characters.",
+                    )
+                    .to_owned(),
+                );
+                return;
+            }
+        };
+        let Some(db) = self.db.clone() else {
+            return;
+        };
+        self.queue(
+            Purpose::CreateCategory { name: name.clone() },
+            categories::create_request(&db, &name, self.category_parent_id),
+            ctx,
+        );
+    }
+
+    fn assign_category(&mut self, entry_id: i64, category_id: i64, ctx: &egui::Context) {
+        if self.active_request.is_some()
+            || entry_id <= 0
+            || category_id <= 0
+            || !self.category_assignments_ready
+            || self.category_assigned.contains(&category_id)
+            || !self
+                .selected
+                .as_ref()
+                .is_some_and(|entry| entry.id == entry_id)
+        {
+            return;
+        }
+        let Some(db) = self.db.clone() else {
+            return;
+        };
+        if !self
+            .categories
+            .iter()
+            .any(|category| category.id == category_id)
+        {
+            return;
+        }
+        self.queue(
+            Purpose::AssignCategory {
+                entry_id,
+                category_id,
+            },
+            categories::assign_request(&db, entry_id, category_id),
+            ctx,
+        );
+    }
+
+    fn navigate_category(&mut self, category: &Category, ctx: &egui::Context) {
+        if self.active_request.is_some()
+            || !self.categories_loaded
+            || !self
+                .categories
+                .iter()
+                .any(|listed| listed.id == category.id)
+        {
+            return;
+        }
+        self.history.push((
+            self.route.clone(),
+            self.offset,
+            self.selected.clone(),
+            self.selected_volume,
+            self.results_scroll,
+        ));
+        self.query_input = category.search_query();
+        self.route = Route::Search {
+            query: self.query_input.clone(),
+            volume_id: None,
+        };
+        self.selected_volume = None;
+        self.offset = 0;
+        self.page = Page::default();
+        self.selected = None;
+        self.restore_selection = None;
+        self.reveal_selected = false;
+        self.restore_scroll = None;
+        self.load_page(ctx);
+    }
+
     fn navigate_search(&mut self, ctx: &egui::Context) {
         if self.active_request.is_some() {
             return;
@@ -782,6 +955,9 @@ impl DesktopApp {
         if let Some((route, offset, selection, selected_volume, scroll)) = self.history.pop() {
             self.reveal_selected = false;
             self.restore_scroll = Some(scroll);
+            if let Route::Search { query, .. } = &route {
+                self.query_input = query.clone();
+            }
             self.route = route;
             self.offset = offset;
             self.selected = None;
@@ -891,6 +1067,10 @@ impl DesktopApp {
             return;
         }
         if reply.response.get("ok").and_then(Value::as_bool) != Some(true) {
+            let code = reply
+                .response
+                .pointer("/error/code")
+                .and_then(Value::as_str);
             let message = reply
                 .response
                 .pointer("/error/message")
@@ -898,13 +1078,34 @@ impl DesktopApp {
                 .unwrap_or("Unknown service error");
             let error_message = message.to_owned();
             self.status = StatusText::new("Операция отклонена", "Operation refused");
+            if matches!(&reply.purpose, Purpose::Categories) {
+                self.categories.clear();
+                self.categories_loaded = false;
+                self.category_assigned.clear();
+                self.category_assignments_ready = false;
+            } else if matches!(&reply.purpose, Purpose::EntryCategoryIds { .. }) {
+                self.category_assigned.clear();
+                self.category_assignments_ready = false;
+                self.category_assignments_error = true;
+            } else if matches!(
+                &reply.purpose,
+                Purpose::AssignCategory { .. } | Purpose::UnassignCategory { .. }
+            ) && code == Some("not_found")
+            {
+                self.selected = None;
+                self.refresh_category_results(ctx);
+            } else if matches!(&reply.purpose, Purpose::Page { .. }) {
+                self.category_result_refresh_pending = false;
+                self.category_assigned.clear();
+                self.category_assignments_ready = false;
+                self.restore_selection = None;
+                self.restore_scroll = None;
+                self.selected = None;
+                self.page = Page::default();
+            }
             if matches!(&reply.purpose, Purpose::DiskPreferences) {
                 self.preferences_ready = false;
-                self.legacy_shelf_editable = reply
-                    .response
-                    .pointer("/error/code")
-                    .and_then(Value::as_str)
-                    == Some("schema_version");
+                self.legacy_shelf_editable = code == Some("schema_version");
                 self.disk_preferences.clear();
                 self.shelf_collisions.clear();
                 self.load_shelf_labels(ctx, true);
@@ -940,6 +1141,15 @@ impl DesktopApp {
                 self.history.clear();
                 self.offset = 0;
                 self.selected = None;
+                self.categories.clear();
+                self.categories_loaded = false;
+                self.category_assigned.clear();
+                self.category_assignments_ready = false;
+                self.category_assignments_error = false;
+                self.category_result_refresh_pending = false;
+                self.category_parent_id = None;
+                self.category_name_input.clear();
+                self.show_categories_dialog = false;
                 self.load_volumes(ctx);
             }
             Purpose::Volumes => match parse_volumes(data) {
@@ -1080,6 +1290,88 @@ impl DesktopApp {
             Purpose::ScanProgress { .. } | Purpose::ScanCancel { .. } => {
                 unreachable!("Auxiliary scan reply must be processed before active worker");
             }
+            Purpose::Categories => match parse_categories(data) {
+                Ok(categories) => {
+                    self.categories = categories;
+                    self.categories_loaded = true;
+                    if !self
+                        .category_parent_id
+                        .is_none_or(|id| self.categories.iter().any(|c| c.id == id))
+                    {
+                        self.category_parent_id = None;
+                    }
+                    if self.show_categories_dialog && self.selected.is_some() {
+                        self.load_assigned_categories(ctx);
+                    }
+                }
+                Err(error) => {
+                    self.categories.clear();
+                    self.categories_loaded = false;
+                    self.category_assigned.clear();
+                    self.category_assignments_ready = false;
+                    self.error = Some(error);
+                }
+            },
+            Purpose::EntryCategoryIds { entry_id } => {
+                if self
+                    .selected
+                    .as_ref()
+                    .is_some_and(|entry| entry.id == entry_id)
+                {
+                    match categories::parse_assignment_ids(data) {
+                        Ok(ids) => {
+                            self.category_assigned = ids;
+                            self.category_assignments_ready = true;
+                            self.category_assignments_error = false;
+                        }
+                        Err(error) => {
+                            self.category_assigned.clear();
+                            self.category_assignments_ready = false;
+                            self.category_assignments_error = true;
+                            self.error = Some(error);
+                        }
+                    }
+                }
+            }
+            Purpose::CreateCategory { name } => {
+                self.category_name_input.clear();
+                self.category_parent_id = None;
+                self.status = StatusText::new(
+                    format!("Категория «{name}» создана"),
+                    format!("Category “{name}” created"),
+                );
+                self.load_categories(ctx);
+            }
+            Purpose::AssignCategory {
+                entry_id,
+                category_id,
+            } => {
+                self.status = StatusText::new(
+                    format!("Категория #{category_id} назначена записи #{entry_id}"),
+                    format!("Category #{category_id} assigned to entry #{entry_id}"),
+                );
+                self.refresh_category_results(ctx);
+            }
+            Purpose::UnassignCategory {
+                entry_id,
+                category_id,
+            } => {
+                if data["removed"] != true {
+                    self.error = Some(
+                        self.t(
+                            "Назначение уже отсутствует; обновляем список.",
+                            "Assignment already absent; refreshing membership.",
+                        )
+                        .to_owned(),
+                    );
+                } else {
+                    self.status = StatusText::new(
+                        format!("Назначение категории #{category_id} снято для записи #{entry_id}"),
+                        format!("Category #{category_id} removed from entry #{entry_id}"),
+                    );
+                }
+                self.refresh_category_results(ctx);
+            }
             Purpose::Export { path } => {
                 let rows = data.get("rows").and_then(Value::as_u64).unwrap_or(0);
                 self.status = StatusText::new(
@@ -1091,6 +1383,19 @@ impl DesktopApp {
                 Ok(page) => {
                     self.route = route;
                     self.offset = page.offset;
+                    if page.items.is_empty() && page.offset > 0 {
+                        // Other processes can remove the last hit before Back
+                        // returns to a formerly populated high-offset page.
+                        // The same guard applies after category edits and to
+                        // regular navigation, not just a pending mutation.
+                        self.offset = self.offset.saturating_sub(PAGE_LIMIT);
+                        self.page = Page::default();
+                        self.selected = None;
+                        self.restore_selection = None;
+                        self.restore_scroll = None;
+                        self.load_page(ctx);
+                        return;
+                    }
                     let start =
                         page.offset
                             .saturating_add(if page.items.is_empty() { 0 } else { 1 });
@@ -1106,8 +1411,28 @@ impl DesktopApp {
                             .cloned()
                     });
                     self.page = page;
+                    if self.category_result_refresh_pending {
+                        self.category_result_refresh_pending = false;
+                        if self.show_categories_dialog && self.selected.is_some() {
+                            self.load_assigned_categories(ctx);
+                        } else {
+                            self.category_assigned.clear();
+                            self.category_assignments_ready = false;
+                        }
+                    }
                 }
-                Err(e) => self.error = Some(e),
+                Err(e) => {
+                    // A malformed success response must fail closed exactly
+                    // like an explicit backend error: no stale inspector row.
+                    self.category_result_refresh_pending = false;
+                    self.category_assigned.clear();
+                    self.category_assignments_ready = false;
+                    self.selected = None;
+                    self.restore_selection = None;
+                    self.restore_scroll = None;
+                    self.page = Page::default();
+                    self.error = Some(e);
+                }
             },
         }
     }
@@ -1178,6 +1503,21 @@ impl DesktopApp {
                         ui.close();
                     }
                 });
+                if ui
+                    .add_enabled(
+                        self.db.is_some() && self.active_request.is_none(),
+                        egui::Button::new(self.t("Категории", "Categories")),
+                    )
+                    .clicked()
+                {
+                    self.category_name_input.clear();
+                    self.category_parent_id = None;
+                    self.category_assigned.clear();
+                    self.category_assignments_ready = false;
+                    self.error = None;
+                    self.show_categories_dialog = true;
+                    self.load_categories(ctx);
+                }
                 ui.menu_button(self.t("Вид", "View"), |ui| {
                     if ui.button(self.t("Все диски", "All disks")).clicked() {
                         self.navigate_disk(None, ctx);
@@ -1695,6 +2035,214 @@ impl DesktopApp {
                 });
             self.show_scan_dialog &= open;
         }
+        if self.show_categories_dialog {
+            let mut open = self.show_categories_dialog;
+            egui::Window::new(self.t("Категории каталога", "Catalog categories"))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(true)
+                .default_width(560.0)
+                .show(ctx, |ui| {
+                    ui.label(self.t(
+                        "Категории и назначения изменяют открытый SQLite. Исходный CTF не открывается.",
+                        "Categories and assignments modify the open SQLite. Original CTF is not opened.",
+                    ));
+                    let selected = self.selected.clone();
+                    let catalog_categories = self.categories.clone();
+                    let category_by_id: HashMap<i64, &Category> = catalog_categories
+                        .iter()
+                        .map(|category| (category.id, category))
+                        .collect();
+                    if let Some(entry) = &selected {
+                        ui.label(format!(
+                            "{}: #{} · {}",
+                            self.t("Выбрана запись", "Selected entry"),
+                            entry.id,
+                            entry.name
+                        ));
+                        ui.label(format!(
+                            "{} #{} · {}",
+                            self.t("Диск каталога", "Catalog disk"),
+                            entry.volume_id,
+                            entry.relative_path
+                        ));
+                        if entry.is_directory() {
+                            ui.label(self.t(
+                                "Назначение папке также включит её вложенные записи в категорийный поиск.",
+                                "Assigning a folder also includes its recorded descendants in category search.",
+                            ));
+                        }
+                        if self.category_assignments_ready {
+                            ui.label(format!(
+                                "{}: {}",
+                                self.t("Прямых назначений", "Direct assignments"),
+                                self.category_assigned.len()
+                            ));
+                            ui.label(self.t(
+                                "Наследованные через папки/подкатегории совпадения здесь не отмечены.",
+                                "Inherited folder/subcategory matches are not shown as direct assignments.",
+                            ));
+                        } else if self.category_assignments_error {
+                            ui.colored_label(
+                                Color32::from_rgb(224, 96, 88),
+                                self.t(
+                                    "Назначения не загружены. Изменения отключены.",
+                                    "Assignments unavailable. Changes are disabled.",
+                                ),
+                            );
+                            if ui
+                                .add_enabled(
+                                    self.active_request.is_none(),
+                                    egui::Button::new(self.t("Повторить загрузку", "Retry loading")),
+                                )
+                                .clicked()
+                            {
+                                self.load_assigned_categories(ctx);
+                            }
+                        } else {
+                            ui.label(self.t("Загрузка назначений…", "Loading assignments…"));
+                        }
+                    } else {
+                        ui.label(self.t(
+                            "Чтобы назначить категорию, выделите файл в результатах до открытия окна.",
+                            "To assign a category, select a result before opening this dialog.",
+                        ));
+                    }
+                    ui.separator();
+                    if self.categories_loaded && catalog_categories.is_empty() {
+                        ui.label(self.t("Категорий пока нет.", "No categories yet."));
+                    }
+                    if !self.categories_loaded && self.active_request.is_none() {
+                        ui.label(self.t(
+                            "Справочник категорий не загружен; переходы и изменения отключены.",
+                            "Categories not loaded; navigation and edits are disabled.",
+                        ));
+                        if ui.button(self.t("Повторить загрузку", "Retry loading")).clicked() {
+                            self.load_categories(ctx);
+                        }
+                    }
+                    egui::ScrollArea::vertical().max_height(260.0).show_rows(
+                        ui,
+                        28.0,
+                        catalog_categories.len(),
+                        |ui, visible_rows| {
+                        for row in visible_rows {
+                            let category = &catalog_categories[row];
+                            ui.horizontal(|ui| {
+                                let title = categories::display_path(category, &category_by_id);
+                                if ui
+                                    .add_enabled(
+                                        self.active_request.is_none() && self.categories_loaded,
+                                        egui::Button::new(title),
+                                    )
+                                    .on_hover_text(self.t(
+                                        "Показать записи этой категории на всех дисках",
+                                        "Show this category across all catalog disks",
+                                    ))
+                                    .clicked()
+                                {
+                                    self.navigate_category(category, ctx);
+                                    self.show_categories_dialog = false;
+                                }
+                                if let Some(entry) = &selected {
+                                    let assigned = self.category_assigned.contains(&category.id);
+                                    let action_label = if assigned {
+                                        self.t("Снять", "Remove")
+                                    } else {
+                                        self.t("Назначить", "Assign")
+                                    };
+                                    let action_hint = if assigned {
+                                        self.t(
+                                            "Удалить только связь категории в SQLite, не файл; назначение можно восстановить",
+                                            "Remove only the SQLite category link, never the file; reversible",
+                                        )
+                                    } else {
+                                        self.t(
+                                            "Назначить категорию выбранной записи каталога SQLite",
+                                            "Assign this category to the selected SQLite entry",
+                                        )
+                                    };
+                                    if assigned {
+                                        ui.label("✓");
+                                    }
+                                    if ui
+                                        .add_enabled(
+                                            self.active_request.is_none()
+                                                && self.categories_loaded
+                                                && self.category_assignments_ready,
+                                            egui::Button::new(action_label),
+                                        )
+                                        .on_hover_text(action_hint)
+                                        .clicked()
+                                    {
+                                        if assigned {
+                                            self.unassign_category(entry.id, category.id, ctx);
+                                        } else {
+                                            self.assign_category(entry.id, category.id, ctx);
+                                        }
+                                    }
+                                }
+                            });
+                        }
+                    });
+                    ui.separator();
+                    ui.strong(self.t("Новая категория", "New category"));
+                    let name_hint = self.t("Название", "Name");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.category_name_input)
+                            .hint_text(name_hint)
+                            .desired_width(f32::INFINITY),
+                    );
+                    let parent_name = self
+                        .category_parent_id
+                        .and_then(|id| category_by_id.get(&id).copied())
+                        .map(|category| categories::display_path(category, &category_by_id))
+                        .unwrap_or_else(|| self.t("Без родителя", "No parent").to_owned());
+                    let no_parent = self.t("Без родителя", "No parent");
+                    ui.horizontal(|ui| {
+                        ui.label(self.t("Родитель", "Parent"));
+                        ui.add_enabled_ui(
+                            self.categories_loaded && self.active_request.is_none(),
+                            |ui| {
+                        egui::ComboBox::from_id_salt("new_category_parent")
+                            .selected_text(parent_name)
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut self.category_parent_id,
+                                    None,
+                                    no_parent,
+                                );
+                                for category in &catalog_categories {
+                                    ui.selectable_value(
+                                        &mut self.category_parent_id,
+                                        Some(category.id),
+                                        categories::display_path(category, &category_by_id),
+                                    );
+                                }
+                            });
+                        });
+                    });
+                    let can_create = self.active_request.is_none()
+                        && self.categories_loaded
+                        && categories::new_name(&self.category_name_input).is_ok();
+                    if ui
+                        .add_enabled(
+                            can_create,
+                            egui::Button::new(self.t("Создать категорию", "Create category")),
+                        )
+                        .clicked()
+                    {
+                        self.create_category(ctx);
+                    }
+                    if let Some(error) = &self.error {
+                        ui.colored_label(Color32::from_rgb(224, 96, 88), error);
+                    }
+                    if ui.button(self.t("Закрыть", "Close")).clicked() {
+                        self.show_categories_dialog = false;
+                    }
+                });
+            self.show_categories_dialog &= open;
+        }
         if self.show_export_dialog {
             let mut open = self.show_export_dialog;
             egui::Window::new(self.t("Экспорт метаданных", "Metadata export"))
@@ -2077,14 +2625,372 @@ mod shortcut_tests {
     }
 
     #[test]
+    fn category_membership_buttons_fail_closed_until_service_confirms() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.categories.push(Category {
+            id: 7,
+            parent_id: None,
+            name: "Synthetic".into(),
+        });
+        app.assign_category(12, 7, &ctx);
+        app.unassign_category(12, 7, &ctx);
+        assert!(app.active_request.is_none());
+        assert!(!app.category_assignments_ready);
+        assert!(app.category_assigned.is_empty());
+    }
+
+    #[test]
+    fn category_mutation_missing_entry_discards_selection_and_refreshes_page() {
+        let ctx = egui::Context::default();
+        let candidate = json!({
+            "id": 19, "volume_id": 2, "kind": "file", "size": 42,
+            "name": "Кино.mkv", "relative_path": "Кино.mkv",
+        });
+        let entry = Entry::parse(&candidate).unwrap();
+        let route = Route::Search {
+            query: "category_id:7".into(),
+            volume_id: None,
+        };
+        for purpose in [
+            Purpose::AssignCategory {
+                entry_id: 19,
+                category_id: 7,
+            },
+            Purpose::UnassignCategory {
+                entry_id: 19,
+                category_id: 7,
+            },
+        ] {
+            let mut app = DesktopApp::with_context(&ctx, None);
+            app.route = route.clone();
+            app.offset = PAGE_LIMIT;
+            app.history.push((route.clone(), 0, None, None, 0.0));
+            app.show_categories_dialog = true;
+            app.selected = Some(entry.clone());
+            app.page.items = vec![entry.clone()];
+            app.category_assigned.insert(7);
+            app.category_assignments_ready = true;
+
+            for (id, code) in [(33, "database_busy"), (34, "not_found")] {
+                app.active_request = Some(id);
+                app.apply_reply(
+                    crate::bridge::Reply {
+                        id,
+                        purpose: purpose.clone(),
+                        response: json!({"ok":false, "error":{"code":code,"message":"Failed"}}),
+                    },
+                    &ctx,
+                );
+                assert_eq!(app.error.as_deref(), Some("Failed"));
+                if code != "not_found" {
+                    assert!(app.category_assignments_ready);
+                    assert_eq!(app.selected.as_ref().map(|entry| entry.id), Some(19));
+                    assert_eq!(app.page.items.len(), 1);
+                }
+            }
+
+            assert!(!app.category_assignments_ready);
+            assert!(app.category_assigned.is_empty());
+            assert!(app.selected.is_none());
+            assert!(app.restore_selection.is_none());
+            assert!(app.page.items.is_empty());
+            assert!(app.category_result_refresh_pending);
+            assert_eq!(app.offset, PAGE_LIMIT);
+            assert_eq!(app.history.len(), 1);
+
+            let mut fresh = candidate.clone();
+            fresh["id"] = json!(20);
+            app.active_request = Some(35);
+            app.apply_reply(
+                crate::bridge::Reply {
+                    id: 35,
+                    purpose: Purpose::Page {
+                        route: route.clone(),
+                    },
+                    response: json!({"ok":true, "data":{"items":[fresh],
+                        "offset":PAGE_LIMIT, "limit":PAGE_LIMIT, "has_more":false}}),
+                },
+                &ctx,
+            );
+            assert!(!app.category_result_refresh_pending);
+            assert!(app.selected.is_none());
+            assert_eq!(app.page.items[0].id, 20);
+            assert_eq!(app.offset, PAGE_LIMIT);
+            assert_eq!(app.history.len(), 1);
+        }
+    }
+
+    #[test]
+    fn membership_write_invalidates_stale_results_and_selected_entry() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        let entry = Entry {
+            id: 19,
+            volume_id: 2,
+            parent_id: None,
+            name: "Кино.mkv".into(),
+            relative_path: "Кино.mkv".into(),
+            kind: "file".into(),
+            size: 42,
+            modified_unix: None,
+            description: String::new(),
+            tags: String::new(),
+        };
+        app.route = Route::Search {
+            query: "category_id:7".into(),
+            volume_id: None,
+        };
+        app.selected = Some(entry.clone());
+        app.page.items = vec![entry];
+        app.category_assigned.insert(7);
+        app.category_assignments_ready = true;
+        app.refresh_category_results(&ctx);
+        assert!(
+            app.page.items.is_empty(),
+            "stale category results must disappear"
+        );
+        assert!(app.category_result_refresh_pending);
+        assert!(!app.category_assignments_ready);
+        assert!(app.category_assigned.is_empty());
+        assert_eq!(app.restore_selection.as_ref().map(|e| e.id), Some(19));
+
+        // SQLite no longer returns the unassigned item. UI selection must
+        // disappear, and reloading the result must not claim an old category.
+        app.active_request = Some(33);
+        app.apply_reply(
+            crate::bridge::Reply {
+                id: 33,
+                purpose: Purpose::Page {
+                    route: app.route.clone(),
+                },
+                response: json!({"ok":true, "data":{"items":[],
+                    "offset":0, "limit":250, "has_more":false}}),
+            },
+            &ctx,
+        );
+        assert!(!app.category_result_refresh_pending);
+        assert!(app.selected.is_none());
+        assert!(app.page.items.is_empty());
+        assert!(!app.category_assignments_ready);
+    }
+
+    #[test]
+    fn membership_refresh_steps_back_from_empty_high_offset_page() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.route = Route::Search {
+            query: "category_id:7".into(),
+            volume_id: None,
+        };
+        app.offset = 250;
+        app.category_result_refresh_pending = true;
+        app.active_request = Some(34);
+        app.apply_reply(
+            crate::bridge::Reply {
+                id: 34,
+                purpose: Purpose::Page {
+                    route: app.route.clone(),
+                },
+                response: json!({"ok":true, "data":{"items":[],
+                    "offset":250, "limit":250, "has_more":false}}),
+            },
+            &ctx,
+        );
+        assert_eq!(app.offset, 0);
+        assert!(app.category_result_refresh_pending);
+    }
+
+    #[test]
+    fn back_from_removed_category_last_page_recovers_previous_page() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        let category_route = Route::Search {
+            query: "category_id:7".into(),
+            volume_id: None,
+        };
+        app.route = Route::Folder {
+            volume_id: 2,
+            parent_id: None,
+        };
+        app.history
+            .push((category_route.clone(), 250, None, None, 0.0));
+        app.go_back(&ctx);
+        assert_eq!(app.offset, 250);
+        assert!(!app.category_result_refresh_pending);
+
+        app.active_request = Some(40);
+        app.apply_reply(
+            crate::bridge::Reply {
+                id: 40,
+                purpose: Purpose::Page {
+                    route: category_route.clone(),
+                },
+                response: json!({"ok":true,"data":{"items":[],
+                    "offset":250,"limit":250,"has_more":false}}),
+            },
+            &ctx,
+        );
+        assert_eq!(app.offset, 0);
+        assert!(app.page.items.is_empty());
+        assert!(app.selected.is_none());
+        assert!(app.restore_selection.is_none());
+
+        // The fallback page is then loaded from the service: no stale
+        // high-offset view and no permanent category refresh state.
+        app.active_request = Some(41);
+        app.apply_reply(
+            crate::bridge::Reply {
+                id: 41,
+                purpose: Purpose::Page {
+                    route: category_route,
+                },
+                response: json!({"ok":true,"data":{"items":[{
+                    "id":11,"volume_id":2,"parent_id":null,
+                    "name":"Кино.mkv","relative_path":"Кино.mkv",
+                    "kind":"file","size":42,"modified_unix":null,
+                    "description":"","tags":""}],
+                    "offset":0,"limit":250,"has_more":false}}),
+            },
+            &ctx,
+        );
+        assert_eq!(app.offset, 0);
+        assert_eq!(app.page.items.len(), 1);
+        assert_eq!(app.page.items[0].id, 11);
+        assert!(!app.category_result_refresh_pending);
+    }
+
+    #[test]
+    fn malformed_page_reply_drops_old_inspector_selection_fail_closed() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        let selected = Entry {
+            id: 19,
+            volume_id: 2,
+            parent_id: None,
+            name: "Кино.mkv".into(),
+            relative_path: "Кино.mkv".into(),
+            kind: "file".into(),
+            size: 42,
+            modified_unix: None,
+            description: String::new(),
+            tags: String::new(),
+        };
+        app.selected = Some(selected.clone());
+        app.restore_selection = Some(selected.clone());
+        app.page.items = vec![selected];
+        app.category_result_refresh_pending = true;
+        app.active_request = Some(42);
+        app.apply_reply(
+            crate::bridge::Reply {
+                id: 42,
+                purpose: Purpose::Page {
+                    route: app.route.clone(),
+                },
+                response: json!({"ok":true,"data":{
+                    "items":"bad-type","offset":0,"limit":250}}),
+            },
+            &ctx,
+        );
+        assert!(app.error.is_some());
+        assert!(app.selected.is_none());
+        assert!(app.restore_selection.is_none());
+        assert!(app.page.items.is_empty());
+        assert!(!app.category_result_refresh_pending);
+        assert!(!app.category_assignments_ready);
+    }
+
+    #[test]
+    fn failed_membership_load_is_retryable_not_permanent_loading() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.selected = Some(Entry {
+            id: 19,
+            volume_id: 2,
+            parent_id: None,
+            name: "Кино.mkv".into(),
+            relative_path: "Кино.mkv".into(),
+            kind: "file".into(),
+            size: 42,
+            modified_unix: None,
+            description: String::new(),
+            tags: String::new(),
+        });
+        app.active_request = Some(43);
+        app.apply_reply(
+            crate::bridge::Reply {
+                id: 43,
+                purpose: Purpose::EntryCategoryIds { entry_id: 19 },
+                response: json!({"ok":false,"error":{
+                    "code":"not_found","message":"Entry removed"}}),
+            },
+            &ctx,
+        );
+        assert!(app.category_assignments_error);
+        assert!(!app.category_assignments_ready);
+        assert!(app.category_assigned.is_empty());
+
+        app.active_request = Some(44);
+        app.apply_reply(
+            crate::bridge::Reply {
+                id: 44,
+                purpose: Purpose::EntryCategoryIds { entry_id: 19 },
+                response: json!({"ok":true,"data":[7]}),
+            },
+            &ctx,
+        );
+        assert!(!app.category_assignments_error);
+        assert!(app.category_assignments_ready);
+        assert!(app.category_assigned.contains(&7));
+    }
+
+    #[test]
+    fn category_navigation_is_all_disk_scoped_and_back_restores_query() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.query_input = "clip-001".to_owned();
+        app.route = Route::Search {
+            query: app.query_input.clone(),
+            volume_id: Some(61),
+        };
+        app.selected_volume = Some(61);
+        let category = Category {
+            id: 3,
+            parent_id: None,
+            name: "Семейное Кино".into(),
+        };
+        app.page.offset = 250;
+        app.page.has_more = true;
+        app.categories.push(category.clone());
+        app.categories_loaded = true;
+        app.navigate_category(&category, &ctx);
+        assert_eq!(app.page.offset, 0);
+        assert!(!app.page.has_more);
+        assert_eq!(app.query_input, "category_id:3");
+        assert_eq!(app.selected_volume, None);
+        assert_eq!(app.history.len(), 1);
+        assert_eq!(
+            app.route,
+            Route::Search {
+                query: "category_id:3".into(),
+                volume_id: None,
+            }
+        );
+        app.go_back(&ctx);
+        assert_eq!(app.query_input, "clip-001");
+        assert_eq!(app.selected_volume, Some(61));
+    }
+
+    #[test]
     fn dialogs_disable_background_controls_until_closed() {
         let ctx = egui::Context::default();
         let mut app = DesktopApp::with_context(&ctx, None);
-        for dialog in 0..4 {
+        for dialog in 0..5 {
             app.show_catalog_dialog = dialog == 0;
             app.show_export_dialog = dialog == 1;
             app.show_scan_dialog = dialog == 2;
             app.show_disk_properties = (dialog == 3).then_some(1);
+            app.show_categories_dialog = dialog == 4;
             let mut output = ctx.run_pass(egui::RawInput::default(), |ctx| {
                 egui::Area::new(egui::Id::unique("background-test")).show(ctx, |ui| {
                     app.protect_background(ui);
@@ -2097,6 +3003,7 @@ mod shortcut_tests {
         app.show_export_dialog = false;
         app.show_scan_dialog = false;
         app.show_disk_properties = None;
+        app.show_categories_dialog = false;
         let mut output = ctx.run_pass(egui::RawInput::default(), |ctx| {
             egui::Area::new(egui::Id::unique("background-test")).show(ctx, |ui| {
                 app.protect_background(ui);
@@ -2226,13 +3133,17 @@ mod shortcut_tests {
                 purpose: Purpose::Page {
                     route: app.route.clone(),
                 },
-                response: json!({"ok": true, "data": {"items": [], "offset": 250, "limit": 250}}),
+                response: json!({"ok": true, "data": {"items": [{
+                    "id":11,"volume_id":2,"parent_id":null,
+                    "name":"Кино.mkv","relative_path":"Кино.mkv","kind":"file",
+                    "size":42,"modified_unix":null,"description":"","tags":""
+                }], "offset": 250, "limit": 250}}),
             },
             &ctx,
         );
-        assert_eq!(app.status.text(app.lang), "Показаны строки 250–250");
+        assert_eq!(app.status.text(app.lang), "Показаны строки 251–251");
         app.lang = Language::English;
-        assert_eq!(app.status.text(app.lang), "Showing rows 250–250");
+        assert_eq!(app.status.text(app.lang), "Showing rows 251–251");
         app.active_request = Some(8);
         app.apply_reply(
             crate::bridge::Reply {

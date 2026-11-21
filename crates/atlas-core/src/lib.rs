@@ -100,6 +100,67 @@ pub struct FastPage {
 pub struct Catalog {
     conn: Connection,
 }
+
+#[cfg(test)]
+mod category_transaction_tests {
+    use super::*;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    #[test]
+    fn invalid_parent_ids_are_rejected_without_waiting_for_a_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("catalog.sqlite");
+        let blocker = Catalog::open(&db).unwrap();
+        let competitor = Catalog::open(&db).unwrap();
+        competitor.conn().busy_timeout(Duration::ZERO).unwrap();
+        let _writer =
+            Transaction::new_unchecked(blocker.conn(), rusqlite::TransactionBehavior::Immediate)
+                .unwrap();
+
+        for id in [0, -1] {
+            let error = competitor.create_category("Child", Some(id)).unwrap_err();
+            assert_eq!(error.code, "invalid_request", "parent ID {id}");
+        }
+    }
+
+    #[test]
+    fn deleting_parent_before_competing_category_creation_cannot_create_self_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("catalog.sqlite");
+        let blocker = Catalog::open(&db).unwrap();
+        let mut competitor = Catalog::open(&db).unwrap();
+        let parent = blocker.create_category("Parent", None).unwrap();
+        let deletion =
+            Transaction::new_unchecked(blocker.conn(), rusqlite::TransactionBehavior::Immediate)
+                .unwrap();
+        deletion
+            .execute("DELETE FROM categories WHERE id=?1", [parent])
+            .unwrap();
+
+        // Wait for SQLite's actual write contention. With a nonatomic check,
+        // the competitor has already observed the parent in its read snapshot.
+        let timeout = Duration::from_secs(10);
+        let (contended, wait_for_contention) = mpsc::channel();
+        let (committed, wait_for_commit) = mpsc::channel();
+        competitor
+            .conn
+            .busy_handler(Some(move |attempt| {
+                attempt == 0
+                    && contended.send(()).is_ok()
+                    && wait_for_commit.recv_timeout(timeout).is_ok()
+            }))
+            .unwrap();
+        let child = std::thread::spawn(move || competitor.create_category("Child", Some(parent)));
+        wait_for_contention.recv_timeout(timeout).unwrap();
+        deletion.commit().unwrap();
+        committed.send(()).unwrap();
+
+        assert_eq!(child.join().unwrap().unwrap_err().code, "not_found");
+        assert_eq!(blocker.categories().unwrap(), json!([]));
+    }
+}
+
 impl Catalog {
     pub fn conn(&self) -> &Connection {
         &self.conn
@@ -539,6 +600,21 @@ impl Catalog {
             Ok(())
         })
     }
+    fn require_entry(conn: &Connection, entry_id: i64) -> Result<()> {
+        if entry_id <= 0 {
+            return Err(Error::new("invalid_request", "Entry ID must be positive"));
+        }
+        let found: i64 = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM entries WHERE id=?1)",
+            [entry_id],
+            |row| row.get(0),
+        )?;
+        if found == 0 {
+            return Err(Error::new("not_found", "Catalog entry no longer exists"));
+        }
+        Ok(())
+    }
+
     pub fn create_category(&self, name: &str, parent_id: Option<i64>) -> Result<i64> {
         if name.trim().is_empty() {
             return Err(Error::new(
@@ -546,18 +622,82 @@ impl Catalog {
                 "Category name cannot be empty",
             ));
         }
-        self.conn.execute(
+        if parent_id.is_some_and(|parent| parent <= 0) {
+            return Err(Error::new("invalid_request", "Parent ID must be positive"));
+        }
+        // Serialize the parent check and insert. If another writer deleted
+        // the last category between them, SQLite could reuse its ID and
+        // accept a self-parent through the foreign key.
+        let tx = Transaction::new_unchecked(&self.conn, rusqlite::TransactionBehavior::Immediate)?;
+        if let Some(parent) = parent_id {
+            let exists: i64 = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM categories WHERE id=?1)",
+                [parent],
+                |row| row.get(0),
+            )?;
+            if exists == 0 {
+                return Err(Error::new("not_found", "Parent category not found"));
+            }
+        }
+        tx.execute(
             "INSERT INTO categories(name,name_norm,parent_id) VALUES(?1,?2,?3)",
             params![name, name.to_lowercase(), parent_id],
         )?;
-        Ok(self.conn.last_insert_rowid())
+        let id = tx.last_insert_rowid();
+        tx.commit()?;
+        Ok(id)
     }
     pub fn assign_category(&self, entry_id: i64, category_id: i64) -> Result<()> {
-        self.conn.execute(
+        // The entry existence check and the membership write must be atomic
+        // against a second process deleting the catalog entry. BEGIN IMMEDIATE
+        // serializes concurrent writers without requiring an exclusive DB lock.
+        let tx = Transaction::new_unchecked(&self.conn, rusqlite::TransactionBehavior::Immediate)?;
+        Self::require_entry(&tx, entry_id)?;
+        tx.execute(
             "INSERT OR IGNORE INTO entry_categories(entry_id,category_id) VALUES(?1,?2)",
             params![entry_id, category_id],
         )?;
+        tx.commit()?;
         Ok(())
+    }
+
+    /// IDs of categories explicitly assigned to one catalog entry.
+    /// Does not infer inherited categories and does not touch source media.
+    pub fn entry_category_ids(&self, entry_id: i64) -> Result<Value> {
+        // A deferred read transaction fixes one SQLite snapshot for both the
+        // existence check and memberships even while another process writes.
+        let tx = self.conn.unchecked_transaction()?;
+        Self::require_entry(&tx, entry_id)?;
+        let ids = {
+            let mut stmt = tx.prepare(
+                "SELECT category_id FROM entry_categories WHERE entry_id=?1 ORDER BY category_id",
+            )?;
+            let collected = stmt
+                .query_map([entry_id], |row| row.get::<_, i64>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            collected
+        };
+        tx.commit()?;
+        Ok(json!(ids))
+    }
+
+    /// Remove only an explicit SQLite category membership. No source file or
+    /// catalog entry is deleted; a later assign can restore the same link.
+    pub fn unassign_category(&self, entry_id: i64, category_id: i64) -> Result<bool> {
+        if entry_id <= 0 || category_id <= 0 {
+            return Err(Error::new(
+                "invalid_request",
+                "Category and entry IDs must be positive",
+            ));
+        }
+        let tx = Transaction::new_unchecked(&self.conn, rusqlite::TransactionBehavior::Immediate)?;
+        Self::require_entry(&tx, entry_id)?;
+        let removed = tx.execute(
+            "DELETE FROM entry_categories WHERE entry_id=?1 AND category_id=?2",
+            params![entry_id, category_id],
+        )?;
+        tx.commit()?;
+        Ok(removed > 0)
     }
     pub fn categories(&self) -> Result<Value> {
         let mut s = self
@@ -913,6 +1053,10 @@ pub mod api {
                 c.assign_category(integer(&v, "entry_id")?, integer(&v, "category_id")?)?;
                 Ok(json!({}))
             }
+            "entry_category_ids" => c.entry_category_ids(integer(&v, "entry_id")?),
+            "unassign_category" => Ok(json!({"removed":c.unassign_category(
+                integer(&v, "entry_id")?, integer(&v, "category_id")?
+            )?})),
             "explain_query" => c.explain_query(string(&v, "query")?),
             "init" => Ok(
                 json!({"schema_version":c.conn().pragma_query_value(None,"user_version",|r|r.get::<_,i64>(0))?}),

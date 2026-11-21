@@ -68,3 +68,14 @@ or any private CTF to GitHub. For more detailed manual scenarios follow
 with an explicit UTF-8 BOM so Cyrillic fixture filenames and UTF-8 CLI
 responses survive the legacy shell. Windows CI invokes it with the real
 `powershell` shell (5.1), not PowerShell 7.
+
+## Optional native category QA (PR #73+)
+
+Add -CategoryChecks to the existing synthetic QA script on a compatible
+source SHA. Hosted Windows CI runs this mode headlessly and records the
+exact-ID Unicode category checks. Use -CategoryChecks -ManualReview only
+in a real unlocked RDP session for the additional category GUI questions.
+Older binaries without category_id/unassign_category do not support this
+flag. Hosted smoke is never physical Windows 11 GUI acceptance.
+
+**PowerShell 5.1 source parser:** `Test-CliTransport.ps1` parses the UTF-8 QA runner using `Parser.ParseInput` on explicitly decoded UTF-8 text. Never rely on the shell's machine ANSI codepage for the BOM-less repository source. The hosted Windows transport regression and packaged QA bundle are distinct checks.
