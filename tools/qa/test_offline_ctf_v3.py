@@ -126,6 +126,41 @@ class PrivateRunnerTest(unittest.TestCase):
             failed = call(root, cli, source, reportdir)
             self.assertNotEqual(failed.returncode, 0, "Output overwrite allowed")
 
+    def test_current_sqlite_3541_requires_explicit_reviewed_pin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            cli, source = fixture(root, version="3.54.1")
+            before = source.read_bytes()
+            denied = call(root, cli, source, root / "historical-default")
+            self.assertEqual(denied.returncode, 1)
+            failed = json.loads((root / "historical-default" / "V3_ACCEPTANCE.json").read_text())
+            self.assertEqual(failed["error_code"], "unpatched_sqlite")
+            self.assertTrue(failed["source_unchanged"])
+            allowed = call(root, cli, source, root / "current-approved",
+                           ["--expected-sqlite-version", "3.54.1"])
+            self.assertEqual(allowed.returncode, 0, allowed.stderr)
+            report = json.loads((root / "current-approved" / "V3_ACCEPTANCE.json").read_text())
+            self.assertEqual(report["sqlite_runtime_version"], "3.54.1")
+            self.assertEqual(report["sqlite_expected_version"], "3.54.1")
+            self.assertTrue(report["source_unchanged"])
+            self.assertEqual(source.read_bytes(), before)
+
+    def test_unapproved_sqlite_versions_refused_before_creating_checkpoint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            cli, source = fixture(root, version="3.46.0")
+            dest = root / "unapproved"
+            result = call(root, cli, source, dest, ["--expected-sqlite-version", "3.46.0"])
+            self.assertEqual(result.returncode, 2)
+            self.assertFalse(dest.exists())
+            self.assertNotIn(str(source), result.stdout + result.stderr)
+            denied = call(root, cli, source, root / "wrong-approved",
+                          ["--expected-sqlite-version", "3.54.1"])
+            self.assertEqual(denied.returncode, 1)
+            report = json.loads((root / "wrong-approved" / "V3_ACCEPTANCE.json").read_text())
+            self.assertEqual(report["error_code"], "unpatched_sqlite")
+            self.assertTrue(report["source_unchanged"])
+
     def test_unpatched_sqlite_not_accepted_without_source_modification(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

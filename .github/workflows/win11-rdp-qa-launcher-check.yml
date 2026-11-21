@@ -1,0 +1,32 @@
+name: WhereIsIt AI - Win11 RDP QA launcher static contract
+on:
+  pull_request:
+    paths:
+      - tools/qa/windows11-egui/Invoke-VerifiedWin11EguiRdpQA.ps1
+      - tools/qa/test_win11_interactive_qa_contract.py
+      - .github/workflows/win11-rdp-qa-launcher-check.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  qa-launcher-check:
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Parse PowerShell 5.1 source without execution
+        shell: powershell
+        run: |
+          $tokens = @()
+          $errors = @()
+          $source = (Resolve-Path 'tools/qa/windows11-egui/Invoke-VerifiedWin11EguiRdpQA.ps1').Path
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            $source, [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) { throw 'Win11 QA launcher syntax error.' }
+          Write-Host 'WIN11_QA_LAUNCHER_PARSE_PASS'
+      - name: Verify guardrails using Python
+        shell: pwsh
+        run: python -m unittest discover -s tools/qa -p 'test_win11_interactive_qa_contract.py' -v
