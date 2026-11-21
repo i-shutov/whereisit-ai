@@ -714,14 +714,9 @@ impl DesktopApp {
         }
     }
 
-
     fn load_categories(&mut self, ctx: &egui::Context) {
         if let Some(db) = self.db.clone() {
-            self.queue(
-                Purpose::Categories,
-                categories::list_request(&db),
-                ctx,
-            );
+            self.queue(Purpose::Categories, categories::list_request(&db), ctx);
         }
     }
 
@@ -759,7 +754,11 @@ impl DesktopApp {
         let Some(db) = self.db.clone() else {
             return;
         };
-        if !self.categories.iter().any(|category| category.id == category_id) {
+        if !self
+            .categories
+            .iter()
+            .any(|category| category.id == category_id)
+        {
             return;
         }
         self.queue(
@@ -2346,7 +2345,6 @@ mod shortcut_tests {
         ));
     }
 
-
     #[test]
     fn category_navigation_is_all_disk_scoped_and_back_restores_query() {
         let ctx = egui::Context::default();
@@ -2366,10 +2364,13 @@ mod shortcut_tests {
         assert_eq!(app.query_input, "category:\"Семейное Кино\"");
         assert_eq!(app.selected_volume, None);
         assert_eq!(app.history.len(), 1);
-        assert_eq!(app.route, Route::Search {
-            query: "category:\"Семейное Кино\"".into(),
-            volume_id: None,
-        });
+        assert_eq!(
+            app.route,
+            Route::Search {
+                query: "category:\"Семейное Кино\"".into(),
+                volume_id: None,
+            }
+        );
         app.go_back(&ctx);
         assert_eq!(app.query_input, "clip-001");
         assert_eq!(app.selected_volume, Some(61));
