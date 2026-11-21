@@ -31,6 +31,49 @@ function Invoke-Silent([string]$Exe, [string[]]$Arguments) {
     $p = Start-Process -FilePath $Exe -ArgumentList $Arguments -Wait -PassThru -NoNewWindow
     if ($p.ExitCode -ne 0) { throw "Installer/uninstaller returned $($p.ExitCode)" }
 }
+# PowerShell 5.1 cannot safely marshal arbitrary JSON through native argv quoting.
+# Reuse the already accepted Win10 native CLI 'serve' UTF-8 stdin framing.
+function Invoke-InstalledCliJson([string]$Json) {
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+    $start = New-Object System.Diagnostics.ProcessStartInfo
+    $start.FileName = $cli
+    $start.Arguments = 'serve'
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardInput = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $start.StandardOutputEncoding = $utf8NoBom
+    $start.StandardErrorEncoding = $utf8NoBom
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $start
+    $oldInputEncoding = [Console]::InputEncoding
+    try {
+        [Console]::InputEncoding = $utf8NoBom
+        if (-not $process.Start()) { throw 'Could not start installed native CLI serve transport.' }
+        $outTask = $process.StandardOutput.ReadToEndAsync()
+        $errTask = $process.StandardError.ReadToEndAsync()
+        $bytes = $utf8NoBom.GetBytes($Json + [char]10)
+        $process.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+        $process.StandardInput.Close()
+        $process.WaitForExit()
+        $stdout = $outTask.GetAwaiter().GetResult()
+        $stderr = $errTask.GetAwaiter().GetResult()
+        if ($process.ExitCode -ne 0) {
+            throw "Installed native CLI serve transport failed (exit=$($process.ExitCode))."
+        }
+        $lines = @($stdout -split '\r?\n' | Where-Object { $_ -ne '' })
+        if ($lines.Count -ne 1) { throw 'Installed native CLI returned ambiguous JSON lines.' }
+        try {
+            return ($lines[0] | ConvertFrom-Json -ErrorAction Stop)
+        } catch {
+            throw 'Installed native CLI returned non-JSON output.'
+        }
+    } finally {
+        [Console]::InputEncoding = $oldInputEncoding
+        $process.Dispose()
+    }
+}
 if (-not [Environment]::Is64BitOperatingSystem) { throw 'Windows x64 required.' }
 $expectedGui = Join-Path $root 'target/release/atlas-desktop-egui.exe'
 $expectedCli = Join-Path $root 'target/release/atlas.exe'
@@ -68,15 +111,7 @@ if ($LASTEXITCODE -ne 0 -or $installedVersion -ne "WhereIsIt AI $version") {
     throw 'Installed CLI version mismatch.'
 }
 $request = @{op='init'; db=$Catalog} | ConvertTo-Json -Compress
-$answer = & $cli request $request
-$exitCode = $LASTEXITCODE
-if ($exitCode -ne 0) { throw "Installed CLI request failed (exit=$exitCode)." }
-if (-not $answer) { throw 'Installed CLI returned no response.' }
-try {
-    $response = $answer | ConvertFrom-Json -ErrorAction Stop
-} catch {
-    throw 'Installed CLI returned non-JSON data.'
-}
+$response = Invoke-InstalledCliJson $request
 if ($response.ok -ne $true) {
     $code = if ($response.error -and $response.error.code) { [string]$response.error.code } else { 'unavailable' }
     throw "Installed CLI refused synthetic SQLite init (error_code=$code)."
