@@ -49,6 +49,7 @@ jobs:
       - run: python3 -m unittest discover -s tools/qa -p 'test_egui_preview_packaging.py' -v
       - run: python3 -m unittest discover -s tools/qa -p 'test_egui_win64_installer_contract.py' -v
       - run: python3 -m unittest discover -s tools/qa -p 'test_win10_egui_host_qa.py' -v
+      - run: python3 -m unittest discover -s tools/qa -p 'test_win11_codex_handoff_contract.py' -v
       - run: bash installers/macos/test-verify-dmg.sh
   windows:
     needs: test
@@ -74,6 +75,15 @@ jobs:
       - name: Build isolated egui Windows QA preview ZIP
         shell: pwsh
         run: ./apps/desktop-egui/package-preview-windows.ps1
+      - name: Parse Win11 Codex read-only launcher (do not run agent)
+        shell: powershell
+        run: |
+          $tokens = @()
+          $parseErrors = @()
+          $path = (Resolve-Path 'tools/qa/windows11-egui/Invoke-Win11CodexReadOnlyAudit.ps1').Path
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            $path, [ref]$tokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count -gt 0) { throw 'Win11 Codex audit launcher failed PowerShell syntax validation.' }
       - name: Windows PowerShell 5.1 native CLI transport regression
         shell: powershell
         run: ./tools/qa/windows10-egui/Test-CliTransport.ps1 -Cli ./target/release/atlas.exe
