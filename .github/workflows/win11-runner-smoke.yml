@@ -17,11 +17,12 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'i-shutov/whereisit-ai' }}
     runs-on: [self-hosted, Windows, X64, win11-whereisit]
     timeout-minutes: 5
-    # Process-scoped policy bypass: runner generates temporary *.ps1; do not alter host ExecutionPolicy.
+    # Custom GitHub shell scripts lack the .ps1 extension; read temporary trusted-main script as text.
+    # Process-scoped policy bypass only. No host execution policy, registry, or service changes.
     # Trusted-main manual smoke only; still no checkout or untrusted PR execution.
     steps:
       - name: Verify exact Windows host, user and native runtime
-        shell: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {0}
+        shell: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create([IO.File]::ReadAllText('{0}')))"
         env:
           EXPECTED_RUNNER: win11-whereisit
           EXPECTED_COMPUTER: VM-326272
@@ -45,7 +46,7 @@ jobs:
           Write-Host "PWSH_VERSION: $($PSVersionTable.PSVersion.ToString())"
           Write-Host 'RUNNER_SMOKE_PASS'
       - name: Report project toolchain availability (non-blocking)
-        shell: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {0}
+        shell: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create([IO.File]::ReadAllText('{0}')))"
         run: |
           $ErrorActionPreference = 'Stop'
           foreach ($tool in @('cargo.exe', 'rustc.exe', 'git.exe', 'python.exe', 'sqlite3.exe', 'cl.exe')) {
@@ -57,7 +58,7 @@ jobs:
             }
           }
       - name: Inspect Codex CLI availability without running Codex
-        shell: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {0}
+        shell: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create([IO.File]::ReadAllText('{0}')))"
         run: |
           $ErrorActionPreference = 'Stop'
           # The service account may have a different PATH/profile than RDP.
