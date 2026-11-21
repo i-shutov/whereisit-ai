@@ -1,0 +1,56 @@
+# Manual trusted-main hardware smoke: NO checkout and NO third-party code.
+# NEVER run pull_request or pull_request_target jobs on this privileged host.
+name: Windows 11 VPS runner smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: win11-vps-smoke-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  windows11-native:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'i-shutov/whereisit-ai' }}
+    runs-on: [self-hosted, Windows, X64, win11-whereisit]
+    timeout-minutes: 5
+    steps:
+      - name: Verify exact Windows host, user and native runtime
+        shell: powershell
+        env:
+          EXPECTED_RUNNER: win11-whereisit
+          EXPECTED_COMPUTER: VM-326272
+          EXPECTED_ACCOUNT: VM-326272\Admin
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $os = Get-CimInstance Win32_OperatingSystem
+          $actualUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+          $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+          $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+          if ($env:COMPUTERNAME -ine $env:EXPECTED_COMPUTER) { throw "Wrong host: $env:COMPUTERNAME" }
+          if ($env:RUNNER_NAME -ine $env:EXPECTED_RUNNER) { throw "Wrong runner: $env:RUNNER_NAME" }
+          if ($actualUser -ine $env:EXPECTED_ACCOUNT) { throw "Unexpected service identity: $actualUser" }
+          if (-not $isAdmin) { throw 'Expected elevated administrator service token' }
+          if ($os.Caption -notmatch 'Windows 11') { throw "Not Windows 11: $($os.Caption)" }
+          if ($os.OSArchitecture -notmatch '64') { throw "Not x64: $($os.OSArchitecture)" }
+          Write-Host "RUNNER_HOST: $env:COMPUTERNAME"
+          Write-Host "RUNNER_NAME: $env:RUNNER_NAME"
+          Write-Host "SERVICE_ACCOUNT: $actualUser"
+          Write-Host "WINDOWS_VERSION: $($os.Caption) build $($os.BuildNumber)"
+          Write-Host "PWSH_VERSION: $($PSVersionTable.PSVersion.ToString())"
+          Write-Host 'RUNNER_SMOKE_PASS'
+      - name: Report project toolchain availability (non-blocking)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($tool in @('cargo.exe', 'rustc.exe', 'git.exe', 'python.exe', 'sqlite3.exe', 'cl.exe')) {
+            $c = Get-Command $tool -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($null -eq $c) {
+              Write-Host "TOOL_MISSING: $tool"
+            } else {
+              Write-Host "TOOL_FOUND: $tool @ $($c.Source)"
+            }
+          }
