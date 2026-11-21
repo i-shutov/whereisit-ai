@@ -1,4 +1,4 @@
-> **Актуализация 2026-11-21:** Этот документ сохраняет исходный scope и критерии, но многие его промежуточные статусы устарели. PR #68 уже в `main ddd9215b` (postmerge native CI и upgrade PASS). PR #69 (PR58 egui parity) и PR #70 (ручной безопасный Win11 runner smoke) пока draft. Новый Windows 11 Pro стенд выделен для нативной GUI/NTFS, installer и perf QA. [Текущий порядок W0–W7, границы доверия runner, актуальная матрица](RELEASE_1_0_WIN11_ACTION_PLAN_2026-11-21.md). **Stable 1.0 NO-GO; USB hardware QA по запросу владельца отложена для текущего Windows блока, а не признана PASS.**
+> **Текущие статусы и очередь релиза (21.11.2026):** [оперативный план](RELEASE_1_0_WIN11_ACTION_PLAN_2026-11-21.md) и [checkpoint](qa/WIN11_RELEASE_CHECKPOINT_20261121.md). Промежуточные статусы в этом историческом документе не являются актуальным NOT_RUN/BLOCKED. Scope и канонический PR58 UX сохраняются.
 
 # WhereIsIt AI — исполняемый план выпуска 1.0
 

@@ -4,18 +4,17 @@
   "channel": "prerelease",
   "stable_ready": false,
   "known_open_gates": [
-    "modified_CTF_in_original_WhereIsIt_not_verified",
-    "opaque_extension_0x10_semantics_not_specified_not_evidence_of_lost_descriptions",
-    "manual_GUI_Win10_Win11_macOS_ARM_Intel_and_accessibility_not_accepted",
+    "PR79_review_and_main_integration_pending",
+    "direct_CTF_link_import_export_in_egui_missing",
+    "remaining_PR58_P0_parity_not_accepted",
+    "full_target_platform_GUI_DPI_accessibility_and_physical_USB_not_accepted",
     "Windows_Authenticode_and_Apple_Developer_ID_notarization_missing",
-    "two_historical_CTF_raw_byte_access_blocked_by_attachment_provider",
-    "real_search_p95_150ms_and_full_progress_cancel_not_accepted",
-    "rust_egui_desktop_not_feature_complete_or_physically_accepted",
-    "real_usb_locator_hardware_acceptance_missing"
+    "product_RC4_and_RC3_to_RC4_upgrade_rollback_not_accepted",
+    "final_frozen_candidate_independent_acceptance_missing"
   ],
   "synthetic_data_is_not_real_data_acceptance": true,
   "real_ctf_44_volume_3046027_entry_readonly_roundtrip_verified": true,
-  "real_ctf_original_app_modified_output_verified": false,
+  "real_ctf_original_app_modified_output_verified": true,
   "publication_requires_successful_jobs": [
     "test",
     "windows",
@@ -44,11 +43,18 @@
     50,
     51,
     52,
-    53
+    53,
+    64,
+    65,
+    68,
+    69,
+    70,
+    73,
+    78
   ],
   "integration_pr": 54,
   "native_annotations_implemented": true,
-  "real_ctf_current_candidate_acceptance": "passed_available_readonly_checks_not_full_stable_acceptance",
+  "real_ctf_current_candidate_acceptance": "passed_supported_copy_edit_original_app_and_win11_warm_search_not_full_stable_acceptance",
   "real_runtime_evidence_source_commit": "fedc833b19c69428ad3f22d4fa2e2c0a9582a07a",
   "real_evidence_report": "docs/qa/RC3_REAL_DATA_REDACTED_20261031.json",
   "installed_rc2_to_rc3_upgrade_evidence": {
@@ -66,7 +72,7 @@
     "reference_ui_kind": "react_in_memory_design_not_rust_egui",
     "reference_ui_safety": "read_only_review_no_delete",
     "native_search_first_pr": 57,
-    "native_source_integration": "pr59_pr62_pr63_source_merged_ci_verified_manual_QA_pending",
+    "native_source_integration": "PR69_PR73_PR78_merged_main_8cbb3b4_exact_CI_PASS_PR79_not_merged",
     "physical_usb_real_hardware_verified": false,
     "rust_egui_frontend_implemented": true,
     "stable_release_decision": "NO_GO",
@@ -75,7 +81,7 @@
     "real_gui_accepted": false
   },
   "native_egui_snapshot": {
-    "as_of": "2026-11-17",
+    "as_of": "2026-11-21",
     "rust_toolchain": "1.100.0",
     "egui_version": "0.37.0",
     "r2_merged_main_sha": "81f0491267ab0b63109d99a470c3c0ff8ba37d9b",
@@ -87,12 +93,55 @@
       "synthetic_end_to_end_export_fixture"
     ],
     "r4_scan_pr": 64,
-    "r4_source_ci_pending": true,
+    "r4_source_ci_pending": false,
     "r5_qa_preview_pr": 65,
-    "r5_source_ci_pending": true,
+    "r5_source_ci_pending": false,
     "native_gui_physical_qa_issue": 66,
     "native_gui_physical_qa_accepted": false,
-    "original_modified_ctf_compatibility_accepted": false,
+    "original_modified_ctf_compatibility_accepted": true,
     "stable_ready": false
+  },
+  "known_format_limitations": [
+    "Observed uncompressed Catalog 3.00 only; unknown supported opaque bytes retained, unsupported structures refused",
+    "Two unavailable historical inputs remain outside measured coverage",
+    "Opaque 0x10 has no asserted semantics; compressed/encrypted variants not accepted"
+  ],
+  "acceptance_20261121": {
+    "main_sha": "8cbb3b4f5e9f07537cbd0d42deeeee01ec4e35ef",
+    "report": "docs/qa/WIN11_RELEASE_CHECKPOINT_20261121.md",
+    "plan": "docs/RELEASE_1_0_WIN11_ACTION_PLAN_2026-11-21.md",
+    "main_ci_runs": [
+      44929080959,
+      44929080983,
+      44929081025
+    ],
+    "win11_gui": "PASS_SCOPED_NOT_FULL_PLATFORM_ACCEPTANCE",
+    "win11_isolated_installer_lifecycle": "PASS_UNSIGNED_QA_NOT_PRODUCT_RC4",
+    "original_app_supported_ctf_modified_copy": "PASS_WHEREISIT_2014_BUILD_220",
+    "warm_search": {
+      "status": "PASS_SCOPED",
+      "volumes": 44,
+      "entries": 3046133,
+      "classes": 6,
+      "warm_iterations_each": 30,
+      "page_limit": 250,
+      "p95_range_ms": [
+        3.81,
+        130.21
+      ],
+      "peak_cli_working_set_mib": 9.14,
+      "cold_cache_verified": false
+    },
+    "pending_pr": {
+      "number": 79,
+      "sha": "43b324644433b026a438b3abf4516119f19b8ac5",
+      "merged": false,
+      "ci": "PASS",
+      "installed_win11_gui": "PASS",
+      "probe_then_first_page_p95_ms": 14.15,
+      "metric_excludes_gui_and_full_validation": true
+    },
+    "next_functional_block": "Direct CTF workflow in egui",
+    "stable_decision": "NO_GO"
   }
 }
