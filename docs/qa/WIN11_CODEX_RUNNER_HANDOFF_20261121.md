@@ -60,3 +60,13 @@ Unattended Codex under the existing Administrator **runner service** is not enab
 ## Current release gates
 
 The Win64 egui installed QA smoke passed in GitHub-hosted CI and PR #72 is in main. PR #73 exact source SHA 7bfdfb15 passed Linux/Windows/macOS ARM+Intel, offline, integration and upgrade workflows; independent interactive Win11 categories still **NOT_RUN**, not a blocker that may be silently waived for stable. Stable 1.0 remains NO-GO pending GUI/USB, changed CTF in original app, real 3M p95, signed installers, and other master-plan gates.
+
+## 2026-11-21: first manual runner smoke failed before script execution
+
+- Exact run: https://github.com/i-shutov/whereisit-ai/actions/runs/44885465184 ; main HEAD at run was `7a05e8b23136ee8bc8d47c0cc0c6fc4d4279c3ed`.
+- The job was assigned to the expected `win11-whereisit` runner on the correct Windows 11 host. It failed in the first `run` step **before any PowerShell script body executed**: Windows PowerShell 5.1 refused the GitHub-generated temporary `.ps1` with `PSSecurityException: running scripts is disabled on this system`.
+- Root cause: using `shell: powershell` inherited the Windows machine's script Execution Policy. Not a runner registration, identity, Rust, Codex or administrator-account failure. Host account checks did not yet execute.
+- Hotfix already committed directly to trusted `main`: [`2b6e63a`](https://github.com/i-shutov/whereisit-ai/commit/2b6e63a948405394a26589fbf7ba1119d2cc0bc4). All manual smoke script steps now use custom `shell: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {0}`. `-ExecutionPolicy` is **process-scoped**; do not change `MachinePolicy`, `LocalMachine`, Registry, users, service configuration or the two other projects' runners.
+- PR #74 mirrors that shell fix and adds a hosted static regression guard. It does **not** enable running Codex on the admin service or PR-triggered jobs.
+- For a real verification, use **Actions → Windows 11 VPS runner smoke → Run workflow → Use workflow from: main**. A rerun of the failed historical attempt does not establish that the newly committed workflow source was used. Record the new run ID and exact source SHA. Require `RUNNER_SMOKE_PASS` with exit code 0; the Codex visibility step is only available after PR #74 is merged and checks pass.
+- If the new run still fails with a policy error, inspect `Get-ExecutionPolicy -List` locally for restrictive Group Policy (`MachinePolicy`/`UserPolicy`) and stop for a scoped decision. A process-only bypass cannot override enforced Group Policy. Do not globally disable PowerShell protection to make QA green.
