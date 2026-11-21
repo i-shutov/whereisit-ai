@@ -2715,6 +2715,148 @@ mod shortcut_tests {
     }
 
     #[test]
+    fn back_from_removed_category_last_page_recovers_previous_page() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        let category_route = Route::Search {
+            query: "category_id:7".into(),
+            volume_id: None,
+        };
+        app.route = Route::Folder {
+            volume_id: 2,
+            parent_id: None,
+        };
+        app.history.push((category_route.clone(), 250, None, None, 0.0));
+        app.go_back(&ctx);
+        assert_eq!(app.offset, 250);
+        assert!(!app.category_result_refresh_pending);
+
+        app.active_request = Some(40);
+        app.apply_reply(
+            crate::bridge::Reply {
+                id: 40,
+                purpose: Purpose::Page {
+                    route: category_route.clone(),
+                },
+                response: json!({"ok":true,"data":{"items":[],
+                    "offset":250,"limit":250,"has_more":false}}),
+            },
+            &ctx,
+        );
+        assert_eq!(app.offset, 0);
+        assert!(app.page.items.is_empty());
+        assert!(app.selected.is_none());
+        assert!(app.restore_selection.is_none());
+
+        // The fallback page is then loaded from the service: no stale
+        // high-offset view and no permanent category refresh state.
+        app.active_request = Some(41);
+        app.apply_reply(
+            crate::bridge::Reply {
+                id: 41,
+                purpose: Purpose::Page {
+                    route: category_route,
+                },
+                response: json!({"ok":true,"data":{"items":[{
+                    "id":11,"volume_id":2,"parent_id":null,
+                    "name":"Кино.mkv","relative_path":"Кино.mkv",
+                    "kind":"file","size":42,"modified_unix":null,
+                    "description":"","tags":""}],
+                    "offset":0,"limit":250,"has_more":false}}),
+            },
+            &ctx,
+        );
+        assert_eq!(app.offset, 0);
+        assert_eq!(app.page.items.len(), 1);
+        assert_eq!(app.page.items[0].id, 11);
+        assert!(!app.category_result_refresh_pending);
+    }
+
+    #[test]
+    fn malformed_page_reply_drops_old_inspector_selection_fail_closed() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        let selected = Entry {
+            id: 19,
+            volume_id: 2,
+            parent_id: None,
+            name: "Кино.mkv".into(),
+            relative_path: "Кино.mkv".into(),
+            kind: "file".into(),
+            size: 42,
+            modified_unix: None,
+            description: String::new(),
+            tags: String::new(),
+        };
+        app.selected = Some(selected.clone());
+        app.restore_selection = Some(selected.clone());
+        app.page.items = vec![selected];
+        app.category_result_refresh_pending = true;
+        app.active_request = Some(42);
+        app.apply_reply(
+            crate::bridge::Reply {
+                id: 42,
+                purpose: Purpose::Page {
+                    route: app.route.clone(),
+                },
+                response: json!({"ok":true,"data":{
+                    "items":"bad-type","offset":0,"limit":250}}),
+            },
+            &ctx,
+        );
+        assert!(app.error.is_some());
+        assert!(app.selected.is_none());
+        assert!(app.restore_selection.is_none());
+        assert!(app.page.items.is_empty());
+        assert!(!app.category_result_refresh_pending);
+        assert!(!app.category_assignments_ready);
+    }
+
+    #[test]
+    fn failed_membership_load_is_retryable_not_permanent_loading() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.selected = Some(Entry {
+            id: 19,
+            volume_id: 2,
+            parent_id: None,
+            name: "Кино.mkv".into(),
+            relative_path: "Кино.mkv".into(),
+            kind: "file".into(),
+            size: 42,
+            modified_unix: None,
+            description: String::new(),
+            tags: String::new(),
+        });
+        app.active_request = Some(43);
+        app.apply_reply(
+            crate::bridge::Reply {
+                id: 43,
+                purpose: Purpose::EntryCategoryIds { entry_id: 19 },
+                response: json!({"ok":false,"error":{
+                    "code":"not_found","message":"Entry removed"}}),
+            },
+            &ctx,
+        );
+        assert!(app.category_assignments_error);
+        assert!(!app.category_assignments_ready);
+        assert!(app.category_assigned.is_empty());
+
+        app.active_request = Some(44);
+        app.apply_reply(
+            crate::bridge::Reply {
+                id: 44,
+                purpose: Purpose::EntryCategoryIds { entry_id: 19 },
+                response: json!({"ok":true,"data":[7]}),
+            },
+            &ctx,
+        );
+        assert!(!app.category_assignments_error);
+        assert!(app.category_assignments_ready);
+        assert!(app.category_assigned.contains(&7));
+    }
+
+    #[test]
     fn category_navigation_is_all_disk_scoped_and_back_restores_query() {
         let ctx = egui::Context::default();
         let mut app = DesktopApp::with_context(&ctx, None);
