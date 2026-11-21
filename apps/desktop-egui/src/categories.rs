@@ -45,7 +45,6 @@ impl Category {
     }
 }
 
-
 /// Human-readable disambiguator for repeated category names. Always show the
 /// immutable category ID and the full available ancestry, without unbounded
 /// traversal when a malformed historical catalog contains a cycle.
@@ -188,8 +187,10 @@ mod tests {
             {"id":31,"parent_id":17,"name":"Документальные"}
         ]))
         .unwrap();
-        let lookup: std::collections::HashMap<_, _> =
-            items.iter().map(|category| (category.id, category)).collect();
+        let lookup: std::collections::HashMap<_, _> = items
+            .iter()
+            .map(|category| (category.id, category))
+            .collect();
         assert_eq!(display_path(&items[0], &lookup), "Видео · #17");
         assert_eq!(display_path(&items[1], &lookup), "Видео · #29");
         assert_eq!(
@@ -197,8 +198,16 @@ mod tests {
             "Видео / Документальные · #31"
         );
         let cycle = vec![
-            Category { id: 50, parent_id: Some(51), name: "A".into() },
-            Category { id: 51, parent_id: Some(50), name: "B".into() }
+            Category {
+                id: 50,
+                parent_id: Some(51),
+                name: "A".into(),
+            },
+            Category {
+                id: 51,
+                parent_id: Some(50),
+                name: "B".into(),
+            },
         ];
         let cycle_lookup: std::collections::HashMap<_, _> =
             cycle.iter().map(|c| (c.id, c)).collect();

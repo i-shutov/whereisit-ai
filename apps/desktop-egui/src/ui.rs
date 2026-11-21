@@ -831,7 +831,10 @@ impl DesktopApp {
     fn navigate_category(&mut self, category: &Category, ctx: &egui::Context) {
         if self.active_request.is_some()
             || !self.categories_loaded
-            || !self.categories.iter().any(|listed| listed.id == category.id)
+            || !self
+                .categories
+                .iter()
+                .any(|listed| listed.id == category.id)
         {
             return;
         }
