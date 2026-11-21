@@ -244,6 +244,17 @@ mod tests {
             serde_json::from_str(&atlas_service::dispatch_json(&request.to_string())).unwrap()
         };
         assert_eq!(call(json!({"op":"init","db":db}))["ok"], true);
+        // SQLite FK permits parent_id equal to its own newly assigned row ID.
+        // API must reject this forward/self-parent before the first insert.
+        let self_parent = call(create_request(db.to_str().unwrap(), "Loop", Some(1)));
+        assert_eq!(self_parent["ok"], false, "{self_parent}");
+        assert_eq!(self_parent["error"]["code"], "not_found");
+        let empty = call(list_request(db.to_str().unwrap()));
+        assert_eq!(empty["data"].as_array().unwrap().len(), 0);
+        let negative_parent = call(create_request(db.to_str().unwrap(), "Invalid", Some(-1)));
+        assert_eq!(negative_parent["ok"], false, "{negative_parent}");
+        assert_eq!(negative_parent["error"]["code"], "invalid_request");
+
         let scan = call(json!({"op":"scan","db":db,"root":disk,
             "label":"Synthetic","hash":false}));
         assert_eq!(scan["ok"], true, "{scan}");
@@ -260,6 +271,19 @@ mod tests {
         assert_eq!(parsed[0].name, "Семейное Кино");
         let assigned = call(assign_request(db.to_str().unwrap(), entry_id, category_id));
         assert_eq!(assigned["ok"], true, "{assigned}");
+
+        // Missing entry must not be confused with a valid entry without links.
+        let gone_id = i64::MAX;
+        let absent = call(list_assigned_request(db.to_str().unwrap(), gone_id));
+        assert_eq!(absent["ok"], false, "{absent}");
+        assert_eq!(absent["error"]["code"], "not_found");
+        let invalid_assign = call(assign_request(db.to_str().unwrap(), gone_id, category_id));
+        assert_eq!(invalid_assign["ok"], false, "{invalid_assign}");
+        assert_eq!(invalid_assign["error"]["code"], "not_found");
+        let invalid_unassign = call(unassign_request(db.to_str().unwrap(), gone_id, category_id));
+        assert_eq!(invalid_unassign["ok"], false, "{invalid_unassign}");
+        assert_eq!(invalid_unassign["error"]["code"], "not_found");
+
         let before = call(list_assigned_request(db.to_str().unwrap(), entry_id));
         assert_eq!(before["ok"], true, "{before}");
         assert!(parse_assignment_ids(&before["data"])

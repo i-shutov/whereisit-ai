@@ -539,12 +539,43 @@ impl Catalog {
             Ok(())
         })
     }
+    fn require_entry(&self, entry_id: i64) -> Result<()> {
+        if entry_id <= 0 {
+            return Err(Error::new("invalid_request", "Entry ID must be positive"));
+        }
+        let found: i64 = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM entries WHERE id=?1)",
+            [entry_id],
+            |row| row.get(0),
+        )?;
+        if found == 0 {
+            return Err(Error::new("not_found", "Catalog entry no longer exists"));
+        }
+        Ok(())
+    }
+
     pub fn create_category(&self, name: &str, parent_id: Option<i64>) -> Result<i64> {
         if name.trim().is_empty() {
             return Err(Error::new(
                 "invalid_request",
                 "Category name cannot be empty",
             ));
+        }
+        // A forward-reference equal to the next generated category ID
+        // could otherwise create a self-parent via a legal SQLite FK.
+        // Only already-existing positive parents are permitted.
+        if let Some(parent) = parent_id {
+            if parent <= 0 {
+                return Err(Error::new("invalid_request", "Parent ID must be positive"));
+            }
+            let exists: i64 = self.conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM categories WHERE id=?1)",
+                [parent],
+                |row| row.get(0),
+            )?;
+            if exists == 0 {
+                return Err(Error::new("not_found", "Parent category not found"));
+            }
         }
         self.conn.execute(
             "INSERT INTO categories(name,name_norm,parent_id) VALUES(?1,?2,?3)",
@@ -553,6 +584,7 @@ impl Catalog {
         Ok(self.conn.last_insert_rowid())
     }
     pub fn assign_category(&self, entry_id: i64, category_id: i64) -> Result<()> {
+        self.require_entry(entry_id)?;
         self.conn.execute(
             "INSERT OR IGNORE INTO entry_categories(entry_id,category_id) VALUES(?1,?2)",
             params![entry_id, category_id],
@@ -563,9 +595,7 @@ impl Catalog {
     /// IDs of categories explicitly assigned to one catalog entry.
     /// Does not infer inherited categories and does not touch source media.
     pub fn entry_category_ids(&self, entry_id: i64) -> Result<Value> {
-        if entry_id <= 0 {
-            return Err(Error::new("invalid_request", "Entry ID must be positive"));
-        }
+        self.require_entry(entry_id)?;
         let mut stmt = self.conn.prepare(
             "SELECT category_id FROM entry_categories WHERE entry_id=?1 ORDER BY category_id",
         )?;
@@ -584,6 +614,7 @@ impl Catalog {
                 "Category and entry IDs must be positive",
             ));
         }
+        self.require_entry(entry_id)?;
         let removed = self.conn.execute(
             "DELETE FROM entry_categories WHERE entry_id=?1 AND category_id=?2",
             params![entry_id, category_id],
