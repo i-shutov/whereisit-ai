@@ -106,6 +106,13 @@ jobs:
       - name: Verify install, installed CLI and safe uninstall
         shell: pwsh
         run: ./installers/windows/smoke-installer.ps1
+      - name: Build isolated Win64 egui QA app (dedicated settings and sidecar)
+        shell: powershell
+        run: |
+          cargo test --locked -p atlas-desktop-egui --features qa-isolated
+          if ($LASTEXITCODE -ne 0) { throw 'QA-isolated egui tests failed' }
+          cargo build --release --locked -p atlas-desktop-egui --features qa-isolated
+          if ($LASTEXITCODE -ne 0) { throw 'QA-isolated egui build failed' }
       - name: Build native egui Win64 installed QA candidate (hosted AMD64 only)
         shell: powershell
         run: ./installers/windows/build-egui-win64-qa.ps1
@@ -150,6 +157,14 @@ jobs:
             dist/windows-egui-win64-qa/WhereIsItAI-egui-win64-QA-*-setup.exe
             dist/windows-egui-win64-qa/SHA256SUMS.txt
             dist/windows-egui-win64-qa/provenance.json
+      - name: Restore default preview GUI binary for the existing generic artifact
+        shell: powershell
+        run: |
+          $preview = 'dist/qa-egui/windows-x64/WhereIsItAI-egui-preview.exe'
+          if (-not (Test-Path -LiteralPath $preview -PathType Leaf)) {
+            throw 'Missing default egui preview executable for generic artifact'
+          }
+          Copy-Item -LiteralPath $preview -Destination 'target/release/atlas-desktop-egui.exe' -Force
       - name: Checksums and provenance
         shell: pwsh
         run: |

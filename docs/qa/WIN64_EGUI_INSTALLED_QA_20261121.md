@@ -40,3 +40,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\qa\windows11-egu
 The preflight rejects wrong repository source SHA, run ID, non-Win64/egui provenance, missing manifests, unexpected additional setups, digest mismatch and any stable/signature misrepresentation. **Self-reported hashes inside an unsigned artifact alone do not establish publisher authenticity.** The operator must verify the trusted repository workflow URL, Actions run and artifact source independently; do not bypass OS security prompts or use unknown mirrors.
 
 Manual installed GUI scenarios and redacted acceptance matrix: [Win11 native egui acceptance checklist](WIN11_WIN64_EGUI_MANUAL_CHECKLIST_20261121.md). Do not call this a physical GUI PASS merely because the script passed.
+
+## Separate QA user data (no shared production sidecar)
+
+The isolated Win64 installer compiles `atlas-desktop-egui.exe` with the opt-in `qa-isolated` feature, **only** for this side-by-side QA artifact. That feature forces the Win64 app's physical-drive binding sidecar and eframe theme/language settings into a distinct per-user `LOCALAPPDATA/WhereIsIt AI egui Win64 QA` directory and refuses to fall back to the production `AtlasCatalog` sidecar or common eframe settings. An invalid/unavailable local profile prevents the instrumented QA GUI from starting. Inno uninstall deliberately **does not erase** those QA-local user files. The existing default native egui preview binary is restored before uploading the unrelated generic Windows artifact, to avoid accidentally distributing the QA-isolated binary as the default GUI.
+
+These guards isolate default app settings, **not arbitrary catalogs explicitly opened by the operator**. Use synthetic SQLite only; do not open real personal catalogs in QA or publish their paths/screenshots.

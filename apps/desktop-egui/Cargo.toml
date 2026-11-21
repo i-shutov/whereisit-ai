@@ -15,6 +15,7 @@ png = { version = "=0.18.1", optional = true }
 
 [features]
 qa-screenshots = ["dep:png"]
+qa-isolated = []
 
 [dev-dependencies]
 tempfile.workspace = true
