@@ -164,6 +164,7 @@ pub struct DesktopApp {
     categories_loaded: bool,
     category_assigned: HashSet<i64>,
     category_assignments_ready: bool,
+    category_assignments_error: bool,
     category_result_refresh_pending: bool,
     category_name_input: String,
     category_parent_id: Option<i64>,
@@ -262,6 +263,7 @@ impl DesktopApp {
             categories_loaded: false,
             category_assigned: HashSet::new(),
             category_assignments_ready: false,
+            category_assignments_error: false,
             category_result_refresh_pending: false,
             category_name_input: String::new(),
             category_parent_id: None,
@@ -733,6 +735,7 @@ impl DesktopApp {
     fn load_assigned_categories(&mut self, ctx: &egui::Context) {
         self.category_assigned.clear();
         self.category_assignments_ready = false;
+        self.category_assignments_error = false;
         let (Some(db), Some(entry_id)) = (
             self.db.clone(),
             self.selected.as_ref().map(|entry| entry.id),
@@ -752,6 +755,7 @@ impl DesktopApp {
     fn refresh_after_category_write(&mut self, ctx: &egui::Context) {
         self.category_assigned.clear();
         self.category_assignments_ready = false;
+        self.category_assignments_error = false;
         self.category_result_refresh_pending = true;
         self.restore_selection = self.selected.clone();
         self.page = Page::default();
@@ -1079,13 +1083,13 @@ impl DesktopApp {
             } else if matches!(&reply.purpose, Purpose::EntryCategoryIds { .. }) {
                 self.category_assigned.clear();
                 self.category_assignments_ready = false;
-            } else if self.category_result_refresh_pending
-                && matches!(&reply.purpose, Purpose::Page { .. })
-            {
+                self.category_assignments_error = true;
+            } else if matches!(&reply.purpose, Purpose::Page { .. }) {
                 self.category_result_refresh_pending = false;
                 self.category_assigned.clear();
                 self.category_assignments_ready = false;
                 self.restore_selection = None;
+                self.restore_scroll = None;
                 self.selected = None;
                 self.page = Page::default();
             }
@@ -1135,6 +1139,7 @@ impl DesktopApp {
                 self.categories_loaded = false;
                 self.category_assigned.clear();
                 self.category_assignments_ready = false;
+                self.category_assignments_error = false;
                 self.category_result_refresh_pending = false;
                 self.category_parent_id = None;
                 self.category_name_input.clear();
@@ -1311,10 +1316,12 @@ impl DesktopApp {
                         Ok(ids) => {
                             self.category_assigned = ids;
                             self.category_assignments_ready = true;
+                            self.category_assignments_error = false;
                         }
                         Err(error) => {
                             self.category_assigned.clear();
                             self.category_assignments_ready = false;
+                            self.category_assignments_error = true;
                             self.error = Some(error);
                         }
                     }
@@ -1370,6 +1377,19 @@ impl DesktopApp {
                 Ok(page) => {
                     self.route = route;
                     self.offset = page.offset;
+                    if page.items.is_empty() && page.offset > 0 {
+                        // Other processes can remove the last hit before Back
+                        // returns to a formerly populated high-offset page.
+                        // The same guard applies after category edits and to
+                        // regular navigation, not just a pending mutation.
+                        self.offset = self.offset.saturating_sub(PAGE_LIMIT);
+                        self.page = Page::default();
+                        self.selected = None;
+                        self.restore_selection = None;
+                        self.restore_scroll = None;
+                        self.load_page(ctx);
+                        return;
+                    }
                     let start =
                         page.offset
                             .saturating_add(if page.items.is_empty() { 0 } else { 1 });
@@ -1384,32 +1404,27 @@ impl DesktopApp {
                             .find(|item| item.id == selection.id)
                             .cloned()
                     });
-                    let empty_page = page.items.is_empty();
                     self.page = page;
                     if self.category_result_refresh_pending {
-                        if empty_page && self.offset > 0 {
-                            // The mutation might have removed the last hit on
-                            // this page. Step back instead of showing an empty
-                            // high-offset result as if it were current.
-                            self.offset = self.offset.saturating_sub(PAGE_LIMIT);
-                            self.selected = None;
-                            self.restore_selection = None;
-                            self.load_page(ctx);
+                        self.category_result_refresh_pending = false;
+                        if self.show_categories_dialog && self.selected.is_some() {
+                            self.load_assigned_categories(ctx);
                         } else {
-                            self.category_result_refresh_pending = false;
-                            if self.show_categories_dialog && self.selected.is_some() {
-                                self.load_assigned_categories(ctx);
-                            } else {
-                                self.category_assigned.clear();
-                                self.category_assignments_ready = false;
-                            }
+                            self.category_assigned.clear();
+                            self.category_assignments_ready = false;
                         }
                     }
                 }
                 Err(e) => {
+                    // A malformed success response must fail closed exactly
+                    // like an explicit backend error: no stale inspector row.
                     self.category_result_refresh_pending = false;
                     self.category_assigned.clear();
                     self.category_assignments_ready = false;
+                    self.selected = None;
+                    self.restore_selection = None;
+                    self.restore_scroll = None;
+                    self.page = Page::default();
                     self.error = Some(e);
                 }
             },
@@ -2061,6 +2076,23 @@ impl DesktopApp {
                                 "Наследованные через папки/подкатегории совпадения здесь не отмечены.",
                                 "Inherited folder/subcategory matches are not shown as direct assignments.",
                             ));
+                        } else if self.category_assignments_error {
+                            ui.colored_label(
+                                Color32::from_rgb(224, 96, 88),
+                                self.t(
+                                    "Назначения не загружены. Изменения отключены.",
+                                    "Assignments unavailable. Changes are disabled.",
+                                ),
+                            );
+                            if ui
+                                .add_enabled(
+                                    self.active_request.is_none(),
+                                    egui::Button::new(self.t("Повторить загрузку", "Retry loading")),
+                                )
+                                .clicked()
+                            {
+                                self.load_assigned_categories(ctx);
+                            }
                         } else {
                             ui.label(self.t("Загрузка назначений…", "Loading assignments…"));
                         }
