@@ -3046,13 +3046,17 @@ mod shortcut_tests {
                 purpose: Purpose::Page {
                     route: app.route.clone(),
                 },
-                response: json!({"ok": true, "data": {"items": [], "offset": 250, "limit": 250}}),
+                response: json!({"ok": true, "data": {"items": [{
+                    "id":11,"volume_id":2,"parent_id":null,
+                    "name":"Кино.mkv","relative_path":"Кино.mkv","kind":"file",
+                    "size":42,"modified_unix":null,"description":"","tags":""
+                }], "offset": 250, "limit": 250}}),
             },
             &ctx,
         );
-        assert_eq!(app.status.text(app.lang), "Показаны строки 250–250");
+        assert_eq!(app.status.text(app.lang), "Показаны строки 251–251");
         app.lang = Language::English;
-        assert_eq!(app.status.text(app.lang), "Showing rows 250–250");
+        assert_eq!(app.status.text(app.lang), "Showing rows 251–251");
         app.active_request = Some(8);
         app.apply_reply(
             crate::bridge::Reply {
