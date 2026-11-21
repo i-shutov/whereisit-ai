@@ -72,3 +72,17 @@ Source change is not a PASS until exact new commit SHA CI is complete.
 ## Regression: Windows PowerShell 5.1 UTF-8 source parser
 
 Hosted Win64 job on `b5bfe5f3` failed before the category smoke with `Runner parse error` and mojibake of Cyrillic category literals. `Test-CliTransport.ps1` used `Parser.ParseFile` on a BOM-less UTF-8 script; Windows PowerShell 5.1 can decode that as ANSI. This checkpoint changes the transport's **source parser only** to `Parser.ParseInput` with explicitly strict UTF-8 bytes. The packaged GUI QA runner already receives an explicit UTF-8 BOM when bundled. This is **NOT a PASS until exact-head hosted Windows CI has rerun**.
+
+## Independent P1 audit closure — 2026-11-21
+
+An independently executed read-only audit of PR #73 at source SHA `a4735002` identified three real correctness gaps. They are **fixed in source but require a fresh exact-head CI run and real Win11 GUI QA**:
+
+| Finding | Source repair | Regression / acceptance |
+|---|---|---|
+| P1-01: category assignment changes leave stale search rows | `ui.rs` now clears the old page, queues a new service result, restores selection only if still matching, steps back from an empty high-offset page and then reloads direct category IDs | EgUI unit regression verifies removed selected row vanishes and pagination steps back; interactive CAT-05/06/08/10 still NOT_RUN |
+| P1-02: SQLite FK permits a self-parent on the first category insert | `atlas-core::create_category` now requires an existing positive parent before inserting | Native SQLite regression rejects a prospective self-parent and negative parent IDs |
+| P1-03: missing catalog entry appears as valid entry with zero categories | `atlas-core::require_entry` checks presence; `entry_category_ids`, assignment and unassignment return `not_found` for absent IDs | Native SQLite regression checks all three APIs; stale GUI assignment controls fail closed |
+
+Source commits: [`1b4a5ab9`](https://github.com/i-shutov/whereisit-ai/commit/1b4a5ab9381cf355b55f4cee137b58aafb6d3704) and [`472bf8d2`](https://github.com/i-shutov/whereisit-ai/commit/472bf8d213924ba421cc673f175a39ea67ea3fb9).
+
+**W1 runner proof:** [trusted-main Win11 smoke #44888299971](https://github.com/i-shutov/whereisit-ai/actions/runs/44888299971) is PASS. Real interactive Windows 11 category GUI checks are still NOT_RUN and must run under the owner's approved Administrator account. Final stable 1.0 remains NO-GO until the independent release gates are met.
