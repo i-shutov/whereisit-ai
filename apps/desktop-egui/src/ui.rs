@@ -2627,7 +2627,10 @@ mod shortcut_tests {
         app.category_assigned.insert(7);
         app.category_assignments_ready = true;
         app.refresh_after_category_write(&ctx);
-        assert!(app.page.items.is_empty(), "stale category results must disappear");
+        assert!(
+            app.page.items.is_empty(),
+            "stale category results must disappear"
+        );
         assert!(app.category_result_refresh_pending);
         assert!(!app.category_assignments_ready);
         assert!(app.category_assigned.is_empty());
@@ -2667,7 +2670,9 @@ mod shortcut_tests {
         app.apply_reply(
             crate::bridge::Reply {
                 id: 34,
-                purpose: Purpose::Page { route: app.route.clone() },
+                purpose: Purpose::Page {
+                    route: app.route.clone(),
+                },
                 response: json!({"ok":true, "data":{"items":[],
                     "offset":250, "limit":250, "has_more":false}}),
             },
