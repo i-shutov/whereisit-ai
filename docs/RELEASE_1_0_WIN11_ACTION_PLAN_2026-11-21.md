@@ -6,6 +6,8 @@
 
 **Owner directive 2026-11-21:** The owner runs Win11 RDP, PowerShell, egui GUI QA and Codex **as Administrator**. Do not require or insist on a separate non-admin account. Interactive Administrator and the privileged self-hosted runner service are separate execution contexts: avoid automatically executing unreviewed public-PR code through the latter.
 
+
+> **Новый проверенный факт W1 (21.11.2026):** GitHub-hosted runner-связь с реальной Windows 11 Pro x64 подтверждена: ручной [smoke #44888299971](https://github.com/i-shutov/whereisit-ai/actions/runs/44888299971) на `main 9ecd3f1` — PASS. В CI-службе не видны Rust/MSVC/Git в `PATH`, но это не доказательство отсутствия в интерактивной сессии Administrator. **RDP GUI/USB/Codex execution — NOT_RUN**. Подробный [W1 checkpoint](qa/WIN11_W1_RUNNER_PASS_20261121.md). Историческая таблица ниже оставлена без подмены исходных статусов.
 ## 1. Зафиксированные факты и незакрытые проверки
 
 | Область | Доказанный статус | Чего НЕ следует утверждать |
