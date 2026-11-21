@@ -1,3 +1,11 @@
+## Resume checkpoint — 2026-11-21 — Win11 native QA release plan
+
+Current live baseline: `main ddd9215b0926c5e74482a3cbf7f10c229a66fb88`, PR #68 merged; postmerge native CI #459 and RC2→RC3 upgrade #250 are PASS. PR #69 (PR58 Rust/egui parity) and PR #70 (trusted manual Windows 11 runner smoke) are separate drafts. New Windows 11 Pro hardware is provisioned but actual runner Online/Idle, trusted workflow smoke and interactive native GUI tests are **not** equivalent and have not been accepted. Full stable v1.0 remains NO-GO.
+
+**Authoritative next action order:** [Win11/Windows 10 + macOS 1.0 action plan](docs/RELEASE_1_0_WIN11_ACTION_PLAN_2026-11-21.md). Keep the IP, credentials and private CTF evidence outside the public repository. Do not run untrusted PR code on the administrator-owned self-hosted runner, touch other projects' services, or mark USB physical QA PASS (owner deferred it for the current Windows test).
+
+---
+
 ## Resume checkpoint — 2026-11-17 — R2/R3 merged, R4/R5 QA pending
 
 The owner-selected [PR #58](https://github.com/i-shutov/whereisit-ai/pull/58)
