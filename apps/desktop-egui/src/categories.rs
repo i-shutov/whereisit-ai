@@ -45,6 +45,46 @@ impl Category {
     }
 }
 
+
+/// Human-readable disambiguator for repeated category names. Always show the
+/// immutable category ID and the full available ancestry, without unbounded
+/// traversal when a malformed historical catalog contains a cycle.
+pub fn display_path(
+    category: &Category,
+    by_id: &std::collections::HashMap<i64, &Category>,
+) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut visited = std::collections::HashSet::new();
+    let mut cursor = Some(category.id);
+    while let Some(id) = cursor {
+        if !visited.insert(id) {
+            parts.push(format!("[cycle #{id}]"));
+            break;
+        }
+        if parts.len() >= 64 {
+            parts.push("…".to_owned());
+            break;
+        }
+        let item = if id == category.id {
+            Some(category)
+        } else {
+            by_id.get(&id).copied()
+        };
+        match item {
+            Some(item) => {
+                parts.push(item.name.clone());
+                cursor = item.parent_id;
+            }
+            None => {
+                parts.push(format!("[missing #{id}]"));
+                break;
+            }
+        }
+    }
+    parts.reverse();
+    format!("{} · #{}", parts.join(" / "), category.id)
+}
+
 pub fn parse_categories(value: &Value) -> Result<Vec<Category>, String> {
     let list = value
         .as_array()
@@ -138,6 +178,33 @@ mod tests {
         assert_eq!(new_name(" \t\n"), Err("empty"));
         assert_eq!(new_name("x\nz"), Err("invalid"));
         assert_eq!(new_name(&"x".repeat(81)), Err("invalid"));
+    }
+
+    #[test]
+    fn category_labels_disambiguate_duplicate_names_and_ancestry() {
+        let items = parse_categories(&json!([
+            {"id":17,"parent_id":null,"name":"Видео"},
+            {"id":29,"parent_id":null,"name":"Видео"},
+            {"id":31,"parent_id":17,"name":"Документальные"}
+        ]))
+        .unwrap();
+        let lookup: std::collections::HashMap<_, _> =
+            items.iter().map(|category| (category.id, category)).collect();
+        assert_eq!(display_path(&items[0], &lookup), "Видео · #17");
+        assert_eq!(display_path(&items[1], &lookup), "Видео · #29");
+        assert_eq!(
+            display_path(&items[2], &lookup),
+            "Видео / Документальные · #31"
+        );
+        let cycle = vec![
+            Category { id: 50, parent_id: Some(51), name: "A".into() },
+            Category { id: 51, parent_id: Some(50), name: "B".into() }
+        ];
+        let cycle_lookup: std::collections::HashMap<_, _> =
+            cycle.iter().map(|c| (c.id, c)).collect();
+        let shown = display_path(&cycle[0], &cycle_lookup);
+        assert!(shown.contains("[cycle #50]"));
+        assert!(shown.ends_with("· #50"));
     }
 
     #[test]
@@ -235,6 +302,10 @@ mod tests {
             "query":format!("category_id:{parent_id}"),"offset":0,"limit":250}));
         assert_eq!(inherited["ok"], true, "{inherited}");
         assert_eq!(inherited["data"]["items"][0]["id"], entry_id);
+        let legacy_name = call(json!({"op":"search_fast","db":db,
+            "query":"category:архив","offset":0,"limit":250}));
+        assert_eq!(legacy_name["ok"], true, "{legacy_name}");
+        assert_eq!(legacy_name["data"]["items"][0]["id"], entry_id);
         for invalid in ["category_id:0", "category_id:-5", "category_id:unknown"] {
             let result = call(json!({"op":"search_fast","db":db,
                 "query":invalid,"offset":0,"limit":250}));

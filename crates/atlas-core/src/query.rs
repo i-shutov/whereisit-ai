@@ -188,7 +188,10 @@ impl Parser {
             }
             "category" => {
                 self.args.push(Value::Text(v));
-                Ok("id IN (WITH RECURSIVE marked(id,volume_id) AS (SELECT e.id,e.volume_id FROM categories c JOIN entry_categories ec ON ec.category_id=c.id JOIN entries e ON e.id=ec.entry_id WHERE c.name_norm=? UNION SELECT child.id,child.volume_id FROM marked m JOIN entries child ON child.volume_id=m.volume_id AND child.parent_id=m.id) SELECT id FROM marked)".into())
+                // Legacy name search intentionally unions same-named categories.
+                // Like category_id, it includes category descendants and files
+                // under explicitly assigned folders.
+                Ok("id IN (WITH RECURSIVE category_tree(id) AS (SELECT id FROM categories WHERE name_norm=? UNION SELECT child.id FROM categories child JOIN category_tree parent ON child.parent_id=parent.id), marked(id,volume_id) AS (SELECT e.id,e.volume_id FROM category_tree c JOIN entry_categories ec ON ec.category_id=c.id JOIN entries e ON e.id=ec.entry_id UNION SELECT child.id,child.volume_id FROM marked m JOIN entries child ON child.volume_id=m.volume_id AND child.parent_id=m.id) SELECT id FROM marked)".into())
             }
             "text" | "name" | "path" | "description" | "tag" => {
                 let col = match field.as_str() {

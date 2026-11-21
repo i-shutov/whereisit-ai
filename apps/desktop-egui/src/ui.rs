@@ -161,6 +161,7 @@ pub struct DesktopApp {
     show_catalog_dialog: bool,
     show_categories_dialog: bool,
     categories: Vec<Category>,
+    categories_loaded: bool,
     category_assigned: HashSet<i64>,
     category_assignments_ready: bool,
     category_name_input: String,
@@ -257,6 +258,7 @@ impl DesktopApp {
             show_catalog_dialog: false,
             show_categories_dialog: false,
             categories: Vec::new(),
+            categories_loaded: false,
             category_assigned: HashSet::new(),
             category_assignments_ready: false,
             category_name_input: String::new(),
@@ -719,6 +721,8 @@ impl DesktopApp {
     }
 
     fn load_categories(&mut self, ctx: &egui::Context) {
+        self.categories_loaded = false;
+        self.categories.clear();
         if let Some(db) = self.db.clone() {
             self.queue(Purpose::Categories, categories::list_request(&db), ctx);
         }
@@ -765,7 +769,7 @@ impl DesktopApp {
     }
 
     fn create_category(&mut self, ctx: &egui::Context) {
-        if self.active_request.is_some() {
+        if self.active_request.is_some() || !self.categories_loaded {
             return;
         }
         let name = match categories::new_name(&self.category_name_input) {
@@ -825,7 +829,10 @@ impl DesktopApp {
     }
 
     fn navigate_category(&mut self, category: &Category, ctx: &egui::Context) {
-        if self.active_request.is_some() {
+        if self.active_request.is_some()
+            || !self.categories_loaded
+            || !self.categories.iter().any(|listed| listed.id == category.id)
+        {
             return;
         }
         self.history.push((
@@ -1047,6 +1054,15 @@ impl DesktopApp {
                 .unwrap_or("Unknown service error");
             let error_message = message.to_owned();
             self.status = StatusText::new("Операция отклонена", "Operation refused");
+            if matches!(&reply.purpose, Purpose::Categories) {
+                self.categories.clear();
+                self.categories_loaded = false;
+                self.category_assigned.clear();
+                self.category_assignments_ready = false;
+            } else if matches!(&reply.purpose, Purpose::EntryCategoryIds { .. }) {
+                self.category_assigned.clear();
+                self.category_assignments_ready = false;
+            }
             if matches!(&reply.purpose, Purpose::DiskPreferences) {
                 self.preferences_ready = false;
                 self.legacy_shelf_editable = reply
@@ -1090,6 +1106,7 @@ impl DesktopApp {
                 self.offset = 0;
                 self.selected = None;
                 self.categories.clear();
+                self.categories_loaded = false;
                 self.category_assigned.clear();
                 self.category_assignments_ready = false;
                 self.category_parent_id = None;
@@ -1238,6 +1255,7 @@ impl DesktopApp {
             Purpose::Categories => match parse_categories(data) {
                 Ok(categories) => {
                     self.categories = categories;
+                    self.categories_loaded = true;
                     if !self
                         .category_parent_id
                         .is_none_or(|id| self.categories.iter().any(|c| c.id == id))
@@ -1249,6 +1267,8 @@ impl DesktopApp {
                     }
                 }
                 Err(error) => {
+                    self.categories.clear();
+                    self.categories_loaded = false;
                     self.category_assigned.clear();
                     self.category_assignments_ready = false;
                     self.error = Some(error);
@@ -1956,9 +1976,9 @@ impl DesktopApp {
                     ));
                     let selected = self.selected.clone();
                     let catalog_categories = self.categories.clone();
-                    let parent_names: HashMap<i64, &str> = catalog_categories
+                    let category_by_id: HashMap<i64, &Category> = catalog_categories
                         .iter()
-                        .map(|category| (category.id, category.name.as_str()))
+                        .map(|category| (category.id, category))
                         .collect();
                     if let Some(entry) = &selected {
                         ui.label(format!(
@@ -1967,11 +1987,27 @@ impl DesktopApp {
                             entry.id,
                             entry.name
                         ));
+                        ui.label(format!(
+                            "{} #{} · {}",
+                            self.t("Диск каталога", "Catalog disk"),
+                            entry.volume_id,
+                            entry.relative_path
+                        ));
+                        if entry.is_directory() {
+                            ui.label(self.t(
+                                "Назначение папке также включит её вложенные записи в категорийный поиск.",
+                                "Assigning a folder also includes its recorded descendants in category search.",
+                            ));
+                        }
                         if self.category_assignments_ready {
                             ui.label(format!(
                                 "{}: {}",
-                                self.t("Назначено категорий", "Assigned categories"),
+                                self.t("Прямых назначений", "Direct assignments"),
                                 self.category_assigned.len()
+                            ));
+                            ui.label(self.t(
+                                "Наследованные через папки/подкатегории совпадения здесь не отмечены.",
+                                "Inherited folder/subcategory matches are not shown as direct assignments.",
                             ));
                         } else {
                             ui.label(self.t("Загрузка назначений…", "Loading assignments…"));
@@ -1983,8 +2019,17 @@ impl DesktopApp {
                         ));
                     }
                     ui.separator();
-                    if catalog_categories.is_empty() && self.active_request.is_none() {
+                    if self.categories_loaded && catalog_categories.is_empty() {
                         ui.label(self.t("Категорий пока нет.", "No categories yet."));
+                    }
+                    if !self.categories_loaded && self.active_request.is_none() {
+                        ui.label(self.t(
+                            "Справочник категорий не загружен; переходы и изменения отключены.",
+                            "Categories not loaded; navigation and edits are disabled.",
+                        ));
+                        if ui.button(self.t("Повторить загрузку", "Retry loading")).clicked() {
+                            self.load_categories(ctx);
+                        }
                     }
                     egui::ScrollArea::vertical().max_height(260.0).show_rows(
                         ui,
@@ -1993,16 +2038,11 @@ impl DesktopApp {
                         |ui, visible_rows| {
                         for row in visible_rows {
                             let category = &catalog_categories[row];
-                            let parent = category
-                                .parent_id
-                                .and_then(|id| parent_names.get(&id))
-                                .map(|name| format!("{name} / "))
-                                .unwrap_or_default();
                             ui.horizontal(|ui| {
-                                let title = format!("{parent}{}", category.name);
+                                let title = categories::display_path(category, &category_by_id);
                                 if ui
                                     .add_enabled(
-                                        self.active_request.is_none(),
+                                        self.active_request.is_none() && self.categories_loaded,
                                         egui::Button::new(title),
                                     )
                                     .on_hover_text(self.t(
@@ -2037,7 +2077,9 @@ impl DesktopApp {
                                     }
                                     if ui
                                         .add_enabled(
-                                            self.active_request.is_none() && self.category_assignments_ready,
+                                            self.active_request.is_none()
+                                                && self.categories_loaded
+                                                && self.category_assignments_ready,
                                             egui::Button::new(action_label),
                                         )
                                         .on_hover_text(action_hint)
@@ -2061,13 +2103,17 @@ impl DesktopApp {
                             .hint_text(name_hint)
                             .desired_width(f32::INFINITY),
                     );
-                    let parent_name = self.category_parent_id.and_then(|id| {
-                        catalog_categories.iter().find(|category| category.id == id)
-                    }).map(|category| category.name.as_str())
-                    .unwrap_or(self.t("Без родителя", "No parent"));
+                    let parent_name = self
+                        .category_parent_id
+                        .and_then(|id| category_by_id.get(&id).copied())
+                        .map(|category| categories::display_path(category, &category_by_id))
+                        .unwrap_or_else(|| self.t("Без родителя", "No parent").to_owned());
                     let no_parent = self.t("Без родителя", "No parent");
                     ui.horizontal(|ui| {
                         ui.label(self.t("Родитель", "Parent"));
+                        ui.add_enabled_ui(
+                            self.categories_loaded && self.active_request.is_none(),
+                            |ui| {
                         egui::ComboBox::from_id_salt("new_category_parent")
                             .selected_text(parent_name)
                             .show_ui(ui, |ui| {
@@ -2080,12 +2126,14 @@ impl DesktopApp {
                                     ui.selectable_value(
                                         &mut self.category_parent_id,
                                         Some(category.id),
-                                        category.name.as_str(),
+                                        categories::display_path(category, &category_by_id),
                                     );
                                 }
                             });
+                        });
                     });
                     let can_create = self.active_request.is_none()
+                        && self.categories_loaded
                         && categories::new_name(&self.category_name_input).is_ok();
                     if ui
                         .add_enabled(
@@ -2519,6 +2567,8 @@ mod shortcut_tests {
         };
         app.page.offset = 250;
         app.page.has_more = true;
+        app.categories.push(category.clone());
+        app.categories_loaded = true;
         app.navigate_category(&category, &ctx);
         assert_eq!(app.page.offset, 0);
         assert!(!app.page.has_more);
