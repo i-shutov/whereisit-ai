@@ -539,11 +539,11 @@ impl Catalog {
             Ok(())
         })
     }
-    fn require_entry(&self, entry_id: i64) -> Result<()> {
+    fn require_entry(conn: &Connection, entry_id: i64) -> Result<()> {
         if entry_id <= 0 {
             return Err(Error::new("invalid_request", "Entry ID must be positive"));
         }
-        let found: i64 = self.conn.query_row(
+        let found: i64 = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM entries WHERE id=?1)",
             [entry_id],
             |row| row.get(0),
@@ -584,24 +584,37 @@ impl Catalog {
         Ok(self.conn.last_insert_rowid())
     }
     pub fn assign_category(&self, entry_id: i64, category_id: i64) -> Result<()> {
-        self.require_entry(entry_id)?;
-        self.conn.execute(
+        // The entry existence check and the membership write must be atomic
+        // against a second process deleting the catalog entry. BEGIN IMMEDIATE
+        // serializes concurrent writers without requiring an exclusive DB lock.
+        let tx = Transaction::new_unchecked(
+            &self.conn,
+            rusqlite::TransactionBehavior::Immediate,
+        )?;
+        Self::require_entry(&tx, entry_id)?;
+        tx.execute(
             "INSERT OR IGNORE INTO entry_categories(entry_id,category_id) VALUES(?1,?2)",
             params![entry_id, category_id],
         )?;
+        tx.commit()?;
         Ok(())
     }
 
     /// IDs of categories explicitly assigned to one catalog entry.
     /// Does not infer inherited categories and does not touch source media.
     pub fn entry_category_ids(&self, entry_id: i64) -> Result<Value> {
-        self.require_entry(entry_id)?;
-        let mut stmt = self.conn.prepare(
-            "SELECT category_id FROM entry_categories WHERE entry_id=?1 ORDER BY category_id",
-        )?;
-        let ids = stmt
-            .query_map([entry_id], |row| row.get::<_, i64>(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+        // A deferred read transaction fixes one SQLite snapshot for both the
+        // existence check and memberships even while another process writes.
+        let tx = self.conn.unchecked_transaction()?;
+        Self::require_entry(&tx, entry_id)?;
+        let ids = {
+            let mut stmt = tx.prepare(
+                "SELECT category_id FROM entry_categories WHERE entry_id=?1 ORDER BY category_id",
+            )?;
+            stmt.query_map([entry_id], |row| row.get::<_, i64>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        tx.commit()?;
         Ok(json!(ids))
     }
 
@@ -614,11 +627,16 @@ impl Catalog {
                 "Category and entry IDs must be positive",
             ));
         }
-        self.require_entry(entry_id)?;
-        let removed = self.conn.execute(
+        let tx = Transaction::new_unchecked(
+            &self.conn,
+            rusqlite::TransactionBehavior::Immediate,
+        )?;
+        Self::require_entry(&tx, entry_id)?;
+        let removed = tx.execute(
             "DELETE FROM entry_categories WHERE entry_id=?1 AND category_id=?2",
             params![entry_id, category_id],
         )?;
+        tx.commit()?;
         Ok(removed > 0)
     }
     pub fn categories(&self) -> Result<Value> {
