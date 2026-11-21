@@ -1852,6 +1852,10 @@ impl DesktopApp {
                     ));
                     let selected = self.selected.clone();
                     let catalog_categories = self.categories.clone();
+                    let parent_names: HashMap<i64, &str> = catalog_categories
+                        .iter()
+                        .map(|category| (category.id, category.name.as_str()))
+                        .collect();
                     if let Some(entry) = &selected {
                         ui.label(format!(
                             "{}: #{} · {}",
@@ -1866,15 +1870,20 @@ impl DesktopApp {
                         ));
                     }
                     ui.separator();
-                    egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
-                        if catalog_categories.is_empty() && self.active_request.is_none() {
-                            ui.label(self.t("Категорий пока нет.", "No categories yet."));
-                        }
-                        for category in &catalog_categories {
+                    if catalog_categories.is_empty() && self.active_request.is_none() {
+                        ui.label(self.t("Категорий пока нет.", "No categories yet."));
+                    }
+                    egui::ScrollArea::vertical().max_height(260.0).show_rows(
+                        ui,
+                        28.0,
+                        catalog_categories.len(),
+                        |ui, visible_rows| {
+                        for row in visible_rows {
+                            let category = &catalog_categories[row];
                             let parent = category
                                 .parent_id
-                                .and_then(|id| catalog_categories.iter().find(|c| c.id == id))
-                                .map(|c| format!("{} / ", c.name))
+                                .and_then(|id| parent_names.get(&id))
+                                .map(|name| format!("{name} / "))
                                 .unwrap_or_default();
                             ui.horizontal(|ui| {
                                 let title = format!("{parent}{}", category.name);
@@ -2361,7 +2370,11 @@ mod shortcut_tests {
             parent_id: None,
             name: "Семейное Кино".into(),
         };
+        app.page.offset = 250;
+        app.page.has_more = true;
         app.navigate_category(&category, &ctx);
+        assert_eq!(app.page.offset, 0);
+        assert!(!app.page.has_more);
         assert_eq!(app.query_input, "category_id:3");
         assert_eq!(app.selected_volume, None);
         assert_eq!(app.history.len(), 1);
