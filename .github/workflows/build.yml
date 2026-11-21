@@ -80,7 +80,7 @@ jobs:
       - name: Offline synthetic egui integration smoke (headless Windows runner)
         shell: powershell
         run: |
-          ./dist/qa-egui/windows-x64/Invoke-WhereIsItEguiQA.ps1 -EvidenceRoot "$env:RUNNER_TEMP/WhereIsItAI-Egui-QA" -DiskCount 6 -SkipGui
+          ./dist/qa-egui/windows-x64/Invoke-WhereIsItEguiQA.ps1 -EvidenceRoot "$env:RUNNER_TEMP/WhereIsItAI-Egui-QA" -DiskCount 6 -SkipGui -CategoryChecks
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -52,3 +52,19 @@
 ## Релизные ворота, которые этот PR не закрывает
 
 Физическая приёмка реальных Win10/Win11 GUI и USB hardware; PR58 полный функциональный UX, CTF modified-output в исходной WhereIsIt, 3 046 027 записей / `p95 ≤ 150 ms`, подписание Windows Authenticode, macOS Developer ID/notarization и физический запуск ARM/Intel. Сохранить `release/ACCEPTANCE.json: stable_ready=false`. Никакого нового stable tag/переноса `v1.0.0-rc.3` без GO.
+
+## Windows PowerShell 5.1 category smoke — new QA lane
+
+The existing synthetic Win10/Win11 QA runner now supports an opt-in
+-CategoryChecks switch. It uses the accepted BOM-free UTF-8 stdin JSON-lines
+native CLI transport and generated SQLite to cover homonymous IDs, direct
+assignment, exact category-ID search, parent-category inheritance, unassignment
+and relinking, invalid IDs, and final catalog integrity.
+
+GitHub-hosted Windows CI invokes the script with six synthetic disks and
+-SkipGui -CategoryChecks; the same packaged script supports interactive Win11
+with -DiskCount 60 -ManualReview -CategoryChecks. Manual category GUI prompts
+are NOT automatically accepted. The separate sidecar byte-immutability check
+still executes after category mutations. No private CTF or USB hardware is used.
+
+Source change is not a PASS until exact new commit SHA CI is complete.

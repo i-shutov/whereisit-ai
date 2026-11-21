@@ -16,7 +16,8 @@ param(
     [string]$ExpectedCommit = '',
     [switch]$SkipGui,
     [switch]$ManualReview,
-    [switch]$CaptureScreenshot
+    [switch]$CaptureScreenshot,
+    [switch]$CategoryChecks
 )
 # Advanced-script parameter defaults are evaluated before PSScriptRoot is populated in Windows PowerShell 5.1.
 if (-not $PreviewDir) { $PreviewDir = $PSScriptRoot }
@@ -119,6 +120,7 @@ function Save-Report {
         session_kind = if ($SkipGui) { 'headless' } elseif ($env:SESSIONNAME -like 'RDP*') { 'RDP' } else { 'interactive' }
         display_resolution = $display
         synthetic_disk_count = $DiskCount
+        category_checks_requested = [bool]$CategoryChecks
         scope = 'generated fixtures only; local evidence; no user CTF/SQLite read'
         checks = $script:Checks
         manual_checks = $script:Manual
@@ -238,6 +240,50 @@ try {
     Assert-Check (($repeat.ok -eq $false) -and
         ($repeat.error.code -eq 'file_exists') -and $priorHash -eq $newHash) 'NO_CLOBBER' 'Existing export refused without byte changes'
 
+    if ($CategoryChecks) {
+        # Generated data and the native Rust/SQLite API only: no real CTF.
+        $items = @($result.data.items)
+        if ($items.Count -lt 2) { throw 'Category smoke requires two generated movie entries.' }
+        $firstEntry = [int64]$items[0].id
+        $secondEntry = [int64]$items[1].id
+        if ($firstEntry -le 0 -or $secondEntry -le 0 -or $firstEntry -eq $secondEntry) {
+            throw 'Generated category fixture has invalid entry IDs.'
+        }
+        $firstCategory = Invoke-Cli @{op='create_category';db=$script:Catalog;name='Видео';parent_id=$null}
+        $secondCategory = Invoke-Cli @{op='create_category';db=$script:Catalog;name='Видео';parent_id=$null}
+        $catId1 = [int64]$firstCategory.data.id
+        $catId2 = [int64]$secondCategory.data.id
+        Assert-Check (($catId1 -gt 0) -and ($catId2 -gt 0) -and ($catId1 -ne $catId2)) 'CATEGORY_IDENTITIES' 'Equal category names have separate IDs'
+        $catalogCategories = Invoke-Cli @{op='categories';db=$script:Catalog}
+        $categoryIds = @($catalogCategories.data | ForEach-Object { [int64]$_.id })
+        Assert-Check (($categoryIds -contains $catId1) -and ($categoryIds -contains $catId2)) 'CATEGORY_LIST' 'Both Unicode categories returned from SQLite'
+        [void](Invoke-Cli @{op='assign_category';db=$script:Catalog;entry_id=$firstEntry;category_id=$catId1})
+        [void](Invoke-Cli @{op='assign_category';db=$script:Catalog;entry_id=$secondEntry;category_id=$catId2})
+        $direct = Invoke-Cli @{op='entry_category_ids';db=$script:Catalog;entry_id=$firstEntry}
+        Assert-Check ((@($direct.data) -contains $catId1) -and -not (@($direct.data) -contains $catId2)) 'CATEGORY_DIRECT' 'Direct category links use exact entry IDs'
+        $firstPage = Invoke-Cli @{op='search_fast';db=$script:Catalog;query=("category_id:" + $catId1);offset=0;limit=250}
+        $secondPage = Invoke-Cli @{op='search_fast';db=$script:Catalog;query=("category_id:" + $catId2);offset=0;limit=250}
+        $distinct = ($firstPage.data.items.Count -eq 1) -and ([int64]$firstPage.data.items[0].id -eq $firstEntry) -and ($secondPage.data.items.Count -eq 1) -and ([int64]$secondPage.data.items[0].id -eq $secondEntry)
+        Assert-Check $distinct 'CATEGORY_EXACT_SEARCH' 'Homonymous categories cannot conflate results'
+        $parent = Invoke-Cli @{op='create_category';db=$script:Catalog;name='Архив';parent_id=$null}
+        $parentId = [int64]$parent.data.id
+        $child = Invoke-Cli @{op='create_category';db=$script:Catalog;name='Документальные';parent_id=$parentId}
+        $childId = [int64]$child.data.id
+        [void](Invoke-Cli @{op='assign_category';db=$script:Catalog;entry_id=$firstEntry;category_id=$childId})
+        $inherited = Invoke-Cli @{op='search_fast';db=$script:Catalog;query=("category_id:" + $parentId);offset=0;limit=250}
+        Assert-Check (($inherited.data.items.Count -eq 1) -and ([int64]$inherited.data.items[0].id -eq $firstEntry)) 'CATEGORY_INHERITANCE' 'Parent search includes child-category file'
+        [void](Invoke-Cli @{op='unassign_category';db=$script:Catalog;entry_id=$firstEntry;category_id=$catId1})
+        $without = Invoke-Cli @{op='search_fast';db=$script:Catalog;query=("category_id:" + $catId1);offset=0;limit=250}
+        Assert-Check ($without.data.items.Count -eq 0) 'CATEGORY_UNASSIGN' 'Only link removed from exact category search'
+        [void](Invoke-Cli @{op='assign_category';db=$script:Catalog;entry_id=$firstEntry;category_id=$catId1})
+        $restored = Invoke-Cli @{op='search_fast';db=$script:Catalog;query=("category_id:" + $catId1);offset=0;limit=250}
+        Assert-Check (($restored.data.items.Count -eq 1) -and ([int64]$restored.data.items[0].id -eq $firstEntry)) 'CATEGORY_RELINK' 'Link restored with original entry preserved'
+        $invalid = Invoke-Cli @{op='search_fast';db=$script:Catalog;query='category_id:0';offset=0;limit=250} -AllowFailure
+        Assert-Check ($invalid.ok -eq $false) 'CATEGORY_INVALID_ID' 'Invalid zero ID rejected by query parser'
+        $validatedCategoryDb = Invoke-Cli @{op='validate_catalog';db=$script:Catalog}
+        Assert-Check ($validatedCategoryDb.ok -eq $true) 'CATEGORY_CATALOG' 'Generated SQLite remains valid'
+    }
+
     $catalogHashBefore = (Get-FileHash -LiteralPath $script:Catalog -Algorithm SHA256).Hash
     $sidecar = Join-Path $script:RunFolder 'private-shelf-bindings.sqlite'
     $scope = 'sqlite:' + $script:Catalog
@@ -309,6 +355,10 @@ public static class WhereIsItQaRect {
             Read-Manual 'RU_EN_DPI' 'Test RU/EN and theme at current RDP DPI; controls must not clip.'
             Read-Manual 'INSPECTOR_SHELF' 'Open disk properties and verify sticker hints; no false connected badge.'
             Read-Manual 'SCAN_CANCEL' 'In app, scan a new synthetic folder and cancel a longer scan; verify rollback.'
+            if ($CategoryChecks) {
+                Read-Manual 'CATEGORY_GUI' 'In real egui GUI verify categories with equal names show separate IDs, and selected entry can be assigned and unassigned without removal.'
+                Read-Manual 'CATEGORY_SEARCH_BACK' 'Verify exact category ID search, then Back restores earlier scope and selected entry.'
+            }
         }
         if (-not $script:PreviewProcess.HasExited) {
             [void]$script:PreviewProcess.CloseMainWindow()
