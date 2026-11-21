@@ -1,3 +1,5 @@
+> **Текущие статусы и очередь релиза (21.11.2026):** [оперативный план](RELEASE_1_0_WIN11_ACTION_PLAN_2026-11-21.md) и [checkpoint](qa/WIN11_RELEASE_CHECKPOINT_20261121.md). Промежуточные статусы в этом историческом документе не являются актуальным NOT_RUN/BLOCKED. Scope и канонический PR58 UX сохраняются.
+
 > Current authoritative 1.0 roadmap: [RELEASE_1_0_EXECUTION_PLAN_2026-11-16.md](RELEASE_1_0_EXECUTION_PLAN_2026-11-16.md). Historical roadmap below is preserved for traceability; Rust/egui migration is now a mandatory architecture direction.
 
 # WhereIsIt AI — дорожная карта до устанавливаемого выпуска 1.0

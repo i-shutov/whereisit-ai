@@ -1,9 +1,11 @@
+> Current status and accepted scope: [release action plan](RELEASE_1_0_WIN11_ACTION_PLAN_2026-11-21.md), [checkpoint](qa/WIN11_RELEASE_CHECKPOINT_20261121.md). Unchecked release-wide items below are not a denial of scoped Win11 PASS.
+
 # WhereIsIt AI — release gate checklist
 
 - [ ] Source `main` has reviewed, passing PRs for M1–M5.
 - [ ] Linux, Windows x64, macOS arm64, macOS Intel CI green on exact release SHA.
 - [ ] `cargo test --workspace --locked`, fmt and Clippy pass.
-- [ ] Real CTF: 44 disks/3,046,027 entries; roundtrip identical for unchanged; original WhereIsIt opens new/edited CTF.
+- [ ] Real CTF: measured full-catalog counts (current Win11 sample: 44 disks/3,046,133 entries); roundtrip identical for unchanged; original WhereIsIt opens new/edited CTF.
 - [ ] No loss for categories, descriptions, DOS times, Unicode and unknown CTF fields, or safe refusal with explicit errors.
 - [ ] Search and duplicate counts agree across all platforms; broad categories performance gate met or documented waiver.
 - [ ] Windows installer: per-user install / launch / command line / uninstall; user data retained; version shown.

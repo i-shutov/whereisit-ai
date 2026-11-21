@@ -1,8 +1,8 @@
 {
   "schema": "whereisit-v1-release-gates-2026-11-16",
   "created_date": "2026-11-16",
-  "source_baseline": "main 405b4ccbc534db73cc6f986b77c8ba6e1b5a5e9e (PR62+PR63 merged, stable NO_GO)",
-  "integration_candidate": "PR64 R4 scan and PR65 isolated egui QA previews remain open/draft; CI incomplete",
+  "source_baseline": "main 8cbb3b4f5e9f07537cbd0d42deeeee01ec4e35ef",
+  "integration_candidate": "PR79 43b324644433b026a438b3abf4516119f19b8ac5: CI and installed Win11 GUI PASS, draft, not merged",
   "published_candidate": "v1.0.0-rc.3",
   "stable_ready": false,
   "status_definitions": {
@@ -30,12 +30,8 @@
       "name": "PR57+PR58 integrated source in main and exact SHA CI",
       "status": "PASS",
       "evidence": [
-        "PR57/PR58 source PR59 merged ff87d109",
-        "PR62 native egui Rust1.100 egui0.37 merged 81f04912",
-        "PR63 real SQLite export merged 405b4ccb",
-        "PR63 exact-head CI native Linux Windows macOS ARM/Intel PASS run 44035800572",
-        "PR63 installed upgrade QA 3/3 PASS run 44035800600",
-        "PR63 offline kit and integration run 44035800563 / 44035800540"
+        "PR64/65/69/70/73/78 merged",
+        "Exact main native run 44929080959, upgrade 44929080983, integration 44929081025 PASS"
       ],
       "missing": [],
       "owner": "Integrator"
@@ -45,14 +41,12 @@
       "name": "Real Windows/macOS Rust egui app",
       "status": "PARTIAL",
       "missing": [
-        "PR58 complete P0 visual/functional parity",
-        "Manual Windows10/11 macOS ARM and Intel GUI launch, DPI and accessibility QA",
-        "Signed default desktop installer"
+        "Remaining PR58 P0 parity",
+        "Full Win10/Win11/macOS ARM/Intel DPI/accessibility GUI matrix"
       ],
       "owner": "egui",
       "evidence": [
-        "Native Rust/egui R2 source implemented and merged PR62",
-        "Rust1.100 and egui0.37 native OS builds passed at exact PR63 SHA"
+        "Real Win11 Rust/egui installed GUI and scoped 60-volume QA PASS"
       ]
     },
     {
@@ -60,14 +54,12 @@
       "name": "P0 end to end service parity",
       "status": "PARTIAL",
       "evidence": [
-        "R2 SQLite browse and search integrated",
-        "R3 whole-query and branch CSV/JSON/Parquet no-clobber export integrated",
-        "Synthetic service end-to-end scan to export regression PASS"
+        "SQLite search/browse/categories/scan/export implemented; scoped Win11 evidence",
+        "PR73 category correctness and PR78 Path/CTF fixes in main"
       ],
       "missing": [
-        "R4 scan with progress/cancel CI/manual QA",
-        "Other PR58 P0 actions and true physical disk status",
-        "P0 feature parity in egui"
+        "Direct CTF link/import/export in egui",
+        "Remaining P0 routes and real physical pairing acceptance"
       ],
       "owner": "Service"
     },
@@ -76,50 +68,55 @@
       "name": "Physical USB fail-closed acceptance",
       "status": "BLOCKED",
       "evidence": [
-        "PR57 synthetic native implementation"
+        "Service implementation and synthetic identity tests"
       ],
       "missing": [
-        "Win10/Win11/Mac real unplug/clones/system-volume"
+        "Real unplug/replug/clone/conflict/system-volume matrix on target OS"
       ],
       "owner": "QA"
     },
     {
       "id": "G5",
       "name": "Original WhereIsIt accepts new/edited supported CTF",
-      "status": "BLOCKED",
+      "status": "PASS",
       "evidence": [
-        "Unchanged real CTF roundtrip"
+        "WhereIsIt 2014 build 220: corrected synthetic/new/edited supported CTF accepted",
+        "Authorized private-copy description edit verified both directions, source unchanged",
+        "docs/qa/WIN11_CTF_PATH_ACCEPTANCE_REDACTED_20261121.md"
       ],
-      "missing": [
-        "Original app independent modified-output evidence",
-        "Two historical CTF provider bytes"
-      ],
-      "owner": "CTF"
+      "missing": [],
+      "owner": "CTF",
+      "scope": "Tested observed uncompressed Catalog 3.00 layouts/version; arbitrary compressed/encrypted and unavailable historical corpus not accepted"
     },
     {
       "id": "G6",
       "name": "3M parity, p95 latency and cancellation",
       "status": "PARTIAL",
       "evidence": [
-        "44-volume 3046027 real records",
-        "p95 209.82–252.83ms on isolated Linux"
+        "Main Win11 full catalog 44 volumes / 3046133 entries, 6 workloads x 30 warm samples, p95 3.81-130.21ms PASS",
+        "CLI peak working set 9.14 MiB; snapshot/generation unchanged",
+        "PR79 readiness path CLI p95 14.15ms and installed GUI PASS, PR-only"
       ],
       "missing": [
-        "Target <=150 ms or documented release scope decision",
-        "Native cancel/rollback and memory"
+        "Final release target-platform workload/long-operation coverage",
+        "PR79 integration before treating fast-open fix as main"
       ],
-      "owner": "Storage"
+      "owner": "Storage",
+      "warm_win11_search_status": "PASS",
+      "all_platforms_and_cold_cache_status": "NOT_RUN"
     },
     {
       "id": "G7",
       "name": "Privacy and data-loss safety",
       "status": "PARTIAL",
       "evidence": [
-        "Privacy-gated RC3",
-        "Safe PR58 workbench"
+        "Source/control CTF and derived SQLite unchanged after actual GUI/lifecycle",
+        "Synthetic no-clobber/fail-closed regressions",
+        "PR79 malformed-CTF fixes passed tests and CI"
       ],
       "missing": [
-        "Final egui/native package recheck"
+        "PR79 review and integration",
+        "Final frozen product package privacy/data-safety audit"
       ],
       "owner": "QA"
     },
@@ -128,12 +125,13 @@
       "name": "Signed/notarized native packages and installed upgrades",
       "status": "BLOCKED",
       "evidence": [
-        "Unsigned RC3 installers and earlier synthetic upgrades"
+        "Win11 isolated unsigned egui install/restart/uninstall PASS, external SQLite retained",
+        "Hosted Windows/macOS packaging and upgrade CI PASS"
       ],
       "missing": [
-        "Authenticode",
-        "Apple Developer ID notarization/staple",
-        "Final egui upgrade on real OS"
+        "Product egui RC4 and RC3-to-RC4 clean-profile/upgrade/rollback acceptance",
+        "Authenticode and Apple Developer ID notarization/staple",
+        "Real target-platform installed package acceptance"
       ],
       "owner": "Release"
     },
@@ -142,11 +140,14 @@
       "name": "Frozen stable v1.0.0 and independent signoff",
       "status": "NOT_STARTED",
       "missing": [
-        "All mandatory gates PASS",
-        "Immutable source+artifact provenance"
+        "All mandatory gates PASS and no open P0/P1 defects",
+        "New immutable RC4, exact source freeze and independent signoff",
+        "Stable tag only after authorization"
       ],
-      "owner": "Integrator"
+      "owner": "Integrator",
+      "evidence": []
     }
   ],
-  "last_reviewed_date": "2026-11-17"
+  "last_reviewed_date": "2026-11-21",
+  "next_functional_block": "Direct CTF workflow in egui, after PR79 integration review"
 }
