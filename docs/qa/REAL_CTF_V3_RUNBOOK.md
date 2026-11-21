@@ -15,8 +15,12 @@ mismatches. **It is not a claim that CI processed a private user catalog.**
 
 ## Prerequisites
 
-Use an `atlas` CLI built from the exact source commit under review, with
-`--sqlite-version` printing `3.51.3`. Keep the original CTF and its verified
+Use an `atlas` CLI built from the exact source commit under review.
+The historical default `--sqlite-version` was `3.51.3`.
+The verified Win64 egui CI #44891158178 now embeds SQLite `3.54.1`;
+use the **explicit reviewed pin** `--expected-sqlite-version 3.54.1`
+with that candidate. A mismatched or unsupported version fails closed; never
+accept an arbitrary version solely because the binary prints it. Keep the original CTF and its verified
 SHA-256 on the local machine. Allow **several gigabytes of free temporary disk
 space**, especially for 3M-entry imports, SQLite WAL and CTF export. The
 3M-entry import may exceed eight minutes on a fast Linux machine; use the
@@ -32,6 +36,7 @@ On Linux:
 python3 tools/qa/offline_ctf_v3.py \
   --cli /path/to/verified/atlas \
   --expected-sha256 '<SHA-256-of-original-CTF>' \
+  --expected-sqlite-version 3.54.1 \
   --output '/path/to/NEW-local-checkpoint-directory' \
   '/path/to/your-original.CTF'
 ```
@@ -44,7 +49,7 @@ application (or a locally built `atlas` executable).
 
 ## Acceptance and privacy requirements
 
-The coordinator requires an actual embedded SQLite 3.51.3; CTF import;
+The coordinator requires an exact approved embedded SQLite version (3.51.3 historical default, or 3.54.1 with an explicit pin); CTF import;
 catalog statistics; `validate_catalog`; exact first-page ID agreement
 between normal and fast search for fixed Boolean/extension/size queries;
 a byte-identical original CTF roundtrip (same SHA-256 and length); and an
