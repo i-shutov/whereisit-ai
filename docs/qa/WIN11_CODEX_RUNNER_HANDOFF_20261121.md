@@ -27,10 +27,12 @@ In Windows Settings, use a **standard user account** for software QA rather than
 
 Under this standard user, in an interactive Win11 session, open PowerShell **7**. Checkout the exact SHA of the code to review. For category PR #73 this is currently 7bfdfb156d004f6e281e626ecd19e816a44dfe5e; refresh it before use. The checkout must be clean.
 
-The following command is a **preflight** and does not launch an agent. Substitute your actual local clone path and exact HEAD:
+The launcher must be taken from a **separately reviewed trusted tooling checkout** (for example this PR after acceptance); the target under audit may be an older PR #73 checkout that does not yet contain the launcher. The following command is a **preflight** and does not launch an agent. Replace example paths with two separate local worktrees; do not check out unreviewed code into the trusted tooling directory:
 
 ~~~powershell
-pwsh -NoProfile -File .\tools\qa\windows11-egui\Invoke-Win11CodexReadOnlyAudit.ps1 -RepositoryPath . -ExpectedSha <40-hex-SHA> -Focus categories
+$toolsRepo  = 'C:\WhereIsItQA\trusted-tools'
+$targetRepo = 'C:\WhereIsItQA\categories-review'
+pwsh -NoProfile -File "$toolsRepo\tools\qa\windows11-egui\Invoke-Win11CodexReadOnlyAudit.ps1" -RepositoryPath $targetRepo -ExpectedSha '7bfdfb156d004f6e281e626ecd19e816a44dfe5e' -Focus categories
 ~~~
 
 After reviewing the selected task, add -Execute to run the audit. The launcher refuses admin elevation, a service/CI session, dirty or wrong source checkout, and missing Codex. Codex uses **read-only** sandbox, ignores user/project config and does not persist an agent rollout; the final report stays in the standard user's LOCALAPPDATA/WhereIsItAI-QA/CodexAudits directory. Inspect and redact before sharing. The launcher does not push, commit, alter other projects, install software or perform GUI input.
