@@ -136,7 +136,8 @@ def check_search_page(fast: dict, full: dict, offset: int, limit: int,
 
 def inspect(source: pathlib.Path, cli: pathlib.Path, timeout: int,
             expected_sha: str | None, full_export: bool,
-            verify_export_parity: bool, result: dict) -> dict:
+            verify_export_parity: bool, expected_sqlite_version: str,
+            result: dict) -> dict:
     size = source.stat().st_size
     original_sha = file_hash(source)
     if expected_sha is not None and original_sha != expected_sha:
@@ -152,7 +153,7 @@ def inspect(source: pathlib.Path, cli: pathlib.Path, timeout: int,
         [str(cli), "--sqlite-version"], stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL, text=True, timeout=15, check=True,
     ).stdout.strip()
-    if version != "3.51.3":
+    if version != expected_sqlite_version:
         raise RuntimeError("unpatched_sqlite")
     result.update({
         "format": "whereisit-local-ctf-v3-acceptance-v1",
@@ -162,6 +163,7 @@ def inspect(source: pathlib.Path, cli: pathlib.Path, timeout: int,
         "source": {"sha256": original_sha, "size_bytes": size},
         "cli_sha256": file_hash(cli),
         "sqlite_runtime_version": version,
+        "sqlite_expected_version": expected_sqlite_version,
         "private_names_paths_and_rows_exported": False,
         "source_written": False,
         "test_original_whereisit_compatibility": False,
@@ -285,6 +287,9 @@ def main() -> int:
     ap.add_argument("--output", required=True, type=pathlib.Path,
                     help="A NEW local directory for aggregate-only checkpoint")
     ap.add_argument("--expected-sha256", help="Optional verified source SHA-256")
+    ap.add_argument("--expected-sqlite-version", choices=("3.51.3", "3.54.1"),
+                    default="3.51.3",
+                    help="Require exact reviewed bundled SQLite; historical default 3.51.3, current Windows CLI 3.54.1")
     ap.add_argument("--full-export", action="store_true",
                     help="Also test full temporary CSV/Parquet export (larger disk I/O)")
     ap.add_argument("--verify-export-parity", action="store_true",
@@ -309,7 +314,8 @@ def main() -> int:
               "source": {"sha256": file_hash(source), "size_bytes": source.stat().st_size}}
     try:
         inspect(source, cli, args.timeout_seconds, args.expected_sha256,
-                args.full_export, args.verify_export_parity, report)
+                args.full_export, args.verify_export_parity,
+                args.expected_sqlite_version, report)
         report["status"] = "passed_available_checks"
     except Exception as exc:
         # Exception text may include a private path; store only an error category
