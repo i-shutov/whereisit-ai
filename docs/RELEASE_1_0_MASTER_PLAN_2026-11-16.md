@@ -1,3 +1,5 @@
+> **Новый оперативный срез 2026-11-21:** [Исполняемый Win11/релизный план W0–W7](RELEASE_1_0_WIN11_ACTION_PLAN_2026-11-21.md) актуализирует интеграцию PR #68, draft PR #69/#70 и Windows 11 Pro стенд. Приведённые ниже статусы PR #64/#65 и старого MSRV являются историческими и не отменяют принятого Rust 1.100/egui 0.37. Канонический PR58 UX и все safety/release gates сохраняются; stable NO-GO.
+
 # WhereIsIt AI — мастер-план выпуска 1.0
 
 > **Оперативный срез 2026-11-17:** R2 `PR #62` слит в main (`81f04912`), R3 `PR #63` слит (`405b4ccb`) после полного native CI/installed-upgrade/offline kit PASS. R4 [#64](https://github.com/i-shutov/whereisit-ai/pull/64) и R5 [#65](https://github.com/i-shutov/whereisit-ai/pull/65) — код в отдельных ветках, точная межплатформенная CI ещё не принята. Физическая Windows/macOS GUI и USB-приёмка вынесена в [#66](https://github.com/i-shutov/whereisit-ai/issues/66). **stable_ready=false, 1.0 NO_GO**; не выдавать нативный исходник за финальный релиз.
