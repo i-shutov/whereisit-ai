@@ -36,15 +36,14 @@ mod tests {
 
     #[test]
     fn isolated_settings_and_sidecar_are_not_shared_with_production() {
-        let root = root_for_localappdata(Path::new(r"C:\SyntheticLocalAppData")).unwrap();
-        assert!(root.ends_with(QA_FOLDER));
-        assert!(root
-            .join("physical-volume-bindings.sqlite")
-            .ends_with("WhereIsIt AI egui Win64 QA/physical-volume-bindings.sqlite"));
-        assert_ne!(
-            root.join("physical-volume-bindings.sqlite"),
-            Path::new(r"C:\SyntheticLocalAppData\AtlasCatalog\physical-volume-bindings.sqlite")
-        );
+        let local = PathBuf::from(r"C:\SyntheticLocalAppData");
+        let root = root_for_localappdata(&local).unwrap();
+        assert_eq!(root, local.join(QA_FOLDER));
+        let sidecar = root.join("physical-volume-bindings.sqlite");
+        let production = local
+            .join("AtlasCatalog")
+            .join("physical-volume-bindings.sqlite");
+        assert_ne!(sidecar, production);
     }
 
     #[test]
