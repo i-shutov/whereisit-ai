@@ -73,22 +73,61 @@ fn lex(s: &str) -> Result<Vec<Token>> {
     }
     Ok(out)
 }
+#[derive(PartialEq, Eq)]
+enum PredicateKind {
+    Other,
+    ExtensionMatch,
+    ExtensionExclusion,
+}
+
+pub(crate) struct Predicate {
+    pub(crate) sql: String,
+    kind: PredicateKind,
+}
+
+impl Predicate {
+    fn other(sql: String) -> Self {
+        Self {
+            sql,
+            kind: PredicateKind::Other,
+        }
+    }
+
+    pub(crate) fn within_volume(self) -> Self {
+        Self::other(format!("{} AND volume_id = ?", self.sql))
+    }
+
+    pub(crate) fn count_sql(&self, table: &str) -> String {
+        if self.kind == PredicateKind::ExtensionExclusion {
+            // Every supported schema declares ext NOT NULL. The unfiltered
+            // count can use SQLite's b-tree Count opcode, and equality can
+            // seek entries_ext. Both counts read the same statement snapshot.
+            format!(
+                "SELECT (SELECT COUNT(*) FROM {table}) - \
+                 (SELECT COUNT(*) FROM {table} WHERE ext = ?)"
+            )
+        } else {
+            format!("SELECT COUNT(*) FROM {table} WHERE {}", self.sql)
+        }
+    }
+}
+
 struct Parser {
     t: Vec<Token>,
     i: usize,
     args: Vec<Value>,
 }
 impl Parser {
-    fn expr(&mut self) -> Result<String> {
+    fn expr(&mut self) -> Result<Predicate> {
         let mut x = self.and()?;
         while self.t.get(self.i) == Some(&Token::Or) {
             self.i += 1;
             let y = self.and()?;
-            x = format!("({x} OR {y})")
+            x = Predicate::other(format!("({} OR {})", x.sql, y.sql));
         }
         Ok(x)
     }
-    fn and(&mut self) -> Result<String> {
+    fn and(&mut self) -> Result<Predicate> {
         let mut x = self.unary()?;
         loop {
             let explicit = self.t.get(self.i) == Some(&Token::And);
@@ -103,14 +142,22 @@ impl Parser {
                 self.i += 1
             }
             let y = self.unary()?;
-            x = format!("({x} AND {y})");
+            x = Predicate::other(format!("({} AND {})", x.sql, y.sql));
         }
         Ok(x)
     }
-    fn unary(&mut self) -> Result<String> {
+    fn unary(&mut self) -> Result<Predicate> {
         if self.t.get(self.i) == Some(&Token::Not) {
             self.i += 1;
-            return Ok(format!("(NOT {})", self.unary()?));
+            let inner = self.unary()?;
+            return Ok(Predicate {
+                sql: format!("(NOT {})", inner.sql),
+                kind: if inner.kind == PredicateKind::ExtensionMatch {
+                    PredicateKind::ExtensionExclusion
+                } else {
+                    PredicateKind::Other
+                },
+            });
         }
         if self.t.get(self.i) == Some(&Token::L) {
             self.i += 1;
@@ -119,7 +166,10 @@ impl Parser {
                 return Err(Error::new("invalid_query", "Missing closing parenthesis"));
             }
             self.i += 1;
-            return Ok(format!("({x})"));
+            return Ok(Predicate {
+                sql: format!("({})", x.sql),
+                kind: x.kind,
+            });
         }
         let w = match self.t.get(self.i) {
             Some(Token::Word(w)) => w.clone(),
@@ -128,7 +178,7 @@ impl Parser {
         self.i += 1;
         self.term(&w)
     }
-    fn term(&mut self, w: &str) -> Result<String> {
+    fn term(&mut self, w: &str) -> Result<Predicate> {
         let (field, value) = match w.split_once(':') {
             Some((a, b)) => (a.to_ascii_lowercase(), b),
             None => ("text".into(), w),
@@ -137,7 +187,15 @@ impl Parser {
             return Err(Error::new("invalid_query", "Empty field value"));
         }
         let v = value.to_lowercase();
-        match field.as_str() {
+        if field == "ext" {
+            self.args
+                .push(Value::Text(v.trim_start_matches('.').into()));
+            return Ok(Predicate {
+                sql: "ext = ?".into(),
+                kind: PredicateKind::ExtensionMatch,
+            });
+        }
+        let sql = match field.as_str() {
             "size" => {
                 let (op, num) = if let Some(x) = v.strip_prefix(">=") {
                     (">=", x)
@@ -172,11 +230,6 @@ impl Parser {
                 "invalid_query",
                 "Unsupported type filter; type:video checks filename extensions only",
             )),
-            "ext" => {
-                self.args
-                    .push(Value::Text(v.trim_start_matches('.').into()));
-                Ok("ext = ?".into())
-            }
             "category_id" => {
                 // Stable identity across repeated Unicode display names.
                 // Parents include descendant categories and their marked files.
@@ -225,10 +278,16 @@ impl Parser {
                 "invalid_query",
                 format!("Unknown field: {field}"),
             )),
-        }
+        }?;
+        Ok(Predicate::other(sql))
     }
 }
 pub fn compile(s: &str) -> Result<(String, Vec<Value>)> {
+    let (predicate, args) = compile_predicate(s)?;
+    Ok((predicate.sql, args))
+}
+
+pub(crate) fn compile_predicate(s: &str) -> Result<(Predicate, Vec<Value>)> {
     if s.len() > 4096 || s.contains('\0') {
         return Err(Error::new(
             "invalid_query",
@@ -267,18 +326,18 @@ pub fn compile(s: &str) -> Result<(String, Vec<Value>)> {
         }
     }
     if t.is_empty() {
-        return Ok(("1".into(), vec![]));
+        return Ok((Predicate::other("1".into()), vec![]));
     }
     let mut p = Parser {
         t,
         i: 0,
         args: vec![],
     };
-    let sql = p.expr()?;
+    let predicate = p.expr()?;
     if p.i != p.t.len() {
         return Err(Error::new("invalid_query", "Unexpected token"));
     }
-    Ok((sql, p.args))
+    Ok((predicate, p.args))
 }
 
 // detail=none stores row IDs only. Intersect a few three-character terms, then
@@ -401,4 +460,60 @@ pub fn needs_payload(input: &str) -> Result<bool> {
         },
         _ => false,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Catalog;
+    use rusqlite::params_from_iter;
+
+    #[test]
+    fn counted_extension_exclusion_uses_btree_count_and_index_seek() {
+        let catalog = Catalog::open(":memory:").unwrap();
+        for (query, scoped, use_complement) in [
+            ("NOT ext:tmp", false, true),
+            ("(NOT (ExT:\".ФЛАК\"))", false, true),
+            ("NOT ext:tmp", true, false),
+            ("NOT NOT ext:tmp", false, false),
+            ("NOT ext:tmp AND ext:mkv", false, false),
+            ("NOT ext:tmp OR category:Media", false, false),
+            ("NOT (ext:tmp OR ext:mkv)", false, false),
+        ] {
+            let (mut predicate, mut args) = compile_predicate(query).unwrap();
+            if scoped {
+                predicate = predicate.within_volume();
+                args.push(Value::Integer(1));
+            }
+            let sql = predicate.count_sql(catalog.query_table(query).unwrap());
+            let opcodes: Vec<String> = catalog
+                .conn()
+                .prepare(&format!("EXPLAIN {sql}"))
+                .unwrap()
+                .query_map(params_from_iter(&args), |row| row.get(1))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap();
+            assert_eq!(
+                opcodes.iter().any(|op| op == "Count"),
+                use_complement,
+                "{query}, scoped={scoped}"
+            );
+            if use_complement {
+                let plan: Vec<String> = catalog
+                    .conn()
+                    .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+                    .unwrap()
+                    .query_map(params_from_iter(&args), |row| row.get(3))
+                    .unwrap()
+                    .collect::<rusqlite::Result<_>>()
+                    .unwrap();
+                assert!(
+                    plan.iter()
+                        .any(|step| step.contains("SEARCH") && step.contains("entries_ext")),
+                    "{query}: {plan:?}"
+                );
+            }
+        }
+    }
 }
