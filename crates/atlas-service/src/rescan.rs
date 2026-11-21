@@ -293,11 +293,11 @@ fn mounted_candidate(probe: &Value, platform: &str, expected_id: &str) -> Result
 }
 
 fn path_is_within(root: &Path, candidate: &Path) -> bool {
-    if candidate.starts_with(root) {
-        return true;
-    }
     #[cfg(windows)]
     {
+        if candidate.starts_with(root) {
+            return true;
+        }
         let root_text = root.to_string_lossy().to_lowercase();
         let candidate_text = candidate.to_string_lossy().to_lowercase();
         let prefix = if root_text.ends_with(['\\', '/']) {
@@ -309,7 +309,7 @@ fn path_is_within(root: &Path, candidate: &Path) -> bool {
     }
     #[cfg(not(windows))]
     {
-        false
+        candidate.starts_with(root)
     }
 }
 
