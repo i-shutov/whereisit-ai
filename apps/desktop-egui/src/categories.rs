@@ -108,10 +108,7 @@ mod tests {
             parent_id: None,
             name: "Sci-Fi / Кино \"Director's\\cut\"".into(),
         };
-        assert_eq!(
-            category.search_query(),
-            "category_id:4"
-        );
+        assert_eq!(category.search_query(), "category_id:4");
         assert_eq!(new_name("  Кино  "), Ok("Кино"));
         assert_eq!(new_name(" \t\n"), Err("empty"));
         assert_eq!(new_name("x\nz"), Err("invalid"));
@@ -188,7 +185,11 @@ mod tests {
         // A selected parent includes assignments made to child categories.
         let parent = call(create_request(db.to_str().unwrap(), "Архив", None));
         let parent_id = parent["data"]["id"].as_i64().unwrap();
-        let child = call(create_request(db.to_str().unwrap(), "Видео", Some(parent_id)));
+        let child = call(create_request(
+            db.to_str().unwrap(),
+            "Видео",
+            Some(parent_id),
+        ));
         let child_id = child["data"]["id"].as_i64().unwrap();
         assert_eq!(
             call(assign_request(db.to_str().unwrap(), entry_id, child_id))["ok"],
@@ -203,6 +204,5 @@ mod tests {
                 "query":invalid,"offset":0,"limit":250}));
             assert_eq!(result["ok"], false, "Accepted invalid {invalid}: {result}");
         }
-
     }
 }

@@ -180,11 +180,9 @@ impl Parser {
             "category_id" => {
                 // Stable identity across repeated Unicode display names.
                 // Parents include descendant categories and their marked files.
-                let id = v
-                    .parse::<i64>()
-                    .ok()
-                    .filter(|id| *id > 0)
-                    .ok_or_else(|| Error::new("invalid_query", "category_id requires a positive integer"))?;
+                let id = v.parse::<i64>().ok().filter(|id| *id > 0).ok_or_else(|| {
+                    Error::new("invalid_query", "category_id requires a positive integer")
+                })?;
                 self.args.push(Value::Integer(id));
                 Ok("id IN (WITH RECURSIVE category_tree(id) AS (SELECT id FROM categories WHERE id=? UNION SELECT child.id FROM categories child JOIN category_tree parent ON child.parent_id=parent.id), marked(id,volume_id) AS (SELECT e.id,e.volume_id FROM category_tree c JOIN entry_categories ec ON ec.category_id=c.id JOIN entries e ON e.id=ec.entry_id UNION SELECT child.id,child.volume_id FROM marked m JOIN entries child ON child.volume_id=m.volume_id AND child.parent_id=m.id) SELECT id FROM marked)".into())
             }
