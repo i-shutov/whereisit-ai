@@ -135,10 +135,38 @@ impl Language {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CatalogIntegrity {
+    Closed,
+    Unchecked,
+    Checking,
+    Verified,
+    Failed,
+}
+
+impl CatalogIntegrity {
+    fn text(self, lang: Language) -> Option<&'static str> {
+        Some(match self {
+            Self::Closed => return None,
+            Self::Unchecked => lang.text("Целостность не проверена", "Integrity not checked"),
+            Self::Checking => lang.text("Проверка целостности…", "Checking integrity…"),
+            Self::Verified => lang.text(
+                "Последняя проверка целостности SQLite пройдена",
+                "Last SQLite integrity check passed",
+            ),
+            Self::Failed => lang.text(
+                "Проверка целостности не пройдена. Каталог закрыт.",
+                "Integrity check failed. Catalog closed.",
+            ),
+        })
+    }
+}
+
 pub struct DesktopApp {
     bus: CommandBus,
     active_request: Option<u64>,
     db: Option<String>,
+    integrity: CatalogIntegrity,
     path_input: String,
     query_input: String,
     volumes: Vec<Volume>,
@@ -235,6 +263,7 @@ impl DesktopApp {
             bus: CommandBus::new(),
             active_request: None,
             db: None,
+            integrity: CatalogIntegrity::Closed,
             path_input: startup_catalog.clone().unwrap_or_default(),
             query_input: String::new(),
             volumes: Vec::new(),
@@ -369,10 +398,63 @@ impl DesktopApp {
         } else {
             Purpose::Open { path: path.clone() }
         };
-        let op = if create { "init" } else { "validate_catalog" };
-        self.status = StatusText::new("Проверка каталога…", "Opening catalog…");
+        let op = if create { "init" } else { "probe_catalog" };
+        self.status = StatusText::new("Открытие каталога…", "Opening catalog…");
         self.queue(purpose, json!({"op":op,"db":path}), ctx);
         self.show_catalog_dialog = false;
+    }
+
+    fn check_catalog_integrity(&mut self, ctx: &egui::Context) {
+        let Some(path) = self.db.clone().filter(|_| self.active_request.is_none()) else {
+            return;
+        };
+        self.integrity = CatalogIntegrity::Checking;
+        self.queue(
+            Purpose::CheckCatalogIntegrity { path: path.clone() },
+            json!({"op":"validate_catalog","db":path}),
+            ctx,
+        );
+    }
+
+    fn clear_catalog(&mut self) {
+        self.db = None;
+        self.integrity = CatalogIntegrity::Closed;
+        self.volumes.clear();
+        self.shelf_context = None;
+        self.shelf = ShelfSnapshot::default();
+        self.shelf_editor.clear();
+        self.legacy_shelf_editable = false;
+        self.disk_preferences.clear();
+        self.shelf_collisions.clear();
+        self.preferences_ready = false;
+        self.show_disk_properties = None;
+        self.focus_disk_name = false;
+        self.disk_draft = DiskPropertiesDraft::default();
+        self.selected_volume = None;
+        self.query_input.clear();
+        self.route = Route::Search {
+            query: String::new(),
+            volume_id: None,
+        };
+        self.history.clear();
+        self.page = Page::default();
+        self.offset = 0;
+        self.selected = None;
+        self.restore_selection = None;
+        self.reveal_selected = false;
+        self.results_scroll = 0.0;
+        self.restore_scroll = None;
+        self.categories.clear();
+        self.categories_loaded = false;
+        self.category_assigned.clear();
+        self.category_assignments_ready = false;
+        self.category_assignments_error = false;
+        self.category_result_refresh_pending = false;
+        self.category_parent_id = None;
+        self.category_name_input.clear();
+        self.show_categories_dialog = false;
+        self.show_export_dialog = false;
+        self.show_scan_dialog = false;
     }
 
     fn start_export(&mut self, ctx: &egui::Context) {
@@ -1045,6 +1127,36 @@ impl DesktopApp {
             return;
         }
         self.active_request = None;
+        if let Purpose::CheckCatalogIntegrity { path } = &reply.purpose {
+            if self.db.as_deref() != Some(path.as_str()) {
+                return;
+            }
+            let data = &reply.response["data"];
+            if reply.response["ok"] == true
+                && matches!(data["schema_version"].as_i64(), Some(1..=3))
+                && data["readonly"] == true
+                && data["quick_check"] == "ok"
+                && data["foreign_key_errors"].as_u64() == Some(0)
+            {
+                self.integrity = CatalogIntegrity::Verified;
+            } else {
+                self.clear_catalog();
+                self.integrity = CatalogIntegrity::Failed;
+                self.status = StatusText::new("Каталог закрыт", "Catalog closed");
+                self.error = Some(
+                    reply
+                        .response
+                        .pointer("/error/message")
+                        .and_then(Value::as_str)
+                        .unwrap_or(self.t(
+                            "Получен неверный результат проверки целостности.",
+                            "Invalid integrity check response.",
+                        ))
+                        .to_owned(),
+                );
+            }
+            return;
+        }
         let scan_finished = matches!(&reply.purpose, Purpose::Scan { .. });
         if scan_finished {
             self.scan_job_id = None;
@@ -1117,8 +1229,25 @@ impl DesktopApp {
             return;
         }
         let data = &reply.response["data"];
+        let opening_existing = matches!(&reply.purpose, Purpose::Open { .. });
         match reply.purpose {
             Purpose::Open { path } | Purpose::Create { path } => {
+                if opening_existing
+                    && (!matches!(data["schema_version"].as_i64(), Some(1..=3))
+                        || data["readonly"] != true
+                        || data["full_validation"] != false)
+                {
+                    self.status = StatusText::new("Открытие отменено", "Open refused");
+                    self.error = Some(
+                        self.t(
+                            "Получен неверный результат проверки схемы.",
+                            "Invalid catalog probe response.",
+                        )
+                        .to_owned(),
+                    );
+                    return;
+                }
+                self.clear_catalog();
                 self.shelf_context = ShelfContext::from_sqlite(&path).ok();
                 if let Some(store) = user_store() {
                     if let Some(scope) = &mut self.shelf_context {
@@ -1127,31 +1256,11 @@ impl DesktopApp {
                 } else {
                     self.shelf_context = None;
                 }
-                self.shelf = ShelfSnapshot::default();
                 self.db = Some(path);
-                self.disk_preferences.clear();
-                self.shelf_collisions.clear();
-                self.preferences_ready = false;
-                self.selected_volume = None;
-                self.query_input.clear();
-                self.route = Route::Search {
-                    query: String::new(),
-                    volume_id: None,
-                };
-                self.history.clear();
-                self.offset = 0;
-                self.selected = None;
-                self.categories.clear();
-                self.categories_loaded = false;
-                self.category_assigned.clear();
-                self.category_assignments_ready = false;
-                self.category_assignments_error = false;
-                self.category_result_refresh_pending = false;
-                self.category_parent_id = None;
-                self.category_name_input.clear();
-                self.show_categories_dialog = false;
+                self.integrity = CatalogIntegrity::Unchecked;
                 self.load_volumes(ctx);
             }
+            Purpose::CheckCatalogIntegrity { .. } => unreachable!("Integrity reply handled above"),
             Purpose::Volumes => match parse_volumes(data) {
                 Ok(volumes) => {
                     self.volumes = volumes;
@@ -1463,6 +1572,16 @@ impl DesktopApp {
                     if ui
                         .add_enabled(
                             self.db.is_some() && self.active_request.is_none(),
+                            egui::Button::new(self.t("Проверить целостность…", "Check integrity…")),
+                        )
+                        .clicked()
+                    {
+                        self.check_catalog_integrity(ctx);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.db.is_some() && self.active_request.is_none(),
                             egui::Button::new(
                                 self.t("Сканировать диск/папку…", "Scan disk/folder…"),
                             ),
@@ -1758,6 +1877,13 @@ impl DesktopApp {
                 ui.horizontal(|ui| {
                     ui.strong(self.t("Инспектор", "Inspector"));
                     ui.separator();
+                    if let Some(integrity) = self.integrity.text(self.lang) {
+                        ui.label(RichText::new(integrity).small()).on_hover_text(self.t(
+                            "Проверка целостности описывает состояние SQLite на момент проверки.",
+                            "An integrity check reports the SQLite state at the time of the check.",
+                        ));
+                        ui.separator();
+                    }
                     ui.label(RichText::new(self.status.text(self.lang)).small().weak());
                     if self.active_request.is_some() { ui.spinner(); }
                 });
@@ -2586,6 +2712,154 @@ impl eframe::App for DesktopApp {
 #[cfg(test)]
 mod shortcut_tests {
     use super::*;
+
+    fn wait_for_catalog_reply(app: &DesktopApp) -> crate::bridge::Reply {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(reply) = app.bus.poll() {
+                return reply;
+            }
+            assert!(Instant::now() < deadline, "catalog operation did not reply");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn existing_catalog_open_dispatches_probe_without_full_validation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("synthetic.sqlite");
+        let init = atlas_service::dispatch_json(&json!({"op":"init","db":path}).to_string());
+        assert_eq!(serde_json::from_str::<Value>(&init).unwrap()["ok"], true);
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, Some(path.to_string_lossy().into_owned()));
+        let (requests, observed) = std::sync::mpsc::channel();
+        app.bus.set_handler(move |request| {
+            requests.send(request["op"].clone()).unwrap();
+            match request["op"].as_str() {
+                Some("validate_catalog") => {
+                    json!({"ok":false,"error":{"message":"Full validation trap"}})
+                }
+                // Do not read an existing user settings sidecar in this test.
+                Some("disk_preferences_list") => {
+                    json!({"ok":true,"data":{"items":[],"collisions":[]}})
+                }
+                _ => serde_json::from_str(&atlas_service::dispatch_json(&request.to_string()))
+                    .unwrap(),
+            }
+        });
+        app.start_catalog(false, &ctx);
+        let reply = wait_for_catalog_reply(&app);
+        assert_eq!(observed.try_recv().unwrap(), "probe_catalog");
+        app.apply_reply(reply, &ctx);
+        assert_eq!(app.db.as_deref(), path.to_str());
+        assert_eq!(app.integrity, CatalogIntegrity::Unchecked);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while app.active_request.is_some() {
+            assert!(Instant::now() < deadline, "catalog did not finish loading");
+            let reply = wait_for_catalog_reply(&app);
+            app.apply_reply(reply, &ctx);
+        }
+        let followups: Vec<_> = observed.try_iter().collect();
+        assert!(followups.iter().any(|op| op == "search_fast"));
+        assert!(followups.iter().all(|op| op != "validate_catalog"));
+        assert_eq!(app.integrity, CatalogIntegrity::Unchecked);
+        assert!(app.error.is_none(), "{:?}", app.error);
+    }
+
+    #[test]
+    fn invalid_probe_does_not_replace_current_catalog() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.db = Some("old.sqlite".into());
+        app.integrity = CatalogIntegrity::Verified;
+        for invalid in [
+            json!({"schema_version":9,"readonly":true,"full_validation":false}),
+            json!({"schema_version":3,"readonly":false,"full_validation":false}),
+            json!({"schema_version":3,"readonly":true,"full_validation":true}),
+        ] {
+            app.active_request = Some(9);
+            app.apply_reply(
+                crate::bridge::Reply {
+                    id: 9,
+                    purpose: Purpose::Open {
+                        path: "new.sqlite".into(),
+                    },
+                    response: json!({"ok":true,"data":invalid}),
+                },
+                &ctx,
+            );
+            assert_eq!(app.db.as_deref(), Some("old.sqlite"));
+            assert_eq!(app.integrity, CatalogIntegrity::Verified);
+            assert!(app.error.is_some());
+            assert!(app.active_request.is_none());
+        }
+    }
+
+    #[test]
+    fn explicit_integrity_check_dispatches_and_failure_clears_catalog_state() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.db = Some("synthetic.sqlite".into());
+        app.preferences_ready = true;
+        app.categories_loaded = true;
+        app.category_assignments_ready = true;
+        app.selected_volume = Some(1);
+        app.offset = 250;
+        let entry = Entry::parse(&json!({
+            "id":42,"volume_id":1,"name":"entry.txt","relative_path":"entry.txt","kind":"file","size":1,
+        })).unwrap();
+        app.page.items.push(entry.clone());
+        app.selected = Some(entry);
+        let (requests, observed) = std::sync::mpsc::channel();
+        app.bus.set_handler(move |request| {
+            requests.send(request.clone()).unwrap();
+            json!({"ok":false,"error":{"code":"integrity","message":"Synthetic failure"}})
+        });
+        app.check_catalog_integrity(&ctx);
+        assert_eq!(app.integrity, CatalogIntegrity::Checking);
+        let reply = wait_for_catalog_reply(&app);
+        assert_eq!(
+            observed.try_recv().unwrap(),
+            json!({"op":"validate_catalog","db":"synthetic.sqlite"})
+        );
+        app.apply_reply(reply, &ctx);
+        assert_eq!(app.integrity, CatalogIntegrity::Failed);
+        assert_eq!(app.error.as_deref(), Some("Synthetic failure"));
+        assert!(app.db.is_none());
+        assert!(app.selected_volume.is_none());
+        assert!(app.selected.is_none());
+        assert_eq!(app.offset, 0);
+        assert!(app.page.items.is_empty());
+        assert!(
+            !app.preferences_ready && !app.categories_loaded && !app.category_assignments_ready
+        );
+    }
+
+    #[test]
+    fn integrity_reply_is_bound_to_the_current_catalog() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.db = Some("current.sqlite".into());
+        app.integrity = CatalogIntegrity::Unchecked;
+        let response = json!({"ok":true,"data":{
+            "schema_version":3,"quick_check":"ok","readonly":true,"foreign_key_errors":0
+        }});
+        for (id, path, expected) in [
+            (7, "prior.sqlite", CatalogIntegrity::Unchecked),
+            (8, "current.sqlite", CatalogIntegrity::Verified),
+        ] {
+            app.active_request = Some(id);
+            app.apply_reply(
+                crate::bridge::Reply {
+                    id,
+                    purpose: Purpose::CheckCatalogIntegrity { path: path.into() },
+                    response: response.clone(),
+                },
+                &ctx,
+            );
+            assert_eq!(app.integrity, expected);
+        }
+    }
 
     #[test]
     fn register_order_matches_reference_and_breaks_size_ties_by_id() {

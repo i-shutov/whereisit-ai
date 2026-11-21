@@ -85,6 +85,7 @@ fn dispatch(input: &str) -> Result<Value> {
         "ctf_duplicates_pinned" => ctf_duplicates::duplicates(&v)?,
         "ctf_copy_candidates_pinned" => copy_candidates::linked(&v)?,
         "compact_catalog" => maintenance::compact_copy(&v)?,
+        "probe_catalog" => maintenance::probe(&v)?,
         "validate_catalog" => maintenance::validate(&v)?,
         "import_ctf" => legacy::import(&mut Catalog::open(text(&v, "db")?)?, &v)?,
         "export_ctf" => legacy::export(&Catalog::open(text(&v, "db")?)?, &v)?,

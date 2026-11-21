@@ -101,6 +101,7 @@ impl Route {
 pub enum Purpose {
     Open { path: String },
     Create { path: String },
+    CheckCatalogIntegrity { path: String },
     Volumes,
     DiskPreferences,
     SaveDiskProperties { volume_id: i64 },
@@ -128,12 +129,28 @@ pub struct CommandBus {
     tx: Sender<Reply>,
     rx: Receiver<Reply>,
     next_id: u64,
+    #[cfg(test)]
+    handler: std::sync::Arc<dyn Fn(&Value) -> Value + Send + Sync>,
 }
 
 impl CommandBus {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel();
-        Self { tx, rx, next_id: 0 }
+        Self {
+            tx,
+            rx,
+            next_id: 0,
+            #[cfg(test)]
+            handler: std::sync::Arc::new(dispatch),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_handler(
+        &mut self,
+        handler: impl Fn(&Value) -> Value + Send + Sync + 'static,
+    ) {
+        self.handler = std::sync::Arc::new(handler);
     }
 
     pub fn send(&mut self, purpose: Purpose, request: Value, ctx: &egui::Context) -> u64 {
@@ -141,14 +158,13 @@ impl CommandBus {
         let id = self.next_id;
         let tx = self.tx.clone();
         let repaint = ctx.clone();
+        #[cfg(test)]
+        let handler = self.handler.clone();
         thread::spawn(move || {
-            let raw = atlas_service::dispatch_json(&request.to_string());
-            let response = serde_json::from_str(&raw).unwrap_or_else(|_| {
-                json!({
-                    "ok":false, "error":{"code":"invalid_backend_response",
-                        "message":"Service returned invalid JSON"}
-                })
-            });
+            #[cfg(test)]
+            let response = handler(&request);
+            #[cfg(not(test))]
+            let response = dispatch(&request);
             let _ = tx.send(Reply {
                 id,
                 purpose,
@@ -162,6 +178,16 @@ impl CommandBus {
     pub fn poll(&self) -> Option<Reply> {
         self.rx.try_recv().ok()
     }
+}
+
+fn dispatch(request: &Value) -> Value {
+    let raw = atlas_service::dispatch_json(&request.to_string());
+    serde_json::from_str(&raw).unwrap_or_else(|_| {
+        json!({
+            "ok":false, "error":{"code":"invalid_backend_response",
+                "message":"Service returned invalid JSON"}
+        })
+    })
 }
 
 #[cfg(test)]

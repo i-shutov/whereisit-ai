@@ -50,6 +50,102 @@ fn seed(c: &mut Catalog) {
 }
 
 #[test]
+fn catalog_probe_is_read_only_and_leaves_full_validation_explicit() {
+    for version in [1, 2, 3] {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source #.sqlite");
+        let mut catalog = if version == 3 {
+            Catalog::open(&source).unwrap()
+        } else {
+            old_catalog(&source, version)
+        };
+        seed(&mut catalog);
+        catalog
+            .conn()
+            .execute("UPDATE volumes SET entry_count=entry_count+1", [])
+            .unwrap();
+        drop(catalog);
+        let original = std::fs::read(&source).unwrap();
+
+        let probe = call(json!({"op":"probe_catalog","db":source}));
+        assert_eq!(
+            probe,
+            json!({"ok":true,"data":{
+                "schema_version":version,"readonly":true,"full_validation":false
+            }})
+        );
+        let validation = call(json!({"op":"validate_catalog","db":source}));
+        assert_eq!(validation["error"]["code"], "integrity", "{validation}");
+        assert_eq!(
+            validation["error"]["message"],
+            "Volume counters do not match catalog records"
+        );
+        assert_eq!(std::fs::read(&source).unwrap(), original);
+    }
+}
+
+#[test]
+fn catalog_probe_rejects_absent_or_unrecognized_input_without_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source.sqlite");
+    let missing = call(json!({"op":"probe_catalog","db":source}));
+    assert_eq!(missing["error"]["code"], "not_found", "{missing}");
+    assert!(!source.exists());
+
+    let malformed = dir.path().join("malformed.sqlite");
+    let contents = b"not a SQLite database";
+    std::fs::write(&malformed, contents).unwrap();
+    let refused = call(json!({"op":"probe_catalog","db":malformed}));
+    assert_eq!(refused["ok"], false, "{refused}");
+    assert_eq!(std::fs::read(&malformed).unwrap(), contents);
+
+    let conn = rusqlite::Connection::open(&source).unwrap();
+    conn.execute("CREATE TABLE unrelated(value TEXT)", [])
+        .unwrap();
+    for (version, error) in [
+        (0, "schema_version"),
+        (4, "schema_version"),
+        (3, "catalog_schema"),
+    ] {
+        conn.pragma_update(None, "user_version", version).unwrap();
+        let original = std::fs::read(&source).unwrap();
+        let refused = call(json!({"op":"probe_catalog","db":source}));
+        assert_eq!(refused["error"]["code"], error, "{refused}");
+        assert_eq!(std::fs::read(&source).unwrap(), original);
+    }
+}
+
+#[test]
+fn catalog_probe_requires_expected_object_kinds_and_columns() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source.sqlite");
+    let catalog = Catalog::open(&source).unwrap();
+    catalog
+        .conn()
+        .execute(
+            "ALTER TABLE categories RENAME COLUMN name_norm TO wrong_name_norm",
+            [],
+        )
+        .unwrap();
+    drop(catalog);
+    let refusal = call(json!({"op":"probe_catalog","db":source}));
+    assert_eq!(refusal["error"]["code"], "catalog_schema", "{refusal}");
+
+    let legacy = dir.path().join("legacy.sqlite");
+    let catalog = old_catalog(&legacy, 2);
+    catalog
+        .conn()
+        .execute_batch(
+            "ALTER TABLE categories RENAME TO former_categories;
+             CREATE VIEW categories AS SELECT * FROM former_categories;",
+        )
+        .unwrap();
+    drop(catalog);
+    let refusal = call(json!({"op":"probe_catalog","db":legacy}));
+    assert_eq!(refusal["error"]["code"], "catalog_schema", "{refusal}");
+}
+
+#[test]
 fn compact_copy_preserves_source_and_creates_a_runnable_catalog() {
     for version in [1, 2, 3] {
         let dir = tempfile::tempdir().unwrap();

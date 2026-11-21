@@ -361,6 +361,9 @@ pub fn parse_ctf(bytes: &[u8], limits: &Limits) -> Result<CtfCatalog, CtfError> 
     if offsets.first().copied().unwrap_or(r.p) != r.p {
         return Err(err(r.p, "unsupported catalog header extension"));
     }
+    if offsets.is_empty() && r.p != bytes.len() {
+        return Err(err(r.p, "unaccounted data after empty catalog header"));
+    }
     let mut disks = Vec::new();
     let mut opaque_trailer = Vec::new();
     let mut total = 0usize;
@@ -493,6 +496,9 @@ pub fn parse_ctf(bytes: &[u8], limits: &Limits) -> Result<CtfCatalog, CtfError> 
             if fr.offset == u32::MAX as usize {
                 if fr.count != 0 || fr.blob != 0 {
                     return Err(err(start, "missing nonempty file range"));
+                }
+                if fr.len != u32::MAX as usize || fr.names != 0 {
+                    return Err(err(start, "invalid absent file range"));
                 }
                 continue;
             }
@@ -1309,6 +1315,42 @@ mod tests {
         let error = parse_ctf(&bytes, &Limits::default()).unwrap_err();
         assert_eq!(error.offset, disk_offset + 12);
         assert_eq!(error.message, "invalid directory table offset");
+    }
+
+    #[test]
+    fn empty_catalog_rejects_unaccounted_suffix() {
+        let mut catalog = sample();
+        catalog.disks.clear();
+        let bytes = write_ctf(&catalog).unwrap();
+        let parsed = parse_ctf(&bytes, &Limits::default()).unwrap();
+        assert!(parsed.disks.is_empty());
+        assert_eq!(write_ctf(&parsed).unwrap(), bytes);
+
+        let mut malformed = bytes.clone();
+        malformed.push(0);
+        let error = parse_ctf(&malformed, &Limits::default()).unwrap_err();
+        assert_eq!(error.offset, bytes.len());
+        assert_eq!(error.message, "unaccounted data after empty catalog header");
+    }
+
+    #[test]
+    fn absent_file_range_requires_length_sentinel_and_zero_name_bytes() {
+        let mut catalog = sample();
+        catalog.disks[0].entries.clear();
+        let bytes = write_ctf(&catalog).unwrap();
+        let parsed = parse_ctf(&bytes, &Limits::default()).unwrap();
+        assert_eq!(write_ctf(&parsed).unwrap(), bytes);
+
+        let table_offset = 27 + catalog.name.len();
+        let disk_offset =
+            u32::from_le_bytes(bytes[table_offset..table_offset + 4].try_into().unwrap()) as usize;
+        for field in [20, 28] {
+            let mut malformed = bytes.clone();
+            malformed[disk_offset + field..disk_offset + field + 4]
+                .copy_from_slice(&1_u32.to_le_bytes());
+            let error = parse_ctf(&malformed, &Limits::default()).unwrap_err();
+            assert_eq!(error.message, "invalid absent file range");
+        }
     }
 
     #[test]
