@@ -28,3 +28,17 @@ The test does **not** launch a GUI. The installed QA executable must then underg
 Only a passing exact-head GitHub-hosted Windows CI job can mark the **isolated Win64 egui installed QA smoke** as PASS. Physical GUI run, PR58 visual and functional parity, fresh RC3-to-next-RC migration, authentic CTF roundtrip in the original program, real 3M-entry performance, physical USB, accessibility, Windows signing/SmartScreen reputation and final stable readiness are NOT established by this code or test. release/ACCEPTANCE.json remains stable_ready=false.
 
 The VERSION value currently labels the historical RC3 source generation; QA candidate filenames always include egui-win64-QA and must **not** be attached to the existing v1.0.0-rc.3 release or retagged. Stable installation identity and future upgrade policy require a separate explicit decision and fresh version after independent QA.
+
+## Read-only exact-run artifact verification on Windows 11
+
+After independently confirming a successful GitHub-hosted workflow run and the exact source SHA, download and extract the separate `WhereIsItAI-egui-Win64-installed-QA-unsigned` Actions artifact. From a trusted checkout **matching that SHA**, run the PowerShell 5.1 preflight script (read-only):
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\qa\windows11-egui\Verify-Win64EguiCandidate.ps1 \
+    -CandidateDirectory '<directory containing setup.exe, provenance.json, SHA256SUMS.txt>' \
+    -ExpectedCommit '<40-character exact source SHA>' -ExpectedRunId '<GitHub Actions run ID>'
+```
+
+The preflight rejects wrong repository source SHA, run ID, non-Win64/egui provenance, missing manifests, unexpected additional setups, digest mismatch and any stable/signature misrepresentation. **Self-reported hashes inside an unsigned artifact alone do not establish publisher authenticity.** The operator must verify the trusted repository workflow URL, Actions run and artifact source independently; do not bypass OS security prompts or use unknown mirrors.
+
+Manual installed GUI scenarios and redacted acceptance matrix: [Win11 native egui acceptance checklist](WIN11_WIN64_EGUI_MANUAL_CHECKLIST_20261121.md). Do not call this a physical GUI PASS merely because the script passed.

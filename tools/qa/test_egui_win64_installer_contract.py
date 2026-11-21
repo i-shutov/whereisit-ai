@@ -62,6 +62,16 @@ class NativeWin64InstalledCandidate(unittest.TestCase):
         self.assertIn("egui_sha256", self.ci)
         self.assertNotIn("self-hosted", self.ci)
         self.assertIn("atlas-windows.exe", self.legacy)
+        preflight = (ROOT / "tools/qa/windows11-egui/Verify-Win64EguiCandidate.ps1").read_text(encoding="utf-8")
+        self.assertIn("ExpectedCommit", preflight)
+        self.assertIn("ExpectedRunId", preflight)
+        self.assertIn("SHA256SUMS.txt", preflight)
+        self.assertIn("installer_sha256", preflight)
+        self.assertIn("WIN64_EGUI_QA_PREFLIGHT_PASS", preflight)
+        self.assertNotIn("Start-Process", preflight)
+        self.assertNotIn("Invoke-WebRequest", preflight)
+        self.assertIn("Verify-Win64EguiCandidate.ps1", self.ci)
+
 
 
 if __name__ == "__main__":

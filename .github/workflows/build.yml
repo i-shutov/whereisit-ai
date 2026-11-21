@@ -137,6 +137,9 @@ jobs:
             stable_ready = $false
             user_catalogs_included = $false
           } | ConvertTo-Json | Set-Content (Join-Path $dir 'provenance.json') -Encoding utf8
+      - name: Verify exact SHA/run Win64 candidate payload before upload
+        shell: powershell
+        run: ./tools/qa/windows11-egui/Verify-Win64EguiCandidate.ps1 -CandidateDirectory 'dist/windows-egui-win64-qa' -ExpectedCommit $env:GITHUB_SHA -ExpectedRunId $env:GITHUB_RUN_ID
       - uses: actions/upload-artifact@v4
         with:
           name: WhereIsItAI-egui-Win64-installed-QA-unsigned
