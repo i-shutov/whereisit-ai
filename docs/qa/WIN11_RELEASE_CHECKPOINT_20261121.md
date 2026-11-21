@@ -56,6 +56,22 @@ Exact installed CLI: SQLite 3.54.1, six classes with 30 warm requests each, zero
 
 These six warm workloads meet p95 <=150 ms. No controlled cold-cache claim. Full evidence and screenshots remain private and are not release contents.
 
+## RC4 candidate and counted-search closure
+
+PR82 prepares RC4; PR83 was integrated into its branch as `ff5af28758fff55817b80b8173e0a13e1ccd2abc`. Tested hosted runtime head `b0efdb94b1f22727a5205f1510a0c9c0d3849b8d`: native [44960976668](https://github.com/i-shutov/whereisit-ai/actions/runs/44960976668), installed upgrade/rollback 44960976635, frozen historical upgrade 44960976588, offline 44960976630 and integration 44960976570 all PASS. Windows x64 and macOS ARM64/Intel installed product upgrade/rollback passed on hosted runners; these are not interactive Mac GUI claims. All 300 local default-feature workspace tests and all-target/all-feature Clippy passed.
+
+Installed exact-source Win11 GUI/CLI hashes matched provenance. It opened the full 44-volume SQLite and displayed files larger than 4 GiB. The catalog contains 2,805,176 files, 239,207 directories and 1,750 archives; 6,324 entries exceed 4 GiB. Five external controls, including a generated private sidecar note, retained their hashes through the fixed installer upgrade. Earlier local RC4-to-RC3 rollback also retained that note, visibly confirmed in GUI.
+
+The earlier RC4 hosted head 9058728 measured a real full-count p95 FAIL of 155.23 ms. PR83 fixes it using exact counts in one SQLite snapshot, without cached volume totals or changed predicates/pages. The installed fixed artifact passed all six x30 warm workloads, p95 3.60–48.91 ms, peak CLI working set 8.93 MiB; no source CTF was accessed by the benchmark. [Before/after and synthetic regressions](COUNTED_SEARCH_SLO_20261121.md). Original failed measurements remain in private evidence.
+
+The installed fixed GUI also exported the full edited derivative to another new CTF. Its bytes matched the earlier modified export independently opened and checked in original WhereIsIt; this comparison is against that accepted changed output, not an unchanged source roundtrip.
+
+Full CSV/Parquet field parity was rerun with the exact installed fixed CLI: 3,046,133 rows x15 fields, all values equal under the independent DuckDB verifier (384 MiB / two threads). CSV 599,828,444 bytes in15.37s; Parquet123,361,897 bytes in18.76s. The working SQLite hash, size and write timestamp were unchanged; no additional CTF import was performed and the source CTF was never accessed by this export check.
+
+Actual native Scan GUI: a small generated folder completed with 1 volume / 8 entries. A subsequent 100,000-file scan showed 10,436 processed entries; Esc cancelled it with the no-snapshot-saved message. The complete original 1-volume/8-entry logical snapshot was identical afterwards, quick_check OK and foreign-key errors zero. This is separate from the earlier CTF import-cancellation test.
+
+Exact main 0708 product was also installed and actually exercised before RC4: full-catalog GUI search, mouse-wheel → candidates → Back, and containing-folder → child-folder → two Back actions restored query/selection/scroll. Its independent CLI repeat passed six x30 warm workloads, p95 6.73–147.46 ms, peak working set 9.01 MiB. These historical measurements retain their own source identity.
+
 ## Release decision
 
-Win11 scoped GUI/product lifecycle, direct egui CTF workflows, tested original-app modified CTF compatibility and measured warm search are accepted evidence. They must not remain NOT_RUN/BLOCKED merely because old documents predate them. Remaining platform/UX parity acceptance, real hardware/wider-platform acceptance, product RC4 upgrade/rollback and authenticated signatures remain open. Stable 1.0 remains NO-GO, stable_ready=false. Current sequence: [release action plan](../RELEASE_1_0_WIN11_ACTION_PLAN_2026-11-21.md).
+Win11 scoped GUI/product lifecycle, direct egui CTF workflows, tested original-app modified CTF compatibility and measured warm search are accepted evidence. They must not remain NOT_RUN/BLOCKED merely because old documents predate them. Remaining platform/UX parity acceptance, real hardware/wider-platform acceptance, signed RC4 target-platform acceptance and authenticated signatures remain open. Stable 1.0 remains NO-GO, stable_ready=false. Current sequence: [release action plan](../RELEASE_1_0_WIN11_ACTION_PLAN_2026-11-21.md).

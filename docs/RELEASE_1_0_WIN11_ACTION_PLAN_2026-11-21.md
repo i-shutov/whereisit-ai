@@ -1,6 +1,6 @@
 # WhereIsIt AI — текущий исполняемый план релиза 1.0
 
-**Срез 21.11.2026, после интеграции #79/#80/#81.** Main: `0708f0444f035fc44946c224afb18e847efca1de`. Exact-head PR81 native [44953342592](https://github.com/i-shutov/whereisit-ai/actions/runs/44953342592), offline/upgrade/integration и scoped installed product GUI — PASS; post-merge main CI проверяется отдельно. **Stable NO-GO, `stable_ready=false`.** Прямой CTF принят; готовится продуктовый RC4. [Мастер-план](RELEASE_1_0_MASTER_PLAN_2026-11-16.md) сохраняет scope.
+**Срез 21.11.2026, после интеграции #79/#80/#81.** Main: `0708f0444f035fc44946c224afb18e847efca1de`. Exact-head PR81 native [44953342592](https://github.com/i-shutov/whereisit-ai/actions/runs/44953342592), offline/upgrade/integration и scoped installed product GUI — PASS; post-merge main CI проверяется отдельно. **Stable NO-GO, `stable_ready=false`.** Прямой CTF принят; RC4 подготовлен в PR82, P1 подсчёта исправлен в PR83 и принят на установленном Win11 кандидате. [Мастер-план](RELEASE_1_0_MASTER_PLAN_2026-11-16.md) сохраняет scope.
 
 ## Что уже сделано и не требуется начинать заново
 
@@ -20,7 +20,7 @@
 | W1 — Win11 стенд | PASS в выполненном scope | Использовать готовую Administrator RDP-сессию и проверенные инструменты; не регистрировать runner заново | Не отдельный повторный проект; переоценка только при изменении среды |
 | W2 — Win11 GUI/lifecycle | SCOPED PASS | Регресс только изменённых сценариев; финальный продуктовый RC проверить отдельно от isolated QA-пакета | Неперезаписываемое evidence exact binary, сохранность внешних данных |
 | W3 — native P0 | CTF GUI PASS SCOPED; остальное PARTIAL | Остаток аппаратной и платформенной P0 приёмки из [parity matrix](qa/PR58_EGUI_PARITY_MATRIX.md) | Полный повседневный пользовательский маршрут без CLI и mock |
-| W4 — поставка/signing | QA lifecycle PASS; signing BLOCKED | Продуктовый egui RC4, RC3→RC4, sidecar/SQLite backup/rollback, Authenticode, Apple notarization/staple | Проверенные подписанные артефакты целевых ОС; unsigned остаётся prerelease |
+| W4 — поставка/signing | UNSIGNED RC4/upgrade/rollback PASS SCOPED; signing BLOCKED | Подписанный продуктовый RC4, интерактивная приёмка остальных целевых ОС, Authenticode, Apple notarization/staple | Проверенные подписанные артефакты целевых ОС; unsigned остаётся prerelease |
 | W5 — данные/CTF/perf | SUPPORTED CTF + WARM WIN11 PASS; остальное PARTIAL | Сохранить готовое evidence; негативные/неподдержанные форматы fail closed; при изменении CTF/UI проверить затронутые операции на копиях; закрыть длительные операции/cancel на финальном кандидате | Нет тихой потери/overwrite; поддерживаемый формат явно описан; показатели привязаны к SHA/нагрузке |
 | W6 — физические ОС/USB | BLOCKED/PARTIAL | Win10/11, macOS ARM/Intel; реальные pairing/unplug/replug/clone/system-volume, DPI/accessibility/keyboard | Утверждённая аппаратная и платформенная матрица PASS, не замена hosted CI |
 | W7 — freeze/RC/stable | NOT_STARTED | Feature/scope freeze → новый RC4 → независимая приёмка → stable | Все mandatory G0–G9 PASS, ни одного открытого P0/P1 дефекта; только затем stable_ready=true |
@@ -42,6 +42,7 @@
 | Пункт | Класс | Действие |
 |---|---|---|
 | Прямой CTF link/import/export в egui | PASS в scope PR81 | Установленный hosted продукт: 60 синтетических дисков, полный импорт 44/3 046 133, правка/экспорт и оригинальная WhereIsIt; источник сохранён |
+| P1 полного подсчёта на RC4 | Исправлено PR83 в ветке RC4 | Было p95 155,23 мс; installed hosted fix 48,91 мс, 6×30 workload PASS, 300 workspace tests и exact-head CI PASS |
 | Два malformed-input CTF случая | Исправлено в main, PR #79 | Сохранены red/green регрессии; новые bounds/opaque guards проверяются в функциональном кандидате |
 | Полная валидация до первой страницы | Исправлено в main, PR #79 | Explicit integrity workflow; schema probe не объявляется полной проверкой |
 | Остальная P0 parity | PARTIAL | Закрыть конкретные отсутствующие маршруты по матрице; работающие категории/Back/Path не переписывать |
