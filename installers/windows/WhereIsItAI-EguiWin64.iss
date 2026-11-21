@@ -1,6 +1,6 @@
 ; Side-by-side Rust/egui product candidate. Legacy Win32 and isolated QA have separate identities.
 #ifndef AppVersion
-  #define AppVersion "1.0.0-rc.3"
+  #define AppVersion "1.0.0-rc.4"
 #endif
 #ifndef BuildDir
   #define BuildDir "../../dist/windows-egui-product/payload"

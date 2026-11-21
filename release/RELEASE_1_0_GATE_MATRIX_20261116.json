@@ -2,8 +2,8 @@
   "schema": "whereisit-v1-release-gates-2026-11-16",
   "created_date": "2026-11-16",
   "source_baseline": "main 8cbb3b4f5e9f07537cbd0d42deeeee01ec4e35ef",
-  "current_main": "db6c1aeb1b426280175b583265e5e26c3812b643",
-  "integration_candidate": "PR79 merged e7ab4d5; current main native 44950079896, upgrade 44950079910, integration 44950079911 PASS. New egui release workflow code is in a separate validation branch, not yet accepted.",
+  "current_main": "0708f0444f035fc44946c224afb18e847efca1de",
+  "integration_candidate": "PR81 bd3c235ba5aabb48932da0b630e2a0b845d2545f merged to main as 0708f0444f035fc44946c224afb18e847efca1de, tree a2fe. Hosted native 44953342592, offline 44953342595, upgrade 44953342584, integration 44953342626 PASS. Hash-verified installed Win11 product GUI imported the complete 44-volume/3046133-entry catalog and exported an edited derivative accepted and displayed by WhereIsIt 2014 build 220 with its Unicode description; four protected original/control hashes were unchanged. Boolean/pagination/read-only-error-retention and real-import cancellation rollback at 223604 entries with no output passed. GUI CSV/JSON/Parquet each contained matching 59 IDs / 15 fields with source excluded; existing CSV overwrite was refused with hash unchanged. Alt+Left restored query and selected notes. CTF rescan was explicitly refused; fresh physical probe found no eligible non-system volume, pairing stayed disabled/unverified. Win11 uninstall removed four executables with protected hashes unchanged; reinstall hashes matched manifest and GUI opened a 60-volume catalog. No physical USB test is claimed.",
   "published_candidate": "v1.0.0-rc.3",
   "stable_ready": false,
   "status_definitions": {
@@ -31,7 +31,7 @@
       "name": "PR57+PR58 integrated source in main and exact SHA CI",
       "status": "PASS",
       "evidence": [
-        "PR64/65/69/70/73/78/79 merged",
+        "PR64/65/69/70/73/78/79/80 merged into accepted main; PR81 merged as 0708f0444f035fc44946c224afb18e847efca1de",
         "Exact main db6c1ae native run 44950079896, upgrade 44950079910, integration 44950079911 PASS"
       ],
       "missing": [],
@@ -56,11 +56,13 @@
       "status": "PARTIAL",
       "evidence": [
         "SQLite search/browse/categories/scan/export implemented; scoped Win11 evidence",
-        "PR73 category correctness and PR78 Path/CTF fixes in main"
+        "PR73 category correctness and PR78 Path/CTF fixes in main",
+        "PR81 merged-main hosted native/offline/upgrade/integration CI PASS; hash-verified installed GUI full-imported 44 volumes / 3046133 entries, exported edited derivative accepted/displayed by WhereIsIt 2014 build 220 with Unicode description, and passed Boolean/pagination/read-only-error-retention",
+        "Installed GUI CSV/JSON/Parquet each returned matching 59 IDs and 15 fields excluding source; overwrite refusal preserved existing CSV hash; Alt+Left restored query and selected notes; explicit CTF rescan refused"
       ],
       "missing": [
-        "Direct CTF link/import/export in egui",
-        "Remaining P0 routes and real physical pairing acceptance"
+        "Remaining P0 routes and physical pairing acceptance; fresh probe found no eligible non-system volume, leaving pairing unverified/disabled",
+        "Real physical pairing acceptance"
       ],
       "owner": "Service"
     },
@@ -96,11 +98,14 @@
       "evidence": [
         "Main Win11 full catalog 44 volumes / 3046133 entries, 6 workloads x 30 warm samples, p95 3.81-130.21ms PASS",
         "CLI peak working set 9.14 MiB; snapshot/generation unchanged",
-        "PR79 readiness path CLI p95 14.15ms and installed GUI PASS, PR-only"
+        "PR79 readiness path integrated in main; PR79 packaged CLI p95 14.15ms and installed GUI PASS (scoped evidence)",
+        "PR81 installed full import of 44 volumes / 3046133 entries completed; observed elapsed upper bound 451.47s; sampled GUI peak working set 803.81 MiB and private bytes 1421.11 MiB (window included setup and observation)",
+        "PR81 full-catalog CLI roundtrip, six workload classes x 30 warm samples: p50/p95 ms Boolean 31.62/35.06, Unicode 14.92/18.27, volume 10.15/11.23, size-extension 29.79/34.03, folder 3.07/3.96, full-count 124.66/147.08; peak working set 8.93 MiB. CLI only, not GUI render; OS cache uncontrolled.",
+        "PR81 installed real-import cancel at 223604 entries rolled back with no output",
+        "PR81 installed GUI export check: CSV/JSON/Parquet each matching 59 IDs / 15 fields, source excluded; existing CSV overwrite refused and hash unchanged"
       ],
       "missing": [
-        "Final release target-platform workload/long-operation coverage",
-        "PR79 integration before treating fast-open fix as main"
+        "Final release target-platform workload and long-operation/cancellation coverage; full-catalog PR81 Win11 import completed but does not establish all-platform or cold-cache SLOs"
       ],
       "owner": "Storage",
       "warm_win11_search_status": "PASS",
@@ -113,10 +118,10 @@
       "evidence": [
         "Source/control CTF and derived SQLite unchanged after actual GUI/lifecycle",
         "Synthetic no-clobber/fail-closed regressions",
-        "PR79 malformed-CTF fixes passed tests and CI"
+        "PR79 malformed-CTF fixes integrated in main and passed tests/CI",
+        "PR81 installed GUI read-only error retention and real-import cancel rollback passed; four protected original/control hashes unchanged after full import and edited-derivative export; uninstall removed four product executables with protected hashes unchanged, reinstall executable hashes matched manifest"
       ],
       "missing": [
-        "PR79 review and integration",
         "Final frozen product package privacy/data-safety audit"
       ],
       "owner": "QA"
@@ -132,7 +137,7 @@
       "missing": [
         "Product egui RC4 and RC3-to-RC4 clean-profile/upgrade/rollback acceptance",
         "Authenticode and Apple Developer ID notarization/staple",
-        "Real target-platform installed package acceptance"
+        "Real target-platform installed package acceptance; Win11 uninstall/reinstall GUI scope passed with reinstall hashes matching manifest and 60-volume catalog opened"
       ],
       "owner": "Release"
     },
@@ -150,5 +155,5 @@
     }
   ],
   "last_reviewed_date": "2026-11-21",
-  "next_functional_block": "Direct CTF workflow in egui, after PR79 integration review"
+  "next_functional_block": "Remaining P0 parity and target-platform/physical USB acceptance; Win11 probe had no eligible non-system volume so pairing remains unverified"
 }

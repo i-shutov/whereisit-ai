@@ -9,10 +9,10 @@
   <key>CFBundleName</key><string>WhereIsIt AI</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>1.0.0</string>
-  <key>CFBundleVersion</key><string>10003</string>
+  <key>CFBundleVersion</key><string>10004</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSHumanReadableCopyright</key><string>WhereIsIt AI contributors</string>
-  <key>WhereIsItReleaseVersion</key><string>1.0.0-rc.3</string>
+  <key>WhereIsItReleaseVersion</key><string>1.0.0-rc.4</string>
 </dict>
 </plist>

@@ -1,10 +1,9 @@
 {
   "format": "whereisit-release-acceptance-v1",
-  "version": "1.0.0-rc.3",
+  "version": "1.0.0-rc.4",
   "channel": "prerelease",
   "stable_ready": false,
   "known_open_gates": [
-    "direct_CTF_new_egui_workflow_exact_candidate_installed_acceptance_pending",
     "remaining_PR58_P0_parity_not_accepted",
     "full_target_platform_GUI_DPI_accessibility_and_physical_USB_not_accepted",
     "Windows_Authenticode_and_Apple_Developer_ID_notarization_missing",
@@ -50,7 +49,9 @@
     70,
     73,
     78,
-    79
+    79,
+    80,
+    81
   ],
   "integration_pr": 54,
   "native_annotations_implemented": true,
@@ -72,7 +73,7 @@
     "reference_ui_kind": "react_in_memory_design_not_rust_egui",
     "reference_ui_safety": "read_only_review_no_delete",
     "native_search_first_pr": 57,
-    "native_source_integration": "PR69_PR73_PR78_PR79_merged_main_db6c1ae_exact_native_upgrade_integration_CI_PASS",
+    "native_source_integration": "PR69_PR73_PR78_PR79_PR81_merged_main_0708f04; PR81_exact_head_native_offline_upgrade_integration_CI_and_scoped_installed_Win11_product_GUI_PASS",
     "physical_usb_real_hardware_verified": false,
     "rust_egui_frontend_implemented": true,
     "stable_release_decision": "NO_GO",
@@ -142,11 +143,50 @@
       "probe_then_first_page_p95_ms": 14.15,
       "metric_excludes_gui_and_full_validation": true
     },
-    "current_main": "db6c1aeb1b426280175b583265e5e26c3812b643",
+    "current_main": "0708f0444f035fc44946c224afb18e847efca1de",
     "current_main_native_ci": 44950079896,
-    "release_work_branch": "feature/ctf-egui-release-1.0-20261121",
-    "release_work_status": "CTF_GUI_OS_pairing_explicit_rescan_candidate_exports_product_packaging_implemented_validation_in_progress_not_main_acceptance",
-    "next_functional_block": "Exact candidate installed GUI and original-app CTF acceptance",
-    "stable_decision": "NO_GO"
+    "release_work_branch": "release/rc4-acceptance-20261121",
+    "release_work_status": "PR81_merged_installed_product_CTF_GUI_original_app_warm_search_lifecycle_PASS_scoped_unsigned_RC4_identity_pending_acceptance",
+    "next_functional_block": "RC4 exact-candidate upgrade/rollback; remaining platform, physical USB, UX scope and signing acceptance",
+    "stable_decision": "NO_GO",
+    "integrated_pr81": {
+      "number": 81,
+      "head_sha": "bd3c235ba5aabb48932da0b630e2a0b845d2545f",
+      "merge_sha": "0708f0444f035fc44946c224afb18e847efca1de",
+      "tree": "a2fe1d785122c6a7a2967333e23c6f6bba280371",
+      "ci_runs": [
+        44953342592,
+        44953342595,
+        44953342584,
+        44953342626
+      ],
+      "workspace_tests": 301,
+      "installed_win11_product_gui": "PASS_SCOPED_UNSIGNED",
+      "ctf_gui_real_copy_edit_export_original_app": "PASS_WHEREISIT_2014_BUILD_220",
+      "full_import_entries": 3046133,
+      "full_import_volumes": 44,
+      "real_import_cancel": "PASS_NO_OUTPUT_NO_STAGE",
+      "candidate_export_formats": [
+        "CSV",
+        "JSON",
+        "Parquet"
+      ],
+      "candidate_export_rows_each": 59,
+      "product_uninstall_external_integrity": "PASS_FOUR_FILES_UNCHANGED",
+      "physical_usb": "BLOCKED_NO_DEVICE",
+      "report": "docs/qa/WIN11_RELEASE_CHECKPOINT_20261121.md"
+    },
+    "pr81_warm_search": {
+      "status": "PASS_SCOPED",
+      "warm_iterations_each": 30,
+      "classes": 6,
+      "p95_range_ms": [
+        3.96,
+        147.08
+      ],
+      "peak_cli_working_set_mib": 8.93,
+      "cold_cache_verified": false,
+      "excludes_gui_rendering": true
+    }
   }
 }

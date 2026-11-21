@@ -2,7 +2,7 @@
 
 Only aggregate evidence is recorded here. No private catalogs, real filenames/paths/queries, source hashes, raw screenshots or licenses are included.
 
-Current integration: PR #79 merged as `e7ab4d5f6a1df6ea820b8b867dfe5255004fb4cd`, then plan PR #80 merged as `db6c1aeb1b426280175b583265e5e26c3812b643`. Exact current-main native 44950079896, upgrade 44950079910 and integration 44950079911 passed. Artifact-specific GUI measurements below retain their original source identity. New egui CTF/pairing/rescan/candidate-export/product-packaging code is in a separate validation branch; this paragraph does not certify its installed GUI.
+Current integration: PR #79 merged as `e7ab4d5f6a1df6ea820b8b867dfe5255004fb4cd`, plan #80 as `db6c1aeb1b426280175b583265e5e26c3812b643`, and functional PR #81 as `0708f0444f035fc44946c224afb18e847efca1de`. The PR81 section records actual installed product acceptance and exact-head CI; post-merge main CI is a separate check. Earlier measurements below retain their original artifact identity. RC4 release identity is being prepared separately; stable_ready remains false.
 
 ## Main accepted scope
 
@@ -29,6 +29,33 @@ Peak CLI working set 9.14 MiB; sampled private bytes 5.52 MiB. First responses r
 
 The packaged Win64 candidate passed actual GUI installation, opening the full catalog before validation, explicit full-check success, catalog-switch status reset, failure cleanup on a generated count-invalid catalog, restart and uninstall with data unchanged. Schema probe + first unfiltered 250 rows: p50/p95 9.15/14.15 ms over 30 warm CLI iterations; first response 34.22 ms. This excludes GUI/sidebar and full validation. Full validation remains an explicit command; opening is not a data-integrity PASS. The CTF malformed-input refusal changes have generated red/green regressions.
 
+## PR81 product acceptance, integrated as 0708f04
+
+PR [#81](https://github.com/i-shutov/whereisit-ai/pull/81) merged as `0708f0444f035fc44946c224afb18e847efca1de`. Its tree `a2fe1d785122c6a7a2967333e23c6f6bba280371` equals the tested head `bd3c235ba5aabb48932da0b630e2a0b845d2545f`. Hosted native [44953342592](https://github.com/i-shutov/whereisit-ai/actions/runs/44953342592), offline 44953342595, upgrade 44953342584 and integration 44953342626 passed all ten jobs. Local Windows workspace tests: 301 PASS; strict all-features Clippy and seven product-packaging regressions PASS. Focused independent review found no actionable P0/P1 in staged import, guarded description edits, pinned reads or pairing safety.
+
+The standard Windows egui product installer was downloaded from that run; archive, setup and installed GUI/CLI hashes matched provenance. Actual interactive GUI evidence:
+
+- 60 generated volumes: read-only CTF link, Boolean/Unicode search, pagination, syntax-error recovery without source loss, disabled linked-description save, import to new SQLite, Unicode description edit and new-file CTF export PASS. Original WhereIsIt 2014 build 220 independently displayed the new description.
+- Full private-copy GUI import published 44 volumes / 3,046,133 entries into a new 1,675,427,840-byte SQLite after FTS integrity and SQLite checks. Observed elapsed upper bound 451.47 seconds. Sampled process peaks: working set 803.81 MiB, private bytes 1,421.11 MiB; monitoring included setup/observation delay and is not phase-specific attribution.
+- Description edit on the derivative SQLite and new-file CTF export PASS. Original WhereIsIt opened the full exported catalog and displayed the exact changed Unicode description. Four protected source/control hashes remained unchanged. No original was a write target.
+- Real-import cancellation observed at 223,604 entries left no destination or staging files; existing catalog and inputs unchanged.
+- Candidate CSV/JSON/Parquet exports each contained the same 59 generated entries and 15 fields, excluding the source disk. CSV overwrite refused; existing file unchanged. Back restored the source query and selection.
+- Imported-CTF rescan refused. Physical verification offered no eligible non-system volume and disabled pairing. This tests safe refusal; real USB pairing/unplug/replug remains BLOCKED.
+- Uninstall removed both installed EXEs and preserved four external databases/controls byte-for-byte. Reinstall verified both EXE hashes and actual GUI reopened the 60-volume external SQLite. This is unsigned product lifecycle evidence, not RC3-to-RC4 or signed acceptance.
+
+Exact installed CLI: SQLite 3.54.1, six classes with 30 warm requests each, zero failures, stable ordered results. Peak working set 8.93 MiB; database size/write timestamp and zero-length WAL unchanged. Timings include CLI JSON round trips/SQLite opens, exclude GUI rendering, and use uncontrolled OS cache.
+
+| Workload | p50 ms | p95 ms |
+|---|---:|---:|
+| Global Boolean | 31.62 | 35.06 |
+| Unicode | 14.92 | 18.27 |
+| Volume | 10.15 | 11.23 |
+| Size/extension | 29.79 | 34.03 |
+| Folder | 3.07 | 3.96 |
+| Global with count | 124.66 | 147.08 |
+
+These six warm workloads meet p95 <=150 ms. No controlled cold-cache claim. Full evidence and screenshots remain private and are not release contents.
+
 ## Release decision
 
-Win11 scoped GUI/lifecycle, tested original-app CTF compatibility and measured warm search are accepted evidence. They must not remain NOT_RUN/BLOCKED merely because old documents predate them. Direct CTF in egui, remaining P0 parity, real hardware/wider-platform acceptance, product RC4 upgrade and authenticated signatures remain open. Stable 1.0 remains NO-GO, stable_ready=false. Current sequence: [release action plan](../RELEASE_1_0_WIN11_ACTION_PLAN_2026-11-21.md).
+Win11 scoped GUI/product lifecycle, direct egui CTF workflows, tested original-app modified CTF compatibility and measured warm search are accepted evidence. They must not remain NOT_RUN/BLOCKED merely because old documents predate them. Remaining platform/UX parity acceptance, real hardware/wider-platform acceptance, product RC4 upgrade/rollback and authenticated signatures remain open. Stable 1.0 remains NO-GO, stable_ready=false. Current sequence: [release action plan](../RELEASE_1_0_WIN11_ACTION_PLAN_2026-11-21.md).
