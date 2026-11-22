@@ -696,11 +696,15 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn('name_norm=?1 AND size=?2', COPIES)
         self.assertIn('"verified": false', COPIES)
 
-    def test_live_os_physical_pairing_is_explicit_and_independent(self):
+    def test_deferred_pairing_retains_identity_logic_without_public_dispatch(self):
         identity = (ROOT / "crates/atlas-service/src/physical_disks.rs").read_text(encoding="utf-8")
         self.assertIn('"physical_status" => physical_disks::status(&v)?', SERVICE)
-        self.assertIn('"physical_pair" => physical_disks::pair(&v)?', SERVICE)
-        self.assertIn('"physical_unpair" => physical_disks::unpair(&v)?', SERVICE)
+        disabled = SERVICE.split('"rescan_volume" | "physical_pair" | "physical_unpair" => {', 1)[1].split('"physical_probe_os"', 1)[0]
+        self.assertIn('"feature_unavailable"', disabled)
+        self.assertNotIn('"physical_pair" => physical_disks::pair(&v)?', SERVICE)
+        self.assertNotIn('"physical_unpair" => physical_disks::unpair(&v)?', SERVICE)
+        self.assertIn('pub fn pair(request: &Value)', identity)
+        self.assertIn('pub fn unpair(request: &Value)', identity)
         self.assertIn("CREATE TABLE IF NOT EXISTS physical_bindings", identity)
         self.assertIn("UNIQUE (catalog_key, platform, physical_id)", identity)
         self.assertIn('return "unverified"', identity)
