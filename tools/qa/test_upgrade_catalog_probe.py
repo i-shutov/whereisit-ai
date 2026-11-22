@@ -1,11 +1,40 @@
 """Require the exact installed versions and checkpoint for each upgrade pair."""
 import unittest
+from contextlib import closing
+import sqlite3
+import tempfile
 from pathlib import Path
 from upgrade_catalog_probe import (FORMAT, RC1, RC2, RC3, RC4, STABLE,
-    expected_cli_version, validate_checkpoint_versions)
+    ENTRY_NOTE, ENTRY_TAGS, expected_cli_version, validate_checkpoint_versions,
+    seed_fixture_annotation, require_fixture_annotation)
 
 
 class InstalledVersionContract(unittest.TestCase):
+    def test_fixture_annotation_runs_unicode_trigger_and_is_visible(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Path(directory) / "generated.sqlite"
+            with closing(sqlite3.connect(db)) as connection, connection:
+                connection.executescript("""
+                    CREATE TABLE payload(id INTEGER PRIMARY KEY, relative_path TEXT,
+                        description TEXT, tags TEXT, normalized_note TEXT);
+                    CREATE VIEW entries AS SELECT * FROM payload;
+                    CREATE TRIGGER normalize_note INSTEAD OF UPDATE OF description,tags ON entries
+                    BEGIN UPDATE payload SET description=new.description,tags=new.tags,
+                        normalized_note=unicode_lower(new.description)
+                        WHERE id=new.id; END;
+                """)
+                connection.execute("INSERT INTO payload VALUES(1,?, '', '', '')",
+                                   ("Музыка/track-a.mp3",))
+            seed_fixture_annotation(db)
+            with closing(sqlite3.connect(db)) as connection:
+                row = connection.execute("SELECT id,description,tags,normalized_note FROM entries").fetchone()
+            self.assertEqual(row, (1, ENTRY_NOTE, ENTRY_TAGS, ENTRY_NOTE.lower()))
+            require_fixture_annotation({"entry_notes": [list(row[:3])]})
+
+    def test_missing_fixture_annotation_is_refused(self):
+        with self.assertRaisesRegex(RuntimeError, "synthetic_note_not_visible"):
+            require_fixture_annotation({"entry_notes": [[1, "", ENTRY_TAGS]]})
+
     def test_os_upgrade_qa_uses_pinned_sqlite_metadata(self):
         root = Path(__file__).resolve().parents[2]
         for path in (

@@ -13,6 +13,7 @@ an ephemeral CI root. Results are short nonprivate JSON.
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -152,6 +153,29 @@ def verify_external(root: Path, expected: dict) -> None:
         raise RuntimeError("external_ctf_modified_by_upgrade")
 
 
+def seed_fixture_annotation(db: Path) -> None:
+    """Seed only the disposable fixture, including its metadata-index triggers."""
+    with closing(sqlite3.connect(db)) as connection, connection:
+        # Catalog::open registers this function for metadata/FTS triggers.
+        # The fixture note/tags use ASCII and uncased Japanese characters.
+        connection.create_function("unicode_lower", 1, str.lower, deterministic=True)
+        target = "Музыка/track-a.mp3"
+        if connection.execute(
+                "SELECT COUNT(*) FROM entries WHERE relative_path=?", (target,)
+        ).fetchone()[0] != 1:
+            raise RuntimeError("synthetic_note_row_missing")
+        connection.execute(
+            "UPDATE entries SET description=?, tags=? WHERE relative_path=?",
+            (ENTRY_NOTE, ENTRY_TAGS, target),
+        )
+
+
+def require_fixture_annotation(baseline: dict) -> None:
+    if not any(note == ENTRY_NOTE and tags == ENTRY_TAGS
+               for entry_id, note, tags in baseline["entry_notes"]):
+        raise RuntimeError("synthetic_note_not_visible")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=["prepare", "verify"])
@@ -182,19 +206,9 @@ def main() -> int:
         if not isinstance(volume, dict) or int(volume.get("entry_count", 0)) < 3:
             raise RuntimeError("synthetic_scan_incomplete")
         call_cli(cli, {"op": "create_category", "db": str(db), "name": CATEGORY})
-        # Add generated user metadata directly to the disposable SQLite catalog
-        # so the lifecycle check proves notes/tags survive installer actions.
-        with sqlite3.connect(db) as connection:
-            connection.execute(
-                "UPDATE entries SET description=?, tags=? WHERE relative_path=?",
-                (ENTRY_NOTE, ENTRY_TAGS, "Музыка/track-a.mp3"),
-            )
-            if connection.execute("SELECT changes()").fetchone()[0] != 1:
-                raise RuntimeError("synthetic_note_row_missing")
+        seed_fixture_annotation(db)
         baseline = observed(cli, db)
-        if not any(note == [entry_id, ENTRY_NOTE, ENTRY_TAGS]
-                   for entry_id, note, tags in baseline["entry_notes"]):
-            raise RuntimeError("synthetic_note_not_visible")
+        require_fixture_annotation(baseline)
         verify_external(root, signatures)
         snapshot.parent.mkdir(parents=True, exist_ok=True)
         snapshot.write_text(

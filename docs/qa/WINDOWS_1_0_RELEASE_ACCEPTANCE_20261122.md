@@ -6,7 +6,7 @@ On 22 November 2026 the owner approved an unsigned Windows x64 stable release. U
 
 These results describe a locally built standard 1.0.0 installer before the hosted source freeze. They do not claim acceptance of an unbuilt final SHA. The release procedure requires another exact-hosted-main installer GUI check before publication.
 
-- 301 Rust tests and strict all-feature Clippy passed. The Python checks passed: 15 RC/stable packaging tests, two release-identity tests and nine upgrade-contract tests. YAML, inline Python and 42 Bash blocks parsed.
+- 301 Rust tests and strict all-feature Clippy passed. The Python checks passed: 15 RC/stable packaging tests, two release-identity tests and 11 upgrade-contract tests. YAML, inline Python and 42 Bash blocks parsed.
 - The setup exited successfully. Installed GUI/CLI hashes matched the staged binaries; CLI reported 1.0.0. The installer was NotSigned, as explicitly approved by the owner.
 - Actual interactive Win11 Administrator GUI opened the complete 44-volume catalog, searched and displayed the retained Unicode description, and displayed the generated sidecar note. Disk properties had no pairing or bound-rescan controls.
 - GUI created a new SQLite catalog and scanned a generated Unicode folder and two files: one volume, three entries. Native read-only validation returned quick_check=ok and zero foreign-key errors.
@@ -28,3 +28,5 @@ Windows 10 was tested jointly with the owner earlier. Its machine was removed an
 The immutable v1.0.0 release contains only the standard Windows egui setup, ACCEPTANCE.json, provenance.json and SHA256SUMS.txt. The root agent starts publication after exact-main CI and installed GUI acceptance, using dispatch on main or an explicit release/windows-1.0-publish control branch pointing at that validated main SHA.
 
 The publisher checks current main, source/run/repository, required jobs, readiness, approved unsigned scope, privacy and checksums. It creates a draft, downloads the assets and verifies their bytes before publishing stable/latest. Existing RC3/RC4 releases remain unchanged. Final hosted results are also recorded in the release PR and private local report.
+
+The upgrade-fixture regression covers the compact entries view, its unicode_lower trigger, explicit connection closure and visible notes/tags. A generated-only integration with the actual installed 1.0 CLI passed note/tag/search/category validation. No product/runtime change was needed for this QA helper correction.

@@ -255,7 +255,7 @@
     "strict_all_features_clippy": "PASS",
     "python_packaging_tests_passed": 15,
     "release_identity_tests_passed": 2,
-    "upgrade_contract_tests_passed": 9,
+    "upgrade_contract_tests_passed": 11,
     "local_standard_installer_gui": "PASS_WORKING_TREE_PREFLIGHT_NOT_HOSTED_SOURCE_CLAIM",
     "gui_real_catalog_volumes": 44,
     "gui_synthetic_catalog_volumes": 60,
@@ -267,6 +267,7 @@
     "protected_original_controls_unchanged": 4,
     "final_hosted_exact_artifact_acceptance_required_before_publication": true,
     "publication_is_manual_after_QA": true,
-    "report": "docs/qa/WINDOWS_1_0_RELEASE_ACCEPTANCE_20261122.md"
+    "report": "docs/qa/WINDOWS_1_0_RELEASE_ACCEPTANCE_20261122.md",
+    "generated_upgrade_helper_actual_cli": "PASS_V3_VIEW_TRIGGER_NOTE_TAG_SEARCH_CATEGORY_VALIDATION"
   }
 }
