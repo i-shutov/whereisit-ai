@@ -225,6 +225,8 @@ pub fn status(request: &Value) -> Result<Value> {
 
 /// A UI must obtain this UUID from a fresh native OS probe and explicitly ask
 /// the operator to bind the selected catalog disk to that *physical* volume.
+// Retained for later release scope; v1.0 dispatch rejects pairing before this runs.
+#[allow(dead_code)]
 pub fn pair(request: &Value) -> Result<Value> {
     let os = platform(request)?;
     let key = scope(request)?;
@@ -288,6 +290,8 @@ pub fn pair(request: &Value) -> Result<Value> {
     Ok(json!({"paired":true,"volume_id":id}))
 }
 
+// Retained for later release scope; v1.0 dispatch rejects unpairing before this runs.
+#[allow(dead_code)]
 pub fn unpair(request: &Value) -> Result<Value> {
     let os = platform(request)?;
     let key = scope(request)?;
@@ -556,7 +560,7 @@ mod tests {
         pair["volume_id"] = json!(1);
         pair["physical_id"] = json!("mac:AAAA-1111");
         pair["confirmed"] = json!(true);
-        assert_eq!(request(pair)["data"]["paired"], true);
+        assert_eq!(super::pair(&pair).unwrap()["paired"], true);
         assert_eq!(
             request(read.clone())["data"]["items"][0]["state"],
             "connected"
@@ -592,20 +596,20 @@ mod tests {
         let mut pair = json!({"op":"physical_pair","user_store":path,
             "catalog_key":"sqlite:synthetic","platform":"windows","volume_id":1,
             "physical_id":"win:{aaaa-bbbb}:12345678","observed_ids":["win:{aaaa-bbbb}:12345678"],"probe_ok":true});
-        assert_eq!(request(pair.clone())["ok"], false);
+        assert!(super::pair(&pair).is_err());
         pair["confirmed"] = json!(true);
         pair["probe_ok"] = json!(false);
-        assert_eq!(request(pair.clone())["ok"], false);
+        assert!(super::pair(&pair).is_err());
         pair["probe_ok"] = json!(true);
-        assert_eq!(request(pair.clone())["ok"], true);
+        assert_eq!(super::pair(&pair).unwrap()["paired"], true);
         pair["volume_id"] = json!(2);
-        assert_eq!(request(pair.clone())["error"]["code"], "identity_conflict");
+        assert_eq!(super::pair(&pair).unwrap_err().code, "identity_conflict");
         pair["volume_id"] = json!(1);
         pair["physical_id"] = json!("win:{cccc-dddd}:12345678");
         pair["observed_ids"] = json!(["win:{cccc-dddd}:12345678"]);
-        assert_eq!(request(pair.clone())["error"]["code"], "identity_conflict");
+        assert_eq!(super::pair(&pair).unwrap_err().code, "identity_conflict");
         pair["observed_ids"] = json!(["win:{cccc-dddd}:12345678", "win:{cccc-dddd}:12345678"]);
-        assert_eq!(request(pair)["error"]["code"], "identity_conflict");
+        assert_eq!(super::pair(&pair).unwrap_err().code, "identity_conflict");
     }
 
     #[test]

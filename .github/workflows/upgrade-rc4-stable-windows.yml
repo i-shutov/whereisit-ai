@@ -1,0 +1,79 @@
+# Exact-source Windows hosted installed-product upgrade from published RC4 to
+# the PR/main 1.0.0 product. Fixtures are generated on the ephemeral runner.
+name: Native egui RC4 to 1.0 Windows installed upgrade
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: egui-rc4-stable-upgrade-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+env:
+  RC4_SHA: 751fa5454c813e60b61800b517685ccab7e9776a
+  STABLE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+jobs:
+  installed-upgrade:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RC4_SHA }}
+          path: rc4
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.STABLE_SHA }}
+          path: stable
+          persist-credentials: false
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rc4/target
+            stable/target
+          key: egui-rc4-stable-${{ runner.os }}-${{ runner.arch }}-rust-1.100.0-${{ hashFiles('rc4/Cargo.lock', 'stable/Cargo.lock') }}
+          restore-keys: |
+            egui-rc3-rc4-${{ runner.os }}-${{ runner.arch }}-rust-1.100.0-
+            rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('stable/Cargo.lock') }}-1.100-release
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Verify exact source trees and release versions
+        shell: pwsh
+        run: |
+          if ((git -C rc4 rev-parse HEAD).Trim() -ne $env:RC4_SHA) { throw 'RC4 checkout SHA mismatch' }
+          if ((git -C stable rev-parse HEAD).Trim() -ne $env:STABLE_SHA) { throw 'Stable checkout SHA mismatch' }
+          if ((Get-Content rc4/VERSION -Raw).Trim() -ne '1.0.0-rc.4') { throw 'Expected frozen RC4 source version' }
+          if ((Get-Content stable/VERSION -Raw).Trim() -ne '1.0.0') { throw 'Expected target stable version 1.0.0' }
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.100.0
+      - name: Build both exact-source Windows installers
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup unavailable' }
+          foreach ($source in @('rc4', 'stable')) {
+            Push-Location $source
+            try {
+              cargo +1.100.0 build --release --locked -p atlas-desktop-egui -p atlas-cli
+              if ($LASTEXITCODE -ne 0) { throw "Build failed for $source" }
+              ./installers/windows/build-egui-product.ps1 -BuildDir (Resolve-Path 'target/release').Path
+              if ($LASTEXITCODE -ne 0) { throw "Product packaging failed for $source" }
+            } finally { Pop-Location }
+          }
+      - name: Install, upgrade, uninstall and roll back
+        shell: pwsh
+        run: |
+          ./stable/tools/qa/upgrade-rc4-stable-windows.ps1 -SourceRoot (Resolve-Path rc4).Path
+          if ($LASTEXITCODE -ne 0) { throw 'RC4 to 1.0 installed upgrade lifecycle failed' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: egui-rc4-stable-windows-${{ env.STABLE_SHA }}
+          path: stable/dist/qa-egui-upgrade/UPGRADE.json
+          if-no-files-found: error
+          retention-days: 30

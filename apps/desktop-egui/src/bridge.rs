@@ -165,6 +165,8 @@ pub enum Purpose {
         root: String,
         job_id: String,
     },
+    // Kept for the later bound-rescan UI flow; v1.0 does not construct it.
+    #[allow(dead_code)]
     Rescan {
         db: String,
         volume_id: i64,

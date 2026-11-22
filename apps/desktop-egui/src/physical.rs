@@ -346,13 +346,17 @@ impl Default for PhysicalPanel {
 }
 
 impl PhysicalPanel {
+    // Kept for later physical-identity UI scope; the v1.0 panel stays inert.
+    #[allow(dead_code)]
     pub fn open(&mut self, scope: ShelfContext, volume_id: i64, volume_ids: Vec<i64>) {
         self.ticket = self.ticket.wrapping_add(1);
         self.scope = Some(scope);
         self.volume_id = volume_id;
         self.volume_ids = unique_positive_ids(volume_ids);
         self.is_open = true;
-        self.refresh_requested = true;
+        // Physical USB identity is not part of the Windows 1.0 UI surface.
+        // Keep this panel entry point inert so no OS probe is started.
+        self.refresh_requested = false;
         self.pending = false;
         self.last_checked = None;
         self.next_refresh_at = None;
@@ -475,6 +479,33 @@ impl PhysicalPanel {
         if !self.is_open {
             return;
         }
+        let tr = |ru: &'static str, en: &'static str| if russian { ru } else { en };
+        let mut open = self.is_open;
+        egui::Window::new(tr("Проверка физического диска", "Physical disk check"))
+            .open(&mut open)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                ui.label(tr(
+                    "USB-привязка и отвязка недоступны в версии 1.0.",
+                    "USB pairing and unpairing are unavailable in version 1.0.",
+                ));
+            });
+        self.is_open = open;
+        if !self.is_open {
+            self.scope = None;
+            self.snapshot = None;
+            self.states.clear();
+            self.last_checked = None;
+            self.next_refresh_at = None;
+            self.selected_physical_id = None;
+        }
+    }
+
+    #[allow(dead_code)]
+    fn show_enabled(&mut self, ctx: &egui::Context, russian: bool) {
+        if !self.is_open {
+            return;
+        }
         self.poll();
         if self.next_refresh_at.is_some_and(|at| Instant::now() >= at) && !self.pending {
             self.refresh_requested = true;
@@ -592,6 +623,8 @@ impl PhysicalPanel {
     }
 }
 
+// Used by the retained later-release physical identity panel entry point.
+#[allow(dead_code)]
 fn unique_positive_ids(ids: Vec<i64>) -> Vec<i64> {
     let mut seen = std::collections::HashSet::new();
     ids.into_iter()

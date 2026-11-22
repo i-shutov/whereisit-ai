@@ -871,43 +871,11 @@ impl DesktopApp {
         );
     }
 
+    #[allow(dead_code)] // Deferred action retained for the release-scope guard test.
     fn start_rescan(&mut self, volume_id: i64, ctx: &egui::Context) {
-        if !self.confirm_rescan
-            || self.active_request.is_some()
-            || self.linked_ctf.is_some()
-            || !self.volumes.iter().any(|v| v.id == volume_id)
-        {
-            return;
-        }
-        let (Some(db), Some(scope)) = (self.db.clone(), self.shelf_context.clone()) else {
-            return;
-        };
-        let job_id = new_scan_job_id();
-        self.scan_registered = false;
-        self.scan_cancel_requested = false;
-        self.scan_progress_entries = 0;
-        self.scan_progress_request = None;
-        self.scan_cancel_request = None;
-        self.last_progress_poll = None;
-        self.scan_job_id = Some(job_id.clone());
-        self.confirm_rescan = false;
-        self.show_disk_properties = None;
-        self.status = StatusText::new(
-            "Проверка носителя перед обновлением снимка…",
-            "Checking device before updating snapshot…",
-        );
-        let request = json!({"op":"rescan_volume","db":db,"user_store":scope.user_store,
-            "catalog_key":scope.catalog_key,"platform":scope.platform,"volume_id":volume_id,
-            "job_id":job_id,"confirmed":true});
-        self.queue(
-            Purpose::Rescan {
-                db,
-                volume_id,
-                job_id,
-            },
-            request,
-            ctx,
-        );
+        // Bound-device rescans are outside the Windows 1.0 release scope.
+        // Keep ordinary metadata scanning available through start_scan.
+        let _ = (volume_id, ctx);
     }
 
     fn poll_scan_progress(&mut self, ctx: &egui::Context) {
@@ -3157,18 +3125,7 @@ impl DesktopApp {
                     .resizable(true)
                     .default_width(520.0)
                     .show(ctx, |ui| {
-                        if ui.add_enabled(self.active_request.is_none() && self.shelf_context.is_some(), egui::Button::new(self.t("Проверить подключение / привязать…", "Check connection / pair…"))).clicked() {
-                            if let Some(scope) = self.shelf_context.clone() {
-                                self.physical.open(scope, id, self.volumes.iter().map(|v|v.id).collect());
-                                self.show_disk_properties = None;
-                            }
-                        }
                         if self.preferences_ready {
-                        ui.add_enabled_ui(self.active_request.is_none() && self.linked_ctf.is_none() && self.shelf_context.is_some(), |ui| {
-                            let text = self.t("Обновить снимок привязанного носителя. Отсутствующие пути исчезнут из каталога; файлы носителя не изменяются.", "Update the paired device snapshot. Missing paths leave the catalog; device files are unchanged.");
-                            ui.checkbox(&mut self.confirm_rescan, text);
-                            if ui.add_enabled(self.confirm_rescan,egui::Button::new(self.t("Пересканировать привязанный носитель", "Rescan paired device"))).clicked() { self.start_rescan(id,ctx); }
-                        });
                         egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
                             ui.strong(format!("#{} · {}", volume.id, volume.label));
                             ui.label(self.t("Локальное имя и свойства хранятся отдельно; исходный каталог и его экспортируемое имя не меняются.",
@@ -3391,7 +3348,7 @@ mod shortcut_tests {
     use super::*;
 
     #[test]
-    fn rescan_requires_confirmation_and_uses_binding_scope_without_a_historical_root() {
+    fn bound_rescan_is_disabled_in_the_windows_1_0_ui() {
         let dir = tempfile::tempdir().unwrap();
         let db = dir
             .path()
@@ -3422,22 +3379,13 @@ mod shortcut_tests {
             sent.send(request.clone()).unwrap();
             json!({"ok":false,"error":{"code":"unpaired_volume","message":"No saved pairing"}})
         });
-        app.start_rescan(7, &ctx);
-        assert!(app.active_request.is_none());
-        assert!(received.try_recv().is_err());
         app.confirm_rescan = true;
         app.start_rescan(7, &ctx);
-        let reply = wait_for_catalog_reply(&app);
-        let request = received.try_recv().unwrap();
-        assert_eq!(request["op"], "rescan_volume");
-        assert_eq!(request["confirmed"], true);
-        assert_eq!(request["volume_id"], 7);
-        assert_eq!(request["catalog_key"], format!("sqlite:{db}"));
-        assert!(request.get("root").is_none());
-        app.apply_reply(reply, &ctx);
+        assert!(app.active_request.is_none());
         assert!(app.scan_job_id.is_none());
         assert_eq!(app.volumes.len(), 1);
         assert_eq!(app.db.as_deref(), Some(db.as_str()));
+        assert!(received.try_recv().is_err());
         app.linked_ctf = Some(LinkedCtf {
             path: "source.ctf".into(),
             cache_root: "cache".into(),

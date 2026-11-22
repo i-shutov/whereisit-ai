@@ -13,6 +13,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class ReleasePreparation(unittest.TestCase):
     def test_crlf_lock_input_produces_attested_lf_and_updates_both_clients(self):
+        self._check_preparation('1.0.0-rc.5', '10005')
+
+    def test_stable_identity_updates_all_bundles_without_rc_suffix(self):
+        self._check_preparation('1.0.0', '10099')
+
+    def _check_preparation(self, version, build):
         with tempfile.TemporaryDirectory() as directory:
             fixture = Path(directory)
             paths = [
@@ -28,7 +34,7 @@ class ReleasePreparation(unittest.TestCase):
                 target = fixture / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(ROOT / relative, target)
-            (fixture / 'VERSION').write_text('1.0.0-rc.5\n', encoding='utf-8')
+            (fixture / 'VERSION').write_text(version + '\n', encoding='utf-8')
             lock = fixture / 'Cargo.lock'
             lock.write_bytes(lock.read_bytes().replace(b'\r\n', b'\n').replace(b'\n', b'\r\n'))
             subprocess.run([sys.executable, str(fixture / paths[3])], check=True,
@@ -39,10 +45,10 @@ class ReleasePreparation(unittest.TestCase):
                           (fixture / 'THIRD_PARTY_NOTICES.md').read_text(encoding='utf-8'))
             for app in ('macos', 'desktop-egui'):
                 info = plistlib.loads((fixture / 'apps' / app / 'Info.plist').read_bytes())
-                self.assertEqual(info['WhereIsItReleaseVersion'], '1.0.0-rc.5')
-                self.assertEqual(info['CFBundleVersion'], '10005')
+                self.assertEqual(info['WhereIsItReleaseVersion'], version)
+                self.assertEqual(info['CFBundleVersion'], build)
             for relative in paths[-3:]:
-                self.assertIn('#define AppVersion "1.0.0-rc.5"',
+                self.assertIn(f'#define AppVersion "{version}"',
                               (fixture / relative).read_text(encoding='utf-8'))
 
 

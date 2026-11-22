@@ -12,7 +12,9 @@ concurrency:
   cancel-in-progress: true
 env:
   RC3_SHA: 0708f0444f035fc44946c224afb18e847efca1de
-  RC4_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  # Frozen historical target. Current product work is covered by the separate
+  # RC4-to-1.0 Windows workflow and must not rewrite this pair's evidence.
+  RC4_SHA: 751fa5454c813e60b61800b517685ccab7e9776a
 jobs:
   installed-upgrade:
     strategy:

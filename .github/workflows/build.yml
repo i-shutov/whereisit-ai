@@ -38,6 +38,7 @@ jobs:
             ~/.cargo/git
             target
           key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-1.100-test
+          restore-keys: rust-${{ runner.os }}-${{ runner.arch }}-
       - run: rustup toolchain install 1.100.0 --profile minimal --component rustfmt,clippy
       - run: python3 tools/dev/verify_release_identity.py
       - run: python3 -m unittest discover -s tools/qa -p 'test_prepare_release_identity.py' -v
@@ -63,6 +64,7 @@ jobs:
       - run: python3 -m unittest discover -s tools/qa -p 'test_egui_preview_packaging.py' -v
       - run: python3 -m unittest discover -s tools/qa -p 'test_egui_win64_installer_contract.py' -v
       - run: python3 -m unittest discover -s tools/qa -p 'test_egui_product_packaging.py' -v
+      - run: python3 -m unittest discover -s tools/qa -p 'test_egui_stable_packaging.py' -v
       - run: python3 -m unittest discover -s tools/qa -p 'test_win10_egui_host_qa.py' -v
       - run: python3 -m unittest discover -s tools/qa -p 'test_win11_codex_handoff_contract.py' -v
       - run: bash installers/macos/test-verify-dmg.sh
@@ -82,6 +84,7 @@ jobs:
             ~/.cargo/git
             target
           key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-1.100-release
+          restore-keys: rust-${{ runner.os }}-${{ runner.arch }}-
       - run: rustup toolchain install 1.100.0 --profile minimal
       - run: cargo test --workspace --locked
       - run: cargo build --release --locked -p atlas-windows -p atlas-cli
@@ -163,9 +166,11 @@ jobs:
           if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'Missing egui product setup.' }
           $sha = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
           "$sha  $(Split-Path $exe -Leaf)" | Set-Content (Join-Path $dir 'SHA256SUMS.txt') -Encoding ascii
-          @{
+          $acceptance = Get-Content 'release/ACCEPTANCE.json' -Raw | ConvertFrom-Json
+          if ($acceptance.version -ne $version) { throw 'Product acceptance version mismatch.' }
+          $product = @{
             schema = 'whereisit-egui-product-candidate-v1'
-            channel = 'prerelease'
+            channel = $acceptance.channel
             target_ui = 'Rust/egui'
             platform = 'windows'
             architecture = 'x64'
@@ -176,10 +181,14 @@ jobs:
             gui_sha256 = (Get-FileHash 'dist/windows-egui-product/payload/atlas-desktop-egui.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
             cli_sha256 = (Get-FileHash 'dist/windows-egui-product/payload/atlas.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
             signing = 'unsigned'
-            stable_ready = $false
+            stable_ready = [bool]$acceptance.stable_ready
             personal_catalogs_included = $false
-          } | ConvertTo-Json | Set-Content (Join-Path $dir 'provenance.json') -Encoding utf8
-          if ((Get-Content -Raw (Join-Path $dir 'provenance.json') | ConvertFrom-Json).stable_ready -ne $false) { throw 'Egui candidate must remain prerelease.' }
+          }
+          if ($version -notmatch '-rc\.\d+$') {
+            if ($acceptance.channel -ne 'stable' -or $acceptance.release_scope.unsigned_windows_stable_approved -ne $true) { throw 'Stable product scope not approved.' }
+            $product.release_scope = $acceptance.release_scope
+          } elseif ($acceptance.channel -ne 'prerelease' -or $acceptance.stable_ready -ne $false) { throw 'RC cannot masquerade as stable.' }
+          $product | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $dir 'provenance.json') -Encoding utf8
       - uses: actions/upload-artifact@v4
         with:
           name: WhereIsItAI-egui-windows-x64-unsigned-candidate
@@ -279,6 +288,14 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Select deferred-platform packaging scope
+        id: release
+        run: |
+          if [[ "$(tr -d '\r\n' < VERSION)" == *-rc.* ]]; then
+            echo 'is_rc=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'is_rc=false' >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/cache@v4
         with:
           path: |
@@ -286,17 +303,22 @@ jobs:
             ~/.cargo/git
             target
           key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-1.100-release
+          restore-keys: rust-${{ runner.os }}-${{ runner.arch }}-
       - run: rustup toolchain install 1.100.0 --profile minimal
       - run: cargo test --workspace --locked
       - name: Compile standard Rust/egui product binary
         run: cargo build --release --locked -p atlas-desktop-egui -p atlas-cli
       - name: Package egui product PKG and DMG
+        if: steps.release.outputs.is_rc == 'true'
         run: bash installers/macos/package-egui-product.sh
       - name: Verify egui product package and generated catalog lifecycle
+        if: steps.release.outputs.is_rc == 'true'
         run: bash installers/macos/smoke-egui-product.sh
       - name: Build isolated egui macOS QA preview app
+        if: steps.release.outputs.is_rc == 'true'
         run: bash apps/desktop-egui/package-preview-macos.sh
       - uses: actions/upload-artifact@v4
+        if: steps.release.outputs.is_rc == 'true'
         with:
           name: WhereIsItAI-egui-qa-${{ matrix.os }}
           if-no-files-found: error
@@ -306,11 +328,15 @@ jobs:
             dist/qa-egui/provenance-*.txt
       - run: bash apps/macos/build.sh
       - run: bash installers/macos/package.sh
+        if: steps.release.outputs.is_rc == 'true'
       - run: bash installers/macos/smoke-package.sh
+        if: steps.release.outputs.is_rc == 'true'
       - name: Record exact source
+        if: steps.release.outputs.is_rc == 'true'
         run: |
           printf 'commit=%s\nrun_id=%s\nsigning=ad-hoc, not notarized\narchitecture=%s\n' "$(git rev-parse HEAD)" "$GITHUB_RUN_ID" "$(uname -m)" > dist/macos/installers/provenance.txt
       - uses: actions/upload-artifact@v4
+        if: steps.release.outputs.is_rc == 'true'
         with:
           name: WhereIsItAI-${{ matrix.os }}-unsigned-candidate
           if-no-files-found: error
@@ -318,6 +344,7 @@ jobs:
             dist/macos/installers/*
             target/release/atlas-desktop-egui
       - uses: actions/upload-artifact@v4
+        if: steps.release.outputs.is_rc == 'true'
         with:
           name: WhereIsItAI-egui-${{ matrix.os }}-unsigned-candidate
           if-no-files-found: error

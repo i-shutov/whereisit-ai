@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 
@@ -24,11 +25,14 @@ RC1 = "1.0.0-rc.1"
 RC2 = "1.0.0-rc.2"
 RC3 = "1.0.0-rc.3"
 RC4 = "1.0.0-rc.4"
+STABLE = "1.0.0"
 QUERY = "(ext:mp3 OR ext:mkv) AND size:>0B"
 CATEGORY = "QA-Upgrade-Ω-Категория"
+ENTRY_NOTE = "Synthetic upgrade note — 東京"
+ENTRY_TAGS = "qa,stable-upgrade"
 CTF_PLACEHOLDER = b"GENERATED INVALID CTF PLACEHOLDER; PROVE THAT INSTALLERS PRESERVE EXTERNAL FILES\n"
 FORMAT = "whereisit-native-upgrade-smoke-v1"
-SUPPORTED_PAIRS = {(RC1, RC2), (RC2, RC3), (RC3, RC4)}
+SUPPORTED_PAIRS = {(RC1, RC2), (RC2, RC3), (RC3, RC4), (RC4, STABLE)}
 
 
 def expected_cli_version(mode: str, source: str, target: str) -> str:
@@ -131,6 +135,10 @@ def observed(cli: Path, db: Path) -> dict:
             [[int(x["id"]), str(x["name"]), int(x["size"])] for x in result["items"]]
         ),
         "volume_ids": sorted(int(x["id"]) for x in volumes),
+        "entry_notes": sorted(
+            [[int(x["id"]), str(x["description"]), str(x["tags"])]
+             for x in result["items"]]
+        ),
     }
 
 
@@ -174,7 +182,19 @@ def main() -> int:
         if not isinstance(volume, dict) or int(volume.get("entry_count", 0)) < 3:
             raise RuntimeError("synthetic_scan_incomplete")
         call_cli(cli, {"op": "create_category", "db": str(db), "name": CATEGORY})
+        # Add generated user metadata directly to the disposable SQLite catalog
+        # so the lifecycle check proves notes/tags survive installer actions.
+        with sqlite3.connect(db) as connection:
+            connection.execute(
+                "UPDATE entries SET description=?, tags=? WHERE relative_path=?",
+                (ENTRY_NOTE, ENTRY_TAGS, "Музыка/track-a.mp3"),
+            )
+            if connection.execute("SELECT changes()").fetchone()[0] != 1:
+                raise RuntimeError("synthetic_note_row_missing")
         baseline = observed(cli, db)
+        if not any(note == [entry_id, ENTRY_NOTE, ENTRY_TAGS]
+                   for entry_id, note, tags in baseline["entry_notes"]):
+            raise RuntimeError("synthetic_note_not_visible")
         verify_external(root, signatures)
         snapshot.parent.mkdir(parents=True, exist_ok=True)
         snapshot.write_text(

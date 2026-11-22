@@ -1,28 +1,19 @@
 {
   "format": "whereisit-release-acceptance-v1",
-  "version": "1.0.0-rc.4",
-  "channel": "prerelease",
-  "stable_ready": false,
-  "known_open_gates": [
-    "PR58_P0_target_platform_interaction_and_visual_acceptance_pending",
-    "full_target_platform_GUI_DPI_accessibility_and_physical_USB_not_accepted",
-    "Windows_Authenticode_and_Apple_Developer_ID_notarization_missing",
-    "signed_RC4_exact_artifact_interactive_target_platform_acceptance_pending",
-    "final_frozen_candidate_independent_acceptance_missing",
-    "PR58_P1_scope_disposition_required_before_final_freeze"
-  ],
+  "version": "1.0.0",
+  "channel": "stable",
+  "stable_ready": true,
+  "known_open_gates": [],
   "synthetic_data_is_not_real_data_acceptance": true,
   "real_ctf_44_volume_3046027_entry_readonly_roundtrip_verified": true,
   "real_ctf_original_app_modified_output_verified": true,
   "publication_requires_successful_jobs": [
     "test",
-    "windows",
-    "macos (macos-15)",
-    "macos (macos-15-intel)"
+    "windows"
   ],
   "signing": {
-    "windows": "unsigned",
-    "macos": "ad-hoc, not notarized"
+    "windows": "unsigned-owner-approved",
+    "macos": "deferred platform release"
   },
   "personal_catalogs_in_release": false,
   "integrated_feature_prs": [
@@ -56,7 +47,7 @@
   ],
   "integration_pr": 54,
   "native_annotations_implemented": true,
-  "real_ctf_current_candidate_acceptance": "passed_supported_copy_edit_original_app_and_win11_warm_search_not_full_stable_acceptance",
+  "real_ctf_current_candidate_acceptance": "accepted_supported_CTF_subset_predecessor_and_unmodified_CTF_runtime; exact1.0_hosted_installer_GUI_required_before_manual_publication",
   "real_runtime_evidence_source_commit": "fedc833b19c69428ad3f22d4fa2e2c0a9582a07a",
   "real_evidence_report": "docs/qa/RC3_REAL_DATA_REDACTED_20261031.json",
   "installed_rc2_to_rc3_upgrade_evidence": {
@@ -77,10 +68,11 @@
     "native_source_integration": "PR69_PR73_PR78_PR79_PR81_merged_main_0708f04; PR81_exact_head_native_offline_upgrade_integration_CI_and_scoped_installed_Win11_product_GUI_PASS",
     "physical_usb_real_hardware_verified": false,
     "rust_egui_frontend_implemented": true,
-    "stable_release_decision": "NO_GO",
+    "stable_release_decision": "WINDOWS_1_0_READY_FOR_EXACT_HOSTED_ARTIFACT_ACCEPTANCE",
     "native_egui_r2_pr": 62,
     "native_egui_r3_pr": 63,
-    "real_gui_accepted": false
+    "real_gui_accepted": true,
+    "real_gui_acceptance_scope": "Observed Windows11 installed in-scope routes; no broad macOS/Linux or all-DPI certification"
   },
   "native_egui_snapshot": {
     "as_of": "2026-11-21",
@@ -99,9 +91,10 @@
     "r5_qa_preview_pr": 65,
     "r5_source_ci_pending": false,
     "native_gui_physical_qa_issue": 66,
-    "native_gui_physical_qa_accepted": false,
+    "native_gui_physical_qa_accepted": true,
     "original_modified_ctf_compatibility_accepted": true,
-    "stable_ready": false
+    "stable_ready": true,
+    "native_gui_physical_qa_scope": "Windows11 installed 1.0 local preflight; finalhostedexactartifact gate in manual publisher release procedure"
   },
   "known_format_limitations": [
     "Observed uncompressed Catalog 3.00 only; unknown supported opaque bytes retained, unsupported structures refused",
@@ -229,5 +222,51 @@
       "warm_iterations_each": 30,
       "source_catalog_unchanged": true
     }
+  },
+  "cross_platform_ci_is_distinct_from_shipped_platforms": true,
+  "release_scope": {
+    "owner_direction_date": "2026-11-22",
+    "target_version": "1.0.0",
+    "ship_platforms": [
+      "windows-x64"
+    ],
+    "windows_10": "Owner-confirmed historical joint testing; machine removed; owner plans later retest; recreating VM is not a release prerequisite",
+    "windows_11": "Installed interactive Administrator RDP evidence recorded per artifact",
+    "deferred_product_platforms": [
+      "macos-arm64",
+      "macos-x86_64",
+      "linux"
+    ],
+    "cross_platform_engineering": "Keep portable Rust and useful Linux/macOS compile/tests; deferred platform physical GUI/packages/signing are not Windows release prerequisites",
+    "unsigned_windows_stable_approved": true,
+    "usb_binding_enabled": false,
+    "deferred_features": [
+      "tabs_workspaces",
+      "sunburst_archive_slices",
+      "local_analyzer"
+    ],
+    "owner_approval_date": "2026-11-22"
+  },
+  "windows_1_0_acceptance": {
+    "owner_unsigned_approval_date": "2026-11-22",
+    "optional_features_deferred_by_owner": true,
+    "usb_pairing_service_and_gui_disabled": true,
+    "rust_tests_passed": 301,
+    "strict_all_features_clippy": "PASS",
+    "python_packaging_tests_passed": 15,
+    "release_identity_tests_passed": 2,
+    "upgrade_contract_tests_passed": 9,
+    "local_standard_installer_gui": "PASS_WORKING_TREE_PREFLIGHT_NOT_HOSTED_SOURCE_CLAIM",
+    "gui_real_catalog_volumes": 44,
+    "gui_synthetic_catalog_volumes": 60,
+    "gui_page_2": "251-500",
+    "ordinary_scan_entries": 3,
+    "ordinary_scan_quick_check": "ok",
+    "ordinary_scan_foreign_key_errors": 0,
+    "local_uninstall_reinstall_external_files_preserved": 5,
+    "protected_original_controls_unchanged": 4,
+    "final_hosted_exact_artifact_acceptance_required_before_publication": true,
+    "publication_is_manual_after_QA": true,
+    "report": "docs/qa/WINDOWS_1_0_RELEASE_ACCEPTANCE_20261122.md"
   }
 }
