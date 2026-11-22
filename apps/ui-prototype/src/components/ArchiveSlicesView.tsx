@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Copy,
   Film,
@@ -10,8 +10,10 @@ import {
 import type { ArchiveSlicesResponse, SystemSnapshot } from '../types/atlas';
 import { formatBytes } from '../utils/format';
 import { useI18n } from '../i18n';
+import { ScopedRequestGate, type ScopedRequestTicket } from '../utils/scopedRequest';
 
 interface ArchiveSlicesViewProps {
+  isActive: boolean;
   snapshot: SystemSnapshot;
   initialVolumeId: number | null;
   onJumpToSearch: (params: { volumeId: number | null; folderPrefix: string | null; query?: string }) => void;
@@ -34,6 +36,7 @@ const SLICE_COLORS = [
 type SliceDimension = 'overview' | 'duplicates' | 'volumes';
 
 export const ArchiveSlicesView: React.FC<ArchiveSlicesViewProps> = ({
+  isActive,
   snapshot,
   initialVolumeId,
   onJumpToSearch,
@@ -47,12 +50,15 @@ export const ArchiveSlicesView: React.FC<ArchiveSlicesViewProps> = ({
   const [activeDim, setActiveDim] = useState<SliceDimension>('overview');
   const [data, setData] = useState<ArchiveSlicesResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const requestGateRef = useRef<ScopedRequestGate | null>(null);
+  if (!requestGateRef.current) requestGateRef.current = new ScopedRequestGate();
 
   useEffect(() => {
     setScopedVolumeId(initialVolumeId);
   }, [initialVolumeId]);
 
-  const loadSlices = useCallback(async () => {
+  const loadSlices = useCallback(async (ticket: ScopedRequestTicket) => {
+    const gate = requestGateRef.current!;
     setLoading(true);
     try {
       const resp = await fetch('/api/catalog/slices', {
@@ -65,21 +71,36 @@ export const ArchiveSlicesView: React.FC<ArchiveSlicesViewProps> = ({
         }),
       });
       const json = await resp.json();
+      if (!gate.isCurrent(ticket)) return;
       if (!resp.ok) {
+        gate.fail(ticket);
         onNotify(json.error || t('Не удалось построить разрезы архива', 'Failed to compute archive slices'), 'error');
         return;
       }
+      if (!gate.succeed(ticket)) return;
       setData(json as ArchiveSlicesResponse);
     } catch (err) {
-      onNotify((err as Error).message, 'error');
+      if (gate.fail(ticket)) onNotify((err as Error).message, 'error');
     } finally {
-      setLoading(false);
+      if (gate.isCurrent(ticket)) setLoading(false);
     }
   }, [scopedVolumeId, selectedCategory, onNotify, t]);
 
   useEffect(() => {
-    void loadSlices();
-  }, [loadSlices, snapshot.totalCatalogEntries, snapshot.pinnedGenerationSha]);
+    if (!isActive) {
+      setLoading(false);
+      return;
+    }
+    const loadKey = JSON.stringify([scopedVolumeId, selectedCategory, snapshot.totalCatalogEntries, snapshot.pinnedGenerationSha]);
+    const gate = requestGateRef.current!;
+    const ticket = gate.begin(loadKey);
+    if (!ticket) {
+      setLoading(false);
+      return;
+    }
+    void loadSlices(ticket);
+    return () => gate.invalidate(ticket);
+  }, [isActive, loadSlices, scopedVolumeId, selectedCategory, snapshot.totalCatalogEntries, snapshot.pinnedGenerationSha]);
 
   const dupProtectionPct =
     data && data.totalIndexedBytes > 0

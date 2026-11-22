@@ -12,6 +12,9 @@ export default defineConfig(() => {
       },
     },
     server: {
+      // Keep the standalone middleware WebSocket off public/private interfaces too.
+      host: '127.0.0.1',
+      ws: {host: '127.0.0.1'},
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',

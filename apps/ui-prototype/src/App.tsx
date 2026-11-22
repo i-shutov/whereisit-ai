@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { HardDriveDownload, Moon, Sun } from 'lucide-react';
 import type { SystemSnapshot } from './types/atlas';
 import { LocatorWorkspace } from './components/LocatorWorkspace';
@@ -17,6 +17,8 @@ type ActiveTab = 'search' | 'slices' | 'sunburst' | 'disks' | 'local';
 export default function App() {
   const { lang, setLang, t } = useI18n();
   const [activeTab, setActiveTab] = useState<ActiveTab>('search');
+  const [visitedTabs, setVisitedTabs] = useState<Set<ActiveTab>>(() => new Set(['search']));
+  const tabRefs = useRef<Partial<Record<ActiveTab, HTMLButtonElement | null>>>({});
   const [darkMode, setDarkMode] = useState<boolean>(true);
   const [snapshot, setSnapshot] = useState<SystemSnapshot | null>(null);
   const [toast, setToast] = useState<{ message: string; tone: 'info' | 'error' | 'success' } | null>(null);
@@ -39,6 +41,15 @@ export default function App() {
 
   const notify = useCallback((message: string, tone: 'info' | 'error' | 'success' = 'info') => {
     setToast({ message, tone });
+  }, []);
+
+  const selectTab = useCallback((tab: ActiveTab) => {
+    const focusedElement = document.activeElement;
+    if (focusedElement instanceof HTMLElement && focusedElement.closest('[role="tabpanel"]')) {
+      tabRefs.current[tab]?.focus();
+    }
+    setActiveTab(tab);
+    setVisitedTabs((visited) => (visited.has(tab) ? visited : new Set(visited).add(tab)));
   }, []);
 
   useEffect(() => {
@@ -81,15 +92,15 @@ export default function App() {
       setSunburstVolumeId(volumeId);
       setSunburstFolderPath(folderPath);
       setSunburstHighlightQuery(highlightQuery);
-      setActiveTab('sunburst');
+      selectTab('sunburst');
     },
-    []
+    [selectTab]
   );
 
   const openSlicesAt = useCallback((volumeId: number | null) => {
     setSlicesVolumeId(volumeId);
-    setActiveTab('slices');
-  }, []);
+    selectTab('slices');
+  }, [selectTab]);
 
   const jumpToSearch = useCallback(
     (params: { volumeId: number | null; folderPrefix: string | null; query?: string; copySourceEntryId?: number | null }) => {
@@ -100,9 +111,9 @@ export default function App() {
         query: params.query,
         copySourceEntryId: params.copySourceEntryId ?? null,
       });
-      setActiveTab('search');
+      selectTab('search');
     },
-    []
+    [selectTab]
   );
 
   const activePropsVolume = useMemo(
@@ -121,6 +132,20 @@ export default function App() {
     { id: 'local', label: t('Локальный ПК', 'Local PC') },
   ];
 
+  const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, current: ActiveTab) => {
+    const currentIndex = navItems.findIndex((item) => item.id === current);
+    let nextIndex: number | null = null;
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') nextIndex = (currentIndex + 1) % navItems.length;
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') nextIndex = (currentIndex - 1 + navItems.length) % navItems.length;
+    else if (event.key === 'Home') nextIndex = 0;
+    else if (event.key === 'End') nextIndex = navItems.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const nextTab = navItems[nextIndex].id;
+    selectTab(nextTab);
+    tabRefs.current[nextTab]?.focus();
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       {/* Top Bar (egui::TopBottomPanel::top) */}
@@ -129,19 +154,26 @@ export default function App() {
           href="#search"
           onClick={(e) => {
             e.preventDefault();
-            setActiveTab('search');
+            selectTab('search');
           }}
           className="font-display text-base font-bold tracking-tight text-slate-900 dark:text-white whitespace-nowrap shrink-0"
         >
           WhereIsIt AI
         </a>
 
-        <nav className="flex items-center gap-5 text-sm font-medium text-slate-600 dark:text-slate-400 overflow-x-auto">
+        <nav role="tablist" aria-label={t('Рабочие пространства', 'Workspaces')} className="flex items-center gap-5 text-sm font-medium text-slate-600 dark:text-slate-400 overflow-x-auto">
           {navItems.map((item) => (
             <button
               key={item.id}
+              ref={(node) => { tabRefs.current[item.id] = node; }}
               type="button"
-              onClick={() => setActiveTab(item.id)}
+              role="tab"
+              id={`workspace-tab-${item.id}`}
+              aria-selected={activeTab === item.id}
+              aria-controls={`workspace-panel-${item.id}`}
+              tabIndex={activeTab === item.id ? 0 : -1}
+              onKeyDown={(event) => handleTabKeyDown(event, item.id)}
+              onClick={() => selectTab(item.id)}
               className={`py-1 transition-colors whitespace-nowrap shrink-0 cursor-pointer border-b-2 ${
                 activeTab === item.id
                   ? 'border-blue-600 text-slate-900 dark:text-white font-semibold'
@@ -237,58 +269,62 @@ export default function App() {
           <div className="h-96 border border-slate-200 dark:border-slate-800 rounded-md bg-white dark:bg-slate-900/40 flex items-center justify-center text-sm text-slate-500">
             {t('Инициализация видеокаталога…', 'Initializing video catalog…')}
           </div>
-        ) : activeTab === 'search' ? (
-          <LocatorWorkspace
-            snapshot={snapshot}
-            presetJump={searchJump}
-            onRefreshSnapshot={refreshSnapshot}
-            onOpenSunburst={(vid, fpath) => openSunburstAt(vid, fpath)}
-            onOpenSlices={openSlicesAt}
-            onOpenDiskProperties={(vid) => setPropsVolumeId(vid)}
-            onOpenScanModal={openScanModal}
-            onNotify={notify}
-          />
-        ) : activeTab === 'local' ? (
-          <LocalDiskAnalyzer snapshot={snapshot} onNotify={notify} />
-        ) : activeTab === 'slices' ? (
-          <ArchiveSlicesView
-            snapshot={snapshot}
-            initialVolumeId={slicesVolumeId}
-            onJumpToSearch={(params) => jumpToSearch(params)}
-            onJumpToCopyCandidates={(entryId) =>
-              jumpToSearch({ volumeId: null, folderPrefix: null, copySourceEntryId: entryId })
-            }
-            onOpenSunburst={(vid, fpath, hl) => openSunburstAt(vid, fpath, hl)}
-            onNotify={notify}
-          />
-        ) : activeTab === 'sunburst' ? (
-          <VolumeSunburstView
-            snapshot={snapshot}
-            selectedVolumeId={sunburstVolumeId}
-            selectedFolderPath={sunburstFolderPath}
-            initialHighlightQuery={sunburstHighlightQuery}
-            onNavigateScope={(vid, fpath) => {
-              setSunburstVolumeId(vid);
-              setSunburstFolderPath(fpath);
-            }}
-            onJumpToSearch={(params) => jumpToSearch(params)}
-            onJumpToCopyCandidates={(entryId) =>
-              jumpToSearch({ volumeId: null, folderPrefix: null, copySourceEntryId: entryId })
-            }
-            onOpenSlices={openSlicesAt}
-            onNotify={notify}
-          />
         ) : (
-          <DisksInventoryView
-            snapshot={snapshot}
-            onRefreshSnapshot={refreshSnapshot}
-            onOpenSunburst={(vid) => openSunburstAt(vid, null)}
-            onOpenSlices={openSlicesAt}
-            onOpenSearch={(vid) => jumpToSearch({ volumeId: vid, folderPrefix: null })}
-            onOpenDiskProperties={(vid) => setPropsVolumeId(vid)}
-            onOpenScanModal={openScanModal}
-            onNotify={notify}
-          />
+          <>
+            <div role="tabpanel" id="workspace-panel-search" aria-labelledby="workspace-tab-search" hidden={activeTab !== 'search'}>
+              {visitedTabs.has('search') && <LocatorWorkspace
+                isActive={activeTab === 'search'}
+                snapshot={snapshot}
+                presetJump={searchJump}
+                onRefreshSnapshot={refreshSnapshot}
+                onOpenSunburst={(vid, fpath) => openSunburstAt(vid, fpath)}
+                onOpenSlices={openSlicesAt}
+                onOpenDiskProperties={(vid) => setPropsVolumeId(vid)}
+                onOpenScanModal={openScanModal}
+                onNotify={notify}
+              />}
+            </div>
+            <div role="tabpanel" id="workspace-panel-slices" aria-labelledby="workspace-tab-slices" hidden={activeTab !== 'slices'}>
+              {visitedTabs.has('slices') && <ArchiveSlicesView
+                isActive={activeTab === 'slices'}
+                snapshot={snapshot}
+                initialVolumeId={slicesVolumeId}
+                onJumpToSearch={(params) => jumpToSearch(params)}
+                onJumpToCopyCandidates={(entryId) => jumpToSearch({ volumeId: null, folderPrefix: null, copySourceEntryId: entryId })}
+                onOpenSunburst={(vid, fpath, hl) => openSunburstAt(vid, fpath, hl)}
+                onNotify={notify}
+              />}
+            </div>
+            <div role="tabpanel" id="workspace-panel-sunburst" aria-labelledby="workspace-tab-sunburst" hidden={activeTab !== 'sunburst'}>
+              {visitedTabs.has('sunburst') && <VolumeSunburstView
+                isActive={activeTab === 'sunburst'}
+                snapshot={snapshot}
+                selectedVolumeId={sunburstVolumeId}
+                selectedFolderPath={sunburstFolderPath}
+                initialHighlightQuery={sunburstHighlightQuery}
+                onNavigateScope={(vid, fpath) => { setSunburstVolumeId(vid); setSunburstFolderPath(fpath); }}
+                onJumpToSearch={(params) => jumpToSearch(params)}
+                onJumpToCopyCandidates={(entryId) => jumpToSearch({ volumeId: null, folderPrefix: null, copySourceEntryId: entryId })}
+                onOpenSlices={openSlicesAt}
+                onNotify={notify}
+              />}
+            </div>
+            <div role="tabpanel" id="workspace-panel-disks" aria-labelledby="workspace-tab-disks" hidden={activeTab !== 'disks'}>
+              {visitedTabs.has('disks') && <DisksInventoryView
+                snapshot={snapshot}
+                onRefreshSnapshot={refreshSnapshot}
+                onOpenSunburst={(vid) => openSunburstAt(vid, null)}
+                onOpenSlices={openSlicesAt}
+                onOpenSearch={(vid) => jumpToSearch({ volumeId: vid, folderPrefix: null })}
+                onOpenDiskProperties={(vid) => setPropsVolumeId(vid)}
+                onOpenScanModal={openScanModal}
+                onNotify={notify}
+              />}
+            </div>
+            <div role="tabpanel" id="workspace-panel-local" aria-labelledby="workspace-tab-local" hidden={activeTab !== 'local'}>
+              {visitedTabs.has('local') && <LocalDiskAnalyzer snapshot={snapshot} onNotify={notify} />}
+            </div>
+          </>
         )}
       </main>
 

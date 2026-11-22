@@ -64,6 +64,7 @@ export interface SearchPresetJump {
 }
 
 interface LocatorWorkspaceProps {
+  isActive: boolean;
   snapshot: SystemSnapshot;
   presetJump: SearchPresetJump | null;
   onRefreshSnapshot: () => Promise<void>;
@@ -79,6 +80,7 @@ type RegisterFilterMode = 'all' | 'current_page' | 'copy_candidates';
 type RegisterOrder = 'id' | 'volume';
 
 export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
+  isActive,
   snapshot,
   presetJump,
   onRefreshSnapshot,
@@ -178,7 +180,9 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
   const debounceTimerRef = useRef<number | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const latestRequestIdRef = useRef<string | null>(null);
+  const handledPresetNonceRef = useRef<number | null | undefined>(undefined);
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
+  const keyboardHandlerRef = useRef<((event: KeyboardEvent) => void) | null>(null);
 
   const composeEffectiveQuery = (text: string, typeTok: string, sizeTok: string): string => {
     const parts: string[] = [];
@@ -286,6 +290,10 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
 
   // Handle cross-tab jump from Archive Slices, Sunburst, or Disks table
   useEffect(() => {
+    if (!isActive) return;
+    const nonce = presetJump?.nonce ?? null;
+    if (handledPresetNonceRef.current === nonce) return;
+    handledPresetNonceRef.current = nonce;
     if (!presetJump) {
       void runCatalogQuery({});
       return;
@@ -325,7 +333,7 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
       nextOffset: 0,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [presetJump?.nonce]);
+  }, [isActive, presetJump?.nonce]);
 
   const volumeMap = useMemo(() => {
     const m = new Map<number, CatalogVolume>();
@@ -482,9 +490,15 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
         }
       }
     };
+    keyboardHandlerRef.current = onKeyDown;
+  });
+
+  useEffect(() => {
+    if (!isActive) return;
+    const onKeyDown = (event: KeyboardEvent) => keyboardHandlerRef.current?.(event);
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  });
+  }, [isActive]);
 
   const pushHistory = () => {
     setNavStack((prev) => [
