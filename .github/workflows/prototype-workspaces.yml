@@ -1,4 +1,4 @@
-name: PR58 prototype workspace regressions
+name: PR58 prototype Windows workspace regressions
 on:
   pull_request:
     paths:
@@ -16,11 +16,8 @@ concurrency:
   cancel-in-progress: true
 jobs:
   prototype:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, windows-2022]
-    runs-on: ${{ matrix.os }}
+    # Linux build/smoke/regressions already run in ui-prototype.yml.
+    runs-on: windows-2022
     timeout-minutes: 15
     defaults:
       run:
