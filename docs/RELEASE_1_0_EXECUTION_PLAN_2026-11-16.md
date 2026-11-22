@@ -1,4 +1,4 @@
-> **Текущие статусы и очередь релиза (21.11.2026):** [оперативный план](RELEASE_1_0_WIN11_ACTION_PLAN_2026-11-21.md) и [checkpoint](qa/WIN11_RELEASE_CHECKPOINT_20261121.md). Промежуточные статусы в этом историческом документе не являются актуальным NOT_RUN/BLOCKED. Scope и канонический PR58 UX сохраняются.
+> **Исторический план. Windows 1.0 stable закрыт 22.11.2026:** [выпуск](https://github.com/i-shutov/whereisit-ai/releases/tag/v1.0.0). Текущий план — [ROADMAP.md](ROADMAP.md): вкладки, sunburst и анализатор PR58 в Windows 1.1; macOS/Linux отдельно. Старые NO_GO, общие платформенные гейты и требования подписи ниже не описывают фактически выпущенную Windows 1.0; действует согласованный scope из [release notes](releases/v1.0.0.md).
 
 # WhereIsIt AI — исполняемый план выпуска 1.0
 

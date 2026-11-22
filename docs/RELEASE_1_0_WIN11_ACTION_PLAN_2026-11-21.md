@@ -1,5 +1,7 @@
 # WhereIsIt AI — Windows1.0 release
 
+> **ЗАКРЫТО 22.11.2026:** Windows x64 [v1.0.0 stable опубликован](https://github.com/i-shutov/whereisit-ai/releases/tag/v1.0.0), точный source `938fece2d74793c2eda7a1b84082ab5db3f8a092`. Финальный hosted-установщик проверен в GUI, все CI и скачанные релизные файлы прошли проверки. `stable_ready=true`. Следующая очередь находится в [ROADMAP.md](ROADMAP.md). Пункты подготовки и preflight ниже — история; они не требуют повторного выпуска или открытия гейтов 1.0.
+
 **Owner decision22.11.2026:** publish Windows x64 stable1.0 unsigned after installer acceptance. USB physical pairing/bound-device rescan disabled; ordinary metadata scan retained. Tabs/workspaces, sunburst/archive slices and local analyzer deferred. macOS/Linux products later; portable code and useful cross-platform checks remain.
 
 ## Accepted base

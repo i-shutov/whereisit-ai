@@ -1,5 +1,7 @@
 # WhereIsIt AI — Windows1.0 master plan
 
+> **ЗАКРЫТО 22.11.2026:** Windows x64 [v1.0.0 stable выпущен](https://github.com/i-shutov/whereisit-ai/releases/tag/v1.0.0), без подписи по решению владельца. Установленный GUI, CI и опубликованные файлы проверены. Актуальная очередь — [roadmap после 1.0](ROADMAP.md): Windows 1.1 — вкладки, sunburst и анализатор по PR58; macOS/Linux — отдельные выпуски. Ниже сохранён исторический план подготовки 1.0, а не текущая очередь или незакрытые гейты.
+
 Owner-approved22.11.2026: **releaseWindowsx64 stable1.0 unsigned; USBpairing disabled; tabs/sunburst/analyzer later; macOS/Linux releases later.** Keep portableRust and cross-platformcompile/tests. EarlierWin10testing accepted ashistorical owner-confirmedevidence; norecreatedVM required.
 
 The canonical executable plan is [Windows1.0](RELEASE_1_0_WIN11_ACTION_PLAN_2026-11-21.md), with [machinegates](../release/RELEASE_1_0_GATE_MATRIX_20261116.json) and [releaseacceptance](../release/ACCEPTANCE.json). Older all-platformsigning/GUI gates are historical and do not override this ownerscope.
