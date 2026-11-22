@@ -1,4 +1,14 @@
-## Resume checkpoint — 2026-11-21 — Win11 native QA release plan
+## Resume checkpoint — 2026-11-22 — Windows 1.0 stable released
+
+Windows x64 [v1.0.0 stable](https://github.com/i-shutov/whereisit-ai/releases/tag/v1.0.0) is published/latest, unsigned with explicit owner approval. Source `938fece2d74793c2eda7a1b84082ab5db3f8a092` (PR #85); [native CI](https://github.com/i-shutov/whereisit-ai/actions/runs/44999900277), installed Windows GUI acceptance, data-preserving RC4 upgrade/rollback and [publication](https://github.com/i-shutov/whereisit-ai/actions/runs/45012028164) passed. All four public assets were downloaded and verified; protected original/external controls remained unchanged. `stable_ready=true`; release tags/assets stay immutable. USB pairing/bound-device rescan is disabled; ordinary metadata scanning remains supported.
+
+**Current plan: [docs/ROADMAP.md](docs/ROADMAP.md).** Next functional release is planned Windows 1.1: PR58 tabs/workspaces, sunburst/archive slices and local analyzer, prototype-first then Rust/egui. macOS and Linux are separate release tracks without assigned version/date, while portable code and cross-platform checks continue. Do not reopen Windows 1.0 gates for these deferred features/platforms. Windows 10 evidence remains owner-confirmed historical testing, not a new exact-1.0 result. Private catalogs, paths, licenses and raw GUI evidence stay outside public Git.
+
+All checkpoints below are historical; their NO-GO/pending statements do not override the released Windows 1.0 or the current roadmap.
+
+---
+
+## Historical checkpoint — 2026-11-21 — Win11 native QA release plan
 
 Current live baseline: `main ddd9215b0926c5e74482a3cbf7f10c229a66fb88`, PR #68 merged; postmerge native CI #459 and RC2→RC3 upgrade #250 are PASS. PR #69 (PR58 Rust/egui parity) and PR #70 (trusted manual Windows 11 runner smoke) are separate drafts. New Windows 11 Pro hardware is provisioned but actual runner Online/Idle, trusted workflow smoke and interactive native GUI tests are **not** equivalent and have not been accepted. Full stable v1.0 remains NO-GO.
 
