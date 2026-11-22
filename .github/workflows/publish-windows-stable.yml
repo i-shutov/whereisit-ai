@@ -1,0 +1,142 @@
+name: Publish Windows 1.0 stable
+on:
+  create:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact current main commit used by the validated native build
+        required: false
+        type: string
+      native_run_id:
+        description: Successful trusted native CI run ID for that exact commit
+        required: false
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: publish-windows-stable
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'create' && github.event.ref_type == 'branch' &&
+       github.event.ref == 'release/windows-1.0-publish' &&
+       github.ref == 'refs/heads/release/windows-1.0-publish')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+    steps:
+      - name: Validate source and resolve the trusted native run
+        id: resolve
+        env:
+          REQUESTED_SOURCE_SHA: ${{ inputs.source_sha }}
+          REQUESTED_RUN_ID: ${{ inputs.native_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          if [[ "$GITHUB_EVENT_NAME" == 'workflow_dispatch' ]]; then
+            [[ "$GITHUB_REF" == 'refs/heads/main' ]]
+            [[ "$REQUESTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+            [[ "$REQUESTED_RUN_ID" =~ ^[0-9]+$ ]]
+            [[ "$SOURCE_SHA" == "$REQUESTED_SOURCE_SHA" ]]
+          else
+            [[ "$GITHUB_EVENT_NAME" == 'create' ]]
+            [[ "$GITHUB_REF" == 'refs/heads/release/windows-1.0-publish' ]]
+            [[ "$GITHUB_SHA" == "$SOURCE_SHA" ]]
+          fi
+          mkdir -p "$RUNNER_TEMP/stable-verification"
+          gh api "repos/$GITHUB_REPOSITORY/commits/main" > "$RUNNER_TEMP/stable-verification/current-main.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?branch=main&head_sha=$SOURCE_SHA&event=push&status=completed&per_page=100" > "$RUNNER_TEMP/stable-verification/candidate-runs.json"
+          python3 - <<'PY'
+          import json, os, sys
+          current = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'stable-verification/current-main.json'), encoding='utf-8-sig'))
+          assert current.get('sha') == os.environ['SOURCE_SHA'], 'source_sha must be current main'
+          requested = os.environ.get('REQUESTED_RUN_ID', '')
+          if requested:
+              run_id = requested
+          else:
+              runs = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'stable-verification/candidate-runs.json'), encoding='utf-8-sig')).get('workflow_runs', [])
+              trusted = [run for run in runs if run.get('head_sha') == os.environ['SOURCE_SHA']
+                         and run.get('head_branch') == 'main' and run.get('event') == 'push'
+                         and run.get('path') == '.github/workflows/build.yml'
+                         and run.get('conclusion') == 'success'
+                         and run.get('head_repository', {}).get('full_name') == os.environ['GITHUB_REPOSITORY']]
+              assert trusted, 'no successful trusted main push native run exists for source_sha'
+              run_id = str(max(trusted, key=lambda run: (run.get('run_number', 0), run.get('updated_at', ''))).get('id'))
+          assert run_id.isdigit(), 'native run ID must be numeric'
+          print('ci_run_id=' + run_id, file=open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8'))
+          PY
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
+          persist-credentials: false
+      - name: Verify current main and successful source-bound Windows CI
+        env:
+          CI_RUN_ID: ${{ steps.resolve.outputs.ci_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID" > verified-run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID/jobs?per_page=100" > verified-jobs.json
+          python3 - <<'PY'
+          import json, os
+          run = json.load(open('verified-run.json', encoding='utf-8-sig'))
+          assert str(run.get('id')) == os.environ['CI_RUN_ID'], 'resolved run ID mismatch'
+          assert run.get('head_sha') == os.environ['SOURCE_SHA'], 'run SHA mismatch'
+          assert run.get('head_branch') == 'main', 'run branch must be main'
+          assert run.get('conclusion') == 'success', 'native run must succeed'
+          assert run.get('event') in ('push', 'workflow_dispatch'), 'untrusted native run event'
+          assert run.get('path') == '.github/workflows/build.yml', 'unexpected workflow path'
+          assert run.get('head_repository', {}).get('full_name') == os.environ['GITHUB_REPOSITORY'], 'run repository mismatch'
+          jobs = json.load(open('verified-jobs.json', encoding='utf-8-sig')).get('jobs', [])
+          for name in ('test', 'windows'):
+              matches = [job for job in jobs if job.get('name') == name]
+              assert len(matches) == 1 and matches[0].get('conclusion') == 'success', f'{name} job did not pass'
+          PY
+      - name: Refuse existing stable release or tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(tr -d '\r\n' < VERSION)" = '1.0.0'
+          if gh release view v1.0.0 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo 'v1.0.0 release already exists; stable releases are immutable.' >&2
+            exit 1
+          fi
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v1.0.0" >/dev/null 2>&1; then
+            echo 'v1.0.0 tag already exists; refusing to move it.' >&2
+            exit 1
+          fi
+      - name: Download the validated Windows product artifact and prepare four assets
+        env:
+          CI_RUN_ID: ${{ steps.resolve.outputs.ci_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh run download "$CI_RUN_ID" --repo "$GITHUB_REPOSITORY" --dir incoming --pattern 'WhereIsItAI-egui-windows-x64-unsigned-candidate'
+          python3 tools/prepare_release_assets.py --stable
+      - name: Create draft, verify downloadable bytes, then publish stable latest
+        env:
+          CI_RUN_ID: ${{ steps.resolve.outputs.ci_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$SOURCE_SHA"
+          gh release create v1.0.0 release-assets/* \
+            --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" \
+            --title 'WhereIsIt AI 1.0.0 — Windows x64 (unsigned)' \
+            --draft --latest=false --notes-file docs/releases/v1.0.0.md
+          gh release view v1.0.0 --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease > draft-state.json
+          python3 -c 'import json; s=json.load(open("draft-state.json")); assert s["isDraft"] is True and s["isPrerelease"] is False, "release must remain a non-prerelease draft until verified"'
+          gh release download v1.0.0 --repo "$GITHUB_REPOSITORY" --dir published-verification
+          (cd published-verification && sha256sum -c SHA256SUMS.txt)
+          test "$(find published-verification -maxdepth 1 -type f | wc -l)" -eq 4
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$SOURCE_SHA"
+          gh release edit v1.0.0 --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          gh release view v1.0.0 --repo "$GITHUB_REPOSITORY" --json url,tagName,isDraft,isPrerelease,assets

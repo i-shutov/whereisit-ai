@@ -66,7 +66,17 @@ assert acceptance["personal_catalogs_in_release"] is False, "Private catalog inc
 if rc is not None:
     assert acceptance["channel"] == "prerelease", "RC must be prerelease"
     assert acceptance["stable_ready"] is False, "RC cannot masquerade as stable"
-expected_jobs = {"test", "windows", "macos (macos-15)", "macos (macos-15-intel)"}
+    expected_jobs = {"test", "windows", "macos (macos-15)", "macos (macos-15-intel)"}
+else:
+    assert version == "1.0.0", "Stable exception is specific to Windows 1.0.0"
+    assert acceptance["channel"] == "stable", "Stable version must use stable channel"
+    assert isinstance(acceptance["stable_ready"], bool), "Explicit readiness required"
+    scope = acceptance["release_scope"]
+    assert scope["target_version"] == version, "Owner approval version mismatch"
+    assert scope["ship_platforms"] == ["windows-x64"], "Windows-only release scope required"
+    assert scope["unsigned_windows_stable_approved"] is True, "Unsigned stable needs owner approval"
+    assert scope["usb_binding_enabled"] is False, "Unaccepted USB binding must be disabled"
+    expected_jobs = {"test", "windows"}
 assert set(acceptance["publication_requires_successful_jobs"]) == expected_jobs, "Incomplete native matrix"
 # Mandatory native CI gate: historic owner-data digests must not enter a release.
 # This is separate from public executable/lockfile provenance digests.

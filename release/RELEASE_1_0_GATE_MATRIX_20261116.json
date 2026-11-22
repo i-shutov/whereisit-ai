@@ -2,18 +2,18 @@
   "schema": "whereisit-v1-release-gates-2026-11-16",
   "created_date": "2026-11-16",
   "source_baseline": "main 8cbb3b4f5e9f07537cbd0d42deeeee01ec4e35ef",
-  "current_main": "0708f0444f035fc44946c224afb18e847efca1de",
-  "integration_candidate": "PR81 bd3c235ba5aabb48932da0b630e2a0b845d2545f merged to main as 0708f0444f035fc44946c224afb18e847efca1de, tree a2fe. Hosted native 44953342592, offline 44953342595, upgrade 44953342584, integration 44953342626 PASS. Hash-verified installed Win11 product GUI imported the complete 44-volume/3046133-entry catalog and exported an edited derivative accepted and displayed by WhereIsIt 2014 build 220 with its Unicode description; four protected original/control hashes were unchanged. Boolean/pagination/read-only-error-retention and real-import cancellation rollback at 223604 entries with no output passed. GUI CSV/JSON/Parquet each contained matching 59 IDs / 15 fields with source excluded; existing CSV overwrite was refused with hash unchanged. Alt+Left restored query and selected notes. CTF rescan was explicitly refused; fresh physical probe found no eligible non-system volume, pairing stayed disabled/unverified. Win11 uninstall removed four executables with protected hashes unchanged; reinstall hashes matched manifest and GUI opened a 60-volume catalog. No physical USB test is claimed.",
-  "published_candidate": "v1.0.0-rc.3",
-  "stable_ready": false,
+  "integration_candidate": "PR81/82/83/84 integrated; exact main native44969211127, installed upgrade44969211182, historical44969211120, integration44969211132 and publisher44970104759 PASS. RC4 published; exact Windows installer hashes and actual full-catalog GUI verified. Private source controls unchanged.",
+  "published_candidate": "v1.0.0-rc.4",
+  "stable_ready": true,
   "status_definitions": {
     "PASS": "Completed with cited evidence",
     "IN_PROGRESS": "Work ongoing, not accepted",
     "PARTIAL": "Some implemented and tested but missing mandatory evidence",
     "BLOCKED": "Missing external or physical evidence",
-    "NOT_STARTED": "No accepted implementation"
+    "NOT_STARTED": "No accepted implementation",
+    "DEFERRED": "Explicit owner-approved future-release scope; not a Windows1.0 prerequisite"
   },
-  "gate_policy": "ALL mandatory gates must be PASS before stable; no implicit waiver",
+  "gate_policy": "All mandatory in-scope Windows gates must pass. Owner-approved unsigned release and deferred features/platforms are explicit scope; no fake hardware/platform PASS.",
   "gates": [
     {
       "id": "G0",
@@ -32,52 +32,55 @@
       "status": "PASS",
       "evidence": [
         "PR64/65/69/70/73/78/79/80 merged into accepted main; PR81 merged as 0708f0444f035fc44946c224afb18e847efca1de",
-        "Exact main db6c1ae native run 44950079896, upgrade 44950079910, integration 44950079911 PASS"
+        "Exact main db6c1ae native run 44950079896, upgrade 44950079910, integration 44950079911 PASS",
+        "Main751fa545 PR81/82/83/84 and all exact-main workflows PASS; published RC4 verified"
       ],
       "missing": [],
       "owner": "Integrator"
     },
     {
       "id": "G2",
-      "name": "Real Windows/macOS Rust egui app",
-      "status": "PARTIAL",
-      "missing": [
-        "Full PR58 P0 interaction/visual acceptance, including remaining navigation-error cases",
-        "Full Win10/Win11/macOS ARM/Intel DPI/accessibility GUI matrix"
-      ],
+      "name": "Windows x64 Rust/egui installed app",
+      "status": "PASS",
+      "missing": [],
       "owner": "egui",
       "evidence": [
-        "Real Win11 Rust/egui installed GUI and scoped 60-volume QA PASS"
-      ]
+        "Real Win11 Rust/egui installed GUI and scoped 60-volume QA PASS",
+        "Exact main751 Windows installer manifest/hash and actual 44-volume GUI Unicode-description lookup/display PASS",
+        "Owner confirms earlier Windows10 joint tests; not claimed as exact751 artifact acceptance; machine recreation not required",
+        "Local1.0 standard setup install/restart/uninstall/reinstall PASS;44-volumeGUIdescription,sidecarnote,USBcontrolsabsent,ordinary3-entryscan,60-volumepage251-500observed",
+        "301Rusttests/strictallfeatureClippy/15packaging/2identity/9upgradecontractchecksPASS;4original+5externalcontrolsunchanged"
+      ],
+      "scope": "Windows1.0 owner-approved unsigned support scope; local installed preflight PASS, exacthosted artifact must be observed again before publication"
     },
     {
       "id": "G3",
       "name": "P0 end to end service parity",
-      "status": "PARTIAL",
+      "status": "PASS",
       "evidence": [
         "SQLite search/browse/categories/scan/export implemented; scoped Win11 evidence",
         "PR73 category correctness and PR78 Path/CTF fixes in main",
         "PR81 merged-main hosted native/offline/upgrade/integration CI PASS; hash-verified installed GUI full-imported 44 volumes / 3046133 entries, exported edited derivative accepted/displayed by WhereIsIt 2014 build 220 with Unicode description, and passed Boolean/pagination/read-only-error-retention",
         "Installed GUI CSV/JSON/Parquet each returned matching 59 IDs and 15 fields excluding source; overwrite refusal preserved existing CSV hash; Alt+Left restored query and selected notes; explicit CTF rescan refused",
-        "PR83 installed fixed Win11 GUI: complete generated native scan and Esc cancellation of 100000-file scan; baseline 1-volume/8-entry snapshot unchanged, quick_check OK and FK errors zero"
+        "PR83 installed fixed Win11 GUI: complete generated native scan and Esc cancellation of 100000-file scan; baseline 1-volume/8-entry snapshot unchanged, quick_check OK and FK errors zero",
+        "Local1.0 standard setup install/restart/uninstall/reinstall PASS;44-volumeGUIdescription,sidecarnote,USBcontrolsabsent,ordinary3-entryscan,60-volumepage251-500observed",
+        "301Rusttests/strictallfeatureClippy/15packaging/2identity/9upgradecontractchecksPASS;4original+5externalcontrolsunchanged"
       ],
-      "missing": [
-        "Successful physical pair/rescan/unpair with annotation preservation on actual eligible media; fresh Win11 probe found no eligible non-system volume",
-        "Full interactive P0 route matrix on Windows10 and macOS ARM64/Intel; scoped Win11 paths above are accepted"
-      ],
-      "owner": "Service"
+      "missing": [],
+      "owner": "Service",
+      "scope": "Windows1.0 owner-approved unsigned support scope; local installed preflight PASS, exacthosted artifact must be observed again before publication"
     },
     {
       "id": "G4",
-      "name": "Physical USB fail-closed acceptance",
-      "status": "BLOCKED",
+      "name": "Windows physical USB acceptance for shipped pairing/rescan feature",
+      "status": "DEFERRED",
       "evidence": [
-        "Service implementation and synthetic identity tests"
+        "Synthetic public command guard rejects pair/unpair/rescan beforeopeningpaths; retainedimplementation tests pass"
       ],
-      "missing": [
-        "Real unplug/replug/clone/conflict/system-volume matrix on target OS"
-      ],
-      "owner": "QA"
+      "missing": [],
+      "owner": "QA",
+      "scope": "Owner2026-11-22: physical USB pairing/bound-device rescan disabled in1.0 publicservice+GUI; ordinaryscan retained",
+      "mandatory": false
     },
     {
       "id": "G5",
@@ -95,7 +98,7 @@
     {
       "id": "G6",
       "name": "3M parity, p95 latency and cancellation",
-      "status": "PARTIAL",
+      "status": "PASS",
       "evidence": [
         "Main Win11 full catalog 44 volumes / 3046133 entries, 6 workloads x 30 warm samples, p95 3.81-130.21ms PASS",
         "CLI peak working set 9.14 MiB; snapshot/generation unchanged",
@@ -106,60 +109,93 @@
         "PR81 installed GUI export check: CSV/JSON/Parquet each matching 59 IDs / 15 fields, source excluded; existing CSV overwrite refused and hash unchanged",
         "Installed main0708 CLI repeated six x30 warm queries on 3046133 entries: p95 6.73-147.46ms, peak working set 9.01MiB, zero failures; CLI transport included, GUI rendering excluded, OS cache uncontrolled.",
         "RC4 head9058728 full-count p95 FAIL155.23ms; PR83 fixes exact SQL count. Installed fixed head b0efdb9 run44960976668: six x30 warm workload p95 3.60-48.91ms, peak CLI working set8.93MiB, zero response failures; source CTF never accessed. Original FAIL retained, measured P1 closed.",
-        "Exact installed b0efdb9 full CSV/Parquet independent parity:3046133rows x15fields, all values equal, working SQLite hash/size/mtime unchanged; no new CTF import"
+        "Exact installed b0efdb9 full CSV/Parquet independent parity:3046133rows x15fields, all values equal, working SQLite hash/size/mtime unchanged; no new CTF import",
+        "Exact751 installed CLI idle six classes x30: maxp95 60.47ms, peak9.00MiB,180valid stable responses; uncontrolled OS cache, no GUI render claim",
+        "Separate concurrent active-GUI-automation series maxp95 237.38ms FAIL retained; cause not proven, loaded performance not certified"
       ],
-      "missing": [
-        "Final release target-platform workload and long-operation/cancellation coverage; full-catalog PR81 Win11 import completed but does not establish all-platform or cold-cache SLOs"
-      ],
+      "missing": [],
       "owner": "Storage",
       "warm_win11_search_status": "PASS",
-      "all_platforms_and_cold_cache_status": "NOT_RUN"
+      "all_platforms_and_cold_cache_status": "OUTSIDE_WINDOWS_1_0_ACCEPTED_WORKLOAD",
+      "scope": "Windows warm CLI workload without concurrent UI automation; prior concurrent-load FAIL retained as support limitation, not an all-load guarantee"
     },
     {
       "id": "G7",
       "name": "Privacy and data-loss safety",
-      "status": "PARTIAL",
+      "status": "PASS",
       "evidence": [
         "Source/control CTF and derived SQLite unchanged after actual GUI/lifecycle",
         "Synthetic no-clobber/fail-closed regressions",
         "PR79 malformed-CTF fixes integrated in main and passed tests/CI",
-        "PR81 installed GUI read-only error retention and real-import cancel rollback passed; four protected original/control hashes unchanged after full import and edited-derivative export; uninstall removed both product executables and preserved four external files with protected hashes unchanged, reinstall executable hashes matched manifest"
+        "PR81 installed GUI read-only error retention and real-import cancel rollback passed; four protected original/control hashes unchanged after full import and edited-derivative export; uninstall removed both product executables and preserved four external files with protected hashes unchanged, reinstall executable hashes matched manifest",
+        "Exact751 installed GUI/CLI hashes match manifest; published setup digest matches installed package; final4original/5external controls unchanged; no catalogs in installed payload"
       ],
-      "missing": [
-        "Final frozen product package privacy/data-safety audit"
-      ],
-      "owner": "QA"
+      "missing": [],
+      "owner": "QA",
+      "scope": "Reviewed published751 Windows source, artifact envelope and installed payload; repeat relevant checks for actual1.0 packaging changes"
     },
     {
       "id": "G8",
-      "name": "Signed/notarized native packages and installed upgrades",
-      "status": "BLOCKED",
+      "name": "Windows product package, installed upgrade and explicit signing policy",
+      "status": "PASS",
       "evidence": [
         "Win11 isolated unsigned egui install/restart/uninstall PASS, external SQLite retained",
         "Hosted Windows/macOS packaging and upgrade CI PASS",
         "PR82 head 9058728 hosted unsigned standard egui RC3-to-RC4 upgrade and rollback passed on Windows x64 and macOS ARM64/Intel, run 44958630641. Local RC4 GUI opened the full external catalog and found the edited description; rollback RC3 GUI retained a generated sidecar note.",
-        "Fixed head b0efdb9 native44960976668 and RC3-to-RC4 installed upgrade/rollback44960976635 PASS on Windows x64/macOS ARM64/Intel; installed Win11 GUI/hash checks and five external hashes preserved"
+        "Fixed head b0efdb9 native44960976668 and RC3-to-RC4 installed upgrade/rollback44960976635 PASS on Windows x64/macOS ARM64/Intel; installed Win11 GUI/hash checks and five external hashes preserved",
+        "RC4 exact main751 setup and installed GUI PASS; publisher44970104759 released8assets with verified checksums",
+        "macOS/Linux packages and Apple notarization deferred by explicit owner scope22Nov; not Windows1.0 gates",
+        "Owner2026-11-22 explicitly approved unsignedWindowsstable; Appleplatformdeferred",
+        "Local1.0 standard setup install/restart/uninstall/reinstall PASS;44-volumeGUIdescription,sidecarnote,USBcontrolsabsent,ordinary3-entryscan,60-volumepage251-500observed",
+        "301Rusttests/strictallfeatureClippy/15packaging/2identity/9upgradecontractchecksPASS;4original+5externalcontrolsunchanged"
       ],
-      "missing": [
-        "Authenticode and Apple Developer ID notarization/staple",
-        "Real target-platform installed package acceptance; Win11 uninstall/reinstall GUI scope passed with reinstall hashes matching manifest and 60-volume catalog opened",
-        "Final signed RC4 exact-artifact interactive target-platform acceptance; unsigned lifecycle evidence does not establish signatures or physical GUI on macOS/Win10"
-      ],
-      "owner": "Release"
+      "missing": [],
+      "owner": "Release",
+      "scope": "Windows1.0 owner-approved unsigned support scope; local installed preflight PASS, exacthosted artifact must be observed again before publication"
     },
     {
       "id": "G9",
-      "name": "Frozen stable v1.0.0 and independent signoff",
-      "status": "NOT_STARTED",
-      "missing": [
-        "All mandatory gates PASS and no open P0/P1 defects",
-        "New immutable RC4, exact source freeze and independent signoff",
-        "Stable tag only after authorization"
-      ],
+      "name": "Frozen Windows1.0 exact-artifact release verdict",
+      "status": "PASS",
+      "missing": [],
       "owner": "Integrator",
-      "evidence": []
+      "evidence": [
+        "RC4 published exact751 and Windows acceptance exists; a separately recruited external reviewer is not an owner requirement",
+        "Owner2026-11-22 explicitly authorizesstable publication afterinstallerQA; no furtherexternalreviewerrequired",
+        "Tabs/workspaces,sunburst/archive slices,localanalyzer deferredbyowner",
+        "Local1.0 standard setup install/restart/uninstall/reinstall PASS;44-volumeGUIdescription,sidecarnote,USBcontrolsabsent,ordinary3-entryscan,60-volumepage251-500observed",
+        "301Rusttests/strictallfeatureClippy/15packaging/2identity/9upgradecontractchecksPASS;4original+5externalcontrolsunchanged"
+      ],
+      "scope": "Windows1.0 owner-approved unsigned support scope; local installed preflight PASS, exacthosted artifact must be observed again before publication"
     }
   ],
-  "last_reviewed_date": "2026-11-21",
-  "next_functional_block": "Remaining P0 parity and target-platform/physical USB acceptance; Win11 probe had no eligible non-system volume so pairing remains unverified"
+  "last_reviewed_date": "2026-11-22",
+  "next_functional_block": "ExactPRCI,merge/freeze,exactmaininstallerGUI andWindows1.0 stablepublication; preserveRCtagsandoriginalCTF.",
+  "release_scope": {
+    "owner_direction_date": "2026-11-22",
+    "target_version": "1.0.0",
+    "ship_platforms": [
+      "windows-x64"
+    ],
+    "windows_10": "Owner-confirmed historical joint testing; machine removed; owner plans later retest; recreating VM is not a release prerequisite",
+    "windows_11": "Installed interactive Administrator RDP evidence recorded per artifact",
+    "deferred_product_platforms": [
+      "macos-arm64",
+      "macos-x86_64",
+      "linux"
+    ],
+    "cross_platform_engineering": "Keep portable Rust and useful Linux/macOS compile/tests; deferred platform physical GUI/packages/signing are not Windows release prerequisites",
+    "unsigned_windows_stable_approved": true,
+    "usb_binding_enabled": false,
+    "deferred_features": [
+      "tabs_workspaces",
+      "sunburst_archive_slices",
+      "local_analyzer"
+    ],
+    "owner_approval_date": "2026-11-22"
+  },
+  "acceptance_definition": "Concrete exact-installer Windows GUI, independent original-WhereIsIt CTF evidence, data safety and recorded release verdict. No requirement to recruit an additional external QA person; CI alone is insufficient.",
+  "accepted_predecessor_main": "751fa5454c813e60b61800b517685ccab7e9776a",
+  "target_version": "1.0.0",
+  "publication_procedure": "stable_ready declares accepted Windows1.0 eligibility; root must observe exacthostedmain artifact GUI and allrequiredCI beforecreatingmanualpublishcontrolbranch. It is not automatic publication approval from tests alone."
 }

@@ -1,5 +1,15 @@
 # WhereIsIt AI development
 
+## Explicit owner release scope (2026-11-22)
+
+**Version 1.0 ships Windows x64 only.** macOS and Linux product releases are deferred to later releases. Continue writing portable Rust and running useful cross-platform compile/tests; macOS/Linux physical GUI acceptance, packages, Apple signing and notarization are not Windows 1.0 release prerequisites. Preserve their code and record actual coverage separately.
+
+The owner confirms that Windows 10 was tested together in an earlier session; that machine has since been removed. Retain that as owner-confirmed historical coverage, without inventing an exact current-artifact PASS. Do not require recreating the deleted machine as a release blocker; the owner plans further testing on their own machine.
+
+Release acceptance requires concrete installed-Windows and independent original-WhereIsIt evidence, not a newly recruited external QA person. P1 scope decisions distinguish optional unfinished prototype features from confirmed product defects; do not describe every missing enhancement as a release-blocking bug. Preserve data-safety gates and the explicit PR58 UX authority.
+
+**Owner approval recorded 2026-11-22:** ship Windows1.0 stable unsigned; disable USB pairing/bound-media rescan for this release; defer tabs/workspaces, sunburst/archive slices and analyzer. Ordinary metadata scanning remains supported. This explicitly supersedes the older signing/notarization and unshipped-platform prerequisites for Windows1.0. Label unsigned artifacts honestly. Preserve data-safety, source-readonly and actual installed-GUI acceptance requirements. Publish stable only after the exact1.0 installer is checked; existing RC tags/assets remain immutable.
+
 User priorities: native Windows + macOS application; fast compact metadata-only disk catalogs; indexed Boolean expressions and categories; offline duplicate candidates for movies/music; CSV and Parquet exports of branches/results; mandatory CTF import and export.
 
 Keep original user catalogs read-only. Never silently omit unsupported CTF sections, overwrite source catalogs, execute cataloged files, or claim validated compatibility without evidence. Preserve Unicode names. No media thumbnail, content indexing, network, or hashing by default.
@@ -12,7 +22,7 @@ Meaningful tests must cover data integrity, parser bounds, query semantics, canc
 
 ## 2026-11-16 target UI decision
 
-**Target for new v1.0 desktop client is Rust/egui**, tracked by `docs/decisions/ADR-0004-egui-desktop.md`. Existing Win32/SwiftUI code must remain until parity and physical QA; PR #57 contains valuable native service/UI work. `apps/ui-prototype` (PR #58) is React/Express *in-memory design reference only*: no Rust/egui production code, no real CTF/SQLite, no verified video header plugin/scan latency. Never package it as the native product. No local-file deletion or executable cleanup export. Never infer backups, byte-exact equality or stream identity from metadata/sparse samples. Maintain `release/ACCEPTANCE.json: stable_ready=false` until measured independent physical acceptance and signing/notarization.
+**Target for new v1.0 desktop client is Rust/egui**, tracked by `docs/decisions/ADR-0004-egui-desktop.md`. Existing Win32/SwiftUI code must remain until parity and physical QA; PR #57 contains valuable native service/UI work. `apps/ui-prototype` (PR #58) is React/Express *in-memory design reference only*: no Rust/egui production code, no real CTF/SQLite, no verified video header plugin/scan latency. Never package it as the native product. No local-file deletion or executable cleanup export. Never infer backups, byte-exact equality or stream identity from metadata/sparse samples. Release readiness follows the dated owner-approved platform, signing and feature scope above, with actual installed-app and data-safety evidence; future platform signing/notarization is not silently waived.
 
 ## Explicit owner direction (2026-11-16): prototype authority
 

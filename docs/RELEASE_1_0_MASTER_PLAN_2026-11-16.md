@@ -1,47 +1,11 @@
-# WhereIsIt AI — мастер-план выпуска 1.0
+# WhereIsIt AI — Windows1.0 master plan
 
-**Обновлён 21.11.2026 после Win11-приёмки. Stable 1.0: NO-GO, `stable_ready=false`.**
+Owner-approved22.11.2026: **releaseWindowsx64 stable1.0 unsigned; USBpairing disabled; tabs/sunburst/analyzer later; macOS/Linux releases later.** Keep portableRust and cross-platformcompile/tests. EarlierWin10testing accepted ashistorical owner-confirmedevidence; norecreatedVM required.
 
-Канонический текущий порядок работ: [оперативный план W0–W7](RELEASE_1_0_WIN11_ACTION_PLAN_2026-11-21.md). Статусы: [машинная матрица G0–G9](../release/RELEASE_1_0_GATE_MATRIX_20261116.json), [ACCEPTANCE.json](../release/ACCEPTANCE.json). Проверенные факты и exact SHA: [checkpoint 21 ноября](qa/WIN11_RELEASE_CHECKPOINT_20261121.md). Исторические планы 16–17 ноября не являются текущей очередью задач.
+The canonical executable plan is [Windows1.0](RELEASE_1_0_WIN11_ACTION_PLAN_2026-11-21.md), with [machinegates](../release/RELEASE_1_0_GATE_MATRIX_20261116.json) and [releaseacceptance](../release/ACCEPTANCE.json). Older all-platformsigning/GUI gates are historical and do not override this ownerscope.
 
-## 1. Где находится релиз
+RC4/main751fa545 remainsimmutable. The1.0 candidate usesactualversion1.0.0 and a separateWindowsstablepublisher, exactsource/run/hash validation, generatedRC4upgrade/rollback tests, actualinstalledGUI acceptance, and draftassetredownload/checksumverification beforepublish. No furtherpermission isneeded: publicationisexplicitlyauthorized afterQA.
 
-| Область | Текущий факт | Что осталось |
-|---|---|---|
-| База интеграции | main `0708f0444f035fc44946c224afb18e847efca1de`; #79/#80/#81 слиты; exact-head PR81 CI и installed GUI PASS | Принять exact-main CI/пакет и RC4 |
-| Rust/egui | Rust 1.100, egui 0.37; настоящий GUI и отдельный установленный QA-пакет проверены на Win11 | Завершить все P0 маршруты egui и платформенную матрицу |
-| Категории, поиск, Path | Native категории с ID, assign/remove, восстановление состояния и доступ к Path проверены на Win11; исправления #73/#78 в main | Регресс затронутых маршрутов при следующих изменениях и финальный RC |
-| CTF | Исправленный экспорт и описание приняты WhereIsIt 2014 build 220; обратная правка импортируется; проверенные исходные копии неизменны | Прямой CTF link/import/edit/export принят в установленном PR81 продукте на синтетике и полной частной копии; ограничения формата и платформ сохраняются |
-| Полный каталог | 44 тома / 3 046 133 записи; 6 warm-классов, 30 повторов: p95 3,81–130,21 мс; CLI peak working set 9,14 МиБ | Нельзя переносить эти числа на все запросы/ОС/GUI или cold-cache |
-| Готовность первой страницы | #79 уже в main: schema probe перед первой страницей, полная проверка отдельной командой | Результаты #79 сохранены; повторить затронутый GUI на итоговом функциональном кандидате |
-| Установщик | Стандартный unsigned egui: Win11 install/restart/uninstall и внешний SQLite; RC4 hosted upgrade/rollback на Windows/macOS ARM/Intel PASS | Подписанный RC4 и интерактивная target-platform приёмка; unsigned RC4 upgrade/rollback уже PASS в PR82/83 |
-| Реальный USB и macOS/Win10 | Есть код/CI и ограниченное более раннее evidence | Обязательные аппаратные/платформенные сценарии ещё не приняты полностью |
+NativeRust/egui, PR58UXauthority and metadata-only/data-safety contracts remain. CTFsources are read-only; edit/exportonlyderivatives/newfiles. SupportedCTF compatibility is independentlyaccepted inoriginalWhereIsIt; no claimsforarbitrarycompressed/encryptedvariants. No catalogedfileexecution/contenthash/defaultnetwork/cleanup export or metadata-equality/backup guarantee.
 
-## 2. Неизменённый контракт продукта
-
-1. Финальный клиент — offline Rust/egui для Windows 10/11 x64 и macOS ARM64/Intel, без Node/Express/браузера в поставке. Win32/SwiftUI сохраняются до принятой parity.
-2. PR #58 остаётся UX-источником: [контракт](UX_REFERENCE_CONTRACT_PR58_2026-11-16.md). Использовать существующие сценарии/макеты, переносить в egui через Rust service; не начинать новый дизайн или новый парсер.
-3. Обязательное P0: компактный реестр 60+ дисков; глобальный/scoped Boolean/Unicode поиск; папки/Back/инспектор; категории; свойства и заметки; scan/progress/cancel/rollback; CTF link/import/export; CSV/JSON/Parquet; кандидаты копий и честная OS-идентичность; сохранность SQLite/CTF/sidecar.
-4. По умолчанию — только метаданные. Не выдавать совпадения по имени/размеру за точные копии, не добавлять удаление, content hashing, миниатюры или AI-распознавание без отдельного принятого scope.
-5. Срезы/sunburst/local analyzer — незавершённый P1 из PR58, video-header/AI и произвольный compressed/encrypted CTF — исследовательский/post-1.0 scope. До freeze явно решить судьбу каждого P1; не объявлять mock готовым backend и не понижать обязательное P0 молча.
-6. Исходные CTF только read-only; изменение/экспорт только в новые файлы/копии. В GitHub — синтетика и очищенные агрегаты, без приватных путей, запросов, SHA исходных CTF, лицензий и raw evidence.
-
-## 3. Порядок до выпуска
-
-| Шаг | Проверяемый результат | Зависимость / выход |
-|---|---|---|
-| 0. Закрыть готовую интеграцию | **Выполнено:** #79 и #80 в main, exact-main native/upgrade/integration CI PASS | Прежние scoped GUI/perf результаты остаются привязаны к проверенным артефактам |
-| 1. **Прямой CTF в egui** | Open/link read-only, импорт в новую SQLite, допустимая правка копии и экспорт в новый CTF через существующий atlas-service; прогресс/отмена/ошибки | Пользователь выполняет основной CTF-сценарий без CLI; новый/изменённый экспорт принят оригинальной WhereIsIt, оригинал не изменён |
-| 2. Завершить P0 parity | Закрыть оставшиеся MISSING/PARTIAL P0 в матрице PR58: маршруты копий/диска, OS pairing, сохранность заметок, длинные операции и ошибки | Таблица действие→service→egui→evidence, без mock и открытых P0/P1 дефектов; решение по P1 до freeze |
-| 3. Принять целевые платформы и USB | Win10/Win11, Mac ARM/Intel; реальные unplug/replug/смена буквы/clone/conflict/system-volume; DPI/клавиатура/accessibility | Ручная/аппаратная матрица отдельно от CI; отсутствие устройств/стендов остаётся BLOCKED |
-| 4. Выпустить новый RC4 | Feature/API/schema freeze, version/changelog, продуктовые egui setup/pkg/dmg, подписанные пакеты, upgrade RC3→RC4/rollback/uninstall | Новый immutable prerelease, checksums/provenance/SBOM; старый RC3/tag не переписывать |
-| 5. Stable 1.0 | Независимая финальная приёмка exact RC SHA, все обязательные gates PASS, затем stable tag/release | Только после этого `stable_ready=true`; сейчас остаётся false |
-
-Signatures/notarization и доступ к аппаратным/платформенным стендам готовить параллельно шагам 1–2. Календарную дату stable нельзя обосновать до устранения этих внешних блокеров; старые суммарные оценки 47–83 человеко-дня больше не описывают остаток.
-
-## 4. Как вести оставшуюся работу
-
-- Один законченный пользовательский блок на PR. CTF в egui завершён и принят в scope PR81; далее продуктовый RC4 и остаток аппаратной/платформенной приёмки.
-- Уже принятые scoped Win11/CTF/perf результаты сохранять и ссылаться на них. Повторять затронутые проверки при изменении кода/артефакта и обязательную финальную приёмку RC; не запускать всю 60-дисковую приёмку после правки документа.
-- CI, unit/regression, actual GUI, hardware и release signing — разные виды evidence. PASS одного не закрывает остальные.
-- После каждого блока обновлять **этот план, оперативную таблицу и машинные gates вместе**, отмечая main отдельно от открытого PR. Сохранять историческое evidence, не оставлять устаревший NOT_RUN текущим статусом.
+Onlyactualin-scopeP0/P1 defects blockWindows1.0. Deferredfeatures/platforms are explicitlyrecorded; missinghardwarepairingtests are not falselymarkedPASS because thatfeature isdisabled. WarmsearchSLO is scoped to no concurrentUIautomation; observedloadedFAILs staydocumented. The finalreleaseverdict ties actualinstaller, GUI anddatasafety evidence to thepublishedsource; it doesnotrequire recruiting a new externalQA person.

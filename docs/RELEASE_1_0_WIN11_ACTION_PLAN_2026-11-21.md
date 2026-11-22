@@ -1,62 +1,29 @@
-# WhereIsIt AI — текущий исполняемый план релиза 1.0
+# WhereIsIt AI — Windows1.0 release
 
-**Срез 21.11.2026, после интеграции #79/#80/#81.** Main: `0708f0444f035fc44946c224afb18e847efca1de`. Exact-head PR81 native [44953342592](https://github.com/i-shutov/whereisit-ai/actions/runs/44953342592), offline/upgrade/integration и scoped installed product GUI — PASS; post-merge main CI проверяется отдельно. **Stable NO-GO, `stable_ready=false`.** Прямой CTF принят; RC4 подготовлен в PR82, P1 подсчёта исправлен в PR83 и принят на установленном Win11 кандидате. [Мастер-план](RELEASE_1_0_MASTER_PLAN_2026-11-16.md) сохраняет scope.
+**Owner decision22.11.2026:** publish Windows x64 stable1.0 unsigned after installer acceptance. USB physical pairing/bound-device rescan disabled; ordinary metadata scan retained. Tabs/workspaces, sunburst/archive slices and local analyzer deferred. macOS/Linux products later; portable code and useful cross-platform checks remain.
 
-## Что уже сделано и не требуется начинать заново
+## Accepted base
 
-- PR #64/#65, #69/#70, #73/#78 находятся в main. Main native/upgrade/integration CI прошёл; ручной runner smoke и интерактивная Win11 QA выполнены отдельно.
-- Настоящий egui Win11 GUI работал с 60 синтетическими дисками, поиском/пагинацией/Back/категориями/Path; установленный QA-пакет прошёл install/restart/uninstall с сохранностью внешней SQLite. Расширенная platform/DPI/USB матрица этим не закрыта.
-- WhereIsIt 2014 build 220 открыл новый/изменённый поддерживаемый CTF; правка описания на частной копии проверена в обе стороны. Исправления writer/root metadata и Path слиты в #78. Реальные файлы и raw evidence не публикуются.
-- На main, 44 тома / 3 046 133 записи: 30 warm измерений на каждый из 6 классов, p95 3,81–130,21 мс, CLI peak working set 9,14 МиБ. Win11 warm SLO для этих workload — PASS. Первые ответы до 574,65 мс; cold-cache и все-query/platform SLO этим не доказаны.
-- #79: исправлены два malformed-CTF refusal случая и задержка полной валидации перед первой страницей. 179 локальных тестов, 4 hosted workflow и installed GUI — PASS. Packaged CLI: schema probe + первые 250 строк p50/p95 9,15/14,15 мс, 30 warm повторов. Это не время отрисовки GUI. Полная проверка сохранена отдельной командой; статус показывает её наличие/результат.
+RC4/main751fa545 is immutable and published. Prior native installed Win11 evidence covers60 generated volumes, full44-volume/3046133-entry CTF, guarded copy edit/new export independently accepted by original WhereIsIt2014build220, reverse vendor edit/import, unchanged roundtrip, full15-field CSV/Parquet parity, categories/notes/navigation/exports, cancellation and external-data-preserving lifecycle. Source catalogs remain read-only.
 
-Источники и границы результатов: [checkpoint](qa/WIN11_RELEASE_CHECKPOINT_20261121.md), [CTF/Path](qa/WIN11_CTF_PATH_ACCEPTANCE_REDACTED_20261121.md), [#79 workflow](https://github.com/i-shutov/whereisit-ai/pull/79).
+Windows10 was tested jointly with the owner earlier; its removed machine need not be recreated. Do not claim an exact new1.0 Windows10 run. The owner plans later personal testing.
 
-## Очередь W0–W7
+## 1.0 changes and acceptance
 
-| Блок | Сейчас | Конкретная оставшаяся работа | Критерий выхода |
-|---|---|---|---|
-| W0 — интеграция | MAIN PASS; #79 MERGED | Готовая интеграция завершена; новый функциональный кандидат проверяется отдельно | Не смешивать принятую базу и ещё не принятый релизный diff |
-| W1 — Win11 стенд | PASS в выполненном scope | Использовать готовую Administrator RDP-сессию и проверенные инструменты; не регистрировать runner заново | Не отдельный повторный проект; переоценка только при изменении среды |
-| W2 — Win11 GUI/lifecycle | SCOPED PASS | Регресс только изменённых сценариев; финальный продуктовый RC проверить отдельно от isolated QA-пакета | Неперезаписываемое evidence exact binary, сохранность внешних данных |
-| W3 — native P0 | CTF GUI PASS SCOPED; остальное PARTIAL | Остаток аппаратной и платформенной P0 приёмки из [parity matrix](qa/PR58_EGUI_PARITY_MATRIX.md) | Полный повседневный пользовательский маршрут без CLI и mock |
-| W4 — поставка/signing | UNSIGNED RC4/upgrade/rollback PASS SCOPED; signing BLOCKED | Подписанный продуктовый RC4, интерактивная приёмка остальных целевых ОС, Authenticode, Apple notarization/staple | Проверенные подписанные артефакты целевых ОС; unsigned остаётся prerelease |
-| W5 — данные/CTF/perf | SUPPORTED CTF + WARM WIN11 PASS; остальное PARTIAL | Сохранить готовое evidence; негативные/неподдержанные форматы fail closed; при изменении CTF/UI проверить затронутые операции на копиях; закрыть длительные операции/cancel на финальном кандидате | Нет тихой потери/overwrite; поддерживаемый формат явно описан; показатели привязаны к SHA/нагрузке |
-| W6 — физические ОС/USB | BLOCKED/PARTIAL | Win10/11, macOS ARM/Intel; реальные pairing/unplug/replug/clone/system-volume, DPI/accessibility/keyboard | Утверждённая аппаратная и платформенная матрица PASS, не замена hosted CI |
-| W7 — freeze/RC/stable | NOT_STARTED | Feature/scope freeze → новый RC4 → независимая приёмка → stable | Все mandatory G0–G9 PASS, ни одного открытого P0/P1 дефекта; только затем stable_ready=true |
+- Actual1.0.0 version/lock/notices/Windows metadata, honest unsigned label; no RC rename/retag.
+- USB pair/unpair/bound-rescan rejects before opening files or probinghardware; no such controls in diskproperties. Deferred implementation retained forfuture. Ordinary metadata scan remains.
+- Windows stable publisher selects exactly standardegui setup+ACCEPTANCE+provenance+SHA256SUMS. Require owner unsigned approval, exact currentmain/source/run, passingWindows/test jobs, cleanacceptance and checksum. Draft/downloadverify precedes stable/latest publication. ExistingRC3/RC4 unchanged.
+- Publication only after actualexactinstaller GUI. Manualworkflow or explicit `release/windows-1.0-publish` controlbranch may start it; rootcreatescontrolbranch pointingexactvalidatedmain only afterGUI. Noautomaticstablepublication onmainmerge.
+- macOS Rust/Swift compile and tests remain; macOS packages/notarization are not Windows1.0 requirements. Historical upgrade probes stayfrozen; newWindowsRC4→1.0 upgrade/uninstall/rollback checks generatedexternalcatalog/notes/tags/categories preservation.
 
-## Принятый PR81: CTF в egui
+Localvalidation:301RusttestsPASS, strictallfeatureClippyPASS,15RC+stablepackagingtestsPASS,2identitytestsPASS,9upgradeversiontestsPASS. Installed1.0GUI/hostedfinalSHA acceptance is recorded only after observation. `stable_ready=false` during preflight; enable after in-scopeinstalledQA, then gatepublication onexacthostedartifact acceptance.
 
-**Владелец:** native egui + service, интегратор принимает законченный маршрут. Переиспользовать `ctf-format`, `atlas-service`, pinned linked-reader и существующий UX PR58; не разрабатывать второй парсер и не менять каноническую компоновку.
+## Support boundaries
 
-1. Open/link CTF read-only с явным источником и состоянием generation; исходник не становится целью сохранения.
-2. Import в **новую** SQLite; понятный progress/cancel, атомарный результат, ошибки без частичного каталога.
-3. Разрешённая правка метаданных на копии/в производном каталоге и Export CTF в **новое** имя. Неподдержанные native-only аннотации/категории не теряются молча: отказ либо уже существующий явный контракт потерь.
-4. Смена исходного CTF инвалидирует старую generation; stale reply не перезаписывает текущий UI. Ошибки, повтор, отмена и no-clobber проверяются на синтетике.
-5. Приёмка: реальное действие в установленном egui → новый CTF → открытие/сверка описания в оригинальной WhereIsIt, плюс source unchanged. Сначала синтетика, затем разрешённая частная копия. Оригинал не менять.
+CTF: observed uncompressedCatalog3.00 subset, opaqueunsupportedstructures failclosed. No silentloss/overwrite, no sourcewrite, no contenthashing/thumbnails/executedcatalogedfiles/defaultnetwork/cleanup. Metadata matches are not proven backups or byte equality.
 
-**Не входит в этот блок:** новый AI/video parser, arbitrary compressed/encrypted CTF, sunburst, новый дизайн, повторная общая 60-дисковая приёмка неизменённых маршрутов или оптимизация уже прошедшего warm-поиска без регрессии.
+WarmWin11SLO excludes concurrentUIautomation and GUIrendering: lastRC4idlemaxp9560.47ms; separateconcurrent237.38msFAILretained. No cold-cache or arbitraryload guarantee. Repeataffected1.0workloads withoutconcurrentUIautomation.
 
-## P0/P1 и внешние блокеры
+P1 defects and optionalfeatures are distinct. Deferredtabs/sunburst/analyzer are approvedfuture scope, not unimplementedmandatory1.0bugs. PR58remainsUXauthority. Finalsignoff records exactinstalledGUI/independentoriginalapp/data evidence and releaseverdict; a newly hiredexternalQA person is not required.
 
-| Пункт | Класс | Действие |
-|---|---|---|
-| Прямой CTF link/import/export в egui | PASS в scope PR81 | Установленный hosted продукт: 60 синтетических дисков, полный импорт 44/3 046 133, правка/экспорт и оригинальная WhereIsIt; источник сохранён |
-| P1 полного подсчёта на RC4 | Исправлено PR83 в ветке RC4 | Было p95 155,23 мс; installed hosted fix 48,91 мс, 6×30 workload PASS, 300 workspace tests и exact-head CI PASS |
-| Два malformed-input CTF случая | Исправлено в main, PR #79 | Сохранены red/green регрессии; новые bounds/opaque guards проверяются в функциональном кандидате |
-| Полная валидация до первой страницы | Исправлено в main, PR #79 | Explicit integrity workflow; schema probe не объявляется полной проверкой |
-| Остальная P0 parity | PARTIAL | Закрыть конкретные отсутствующие маршруты по матрице; работающие категории/Back/Path не переписывать |
-| Реальные USB, Mac/Win10 и полная DPI/accessibility матрица | Внешнее evidence BLOCKED/PARTIAL | Подготовить стенды параллельно разработке; не менять аккаунт Administrator и настройки безопасности ради PASS |
-| Signing/notarization | Внешний release BLOCKER | Подготовить защищённый signing path параллельно W3; ключи не передавать в чат/Git |
-| Sunburst/slices/local analyzer и video/AI | P1/P2 scope decision | Явное решение до freeze; не заявлять mock как готовый native backend |
-
-Поддерживаемый CTF — исследованный несжатый Catalog 3.00; неизвестные поддержанные opaque поля сохраняются, неподдержанные структурные варианты отклоняются. Два недоступных исторических файла и compressed/encrypted варианты остаются ограничениями покрытия, а не поводом заново открывать уже доказанную совместимость тестированного subset. Переход к более широким заявлениям требует нового evidence.
-
-## Финальный выпуск и правила работы
-
-- Критический путь: **#79/#81 завершены → RC4/upgrade + остаток P0 и решение P1 → целевые ОС/USB и подписи → freeze → независимый stable sign-off**.
-- Стенды и signing готовятся параллельно. Обоснованной даты stable пока нет: не подменять внешние блокеры произвольной оценкой в днях.
-- После каждого законченного блока — один PR, exact-SHA CI, затронутая GUI/данная приёмка, обновлённые gates. Не расширять задачу на новые исследования вместо завершения обязательного пользовательского потока.
-- Новые release/version/tag только после соответствующего решения. RC3 не переименовывать; main/PR/QA artifact/stable — разные статусы.
-- Win11 Administrator разрешён. Self-hosted служба — только просмотренный manual main workflow; GUI проводится в интерактивной сессии, не Session 0. Другие проекты/службы и настройки безопасности не трогать.
-- Исходный CTF остаётся неизменным. GitHub не получает личные данные, пути, source hashes, лицензии или неочищенные отчёты. `stable_ready=false` до всех обязательных PASS.
+[Gate matrix](../release/RELEASE_1_0_GATE_MATRIX_20261116.json), [acceptance](../release/ACCEPTANCE.json), [1.0release notes](releases/v1.0.0.md). Publicevidence is aggregate/synthetic only; no privatecatalogs/paths/digests/licenses/screenshots.

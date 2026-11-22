@@ -20,6 +20,8 @@ mod legacy;
 mod maintenance;
 mod os_probe;
 mod physical_disks;
+// Retained for a later release; dispatch intentionally rejects the operation in v1.0.
+#[allow(dead_code)]
 mod rescan;
 mod selection;
 
@@ -108,10 +110,17 @@ fn dispatch(input: &str) -> Result<Value> {
         "disk_preferences_set" => disk_preferences::set(&v)?,
         "disk_preferences_legacy_shelf_set" => disk_preferences::legacy_shelf_set(&v)?,
         "physical_status" => physical_disks::status(&v)?,
+        // Windows 1.0 does not expose physical USB pairing or paired-device
+        // rescans. Reject these before invoking OS probes or opening either
+        // catalog/private sidecar; implementations remain available for a
+        // later release.
+        "rescan_volume" | "physical_pair" | "physical_unpair" => {
+            return Err(Error::new(
+                "feature_unavailable",
+                "Physical USB pairing and bound-device rescans are unavailable in this release",
+            ));
+        }
         "physical_probe_os" => os_probe::probe(),
-        "rescan_volume" => rescan::run(&v)?,
-        "physical_pair" => physical_disks::pair(&v)?,
-        "physical_unpair" => physical_disks::unpair(&v)?,
         "physical_shelf_labels" => physical_disks::shelf_labels(&v)?,
         "physical_shelf_label_set" => physical_disks::set_shelf_label(&v)?,
         "export_csv" | "export_parquet" | "export_json" => {
@@ -178,5 +187,39 @@ mod modern_sha2_regression {
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
         assert_eq!(encoded.len(), 64);
+    }
+}
+
+#[cfg(test)]
+mod release_scope_regression {
+    use super::dispatch_json;
+    use serde_json::{json, Value};
+
+    #[test]
+    fn physical_pairing_and_bound_rescan_fail_before_touching_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let catalog = dir.path().join("catalog.sqlite");
+        let user_store = dir.path().join("private.sqlite");
+        let requests = [
+            json!({"op":"physical_pair","user_store":user_store,"catalog_key":"x","volume_id":1,"confirmed":true}),
+            json!({"op":"physical_unpair","user_store":user_store,"catalog_key":"x","volume_id":1,"confirmed":true}),
+            json!({"op":"rescan_volume","db":catalog,"user_store":user_store,"catalog_key":"x","volume_id":1,"confirmed":true}),
+        ];
+        for request in requests {
+            let first: Value = serde_json::from_str(&dispatch_json(&request.to_string())).unwrap();
+            let second: Value = serde_json::from_str(&dispatch_json(&request.to_string())).unwrap();
+            assert_eq!(
+                first, second,
+                "unavailable response should be deterministic"
+            );
+            assert_eq!(first["ok"], false);
+            assert_eq!(first["error"]["code"], "feature_unavailable");
+            assert_eq!(
+                first["error"]["message"],
+                "Physical USB pairing and bound-device rescans are unavailable in this release"
+            );
+        }
+        assert!(!catalog.exists());
+        assert!(!user_store.exists());
     }
 }

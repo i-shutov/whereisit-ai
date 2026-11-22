@@ -13,10 +13,12 @@ an ephemeral CI root. Results are short nonprivate JSON.
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import hashlib
 import json
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 
@@ -24,11 +26,14 @@ RC1 = "1.0.0-rc.1"
 RC2 = "1.0.0-rc.2"
 RC3 = "1.0.0-rc.3"
 RC4 = "1.0.0-rc.4"
+STABLE = "1.0.0"
 QUERY = "(ext:mp3 OR ext:mkv) AND size:>0B"
 CATEGORY = "QA-Upgrade-Ω-Категория"
+ENTRY_NOTE = "Synthetic upgrade note — 東京"
+ENTRY_TAGS = "qa,stable-upgrade"
 CTF_PLACEHOLDER = b"GENERATED INVALID CTF PLACEHOLDER; PROVE THAT INSTALLERS PRESERVE EXTERNAL FILES\n"
 FORMAT = "whereisit-native-upgrade-smoke-v1"
-SUPPORTED_PAIRS = {(RC1, RC2), (RC2, RC3), (RC3, RC4)}
+SUPPORTED_PAIRS = {(RC1, RC2), (RC2, RC3), (RC3, RC4), (RC4, STABLE)}
 
 
 def expected_cli_version(mode: str, source: str, target: str) -> str:
@@ -131,6 +136,10 @@ def observed(cli: Path, db: Path) -> dict:
             [[int(x["id"]), str(x["name"]), int(x["size"])] for x in result["items"]]
         ),
         "volume_ids": sorted(int(x["id"]) for x in volumes),
+        "entry_notes": sorted(
+            [[int(x["id"]), str(x["description"]), str(x["tags"])]
+             for x in result["items"]]
+        ),
     }
 
 
@@ -142,6 +151,29 @@ def verify_external(root: Path, expected: dict) -> None:
     external = root / "external-user-ctf-placeholder.CTF"
     if not external.is_file() or sha256(external) != expected["placeholder_ctf_sha256"]:
         raise RuntimeError("external_ctf_modified_by_upgrade")
+
+
+def seed_fixture_annotation(db: Path) -> None:
+    """Seed only the disposable fixture, including its metadata-index triggers."""
+    with closing(sqlite3.connect(db)) as connection, connection:
+        # Catalog::open registers this function for metadata/FTS triggers.
+        # The fixture note/tags use ASCII and uncased Japanese characters.
+        connection.create_function("unicode_lower", 1, str.lower, deterministic=True)
+        target = "Музыка/track-a.mp3"
+        if connection.execute(
+                "SELECT COUNT(*) FROM entries WHERE relative_path=?", (target,)
+        ).fetchone()[0] != 1:
+            raise RuntimeError("synthetic_note_row_missing")
+        connection.execute(
+            "UPDATE entries SET description=?, tags=? WHERE relative_path=?",
+            (ENTRY_NOTE, ENTRY_TAGS, target),
+        )
+
+
+def require_fixture_annotation(baseline: dict) -> None:
+    if not any(note == ENTRY_NOTE and tags == ENTRY_TAGS
+               for entry_id, note, tags in baseline["entry_notes"]):
+        raise RuntimeError("synthetic_note_not_visible")
 
 
 def main() -> int:
@@ -174,7 +206,9 @@ def main() -> int:
         if not isinstance(volume, dict) or int(volume.get("entry_count", 0)) < 3:
             raise RuntimeError("synthetic_scan_incomplete")
         call_cli(cli, {"op": "create_category", "db": str(db), "name": CATEGORY})
+        seed_fixture_annotation(db)
         baseline = observed(cli, db)
+        require_fixture_annotation(baseline)
         verify_external(root, signatures)
         snapshot.parent.mkdir(parents=True, exist_ok=True)
         snapshot.write_text(
