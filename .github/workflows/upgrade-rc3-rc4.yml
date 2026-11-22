@@ -1,0 +1,97 @@
+# Hosted standard egui installer upgrade and rollback with generated data.
+name: Native egui RC3 to RC4 installed upgrade
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: egui-rc3-rc4-upgrade-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+env:
+  RC3_SHA: 0708f0444f035fc44946c224afb18e847efca1de
+  RC4_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+jobs:
+  installed-upgrade:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RC3_SHA }}
+          path: rc3
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RC4_SHA }}
+          path: rc4
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rc3/target
+            rc4/target
+          key: egui-rc3-rc4-${{ runner.os }}-${{ runner.arch }}-rust-1.100.0-${{ hashFiles('rc3/Cargo.lock', 'rc4/Cargo.lock') }}
+      - name: Verify both source trees and product versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C rc3 rev-parse HEAD)" = "$RC3_SHA"
+          test "$(git -C rc4 rev-parse HEAD)" = "$RC4_SHA"
+          test "$(tr -d '\r\n' < rc3/VERSION)" = '1.0.0-rc.3'
+          test "$(tr -d '\r\n' < rc4/VERSION)" = '1.0.0-rc.4'
+      - run: rustup toolchain install 1.100.0 --profile minimal
+      - name: Build both Windows product installers
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup unavailable' }
+          foreach ($source in @('rc3', 'rc4')) {
+            Push-Location $source
+            try {
+              cargo +1.100.0 build --release --locked -p atlas-desktop-egui -p atlas-cli
+              if ($LASTEXITCODE -ne 0) { throw "Build failed for $source" }
+              ./installers/windows/build-egui-product.ps1 -BuildDir (Resolve-Path 'target/release').Path
+              if ($LASTEXITCODE -ne 0) { throw "Product packaging failed for $source" }
+            } finally { Pop-Location }
+          }
+      - name: Build both macOS product packages
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for source in rc3 rc4; do
+            (
+              cd "$source"
+              cargo +1.100.0 build --release --locked -p atlas-desktop-egui -p atlas-cli
+              bash installers/macos/package-egui-product.sh
+            )
+          done
+      - name: Install, upgrade and roll back Windows product
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./rc4/tools/qa/upgrade-rc4-windows.ps1 -SourceRoot (Resolve-Path rc3).Path
+          if ($LASTEXITCODE -ne 0) { throw 'Product upgrade and rollback failed' }
+      - name: Install, upgrade and roll back macOS product
+        if: runner.os == 'macOS'
+        shell: bash
+        run: bash rc4/tools/qa/upgrade-rc4-macos.sh "$PWD/rc3"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: egui-upgrade-${{ matrix.os }}-${{ env.RC4_SHA }}
+          path: rc4/dist/qa-egui-upgrade/UPGRADE.json
+          if-no-files-found: error
+          retention-days: 30

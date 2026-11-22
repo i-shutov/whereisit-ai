@@ -16,6 +16,8 @@ plutil -lint "$PLIST" >/dev/null
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$PLIST")" == 'WhereIsItAI' ]]
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST")" == 'ai.whereisit.desktop.egui' ]]
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :WhereIsItReleaseVersion' "$PLIST")" == "$VERSION" ]]
+RC="${VERSION##*.}"
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST")" == "$((10000 + 10#$RC))" ]]
 lipo -archs "$APP/Contents/MacOS/WhereIsItAI" | grep -qw "$ARCH" || { echo 'Wrong egui architecture.' >&2; exit 1; }
 codesign --verify --deep --strict "$APP"
 for file in LICENSE THIRD_PARTY_NOTICES.md "licenses/SQLite-$(python3 -c 'import runpy; print(runpy.run_path("tools/dev/refresh_sqlite_notices.py")["SQLITE_VERSION"])')/COPYRIGHT.txt"; do

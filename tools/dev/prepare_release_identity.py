@@ -27,25 +27,29 @@ for path in [root / "Cargo.lock", root / "crates/atlas-core/Cargo.lock"]:
     for name in workspace_names:
         pattern = rf'(\[\[package\]\]\nname = "{re.escape(name)}"\nversion = ")[^"]+("\n)'
         text = re.sub(pattern, lambda m: m[1] + version + m[2], text)
-    path.write_text(text, encoding="utf-8")
-path = root / "apps/macos/Info.plist"
-with path.open("rb") as handle:
-    info = plistlib.load(handle)
-info["CFBundleShortVersionString"] = numeric
+    path.write_text(text, encoding="utf-8", newline="\n")
 rc_match = re.search(r"-rc\.(\d+)$", version)
-info["CFBundleVersion"] = str(10000 + int(rc_match.group(1))) if rc_match else "10099"
-info["WhereIsItReleaseVersion"] = version
-info["CFBundleGetInfoString"] = "WhereIsIt AI " + version
-with path.open("wb") as handle:
-    plistlib.dump(info, handle, sort_keys=False)
+for path in [root / "apps/macos/Info.plist", root / "apps/desktop-egui/Info.plist"]:
+    with path.open("rb") as handle:
+        info = plistlib.load(handle)
+    info["CFBundleShortVersionString"] = numeric
+    info["CFBundleVersion"] = str(10000 + int(rc_match.group(1))) if rc_match else "10099"
+    info["WhereIsItReleaseVersion"] = version
+    if "CFBundleGetInfoString" in info:
+        info["CFBundleGetInfoString"] = "WhereIsIt AI " + version
+    with path.open("wb") as handle:
+        plistlib.dump(info, handle, sort_keys=False)
 path = root / "THIRD_PARTY_NOTICES.md"
 text = path.read_text(encoding="utf-8")
 text = re.sub(r"SHA-256 Cargo.lock: `[0-9a-f]{64}`", "SHA-256 Cargo.lock: `" + hashlib.sha256((root / "Cargo.lock").read_bytes()).hexdigest() + "`", text)
 path.write_text(text, encoding="utf-8")
-path = root / "installers/windows/WhereIsItAI.iss"
-text = path.read_text(encoding="utf-8")
-text = re.sub(r'#define AppVersion "[^"]+"', f'#define AppVersion "{version}"', text)
-if "VersionInfoVersion=" not in text:
-    text = text.replace("AppVersion={#AppVersion}", "AppVersion={#AppVersion}\nVersionInfoVersion=" + numeric + ".0")
-path.write_text(text, encoding="utf-8")
+for name in ["WhereIsItAI.iss", "WhereIsItAI-EguiWin64.iss", "WhereIsItAI-EguiWin64QA.iss"]:
+    path = root / "installers/windows" / name
+    text = path.read_text(encoding="utf-8")
+    text = re.sub(r'#define AppVersion "[^"]+"', f'#define AppVersion "{version}"', text)
+    if "VersionInfoVersion=" not in text:
+        text = text.replace("AppVersion={#AppVersion}", "AppVersion={#AppVersion}\nVersionInfoVersion=" + numeric + ".0")
+    else:
+        text = re.sub(r'^VersionInfoVersion=.*$', 'VersionInfoVersion=' + numeric + '.0', text, flags=re.M)
+    path.write_text(text, encoding="utf-8")
 print("Release identity:", version)

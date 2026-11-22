@@ -370,7 +370,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-cli"
-version = "1.0.0-rc.3"
+version = "1.0.0-rc.4"
 dependencies = [
  "atlas-service",
  "serde_json",
@@ -378,7 +378,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-core"
-version = "1.0.0-rc.3"
+version = "1.0.0-rc.4"
 dependencies = [
  "csv",
  "rusqlite",
@@ -390,7 +390,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-desktop-egui"
-version = "1.0.0-rc.3"
+version = "1.0.0-rc.4"
 dependencies = [
  "atlas-service",
  "eframe",
@@ -402,14 +402,14 @@ dependencies = [
 
 [[package]]
 name = "atlas-ffi"
-version = "1.0.0-rc.3"
+version = "1.0.0-rc.4"
 dependencies = [
  "atlas-service",
 ]
 
 [[package]]
 name = "atlas-service"
-version = "1.0.0-rc.3"
+version = "1.0.0-rc.4"
 dependencies = [
  "atlas-core",
  "chrono",
@@ -426,7 +426,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-windows"
-version = "1.0.0-rc.3"
+version = "1.0.0-rc.4"
 dependencies = [
  "atlas-service",
  "serde_json",
@@ -860,7 +860,7 @@ dependencies = [
 
 [[package]]
 name = "ctf-format"
-version = "1.0.0-rc.3"
+version = "1.0.0-rc.4"
 dependencies = [
  "serde",
  "serde_json",

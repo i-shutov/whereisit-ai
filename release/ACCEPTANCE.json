@@ -1,15 +1,15 @@
 {
   "format": "whereisit-release-acceptance-v1",
-  "version": "1.0.0-rc.3",
+  "version": "1.0.0-rc.4",
   "channel": "prerelease",
   "stable_ready": false,
   "known_open_gates": [
-    "direct_CTF_new_egui_workflow_exact_candidate_installed_acceptance_pending",
-    "remaining_PR58_P0_parity_not_accepted",
+    "PR58_P0_target_platform_interaction_and_visual_acceptance_pending",
     "full_target_platform_GUI_DPI_accessibility_and_physical_USB_not_accepted",
     "Windows_Authenticode_and_Apple_Developer_ID_notarization_missing",
-    "product_RC4_and_RC3_to_RC4_upgrade_rollback_not_accepted",
-    "final_frozen_candidate_independent_acceptance_missing"
+    "signed_RC4_exact_artifact_interactive_target_platform_acceptance_pending",
+    "final_frozen_candidate_independent_acceptance_missing",
+    "PR58_P1_scope_disposition_required_before_final_freeze"
   ],
   "synthetic_data_is_not_real_data_acceptance": true,
   "real_ctf_44_volume_3046027_entry_readonly_roundtrip_verified": true,
@@ -50,7 +50,9 @@
     70,
     73,
     78,
-    79
+    79,
+    80,
+    81
   ],
   "integration_pr": 54,
   "native_annotations_implemented": true,
@@ -72,7 +74,7 @@
     "reference_ui_kind": "react_in_memory_design_not_rust_egui",
     "reference_ui_safety": "read_only_review_no_delete",
     "native_search_first_pr": 57,
-    "native_source_integration": "PR69_PR73_PR78_PR79_merged_main_db6c1ae_exact_native_upgrade_integration_CI_PASS",
+    "native_source_integration": "PR69_PR73_PR78_PR79_PR81_merged_main_0708f04; PR81_exact_head_native_offline_upgrade_integration_CI_and_scoped_installed_Win11_product_GUI_PASS",
     "physical_usb_real_hardware_verified": false,
     "rust_egui_frontend_implemented": true,
     "stable_release_decision": "NO_GO",
@@ -142,11 +144,90 @@
       "probe_then_first_page_p95_ms": 14.15,
       "metric_excludes_gui_and_full_validation": true
     },
-    "current_main": "db6c1aeb1b426280175b583265e5e26c3812b643",
+    "current_main": "0708f0444f035fc44946c224afb18e847efca1de",
     "current_main_native_ci": 44950079896,
-    "release_work_branch": "feature/ctf-egui-release-1.0-20261121",
-    "release_work_status": "CTF_GUI_OS_pairing_explicit_rescan_candidate_exports_product_packaging_implemented_validation_in_progress_not_main_acceptance",
-    "next_functional_block": "Exact candidate installed GUI and original-app CTF acceptance",
-    "stable_decision": "NO_GO"
+    "release_work_branch": "release/rc4-acceptance-20261121",
+    "release_work_status": "PR81_merged_main; RC4_identity_and_three_platform_hosted_upgrade_PASS; PR83_counted_search_P1_fixed_and_installed_Win11_acceptance_PASS",
+    "next_functional_block": "Signed RC4 target-platform/physical USB and full UX scope acceptance; stable remains NO_GO",
+    "stable_decision": "NO_GO",
+    "integrated_pr81": {
+      "number": 81,
+      "head_sha": "bd3c235ba5aabb48932da0b630e2a0b845d2545f",
+      "merge_sha": "0708f0444f035fc44946c224afb18e847efca1de",
+      "tree": "a2fe1d785122c6a7a2967333e23c6f6bba280371",
+      "ci_runs": [
+        44953342592,
+        44953342595,
+        44953342584,
+        44953342626
+      ],
+      "workspace_tests": 301,
+      "installed_win11_product_gui": "PASS_SCOPED_UNSIGNED",
+      "ctf_gui_real_copy_edit_export_original_app": "PASS_WHEREISIT_2014_BUILD_220",
+      "full_import_entries": 3046133,
+      "full_import_volumes": 44,
+      "real_import_cancel": "PASS_NO_OUTPUT_NO_STAGE",
+      "candidate_export_formats": [
+        "CSV",
+        "JSON",
+        "Parquet"
+      ],
+      "candidate_export_rows_each": 59,
+      "product_uninstall_external_integrity": "PASS_FOUR_FILES_UNCHANGED",
+      "physical_usb": "BLOCKED_NO_DEVICE",
+      "report": "docs/qa/WIN11_RELEASE_CHECKPOINT_20261121.md"
+    },
+    "pr81_warm_search": {
+      "status": "PASS_SCOPED",
+      "warm_iterations_each": 30,
+      "classes": 6,
+      "p95_range_ms": [
+        3.96,
+        147.08
+      ],
+      "peak_cli_working_set_mib": 8.93,
+      "cold_cache_verified": false,
+      "excludes_gui_rendering": true
+    },
+    "rc4_candidate_acceptance": {
+      "tested_head": "9058728f2bdea8076a9ac31268a30d1d090eab02",
+      "installed_upgrade_workflow": 44958630641,
+      "hosted_windows_macos_arm_intel_upgrade_rollback": "PASS_UNSIGNED_GENERATED_ONLY_NOT_GUI",
+      "local_win11_rc4_gui_and_rc3_rollback": "PASS_SCOPED_LOCAL_STANDARD_BUILD",
+      "external_files_preserved_during_rollback": 5,
+      "physical_usb_and_signatures": "BLOCKED",
+      "rust_default_feature_tests": 300,
+      "all_features_clippy": "PASS",
+      "fixed_tested_head": "b0efdb94b1f22727a5205f1510a0c9c0d3849b8d",
+      "fixed_native_workflow": 44960976668,
+      "fixed_installed_upgrade_workflow": 44960976635,
+      "fixed_installed_win11_gui": "PASS_FULL_CATALOG_LARGE_FILES_NATIVE_SCAN_CANCEL_ROLLBACK",
+      "native_scan_cancel_baseline_entries": 8,
+      "native_scan_cancel_observed_progress": 10436,
+      "fixed_gui_ctf_export": "PASS_NEW_OUTPUT_BYTE_IDENTICAL_TO_ORIGINAL_APP_ACCEPTED_MODIFIED_EXPORT",
+      "full_csv_parquet_parity": {
+        "status": "PASS",
+        "tested_head": "b0efdb94b1f22727a5205f1510a0c9c0d3849b8d",
+        "rows": 3046133,
+        "fields": 15,
+        "all_values_equal": true,
+        "working_sqlite_hash_unchanged": true,
+        "source_ctf_accessed": false
+      }
+    },
+    "counted_search_p1": {
+      "detected_head": "9058728f2bdea8076a9ac31268a30d1d090eab02",
+      "before_p95_ms": 155.23,
+      "fix_pr": 83,
+      "integrated_into_rc4_branch": true,
+      "fix_merge_sha": "ff5af28758fff55817b80b8173e0a13e1ccd2abc",
+      "tested_fixed_head": "b0efdb94b1f22727a5205f1510a0c9c0d3849b8d",
+      "installed_fixed_p50_ms": 44.88,
+      "installed_fixed_p95_ms": 48.91,
+      "status": "PASS_SCOPED_WIN11_WARM",
+      "classes": 6,
+      "warm_iterations_each": 30,
+      "source_catalog_unchanged": true
+    }
   }
 }
