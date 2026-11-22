@@ -58,7 +58,8 @@ for name, architecture in expected.items():
             manifest_path = candidates[0]
     if not manifest_path.is_file() or manifest_path.is_symlink():
         raise SystemExit("Missing product provenance manifest for: " + name)
-    product = json.loads(manifest_path.read_text(encoding="utf-8"))
+    # Windows PowerShell 5.1 emits UTF-8 with BOM; macOS emits BOM-less UTF-8.
+    product = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
     if (product.get("schema") != "whereisit-egui-product-candidate-v1"
             or product.get("channel") != "prerelease"
             or product.get("target_ui") != "Rust/egui"
