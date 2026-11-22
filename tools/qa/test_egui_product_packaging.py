@@ -95,6 +95,33 @@ class EguiProductPackagingContract(unittest.TestCase):
             self.assertEqual(provenance["signing"]["windows_x64"], "unsigned")
             self.assertEqual(provenance["signing"]["macos_arm64"], "ad-hoc app; unsigned pkg/dmg; not notarized")
 
+    def test_windows_bom_manifest_preserves_identity_and_checksum_guards(self):
+        # Windows PowerShell 5.1 Set-Content -Encoding UTF8 emits a BOM.
+        for invalid in (None, "identity", "checksum"):
+            with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as temp:
+                repo = Path(temp)
+                self._make_repo(repo, product=True, legacy=False)
+                manifest = next((repo / "incoming").rglob("provenance.json"))
+                candidate = json.loads(manifest.read_text(encoding="utf-8"))
+                if invalid == "identity":
+                    candidate["commit"] = "f" * 40
+                manifest.write_text(json.dumps(candidate) + "\n", encoding="utf-8-sig")
+                self.assertTrue(manifest.read_bytes().startswith(b"\xef\xbb\xbf"))
+                if invalid == "checksum":
+                    installer = next(manifest.parent.glob("*.exe"))
+                    installer.write_bytes(installer.read_bytes() + b"tampered")
+                result = self._prepare(repo)
+                if invalid is None:
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    published = json.loads((repo / "release-assets/provenance.json").read_text(encoding="utf-8"))
+                    self.assertEqual(published["source_commit"], SHA)
+                    self.assertIs(published["stable_ready"], False)
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    expected = "identity or prerelease contract mismatch" if invalid == "identity" else "Product checksum mismatch"
+                    self.assertIn(expected, result.stdout + result.stderr)
+                    self.assertFalse((repo / "release-assets").exists())
+
     def test_legacy_assets_cannot_be_selected_as_product_fallback(self):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)
