@@ -1356,6 +1356,11 @@ impl DesktopApp {
         self.switch_workspace(WorkspaceTab::Search);
         self.workspace_tab_focus_request = false;
         self.selected_volume = Some(volume_id);
+        // PR58's explicit disk action starts a fresh scoped search. Merely
+        // selecting the Search tab above retains its previous context instead.
+        self.query_input.clear();
+        self.results_scroll = 0.0;
+        self.restore_scroll = Some(0.0);
         ctx.memory_mut(|memory| memory.request_focus(egui::Id::unique(SEARCH_INPUT_ID)));
         self.navigate_disk(Some(volume_id), ctx);
     }
@@ -2315,8 +2320,8 @@ impl DesktopApp {
                     );
                     if !tab.available() {
                         let explanation = self.t(
-                            "Пока недоступно: здесь не показываются демонстрационные данные.",
-                            "Not available yet. This workspace does not show demo data.",
+                            "Это рабочее пространство готовится для Windows 1.1.",
+                            "This workspace is planned for Windows 1.1.",
                         );
                         response = response
                             .on_hover_text(explanation)
@@ -4910,7 +4915,7 @@ mod shortcut_tests {
     }
 
     #[test]
-    fn disk_workspace_search_action_jumps_to_catalog_disk_with_current_query() {
+    fn disk_workspace_search_action_starts_fresh_scope_like_pr58() {
         let ctx = egui::Context::default();
         let mut app = DesktopApp::with_context(&ctx, None);
         app.db = Some("synthetic.sqlite".into());
@@ -4929,6 +4934,9 @@ mod shortcut_tests {
             volume_id: None,
         };
         app.query_input = "ext:mkv AND name:фильм".into();
+        app.results_scroll = 120.0;
+        app.history
+            .push((app.route.clone(), 250, None, Some(5), 120.0));
         let (sent, received) = std::sync::mpsc::channel();
         app.bus.set_handler(move |request| {
             sent.send(request.clone()).unwrap();
@@ -4940,13 +4948,16 @@ mod shortcut_tests {
             .recv_timeout(Duration::from_secs(2))
             .expect("search request was not sent");
         assert_eq!(app.workspace_tab, WorkspaceTab::Search);
-        assert_eq!(app.query_input, "ext:mkv AND name:фильм");
+        assert!(app.query_input.is_empty());
         assert_eq!(app.selected_volume, Some(5));
         assert_eq!(request["op"], "search_fast");
-        assert_eq!(request["query"], "ext:mkv AND name:фильм");
+        assert_eq!(request["query"], "");
         assert_eq!(request["volume_id"], 5);
         assert_eq!(app.disks_filter, "#5");
         assert_eq!(app.disks_selected_volume, Some(5));
+        assert!(app.history.is_empty());
+        assert_eq!(app.results_scroll, 0.0);
+        assert_eq!(app.restore_scroll, Some(0.0));
     }
 
     #[test]
