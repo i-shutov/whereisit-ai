@@ -1,6 +1,10 @@
 //! PR58-first native workbench. Every user-visible catalog fact comes from atlas-service;
 //! no fictitious USB mount badges, byte-duplicate claims or on-disk delete operations.
-use crate::bridge::{new_scan_job_id, scan_request, CommandBus, ExportKind, Purpose, Route};
+use crate::bridge::{
+    analytics_cancel_request, analytics_request, exact_category_query, extension_search_query,
+    new_scan_job_id, primary_category_search_query, scan_request, CommandBus, ExportKind, Purpose,
+    Route,
+};
 use crate::categories::{self, parse_categories, Category};
 use crate::linked::LinkedCtf;
 use crate::model::{bytes_compact, parse_volumes, DiskPreferences, Entry, Page, Volume};
@@ -11,6 +15,7 @@ use egui_extras::{Column, TableBuilder};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const PAGE_LIMIT: u64 = 250;
@@ -61,7 +66,10 @@ impl WorkspaceTab {
     }
 
     fn available(self) -> bool {
-        matches!(self, Self::Search | Self::UsbDisks)
+        matches!(
+            self,
+            Self::Search | Self::Slices | Self::VolumeMap | Self::UsbDisks
+        )
     }
 }
 
@@ -214,6 +222,30 @@ pub struct DesktopApp {
     db: Option<String>,
     workspace_tab: WorkspaceTab,
     workspace_tab_focus_request: bool,
+    analytics_job_id: Option<String>,
+    analytics_request_id: Option<u64>,
+    analytics_generation: u64,
+    analytics_db: Option<String>,
+    analytics_data: Option<Arc<Value>>,
+    analytics_error: Option<String>,
+    analytics_cancelled: bool,
+    analytics_volume: Option<i64>,
+    analytics_folder: Option<i64>,
+    analytics_category_id: Option<i64>,
+    analytics_group: String,
+    analytics_highlight: String,
+    slices_dimension: usize,
+    analytics_loaded: bool,
+    slices_job_id: Option<String>,
+    slices_request_id: Option<u64>,
+    slices_generation: u64,
+    slices_db: Option<String>,
+    slices_data: Option<Arc<Value>>,
+    slices_error: Option<String>,
+    slices_cancelled: bool,
+    slices_volume: Option<i64>,
+    slices_category: Option<i64>,
+    slices_loaded: bool,
     integrity: CatalogIntegrity,
     linked_ctf: Option<LinkedCtf>,
     ctf_dialog: Option<CtfDialog>,
@@ -336,6 +368,30 @@ impl DesktopApp {
             db: None,
             workspace_tab: WorkspaceTab::Search,
             workspace_tab_focus_request: false,
+            analytics_job_id: None,
+            analytics_request_id: None,
+            analytics_generation: 0,
+            analytics_db: None,
+            analytics_data: None,
+            analytics_error: None,
+            analytics_cancelled: false,
+            analytics_volume: None,
+            analytics_folder: None,
+            analytics_category_id: None,
+            analytics_group: "volumes".to_owned(),
+            analytics_highlight: String::new(),
+            slices_dimension: 0,
+            analytics_loaded: false,
+            slices_job_id: None,
+            slices_request_id: None,
+            slices_generation: 0,
+            slices_db: None,
+            slices_data: None,
+            slices_error: None,
+            slices_cancelled: false,
+            slices_volume: None,
+            slices_category: None,
+            slices_loaded: false,
             integrity: CatalogIntegrity::Closed,
             linked_ctf: None,
             ctf_dialog: None,
@@ -756,6 +812,22 @@ impl DesktopApp {
     }
 
     fn clear_catalog(&mut self) {
+        for job_id in [self.analytics_job_id.take(), self.slices_job_id.take()]
+            .into_iter()
+            .flatten()
+        {
+            let _ = atlas_service::cancel_analytics_job(&job_id);
+        }
+        self.analytics_generation = self.analytics_generation.wrapping_add(1);
+        self.slices_generation = self.slices_generation.wrapping_add(1);
+        self.analytics_request_id = None;
+        self.slices_request_id = None;
+        self.analytics_db = None;
+        self.slices_db = None;
+        self.analytics_data = None;
+        self.slices_data = None;
+        self.analytics_loaded = false;
+        self.slices_loaded = false;
         self.physical.close_if_scope_changed(None);
         self.db = None;
         self.workspace_tab = WorkspaceTab::Search;
@@ -1419,7 +1491,7 @@ impl DesktopApp {
         if let Some((route, offset, selection, selected_volume, scroll)) = self.history.pop() {
             self.reveal_selected = false;
             self.restore_scroll = Some(scroll);
-            if let Route::Search { query, .. } = &route {
+            if let Route::Search { query, .. } | Route::BranchSearch { query, .. } = &route {
                 self.query_input = query.clone();
             }
             self.route = route;
@@ -1466,6 +1538,100 @@ impl DesktopApp {
     }
 
     fn apply_reply(&mut self, mut reply: crate::bridge::Reply, ctx: &egui::Context) {
+        if let Purpose::AnalyticsCancel = &reply.purpose {
+            return;
+        }
+        if let Purpose::Analytics {
+            job_id,
+            generation,
+            db,
+            slices,
+        } = &reply.purpose
+        {
+            let current = if *slices {
+                self.slices_request_id == Some(reply.id)
+                    && self.slices_generation == *generation
+                    && self.slices_job_id.as_deref() == Some(job_id.as_str())
+                    && self.slices_db.as_deref() == Some(db.as_str())
+            } else {
+                self.analytics_request_id == Some(reply.id)
+                    && self.analytics_generation == *generation
+                    && self.analytics_job_id.as_deref() == Some(job_id.as_str())
+                    && self.analytics_db.as_deref() == Some(db.as_str())
+            };
+            if !current || self.db.as_deref() != Some(db.as_str()) {
+                return;
+            }
+            if *slices {
+                self.slices_request_id = None;
+                self.slices_job_id = None;
+                self.slices_loaded = true;
+            } else {
+                self.analytics_request_id = None;
+                self.analytics_job_id = None;
+                self.analytics_loaded = true;
+            }
+            if reply.response["ok"] != true {
+                let code = reply
+                    .response
+                    .pointer("/error/code")
+                    .and_then(Value::as_str);
+                let cancelled = code == Some("cancelled");
+                let error = reply
+                    .response
+                    .pointer("/error/message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Analytics request failed")
+                    .to_owned();
+                if *slices {
+                    self.slices_cancelled = cancelled;
+                    if !cancelled {
+                        self.slices_error = Some(error);
+                    }
+                } else {
+                    self.analytics_cancelled = cancelled;
+                    if !cancelled {
+                        self.analytics_error = Some(error);
+                    }
+                }
+            } else {
+                let data = &reply.response["data"];
+                if data["root"].is_object()
+                    && data["totals"].is_object()
+                    && data["breadcrumbs"].is_array()
+                {
+                    if *slices {
+                        self.slices_data = Some(Arc::new(data.clone()));
+                        self.slices_error = None;
+                        self.slices_cancelled = false;
+                    } else {
+                        self.analytics_data = Some(Arc::new(data.clone()));
+                        self.analytics_error = None;
+                        self.analytics_cancelled = false;
+                    }
+                } else if *slices {
+                    self.slices_data = None;
+                    self.slices_error = Some(
+                        self.t(
+                            "Сервис вернул неполный ответ аналитики.",
+                            "Service returned an incomplete analytics response.",
+                        )
+                        .to_owned(),
+                    );
+                } else {
+                    self.analytics_data = None;
+                    self.analytics_error = Some(
+                        self.t(
+                            "Сервис вернул неполный ответ аналитики.",
+                            "Service returned an incomplete analytics response.",
+                        )
+                        .to_owned(),
+                    );
+                }
+            }
+            ctx.request_repaint();
+            return;
+        }
         if let Purpose::CtfProgress { job_id } = &reply.purpose {
             if self.ctf_progress_request == Some(reply.id)
                 && self.ctf_job_id.as_ref() == Some(job_id)
@@ -1773,7 +1939,9 @@ impl DesktopApp {
             }
             Purpose::LinkedRead { .. }
             | Purpose::CtfProgress { .. }
-            | Purpose::CtfCancel { .. } => unreachable!("Handled above"),
+            | Purpose::CtfCancel { .. }
+            | Purpose::Analytics { .. }
+            | Purpose::AnalyticsCancel => unreachable!("Handled above"),
             Purpose::Open { path } | Purpose::Create { path } => {
                 if opening_existing
                     && (!matches!(data["schema_version"].as_i64(), Some(1..=3))
@@ -2557,6 +2725,952 @@ impl DesktopApp {
         });
     }
 
+    fn request_analytics(&mut self, ctx: &egui::Context, slices: bool) {
+        let Some(db) = self.db.clone() else {
+            return;
+        };
+        if self.linked_ctf.is_some() {
+            if slices {
+                self.slices_loaded = true;
+                self.slices_error = Some(
+                    self.t(
+                        "Аналитика для связанного CTF-источника недоступна.",
+                        "Analytics is unavailable for a linked CTF source.",
+                    )
+                    .to_owned(),
+                );
+            } else {
+                self.analytics_loaded = true;
+                self.analytics_error = Some(
+                    self.t(
+                        "Аналитика для связанного CTF-источника недоступна.",
+                        "Analytics is unavailable for a linked CTF source.",
+                    )
+                    .to_owned(),
+                );
+            }
+            return;
+        }
+        if self.active_request.is_some() {
+            return;
+        }
+        let old = if slices {
+            self.slices_job_id.take()
+        } else {
+            self.analytics_job_id.take()
+        };
+        if let Some(old) = old {
+            let _ = self.bus.send(
+                Purpose::AnalyticsCancel,
+                analytics_cancel_request(&old),
+                ctx,
+            );
+        }
+        let generation = if slices {
+            self.slices_generation = self.slices_generation.wrapping_add(1);
+            self.slices_generation
+        } else {
+            self.analytics_generation = self.analytics_generation.wrapping_add(1);
+            self.analytics_generation
+        };
+        let job_id = new_scan_job_id();
+        let volume = if slices {
+            self.slices_volume
+        } else {
+            self.analytics_volume
+        };
+        let folder = if slices { None } else { self.analytics_folder };
+        let category = if slices {
+            self.slices_category
+        } else {
+            self.analytics_category_id
+        };
+        let request = analytics_request(
+            &db,
+            &job_id,
+            volume,
+            folder,
+            if slices {
+                "volumes"
+            } else {
+                &self.analytics_group
+            },
+            if slices {
+                ""
+            } else {
+                &self.analytics_highlight
+            },
+            category,
+        );
+        let request_id = self.bus.send(
+            Purpose::Analytics {
+                job_id: job_id.clone(),
+                generation,
+                db: db.clone(),
+                slices,
+            },
+            request,
+            ctx,
+        );
+        if slices {
+            self.slices_request_id = Some(request_id);
+            self.slices_job_id = Some(job_id);
+            self.slices_db = Some(db);
+            self.slices_data = None;
+            self.slices_error = None;
+            self.slices_cancelled = false;
+            self.slices_loaded = false;
+        } else {
+            self.analytics_request_id = Some(request_id);
+            self.analytics_job_id = Some(job_id);
+            self.analytics_db = Some(db);
+            self.analytics_data = None;
+            self.analytics_error = None;
+            self.analytics_cancelled = false;
+            self.analytics_loaded = false;
+        }
+    }
+
+    fn cancel_analytics(&mut self, ctx: &egui::Context, slices: bool, user_cancelled: bool) {
+        let job_id = if slices {
+            self.slices_job_id.take()
+        } else {
+            self.analytics_job_id.take()
+        };
+        if let Some(job_id) = job_id {
+            let _ = self.bus.send(
+                Purpose::AnalyticsCancel,
+                analytics_cancel_request(&job_id),
+                ctx,
+            );
+            if slices {
+                self.slices_cancelled = user_cancelled;
+                self.slices_loaded = user_cancelled;
+                self.slices_generation = self.slices_generation.wrapping_add(1);
+                self.slices_request_id = None;
+            } else {
+                self.analytics_cancelled = user_cancelled;
+                self.analytics_loaded = user_cancelled;
+                self.analytics_generation = self.analytics_generation.wrapping_add(1);
+                self.analytics_request_id = None;
+            }
+        }
+    }
+
+    fn jump_analytics_to_search(
+        &mut self,
+        ctx: &egui::Context,
+        volume: Option<i64>,
+        folder: Option<i64>,
+        query: &str,
+    ) {
+        if self.active_request.is_some() || self.dialog_open() {
+            return;
+        }
+        let exact_category = if self.workspace_tab == WorkspaceTab::Slices {
+            self.slices_category
+        } else {
+            self.analytics_category_id
+        };
+        let scoped_query = exact_category_query(query, exact_category);
+        self.history.clear();
+        self.selected_volume = volume;
+        self.query_input = query.to_owned();
+        self.offset = 0;
+        self.page = Page::default();
+        self.selected = None;
+        self.restore_selection = None;
+        self.reveal_selected = false;
+        self.restore_scroll = None;
+        self.results_scroll = 0.0;
+        self.route = match (volume, folder) {
+            (Some(volume_id), Some(parent_id)) => Route::BranchSearch {
+                volume_id,
+                parent_id,
+                query: query.trim().to_owned(),
+                exact_category_id: exact_category,
+            },
+            (_, _) => Route::Search {
+                query: scoped_query,
+                volume_id: volume,
+            },
+        };
+        self.switch_workspace(WorkspaceTab::Search);
+        self.load_page(ctx);
+    }
+
+    fn jump_analytics_to_copy_candidates(
+        &mut self,
+        ctx: &egui::Context,
+        entry_id: i64,
+        volume: Option<i64>,
+    ) {
+        if self.active_request.is_some() || self.dialog_open() {
+            return;
+        }
+        self.history.clear();
+        self.selected_volume = volume;
+        self.query_input.clear();
+        self.offset = 0;
+        self.page = Page::default();
+        self.selected = None;
+        self.restore_selection = None;
+        self.reveal_selected = false;
+        self.restore_scroll = None;
+        self.results_scroll = 0.0;
+        self.route = Route::Copies { entry_id };
+        self.switch_workspace(WorkspaceTab::Search);
+        self.load_page(ctx);
+    }
+
+    fn analytics_workspace(&mut self, root: &mut egui::Ui, ctx: &egui::Context, slices: bool) {
+        let db_now = self.db.clone();
+        let old_db = if slices {
+            self.slices_db.as_ref()
+        } else {
+            self.analytics_db.as_ref()
+        };
+        let has_job = if slices {
+            self.slices_job_id.is_some()
+        } else {
+            self.analytics_job_id.is_some()
+        };
+        if has_job && old_db != db_now.as_ref() {
+            self.cancel_analytics(ctx, slices, false);
+        }
+        let (loaded, job_id) = if slices {
+            (self.slices_loaded, self.slices_job_id.is_some())
+        } else {
+            (self.analytics_loaded, self.analytics_job_id.is_some())
+        };
+        if self.db.is_none() {
+            self.cancel_analytics(ctx, slices, false);
+        } else if !loaded && !job_id {
+            self.request_analytics(ctx, slices);
+        }
+        let mut selected_map_volume = None;
+        if !slices {
+            egui::Panel::left("analytics_volume_register")
+                .resizable(true)
+                .default_size(194.0)
+                .size_range(150.0..=270.0)
+                .show(root, |ui| {
+                    self.protect_background(ui);
+                    ui.heading(self.t("Диски каталога", "Catalog disks"));
+                    ui.weak(self.t("Логические байты индекса", "Logical indexed bytes"));
+                    let all = self.analytics_volume.is_none();
+                    if ui
+                        .selectable_label(all, self.t("Все диски каталога", "All catalog disks"))
+                        .clicked()
+                        && !all
+                    {
+                        selected_map_volume = Some(None);
+                    }
+                    let rows = self.volumes.clone();
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        for volume in &rows {
+                            let selected = self.analytics_volume == Some(volume.id);
+                            let label = format!(
+                                "#{} · {}\n{} · {}",
+                                volume.id,
+                                volume.label,
+                                bytes_compact(volume.total_bytes),
+                                volume.entry_count
+                            );
+                            if ui.selectable_label(selected, label).clicked() && !selected {
+                                selected_map_volume = Some(Some(volume.id));
+                            }
+                        }
+                    });
+                });
+        }
+        if let Some(volume) = selected_map_volume {
+            self.analytics_volume = volume;
+            self.analytics_folder = None;
+            self.request_analytics(ctx, false);
+        }
+        egui::CentralPanel::default().show(root, |ui| {
+            self.protect_background(ui);
+            let mut changed = false;
+            let (is_loading, is_cancelled, error, current_data) = if slices {
+                (
+                    self.slices_job_id.is_some(),
+                    self.slices_cancelled,
+                    self.slices_error.clone(),
+                    self.slices_data.clone(),
+                )
+            } else {
+                (
+                    self.analytics_job_id.is_some(),
+                    self.analytics_cancelled,
+                    self.analytics_error.clone(),
+                    self.analytics_data.clone(),
+                )
+            };
+            let slices_all_label = self.t("Весь архив", "All archive");
+            let slices_all_categories_label = self.t("Все категории", "All categories");
+            let highlight_hint = self.t("Подсветить запрос…", "Highlight query…");
+            let slice_volumes = self.volumes.clone();
+            ui.horizontal_wrapped(|ui| {
+                ui.heading(if slices {
+                    self.t("Разрезы архива", "Archive Slices")
+                } else {
+                    self.t("Карта объёма", "Volume Map")
+                });
+                ui.separator();
+                let volume_label = self.t("Диски", "Volumes");
+                let category_label = self.t("Категории", "Categories");
+                let extension_label = self.t("Расширения", "Extensions");
+                if !slices {
+                    for (id, label) in [
+                        ("volumes", volume_label),
+                        ("categories", category_label),
+                        ("extensions", extension_label),
+                    ] {
+                        if ui
+                            .selectable_label(self.analytics_group == id, label)
+                            .clicked()
+                            && self.analytics_group != id
+                        {
+                            self.analytics_group = id.to_owned();
+                            changed = true;
+                        }
+                    }
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut self.analytics_highlight)
+                            .hint_text(highlight_hint)
+                            .desired_width(170.0),
+                    );
+                    if response.lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        changed = true;
+                    }
+                    if ui.small_button(self.t("Применить", "Apply")).clicked() {
+                        changed = true;
+                    }
+                } else {
+                    for (n, label) in [
+                        (0, self.t("Обзор", "Overview")),
+                        (1, self.t("Кандидаты", "Candidates")),
+                        (2, volume_label),
+                    ] {
+                        if ui
+                            .selectable_label(self.slices_dimension == n, label)
+                            .clicked()
+                        {
+                            self.slices_dimension = n;
+                        }
+                    }
+                    egui::ComboBox::from_id_salt("slices_volume_scope")
+                        .selected_text(
+                            self.slices_volume
+                                .map(|id| format!("#{id}"))
+                                .unwrap_or_else(|| slices_all_label.to_owned()),
+                        )
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_value(&mut self.slices_volume, None, slices_all_label)
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                            for volume in &slice_volumes {
+                                if ui
+                                    .selectable_value(
+                                        &mut self.slices_volume,
+                                        Some(volume.id),
+                                        format!("#{} · {}", volume.id, volume.label),
+                                    )
+                                    .changed()
+                                {
+                                    changed = true;
+                                }
+                            }
+                        });
+                    let categories = current_data
+                        .as_ref()
+                        .and_then(|d| d["by_category"].as_array().cloned())
+                        .unwrap_or_default();
+                    egui::ComboBox::from_id_salt("slices_category_scope")
+                        .selected_text(
+                            self.slices_category
+                                .map(|id| format!("Category #{id}"))
+                                .unwrap_or_else(|| slices_all_categories_label.to_owned()),
+                        )
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_value(
+                                    &mut self.slices_category,
+                                    None,
+                                    slices_all_categories_label,
+                                )
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                            for category in &categories {
+                                if let Some(id) = category["id"]
+                                    .as_str()
+                                    .and_then(|v| v.strip_prefix("category:"))
+                                    .and_then(|v| v.parse::<i64>().ok())
+                                {
+                                    if ui
+                                        .selectable_value(
+                                            &mut self.slices_category,
+                                            Some(id),
+                                            category["label"].as_str().unwrap_or("?"),
+                                        )
+                                        .changed()
+                                    {
+                                        changed = true;
+                                    }
+                                }
+                            }
+                        });
+                }
+                if ui
+                    .small_button(self.t("Открыть в поиске", "Open in Search"))
+                    .clicked()
+                {
+                    let volume = if slices {
+                        self.slices_volume
+                    } else {
+                        self.analytics_volume
+                    };
+                    let folder = if slices { None } else { self.analytics_folder };
+                    let map_query = self.analytics_highlight.clone();
+                    let query = if slices { "" } else { map_query.as_str() };
+                    self.jump_analytics_to_search(ctx, volume, folder, query);
+                }
+                if slices && ui.small_button(self.t("Карта", "Map")).clicked() {
+                    self.analytics_volume = self.slices_volume;
+                    self.analytics_folder = None;
+                    self.analytics_category_id = self.slices_category;
+                    self.switch_workspace(WorkspaceTab::VolumeMap);
+                    self.request_analytics(ctx, false);
+                }
+                if is_loading && ui.button(self.t("Отмена", "Cancel")).clicked() {
+                    self.cancel_analytics(ctx, slices, true);
+                }
+                if let Some(result) = &current_data {
+                    if result["truncated"] == true {
+                        ui.colored_label(
+                            Color32::YELLOW,
+                            format!(
+                                "{} · {} {} · {}",
+                                self.t("Результат ограничен", "Result limited"),
+                                result["omitted_node_count"].as_u64().unwrap_or(0),
+                                self.t("узлов пропущено", "nodes omitted"),
+                                bytes_compact(result["remainder_bytes"].as_u64().unwrap_or(0))
+                            ),
+                        );
+                    }
+                }
+            });
+            if changed {
+                if slices {
+                    self.request_analytics(ctx, true);
+                } else {
+                    self.analytics_folder = None;
+                    self.request_analytics(ctx, false);
+                }
+            }
+            if is_loading {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(self.t("Чтение локального индекса…", "Reading local index…"));
+                });
+            }
+            if let Some(error) = error {
+                ui.colored_label(Color32::LIGHT_RED, error);
+                if ui.button(self.t("Повторить", "Retry")).clicked() {
+                    self.request_analytics(ctx, slices);
+                }
+            }
+            if is_cancelled && current_data.is_none() && !is_loading {
+                ui.label(self.t("Анализ отменён.", "Analysis cancelled."));
+                if ui.button(self.t("Запустить снова", "Run again")).clicked() {
+                    self.request_analytics(ctx, slices);
+                }
+            }
+            let Some(data) = current_data else {
+                return;
+            };
+            let totals = &data["totals"];
+            ui.columns(4, |cols| {
+                let cards = [
+                    (
+                        self.t("Логические байты индекса", "Logical indexed bytes"),
+                        bytes_compact(totals["indexed_bytes"].as_u64().unwrap_or(0)),
+                    ),
+                    (
+                        self.t("Файлы", "Files"),
+                        totals["files"].as_u64().unwrap_or(0).to_string(),
+                    ),
+                    (
+                        self.t("Папки", "Directories"),
+                        totals["directories"].as_u64().unwrap_or(0).to_string(),
+                    ),
+                    (
+                        self.t("Диски в срезе", "Volumes in scope"),
+                        data["by_volume"]
+                            .as_array()
+                            .map_or(0, |rows| rows.len() as u64)
+                            .to_string(),
+                    ),
+                ];
+                for (col, (label, value)) in cols.iter_mut().zip(cards) {
+                    col.group(|ui| {
+                        ui.weak(label);
+                        ui.strong(value);
+                    });
+                }
+            });
+            if slices {
+                self.draw_slice_panels(ui, &data, ctx);
+            } else {
+                self.draw_sunburst(ui, &data, ctx);
+            }
+        });
+    }
+
+    fn draw_slice_panels(&mut self, ui: &mut egui::Ui, data: &Value, ctx: &egui::Context) {
+        if self.slices_dimension == 1 {
+            ui.columns(2,|cols|{
+                cols[0].group(|ui|{ui.strong(self.t("Кандидаты на сверку","Review candidates"));ui.separator();ui.weak(self.t("Срезы не подтверждают равенство содержимого или наличие резерва.","Archive slices do not verify equal contents or backup status."));ui.label(self.t("Нет данных кандидатов для этой выборки.","No candidate rows are available for this scope."));});
+                cols[1].group(|ui|{ui.strong(self.t("Безопасное действие","Safe action"));ui.separator();ui.label(self.t("Откройте результаты поиска и используйте отдельный отчёт кандидатов по выбранному файлу.","Open search results and use the candidate report for a selected file."));});
+            });
+            return;
+        }
+        let left_key = if self.slices_dimension == 2 {
+            "by_volume"
+        } else {
+            "by_extension"
+        };
+        let right_key = if self.slices_dimension == 2 {
+            "by_size_bucket"
+        } else {
+            "by_category"
+        };
+        let left_title = if self.slices_dimension == 2 {
+            self.t("Диски каталога", "Catalog volumes")
+        } else {
+            self.t("Расширения", "Extensions")
+        };
+        let right_title = if self.slices_dimension == 2 {
+            self.t("Размеры файлов", "File sizes")
+        } else {
+            self.t("Категории", "Categories")
+        };
+        ui.columns(2, |cols| {
+            for (col, key, title) in [(0, left_key, left_title), (1, right_key, right_title)] {
+                let rows = data[key].as_array().cloned().unwrap_or_default();
+                cols[col].group(|ui| {
+                    ui.strong(title);
+                    ui.separator();
+                    if rows.is_empty() {
+                        ui.weak(self.t("Нет данных для этой выборки.", "No rows for this scope."));
+                    }
+                    let maximum = rows
+                        .iter()
+                        .filter_map(|r| r["bytes"].as_u64())
+                        .max()
+                        .unwrap_or(1)
+                        .max(1);
+                    egui::ScrollArea::vertical()
+                        .max_height(430.0)
+                        .show(ui, |ui| {
+                            for row in rows.iter().take(100) {
+                                let label = row["label"]
+                                    .as_str()
+                                    .or_else(|| row["id"].as_str())
+                                    .unwrap_or("?");
+                                let bytes = row["bytes"].as_u64().unwrap_or(0);
+                                let count = row["file_count"].as_u64().unwrap_or(0);
+                                let id = row["id"].as_str().unwrap_or("");
+                                let query = if key == "by_extension" {
+                                    let extension = id.strip_prefix("ext:").unwrap_or("");
+                                    extension_search_query(extension)
+                                } else if key == "by_category" {
+                                    primary_category_search_query(id).unwrap_or_default()
+                                } else if key == "by_size_bucket" {
+                                    match id {
+                                        "size:0" => "size:<1MiB".into(),
+                                        "size:1" => "size:>=1MiB AND size:<1GiB".into(),
+                                        "size:2" => "size:>=1GiB AND size:<10GiB".into(),
+                                        "size:3" => "size:>=10GiB".into(),
+                                        _ => String::new(),
+                                    }
+                                } else {
+                                    String::new()
+                                };
+                                if ui
+                                    .selectable_label(
+                                        false,
+                                        format!("{label}    {count} · {}", bytes_compact(bytes)),
+                                    )
+                                    .clicked()
+                                {
+                                    if key == "by_volume" {
+                                        let volume = id
+                                            .strip_prefix("volume:")
+                                            .and_then(|v| v.parse::<i64>().ok());
+                                        if let Some(volume) = volume {
+                                            self.jump_analytics_to_search(
+                                                ctx,
+                                                Some(volume),
+                                                None,
+                                                "",
+                                            );
+                                        }
+                                    } else if !query.is_empty() {
+                                        self.jump_analytics_to_search(
+                                            ctx,
+                                            self.slices_volume,
+                                            None,
+                                            &query,
+                                        );
+                                    }
+                                }
+                                ui.add(
+                                    egui::ProgressBar::new(bytes as f32 / maximum as f32).text(""),
+                                );
+                            }
+                        });
+                });
+            }
+        });
+    }
+
+    fn draw_sunburst(&mut self, ui: &mut egui::Ui, data: &Value, ctx: &egui::Context) {
+        let root = &data["root"];
+        if !root.is_object() {
+            ui.colored_label(
+                Color32::LIGHT_RED,
+                self.t(
+                    "Ответ аналитики неполон.",
+                    "Analytics response is incomplete.",
+                ),
+            );
+            return;
+        }
+        let crumbs = data["breadcrumbs"].as_array().cloned().unwrap_or_default();
+        ui.horizontal(|ui| {
+            for (i, crumb) in crumbs.iter().enumerate() {
+                if i > 0 {
+                    ui.label("›");
+                }
+                let label = crumb["label"].as_str().unwrap_or("?");
+                if ui.small_button(label).clicked() {
+                    self.analytics_volume = crumb
+                        .get("volume_id")
+                        .or_else(|| crumb.get("volumeId"))
+                        .and_then(Value::as_i64);
+                    self.analytics_folder = crumb
+                        .get("folder_entry_id")
+                        .or_else(|| crumb.get("folderEntryId"))
+                        .and_then(Value::as_i64);
+                    self.request_analytics(ctx, false);
+                }
+            }
+        });
+        let mut clicked: Option<Value> = None;
+        let mut hovered: Option<Value> = None;
+        let mut parent_clicked = false;
+        ui.columns(2, |cols| {
+            let chart = &mut cols[0];
+            let (rect, response) = chart.allocate_exact_size(
+                egui::vec2(chart.available_width().min(500.0), 460.0),
+                egui::Sense::click(),
+            );
+            let painter = chart.painter_at(rect);
+            let center = rect.center();
+            let max_r = rect.width().min(rect.height()) * 0.47;
+            painter.circle_filled(
+                center,
+                max_r * 0.34,
+                if self.dark {
+                    Color32::from_gray(28)
+                } else {
+                    Color32::from_gray(248)
+                },
+            );
+            let colors = [
+                [
+                    [37, 99, 235],
+                    [59, 130, 246],
+                    [96, 165, 250],
+                    [147, 197, 253],
+                ],
+                [
+                    [13, 148, 136],
+                    [20, 184, 166],
+                    [45, 212, 191],
+                    [94, 234, 212],
+                ],
+                [
+                    [217, 119, 6],
+                    [245, 158, 11],
+                    [251, 191, 36],
+                    [252, 211, 77],
+                ],
+                [
+                    [124, 58, 237],
+                    [139, 92, 246],
+                    [167, 139, 250],
+                    [196, 181, 253],
+                ],
+                [
+                    [225, 29, 72],
+                    [244, 63, 94],
+                    [251, 113, 133],
+                    [253, 164, 175],
+                ],
+                [
+                    [2, 132, 199],
+                    [14, 165, 233],
+                    [56, 189, 248],
+                    [125, 211, 252],
+                ],
+                [
+                    [5, 150, 105],
+                    [16, 185, 129],
+                    [52, 211, 153],
+                    [110, 231, 183],
+                ],
+                [
+                    [79, 70, 229],
+                    [99, 102, 241],
+                    [129, 140, 248],
+                    [165, 180, 252],
+                ],
+            ];
+            let radii = [(0.36, 0.54), (0.56, 0.70), (0.72, 0.84), (0.86, 0.98)];
+            let mut ranked = Vec::new();
+            let mut hit_regions: Vec<(f64, f64, f32, f32, Value)> = Vec::new();
+            let start_angle = -std::f64::consts::FRAC_PI_2;
+            let mut parents = vec![(
+                root.clone(),
+                start_angle,
+                start_angle + std::f64::consts::TAU,
+                0usize,
+                0usize,
+            )];
+            while let Some((parent, start, end, depth, branch_color)) = parents.pop() {
+                if depth >= 4 {
+                    continue;
+                }
+                let Some(children) = parent["children"].as_array() else {
+                    continue;
+                };
+                let total = parent["size"]
+                    .as_f64()
+                    .unwrap_or_else(|| children.iter().filter_map(|n| n["size"].as_f64()).sum())
+                    .max(1.0);
+                let mut angle = start;
+                let mut ordered = children.clone();
+                ordered.sort_by(|a, b| {
+                    b["size"]
+                        .as_u64()
+                        .unwrap_or(0)
+                        .cmp(&a["size"].as_u64().unwrap_or(0))
+                });
+                for (child_index, node) in ordered.into_iter().enumerate() {
+                    let size = node["size"].as_f64().unwrap_or(0.0);
+                    let sweep = ((end - start) * size / total).max(0.0).min(end - angle);
+                    let stop = (angle + sweep).min(end);
+                    let hue = if depth == 0 {
+                        child_index % colors.len()
+                    } else {
+                        branch_color
+                    };
+                    let base = colors[hue][depth];
+                    let (inner, outer) = radii[depth];
+                    if sweep > 0.0 {
+                        hit_regions.push((angle, stop, inner * max_r, outer * max_r, node.clone()));
+                    }
+                    let steps = ((stop - angle).abs() * 24.0).ceil().max(1.0) as usize;
+                    for s in 0..steps {
+                        let a0 = angle + (stop - angle) * s as f64 / steps as f64;
+                        let a1 = angle + (stop - angle) * (s + 1) as f64 / steps as f64;
+                        let point = |r: f32, a: f64| {
+                            center + egui::vec2(a.cos() as f32, a.sin() as f32) * (max_r * r)
+                        };
+                        let fill = Color32::from_rgb(base[0], base[1], base[2]);
+                        painter.add(egui::Shape::convex_polygon(
+                            vec![
+                                point(inner, a0),
+                                point(outer, a0),
+                                point(outer, a1),
+                                point(inner, a1),
+                            ],
+                            fill,
+                            egui::Stroke::new(
+                                1.0,
+                                if self.dark {
+                                    Color32::from_gray(20)
+                                } else {
+                                    Color32::WHITE
+                                },
+                            ),
+                        ));
+                    }
+                    if depth == 0 {
+                        ranked.push(node.clone());
+                    }
+                    if stop - angle > 0.003 {
+                        parents.push((node.clone(), angle, stop, depth + 1, hue));
+                    }
+                    angle = stop;
+                }
+                if angle < end - 0.002 {
+                    // Render the bounded/capped tail as an unknown remainder, never redistribute it.
+                    let (inner, outer) = radii[depth];
+                    let p = |r: f32, a: f64| {
+                        center + egui::vec2(a.cos() as f32, a.sin() as f32) * (max_r * r)
+                    };
+                    let steps = (((end - angle).abs() * 24.0).ceil() as usize).max(1);
+                    for s in 0..steps {
+                        let a0 = angle + (end - angle) * s as f64 / steps as f64;
+                        let a1 = angle + (end - angle) * (s + 1) as f64 / steps as f64;
+                        painter.add(egui::Shape::convex_polygon(
+                            vec![p(inner, a0), p(outer, a0), p(outer, a1), p(inner, a1)],
+                            Color32::DARK_GRAY,
+                            egui::Stroke::new(1.0, Color32::BLACK),
+                        ));
+                    }
+                }
+            }
+            if let Some(pointer) = response.hover_pos() {
+                let v = pointer - center;
+                let radius = v.length();
+                let mut angle = (v.y as f64).atan2(v.x as f64);
+                while angle < start_angle {
+                    angle += std::f64::consts::TAU;
+                }
+                if let Some((_, _, _, _, node)) =
+                    hit_regions.iter().find(|(a, b, inner, outer, _)| {
+                        radius >= *inner && radius <= *outer && angle >= *a && angle <= *b
+                    })
+                {
+                    hovered = Some(node.clone());
+                    if response.clicked() {
+                        clicked = Some(node.clone());
+                    }
+                } else if radius < max_r * 0.34 && response.clicked() {
+                    parent_clicked = true;
+                }
+            }
+            let center_node = hovered.as_ref().unwrap_or(root);
+            let center_text = if self.analytics_highlight.trim().is_empty() {
+                bytes_compact(center_node["size"].as_u64().unwrap_or(0))
+            } else {
+                format!(
+                    "{} / {}",
+                    bytes_compact(center_node["matched_bytes"].as_u64().unwrap_or(0)),
+                    center_node["matched_files"].as_u64().unwrap_or(0)
+                )
+            };
+            painter.text(
+                center,
+                egui::Align2::CENTER_CENTER,
+                center_text,
+                egui::FontId::proportional(15.0),
+                if self.dark {
+                    Color32::WHITE
+                } else {
+                    Color32::BLACK
+                },
+            );
+            let list = &mut cols[1];
+            list.strong(root["name"].as_str().unwrap_or("Archive"));
+            list.separator();
+            if let Some(node) = &hovered {
+                list.group(|ui| {
+                    ui.strong(node["name"].as_str().unwrap_or("?"));
+                    ui.label(format!(
+                        "{} · {}",
+                        bytes_compact(node["size"].as_u64().unwrap_or(0)),
+                        node["item_count"].as_u64().unwrap_or(0)
+                    ));
+                    if !self.analytics_highlight.trim().is_empty() {
+                        ui.weak(format!(
+                            "{} · {}",
+                            self.t("Совпало", "Matched"),
+                            bytes_compact(node["matched_bytes"].as_u64().unwrap_or(0))
+                        ));
+                    }
+                });
+            }
+            ranked.sort_by(|a, b| {
+                b["size"]
+                    .as_u64()
+                    .unwrap_or(0)
+                    .cmp(&a["size"].as_u64().unwrap_or(0))
+            });
+            egui::ScrollArea::vertical()
+                .max_height(470.0)
+                .show(list, |ui| {
+                    for node in ranked {
+                        let name = node["name"].as_str().unwrap_or("?");
+                        let bytes = node["size"].as_u64().unwrap_or(0);
+                        let count = node["item_count"].as_u64().unwrap_or(0);
+                        if ui
+                            .selectable_label(
+                                false,
+                                format!("{name}    {} · {count}", bytes_compact(bytes)),
+                            )
+                            .clicked()
+                        {
+                            clicked = Some(node);
+                        }
+                    }
+                });
+        });
+        if parent_clicked && crumbs.len() > 1 {
+            let crumb = &crumbs[crumbs.len() - 2];
+            self.analytics_volume = crumb
+                .get("volume_id")
+                .or_else(|| crumb.get("volumeId"))
+                .and_then(Value::as_i64);
+            self.analytics_folder = crumb
+                .get("folder_entry_id")
+                .or_else(|| crumb.get("folderEntryId"))
+                .and_then(Value::as_i64);
+            self.request_analytics(ctx, false);
+        }
+        if let Some(node) = clicked {
+            if self.analytics_group == "categories" && node["kind"] == "category" {
+                let id = node["id"].as_str().unwrap_or("");
+                if let Some(query) = primary_category_search_query(id) {
+                    self.jump_analytics_to_search(ctx, self.analytics_volume, None, &query);
+                }
+            } else if self.analytics_group == "extensions" && node["kind"] == "other_group" {
+                let extension = node["id"]
+                    .as_str()
+                    .and_then(|id| id.strip_prefix("ext:"))
+                    .unwrap_or("");
+                let query = extension_search_query(extension);
+                self.jump_analytics_to_search(ctx, self.analytics_volume, None, &query);
+            } else if let Some(entry_id) = node["entry_id"].as_i64() {
+                if node["kind"] == "file" {
+                    self.jump_analytics_to_copy_candidates(
+                        ctx,
+                        entry_id,
+                        node["volume_id"].as_i64(),
+                    );
+                } else {
+                    self.analytics_volume = node["volume_id"].as_i64().or(self.analytics_volume);
+                    self.analytics_folder = Some(entry_id);
+                    self.request_analytics(ctx, false);
+                }
+            } else if let Some(volume) = node["volume_id"].as_i64() {
+                self.analytics_volume = Some(volume);
+                self.analytics_folder = None;
+                self.request_analytics(ctx, false);
+            }
+        }
+    }
+
     fn search_toolbar(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
         egui::Panel::top("search_toolbar").show(root, |ui| {
             self.protect_background(ui);
@@ -2875,14 +3989,26 @@ impl DesktopApp {
                 return;
             }
             ui.horizontal(|ui| {
-                ui.strong(match &self.route {
-                    Route::Search { .. } => self.t("Результаты поиска", "Search results"),
-                    Route::Folder { .. } => self.t("Содержимое каталога", "Folder contents"),
-                    Route::Copies { .. } => self.t(
-                        "Кандидаты по имени и размеру · НЕ байтовая проверка",
-                        "Name+size candidates · NOT byte verified",
+                let result_heading = match &self.route {
+                    Route::Search { .. } => {
+                        self.t("Результаты поиска", "Search results").to_owned()
+                    }
+                    Route::BranchSearch { parent_id, .. } => format!(
+                        "{} #{parent_id} · {}",
+                        self.t("Поиск в папке", "Folder search"),
+                        self.query_input
                     ),
-                });
+                    Route::Folder { .. } => {
+                        self.t("Содержимое каталога", "Folder contents").to_owned()
+                    }
+                    Route::Copies { .. } => self
+                        .t(
+                            "Кандидаты по имени и размеру · НЕ байтовая проверка",
+                            "Name+size candidates · NOT byte verified",
+                        )
+                        .to_owned(),
+                };
+                ui.strong(result_heading);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .add_enabled(
@@ -3682,13 +4808,29 @@ impl eframe::App for DesktopApp {
         self.workspace_tabs(root, &ctx);
         match self.workspace_tab {
             WorkspaceTab::Search => {
+                self.cancel_analytics(&ctx, false, false);
+                self.cancel_analytics(&ctx, true, false);
                 self.search_toolbar(root, &ctx);
                 self.disk_sidebar(root, &ctx);
                 self.inspector(root, &ctx);
                 self.results_table(root, &ctx);
             }
-            WorkspaceTab::UsbDisks => self.disks_workspace(root, &ctx),
-            WorkspaceTab::Slices | WorkspaceTab::VolumeMap | WorkspaceTab::LocalPc => {
+            WorkspaceTab::UsbDisks => {
+                self.cancel_analytics(&ctx, false, false);
+                self.cancel_analytics(&ctx, true, false);
+                self.disks_workspace(root, &ctx)
+            }
+            WorkspaceTab::Slices => {
+                self.cancel_analytics(&ctx, false, false);
+                self.analytics_workspace(root, &ctx, true)
+            }
+            WorkspaceTab::VolumeMap => {
+                self.cancel_analytics(&ctx, true, false);
+                self.analytics_workspace(root, &ctx, false)
+            }
+            WorkspaceTab::LocalPc => {
+                self.cancel_analytics(&ctx, false, false);
+                self.cancel_analytics(&ctx, true, false);
                 self.unavailable_workspace(root)
             }
         }
@@ -3706,6 +4848,58 @@ mod ctf_workflow_tests;
 #[cfg(test)]
 mod shortcut_tests {
     use super::*;
+
+    #[test]
+    fn analytics_stale_generation_cannot_replace_current_view() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.db = Some("catalog.sqlite".into());
+        app.analytics_job_id = Some("new-job".into());
+        app.analytics_request_id = Some(2);
+        app.analytics_generation = 4;
+        app.analytics_data = Some(Arc::new(json!({"root":{"id":"kept"}})));
+        app.apply_reply(
+            crate::bridge::Reply {
+                id: 1,
+                purpose: Purpose::Analytics {
+                    job_id: "old-job".into(),
+                    generation: 3,
+                    db: "catalog.sqlite".into(),
+                    slices: false,
+                },
+                response: json!({"ok":true,"data":{"root":{"id":"stale"}}}),
+            },
+            &ctx,
+        );
+        assert_eq!(app.analytics_data.as_ref().unwrap()["root"]["id"], "kept");
+        assert_eq!(app.analytics_job_id.as_deref(), Some("new-job"));
+    }
+
+    #[test]
+    fn explicit_analytics_cancel_does_not_restart_until_retry() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.slices_job_id = Some("slice-job".into());
+        app.slices_request_id = Some(8);
+        app.slices_generation = 11;
+        app.cancel_analytics(&ctx, true, true);
+        assert!(app.slices_job_id.is_none());
+        assert!(app.slices_loaded);
+        assert!(app.slices_cancelled);
+        assert!(app.slices_generation > 11);
+        assert!(app.slices_data.is_none());
+    }
+
+    #[test]
+    fn analytics_navigation_does_not_dispatch_behind_a_modal() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        let route = app.route.clone();
+        app.show_export_dialog = true;
+        app.jump_analytics_to_search(&ctx, Some(2), Some(9), "ext:mkv");
+        assert_eq!(app.route, route);
+        assert!(app.history.is_empty());
+    }
 
     #[test]
     fn bound_rescan_is_disabled_in_the_windows_1_0_ui() {
@@ -4787,15 +5981,15 @@ mod shortcut_tests {
     }
 
     #[test]
-    fn workspace_tabs_keep_pr58_order_and_disable_unimplemented_workspaces() {
+    fn workspace_tabs_keep_pr58_order_and_enable_analytics_workspaces() {
         assert_eq!(
             WorkspaceTab::ORDERED.map(|tab| tab.label(Language::English)),
             ["Search", "Slices", "Volume Map", "USB Disks", "Local PC"]
         );
         assert!(WorkspaceTab::Search.available());
         assert!(WorkspaceTab::UsbDisks.available());
-        assert!(!WorkspaceTab::Slices.available());
-        assert!(!WorkspaceTab::VolumeMap.available());
+        assert!(WorkspaceTab::Slices.available());
+        assert!(WorkspaceTab::VolumeMap.available());
         assert!(!WorkspaceTab::LocalPc.available());
     }
 
@@ -4858,11 +6052,11 @@ mod shortcut_tests {
         assert_eq!(app.disks_filter, "#5");
         assert_eq!(app.disks_selected_volume, Some(5));
         assert_eq!(app.restore_scroll, Some(177.0));
-        assert!(!app.switch_workspace(WorkspaceTab::Slices));
-        assert_eq!(app.workspace_tab, WorkspaceTab::Search);
+        assert!(app.switch_workspace(WorkspaceTab::Slices));
+        assert_eq!(app.workspace_tab, WorkspaceTab::Slices);
         app.show_export_dialog = true;
         assert!(!app.switch_workspace(WorkspaceTab::UsbDisks));
-        assert_eq!(app.workspace_tab, WorkspaceTab::Search);
+        assert_eq!(app.workspace_tab, WorkspaceTab::Slices);
     }
 
     #[test]

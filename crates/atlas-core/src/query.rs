@@ -183,7 +183,7 @@ impl Parser {
             Some((a, b)) => (a.to_ascii_lowercase(), b),
             None => ("text".into(), w),
         };
-        if value.is_empty() {
+        if value.is_empty() && field != "ext" {
             return Err(Error::new("invalid_query", "Empty field value"));
         }
         let v = value.to_lowercase();
@@ -196,6 +196,45 @@ impl Parser {
             });
         }
         let sql = match field.as_str() {
+            "primary_category_id" => {
+                let id = value
+                    .parse::<i64>()
+                    .ok()
+                    .filter(|id| *id >= 0)
+                    .ok_or_else(|| {
+                        Error::new(
+                            "invalid_query",
+                            "primary_category_id requires a non-negative integer",
+                        )
+                    })?;
+                self.args.push(Value::Integer(id));
+                Ok("id IN (SELECT e.id FROM entries e WHERE e.kind='file' AND COALESCE((SELECT MIN(category_id) FROM entry_categories WHERE entry_id=e.id),0)=?)".into())
+            }
+            "category_exact_id" => {
+                let id = value
+                    .parse::<i64>()
+                    .ok()
+                    .filter(|id| *id > 0)
+                    .ok_or_else(|| {
+                        Error::new(
+                            "invalid_query",
+                            "category_exact_id requires a positive integer",
+                        )
+                    })?;
+                self.args.push(Value::Integer(id));
+                Ok("id IN (SELECT e.id FROM entries e WHERE e.kind='file' AND EXISTS(SELECT 1 FROM entry_categories ec WHERE ec.entry_id=e.id AND ec.category_id=?))".into())
+            }
+            "branch_id" => {
+                let id = value
+                    .parse::<i64>()
+                    .ok()
+                    .filter(|id| *id > 0)
+                    .ok_or_else(|| {
+                        Error::new("invalid_query", "branch_id requires a positive integer")
+                    })?;
+                self.args.push(Value::Integer(id));
+                Ok("id IN (WITH RECURSIVE branch(id,volume_id) AS (SELECT child.id,child.volume_id FROM entries anchor JOIN entries child ON child.parent_id=anchor.id AND child.volume_id=anchor.volume_id WHERE anchor.id=? UNION SELECT child.id,child.volume_id FROM entries child JOIN branch parent ON child.parent_id=parent.id AND child.volume_id=parent.volume_id) SELECT id FROM branch)".into())
+            }
             "size" => {
                 let (op, num) = if let Some(x) = v.strip_prefix(">=") {
                     (">=", x)
@@ -467,6 +506,157 @@ mod tests {
     use super::*;
     use crate::Catalog;
     use rusqlite::params_from_iter;
+
+    #[test]
+    fn branch_id_searches_only_same_volume_descendants_excluding_anchor() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut catalog = Catalog::open(dir.path().join("branch.sqlite")).unwrap();
+        let mut branch = 0;
+        catalog
+            .bulk_import("Disk", "offline", |w| {
+                branch = w.insert(&crate::NewEntry {
+                    parent_id: None,
+                    name: "資料".into(),
+                    relative_path: "資料".into(),
+                    kind: "directory".into(),
+                    size: 0,
+                    modified_unix: None,
+                    description: String::new(),
+                    tags: String::new(),
+                })?;
+                let nested = w.insert(&crate::NewEntry {
+                    parent_id: Some(branch),
+                    name: "nested".into(),
+                    relative_path: "資料/nested".into(),
+                    kind: "directory".into(),
+                    size: 0,
+                    modified_unix: None,
+                    description: String::new(),
+                    tags: String::new(),
+                })?;
+                w.insert(&crate::NewEntry {
+                    parent_id: Some(nested),
+                    name: "résumé.TXT".into(),
+                    relative_path: "資料/nested/résumé.TXT".into(),
+                    kind: "file".into(),
+                    size: 12,
+                    modified_unix: None,
+                    description: String::new(),
+                    tags: String::new(),
+                })?;
+                w.insert(&crate::NewEntry {
+                    parent_id: Some(branch),
+                    name: "near.txt".into(),
+                    relative_path: "資料/near.txt".into(),
+                    kind: "file".into(),
+                    size: 8,
+                    modified_unix: None,
+                    description: String::new(),
+                    tags: String::new(),
+                })?;
+                w.insert(&crate::NewEntry {
+                    parent_id: None,
+                    name: "outside.txt".into(),
+                    relative_path: "outside.txt".into(),
+                    kind: "file".into(),
+                    size: 20,
+                    modified_unix: None,
+                    description: String::new(),
+                    tags: String::new(),
+                })?;
+                Ok(())
+            })
+            .unwrap();
+        let query = format!("branch_id:{branch} AND ext:txt");
+        let result = catalog.search(&query, None, 0, 20).unwrap();
+        assert_eq!(result.total, 2);
+        assert!(result.items.iter().any(|e| e.name == "résumé.TXT"));
+        let only_nested = catalog
+            .search(
+                &format!("branch_id:{branch} AND name_exact:résumé.TXT"),
+                None,
+                0,
+                20,
+            )
+            .unwrap();
+        assert_eq!(only_nested.total, 1);
+        assert_eq!(only_nested.items[0].relative_path, "資料/nested/résumé.TXT");
+        assert_eq!(
+            catalog
+                .search(
+                    &format!("branch_id:{branch} AND name_exact:資料"),
+                    None,
+                    0,
+                    20
+                )
+                .unwrap()
+                .total,
+            0,
+            "anchor folder must not match its own branch"
+        );
+        for invalid in ["0", "-4", "nope"] {
+            assert!(compile(&format!("branch_id:{invalid}")).is_err());
+        }
+        drop(catalog);
+    }
+
+    #[test]
+    fn category_id_predicates_match_primary_and_exact_assignment() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut catalog = Catalog::open(dir.path().join("categories.sqlite")).unwrap();
+        let mut files = Vec::new();
+        catalog
+            .bulk_import("Disk", "offline", |w| {
+                for name in ["multi.bin", "second.bin", "uncategorized.bin", "noext"] {
+                    files.push(w.insert(&crate::NewEntry {
+                        parent_id: None,
+                        name: name.into(),
+                        relative_path: name.into(),
+                        kind: "file".into(),
+                        size: 1,
+                        modified_unix: None,
+                        description: String::new(),
+                        tags: String::new(),
+                    })?);
+                }
+                Ok(())
+            })
+            .unwrap();
+        let duplicate_a = catalog.create_category("Movies", None).unwrap();
+        let duplicate_b = catalog.create_category("Movies", None).unwrap();
+        catalog.assign_category(files[0], duplicate_a).unwrap();
+        catalog.assign_category(files[0], duplicate_b).unwrap();
+        catalog.assign_category(files[1], duplicate_b).unwrap();
+
+        let primary_a = catalog
+            .search(&format!("primary_category_id:{duplicate_a}"), None, 0, 10)
+            .unwrap();
+        assert_eq!(
+            primary_a.items.iter().map(|e| e.id).collect::<Vec<_>>(),
+            vec![files[0]]
+        );
+        let primary_b = catalog
+            .search(&format!("primary_category_id:{duplicate_b}"), None, 0, 10)
+            .unwrap();
+        assert_eq!(
+            primary_b.items.iter().map(|e| e.id).collect::<Vec<_>>(),
+            vec![files[1]]
+        );
+        let exact_b = catalog
+            .search(&format!("category_exact_id:{duplicate_b}"), None, 0, 10)
+            .unwrap();
+        assert_eq!(exact_b.total, 2);
+        let uncategorized = catalog
+            .search("primary_category_id:0", None, 0, 10)
+            .unwrap();
+        assert_eq!(uncategorized.total, 2);
+        assert!(compile("primary_category_id:-1").is_err());
+        assert!(compile("category_exact_id:0").is_err());
+
+        let empty_ext = catalog.search("ext:\"\"", None, 0, 10).unwrap();
+        assert_eq!(empty_ext.total, 1);
+        assert!(compile("name:\"\"").is_err());
+    }
 
     #[test]
     fn counted_extension_exclusion_uses_btree_count_and_index_seek() {

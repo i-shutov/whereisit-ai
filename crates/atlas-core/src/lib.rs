@@ -12,6 +12,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use walkdir::WalkDir;
+pub mod analytics;
 pub mod query;
 
 pub type Result<T> = std::result::Result<T, Error>;

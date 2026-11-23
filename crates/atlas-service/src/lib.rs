@@ -1,6 +1,7 @@
 //! Shared command service for native clients and CLI.
 use atlas_core::{Catalog, Error, Result};
 use serde_json::{json, Value};
+mod analytics;
 mod copy_candidates;
 mod ctf_annotation_backup;
 mod ctf_annotations;
@@ -29,6 +30,15 @@ mod selection;
 /// Does not open any catalog or access the filesystem.
 pub fn embedded_sqlite_version() -> &'static str {
     rusqlite::version()
+}
+
+/// Reserve an analytics cancellation slot before a native client launches its worker thread.
+/// This is a bounded, in-memory operation and does not open the catalog or touch the filesystem.
+pub fn prepare_analytics_job(job_id: &str) -> Result<()> {
+    analytics::prepare(&json!({"job_id":job_id})).map(|_| ())
+}
+pub fn cancel_analytics_job(job_id: &str) -> Result<()> {
+    analytics::cancel(&json!({"job_id":job_id})).map(|_| ())
 }
 
 pub fn dispatch_json(input: &str) -> String {
@@ -72,6 +82,9 @@ fn dispatch(input: &str) -> Result<Value> {
         .and_then(Value::as_str)
         .ok_or_else(|| Error::new("invalid_request", "op must be a string"))?;
     let mut data = match op {
+        "analytics" => analytics::run(&v)?,
+        "analytics_prepare" => analytics::prepare(&v)?,
+        "analytics_cancel" => analytics::cancel(&v)?,
         "ctf_sync" => ctf_mirror::sync(&v)?,
         "ctf_progress" => ctf_job::progress(&v)?,
         "ctf_cancel" => ctf_job::cancel(&v)?,

@@ -32,6 +32,12 @@ pub enum Route {
         volume_id: i64,
         parent_id: Option<i64>,
     },
+    BranchSearch {
+        volume_id: i64,
+        parent_id: i64,
+        query: String,
+        exact_category_id: Option<i64>,
+    },
     Copies {
         entry_id: i64,
     },
@@ -50,6 +56,16 @@ impl Route {
             } => json!({
                 "op":"children", "db":db, "volume_id":volume_id,
                 "parent_id":parent_id, "offset":offset, "limit":limit
+            }),
+            Self::BranchSearch {
+                volume_id,
+                parent_id,
+                query,
+                exact_category_id,
+            } => json!({
+                "op":"search_fast", "db":db,
+                "query":branch_search_query(*parent_id, &exact_category_query(query, *exact_category_id)),
+                "volume_id":volume_id, "offset":offset, "limit":limit
             }),
             Self::Copies { entry_id } => json!({
                 "op":"copy_candidates", "db":db, "entry_id":entry_id,
@@ -92,12 +108,56 @@ impl Route {
                 "op":kind.operation(), "db":db, "path":path, "mode":"children",
                 "volume_id":volume_id, "parent_id":parent_id, "overwrite":false
             })),
+            Self::BranchSearch {
+                volume_id,
+                parent_id,
+                query,
+                exact_category_id,
+            } => Some(json!({
+                "op":kind.operation(), "db":db, "path":path, "mode":"search",
+                "query":branch_search_query(*parent_id, &exact_category_query(query, *exact_category_id)),
+                "volume_id":volume_id, "overwrite":false
+            })),
             Self::Copies { entry_id } => Some(json!({
                 "op":kind.operation(), "db":db, "path":path, "mode":"copy_candidates",
                 "entry_id":entry_id, "other_disks_only":true, "overwrite":false
             })),
         }
     }
+}
+
+fn branch_search_query(parent_id: i64, query: &str) -> String {
+    if query.trim().is_empty() {
+        format!("branch_id:{parent_id}")
+    } else {
+        format!("branch_id:{parent_id} AND ({})", query.trim())
+    }
+}
+
+pub fn exact_category_query(query: &str, category_id: Option<i64>) -> String {
+    let query = query.trim();
+    match category_id.filter(|id| *id > 0) {
+        Some(id) if query.is_empty() => format!("category_exact_id:{id}"),
+        Some(id) => format!("category_exact_id:{id} AND ({query})"),
+        None => query.to_owned(),
+    }
+}
+
+pub fn extension_search_query(extension: &str) -> String {
+    if extension.is_empty() {
+        "ext:\"\"".to_owned()
+    } else {
+        format!("ext:{extension}")
+    }
+}
+
+pub fn primary_category_search_query(row_id: &str) -> Option<String> {
+    let id = row_id.strip_prefix("category:")?;
+    if id == "uncategorized" {
+        return Some("primary_category_id:0".to_owned());
+    }
+    let id = id.parse::<i64>().ok().filter(|id| *id > 0)?;
+    Some(format!("primary_category_id:{id}"))
 }
 
 #[derive(Clone, Debug)]
@@ -186,6 +246,35 @@ pub enum Purpose {
         catalog_key: String,
         volume_id: i64,
     },
+    Analytics {
+        job_id: String,
+        generation: u64,
+        db: String,
+        slices: bool,
+    },
+    AnalyticsCancel,
+}
+
+pub fn analytics_request(
+    db: &str,
+    job_id: &str,
+    volume_id: Option<i64>,
+    folder_entry_id: Option<i64>,
+    group_by: &str,
+    highlight_query: &str,
+    category_id: Option<i64>,
+) -> Value {
+    json!({
+        "op":"analytics", "db":db, "job_id":job_id,
+        "volume_id":volume_id, "folder_entry_id":folder_entry_id,
+        "group_by":group_by, "highlight_query":highlight_query,
+        "category_id":category_id,
+        "max_depth":4, "max_nodes":5000
+    })
+}
+
+pub fn analytics_cancel_request(job_id: &str) -> Value {
+    json!({"op":"analytics_cancel", "job_id":job_id})
 }
 
 pub struct Reply {
@@ -225,6 +314,20 @@ impl CommandBus {
     pub fn send(&mut self, purpose: Purpose, request: Value, ctx: &egui::Context) -> u64 {
         self.next_id = self.next_id.wrapping_add(1);
         let id = self.next_id;
+        if let Purpose::Analytics { job_id, .. } = &purpose {
+            // The backend prepare call only registers a process-local cancellation token. It
+            // must complete before the query worker starts so cancel-before-first-row is safe.
+            if let Err(error) = atlas_service::prepare_analytics_job(job_id) {
+                let response = json!({"ok":false,"error":{"code":"analytics_prepare_failed","message":error.to_string()}});
+                let _ = self.tx.send(Reply {
+                    id,
+                    purpose,
+                    response,
+                });
+                ctx.request_repaint();
+                return id;
+            }
+        }
         let tx = self.tx.clone();
         let repaint = ctx.clone();
         #[cfg(test)]
@@ -318,6 +421,77 @@ mod tests {
         assert_eq!(candidates["other_disks_only"], true);
         assert_eq!(candidates["overwrite"], false);
         assert!(candidates.get("limit").is_none());
+    }
+
+    #[test]
+    fn analytics_request_is_bounded_scoped_and_metadata_only() {
+        let request = analytics_request(
+            "catalog.sqlite",
+            "egui-job",
+            Some(7),
+            Some(43),
+            "categories",
+            "ext:mkv",
+            Some(9),
+        );
+        assert_eq!(request["op"], "analytics");
+        assert_eq!(request["db"], "catalog.sqlite");
+        assert_eq!(request["job_id"], "egui-job");
+        assert_eq!(request["volume_id"], 7);
+        assert_eq!(request["folder_entry_id"], 43);
+        assert_eq!(request["group_by"], "categories");
+        assert_eq!(request["highlight_query"], "ext:mkv");
+        assert_eq!(request["category_id"], 9);
+        assert_eq!(request["max_depth"], 4);
+        assert_eq!(request["max_nodes"], 5000);
+        assert_eq!(
+            analytics_cancel_request("egui-job")["op"],
+            "analytics_cancel"
+        );
+    }
+
+    #[test]
+    fn branch_search_preserves_folder_predicate_in_pages_and_exports() {
+        let route = Route::BranchSearch {
+            volume_id: 4,
+            parent_id: 81,
+            query: "ext:mkv OR category:\"Movies\"".into(),
+            exact_category_id: Some(12),
+        };
+        let page = route.request("catalog.sqlite", 0, 250);
+        assert_eq!(page["op"], "search_fast");
+        assert_eq!(page["volume_id"], 4);
+        assert_eq!(
+            page["query"],
+            "branch_id:81 AND (category_exact_id:12 AND (ext:mkv OR category:\"Movies\"))"
+        );
+        let export = route
+            .export_request("catalog.sqlite", "out.csv", ExportKind::Csv)
+            .unwrap();
+        assert_eq!(export["mode"], "search");
+        assert_eq!(export["query"], page["query"]);
+        assert_eq!(export["volume_id"], 4);
+        assert_eq!(export["overwrite"], false);
+    }
+
+    #[test]
+    fn category_scope_and_no_extension_queries_are_unambiguous() {
+        assert_eq!(exact_category_query("", Some(17)), "category_exact_id:17");
+        assert_eq!(
+            exact_category_query("ext:mkv", Some(17)),
+            "category_exact_id:17 AND (ext:mkv)"
+        );
+        assert_eq!(extension_search_query("mkv"), "ext:mkv");
+        assert_eq!(extension_search_query(""), "ext:\"\"");
+        assert_eq!(
+            primary_category_search_query("category:42").as_deref(),
+            Some("primary_category_id:42")
+        );
+        assert_eq!(
+            primary_category_search_query("category:uncategorized").as_deref(),
+            Some("primary_category_id:0")
+        );
+        assert_eq!(primary_category_search_query("category:bad"), None);
     }
 
     #[test]
