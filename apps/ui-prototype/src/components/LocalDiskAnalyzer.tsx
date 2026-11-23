@@ -16,13 +16,12 @@ import {
   RefreshCw,
   ShieldAlert,
   ShieldCheck,
-  Sparkles,
-  Square,
-  Trash2,
   X,
 } from 'lucide-react';
 import type { DuplicateCriterion, SystemSnapshot } from '../types/atlas';
 import { formatBytes, formatExactBytes } from '../utils/format';
+import { metadataCandidateKey, normalizeMetadataName } from '../utils/metadataCandidates';
+import { escapeReviewCsvCell } from '../utils/reviewCsv';
 import { useI18n } from '../i18n';
 
 interface LocalDiskAnalyzerProps {
@@ -82,11 +81,11 @@ interface UsbMatchEntry {
 }
 
 interface BaselineStore {
+  sourceSessionId: number;
   savedAtMs: number;
   folders: Record<string, number>;
 }
 
-const BASELINE_STORAGE_PREFIX = 'whereisit_local_baseline_v1::';
 const GB = 1024 ** 3;
 const MB = 1024 ** 2;
 
@@ -285,7 +284,7 @@ function buildSampleWorkstationFiles(): { rootName: string; files: LocalFileItem
     return {
       id: `local-${idx}-${r.path}`,
       name,
-      nameNorm: name.toLowerCase(),
+      nameNorm: normalizeMetadataName(name),
       relativePath: r.path,
       parentPath,
       ext: dot > 0 ? name.slice(dot + 1).toLowerCase() : '',
@@ -333,73 +332,7 @@ function classifyBloatItem(file: LocalFileItem): BloatCategory | null {
   return null;
 }
 
-/**
- * Stage 2: Sparse 3×64 KB Fingerprint (Head + Middle + Tail + Exact Size).
- * Reads at most 192 KB regardless of whether the file is 5 MB or 80 GB!
- */
-async function computeSparse3x64kHash(file: File): Promise<string> {
-  const chunk = 65536;
-  if (file.size <= chunk * 3) {
-    const buf = await file.arrayBuffer();
-    const digest = await crypto.subtle.digest('SHA-256', buf);
-    return Array.from(new Uint8Array(digest))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('')
-      .slice(0, 16);
-  }
-  const midStart = Math.floor(file.size / 2) - Math.floor(chunk / 2);
-  const tailStart = Math.max(0, file.size - chunk);
-  const [head, mid, tail] = await Promise.all([
-    file.slice(0, chunk).arrayBuffer(),
-    file.slice(midStart, midStart + chunk).arrayBuffer(),
-    file.slice(tailStart, file.size).arrayBuffer(),
-  ]);
-  const merged = new Uint8Array(head.byteLength + mid.byteLength + tail.byteLength + 8);
-  merged.set(new Uint8Array(head), 0);
-  merged.set(new Uint8Array(mid), head.byteLength);
-  merged.set(new Uint8Array(tail), head.byteLength + mid.byteLength);
-  new DataView(merged.buffer).setFloat64(head.byteLength + mid.byteLength + tail.byteLength, file.size);
-  const digest = await crypto.subtle.digest('SHA-256', merged);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
-    .slice(0, 16);
-}
-
-/**
- * Stage 3: Targeted Pre-Delete Full Byte-by-Byte Digest (chunked 4 MB reads with progress & cancel).
- * Computed ONLY for a single suspect duplicate group when requested by user.
- */
-async function computeFullFileVerifyDigest(
-  file: File,
-  onProgress: (bytesDone: number) => void,
-  shouldAbort: () => boolean
-): Promise<string | null> {
-  const CHUNK_BYTES = 4 * 1024 * 1024; // 4 MB slices
-  const chunkDigests: Uint8Array[] = [];
-  let offset = 0;
-
-  while (offset < file.size) {
-    if (shouldAbort()) return null;
-    const end = Math.min(offset + CHUNK_BYTES, file.size);
-    const buf = await file.slice(offset, end).arrayBuffer();
-    const subHash = await crypto.subtle.digest('SHA-256', buf);
-    chunkDigests.push(new Uint8Array(subHash));
-    offset = end;
-    onProgress(offset);
-  }
-
-  // Combine chunk SHA-256 digests (Merkle-root style full-file SHA-256 over every byte)
-  const combined = new Uint8Array(chunkDigests.length * 32 + 8);
-  chunkDigests.forEach((d, idx) => combined.set(d, idx * 32));
-  new DataView(combined.buffer).setFloat64(chunkDigests.length * 32, file.size);
-  const rootDigest = await crypto.subtle.digest('SHA-256', combined);
-  return Array.from(new Uint8Array(rootDigest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
-    .slice(0, 20);
-}
-
+// Hash-based file inspection is intentionally deferred; this prototype uses metadata only.
 export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, onNotify }) => {
   const { lang, t } = useI18n();
   const numLocale = lang === 'en' ? 'en-US' : 'ru-RU';
@@ -424,6 +357,7 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
 
   const [scanning, setScanning] = useState(false);
   const [scanCount, setScanCount] = useState(0);
+  const scanRunRef = useRef(0);
   const [activeMode, setActiveMode] = useState<LocalMode>('tree_map');
 
   // Tree + Sunburst Navigation & Filter
@@ -440,75 +374,105 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
   // Collector Staging Basket (DaisyDisk Collector equivalent)
   const [stagedPaths, setStagedPaths] = useState<Set<string>>(() => new Set());
 
-  // 3-Stage Duplicate Pipeline State
+  // Metadata candidate review only. Content fingerprints/hashes are deferred.
   const [dupCriterion, setDupCriterion] = useState<DuplicateCriterion>('name_size');
-  const [partialHashes, setPartialHashes] = useState<Record<string, string>>({});
-  const [fullHashes, setFullHashes] = useState<Record<string, string>>({});
-  const [hashingSparse, setHashingSparse] = useState(false);
-  const [fullHashingGroupKey, setFullHashingGroupKey] = useState<string | null>(null);
-  const [fullHashProgressPct, setFullHashProgressPct] = useState<number>(0);
-  const abortFullHashRef = useRef<boolean>(false);
 
-  // Read-only USB Backup Coverage matches
+  // Read-only USB metadata candidate matches
   const [usbMatches, setUsbMatches] = useState<Record<string, UsbMatchEntry[]>>({});
   const [checkingUsb, setCheckingUsb] = useState(false);
   const [usbCheckedAt, setUsbCheckedAt] = useState<number | null>(null);
-  const [backupFilter, setBackupFilter] = useState<'all' | 'unbacked' | 'backed_up'>('all');
+  const [usbCheckProgress, setUsbCheckProgress] = useState<{ processed: number; total: number } | null>(null);
+  const usbMatchRunRef = useRef(0);
+  const usbMatchAbortRef = useRef<AbortController | null>(null);
+  const [backupFilter, setBackupFilter] = useState<'all' | 'no_candidate' | 'candidate'>('all');
 
   // Baseline snapshot diff ("What grew?")
   const [baseline, setBaseline] = useState<BaselineStore | null>(null);
+  const sourceSessionIdRef = useRef(0);
 
-  const loadBaselineForRoot = useCallback((label: string) => {
-    if (!label) return;
-    try {
-      const raw = window.localStorage.getItem(`${BASELINE_STORAGE_PREFIX}${label}`);
-      setBaseline(raw ? (JSON.parse(raw) as BaselineStore) : null);
-    } catch {
-      setBaseline(null);
-    }
-  }, []);
-
-  // Automatic read-only backup coverage check against USB archive (writes NOTHING to archive!)
+  // Read-only, chunked metadata candidate lookup. A run token rejects stale responses after reset/cancel.
   const runUsbBackupMatch = useCallback(
     async (itemsToCheck: LocalFileItem[], silent = false) => {
-      if (itemsToCheck.length === 0) return;
-      setCheckingUsb(true);
+      usbMatchAbortRef.current?.abort();
+      const controller = new AbortController();
+      usbMatchAbortRef.current = controller;
+      const runId = ++usbMatchRunRef.current;
+      setUsbMatches({});
+      setUsbCheckedAt(null);
+      setCheckingUsb(itemsToCheck.length > 0);
+      setUsbCheckProgress(itemsToCheck.length > 0 ? { processed: 0, total: itemsToCheck.length } : null);
+      if (itemsToCheck.length === 0) {
+        usbMatchAbortRef.current = null;
+        setCheckingUsb(false);
+        return;
+      }
+
+      let matchedKeys = 0;
       try {
-        const resp = await fetch('/api/catalog/match-local', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            files: itemsToCheck.slice(0, 8000).map((f) => ({
-              key: f.relativePath,
-              name: f.name,
-              size: f.size,
-            })),
-          }),
-        });
-        const data = await resp.json();
-        if (!resp.ok) {
-          if (!silent) onNotify(data.error || t('Ошибка сверки с USB-архивом', 'USB match error'), 'error');
-          return;
+        const chunkSize = 1000;
+        for (let start = 0; start < itemsToCheck.length; start += chunkSize) {
+          const chunk = itemsToCheck.slice(start, start + chunkSize);
+          const resp = await fetch('/api/catalog/match-local', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify({
+              files: chunk.map((f) => ({ key: f.relativePath, name: f.name, size: f.size })),
+            }),
+          });
+          const data = await resp.json();
+          if (runId !== usbMatchRunRef.current) return;
+          if (!resp.ok) throw new Error(data.error || t('Ошибка поиска кандидатов USB', 'USB candidate lookup failed'));
+          const matches = (data.matches ?? {}) as Record<string, UsbMatchEntry[]>;
+          matchedKeys += Object.keys(matches).length;
+          setUsbMatches((prev) => ({ ...prev, ...matches }));
+          setUsbCheckProgress({ processed: Math.min(start + chunk.length, itemsToCheck.length), total: itemsToCheck.length });
         }
-        setUsbMatches((data.matches ?? {}) as Record<string, UsbMatchEntry[]>);
+        if (runId !== usbMatchRunRef.current) return;
         setUsbCheckedAt(Date.now());
         if (!silent) {
           onNotify(
             t(
-              `Сверка завершена: ${data.totalMatchedKeys} файлов уже есть на ваших USB-дисках (без записи в архив).`,
-              `Check done: ${data.totalMatchedKeys} files already exist on your USB disks (zero archive writes).`
+              `Найдено совпадений-кандидатов по имени и размеру: ${matchedKeys}. Равенство содержимого и резерв не проверялись.`,
+              `Found ${matchedKeys} name-and-size metadata candidates. Content equality and backup status were not verified.`
             ),
             'success'
           );
         }
       } catch (err) {
-        if (!silent) onNotify((err as Error).message, 'error');
+        if (runId === usbMatchRunRef.current && (err as Error).name !== 'AbortError' && !silent) {
+          onNotify((err as Error).message, 'error');
+        }
       } finally {
-        setCheckingUsb(false);
+        if (runId === usbMatchRunRef.current) {
+          usbMatchAbortRef.current = null;
+          setCheckingUsb(false);
+          setUsbCheckProgress(null);
+        }
       }
     },
     [onNotify, t]
   );
+
+  const cancelUsbMatch = useCallback(() => {
+    usbMatchRunRef.current += 1;
+    usbMatchAbortRef.current?.abort();
+    usbMatchAbortRef.current = null;
+    setCheckingUsb(false);
+    setUsbCheckProgress(null);
+  }, []);
+
+  const cancelLocalScan = useCallback(() => {
+    scanRunRef.current += 1;
+    setScanning(false);
+    setScanCount(0);
+  }, []);
+
+  useEffect(() => () => {
+    scanRunRef.current += 1;
+    usbMatchRunRef.current += 1;
+    usbMatchAbortRef.current?.abort();
+  }, []);
 
   const resetAnalysisWithFiles = useCallback(
     (
@@ -518,7 +482,9 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
       dirHandle: FileSystemDirectoryHandle | null = null,
       rw = false
     ) => {
+      cancelUsbMatch();
       setRootLabel(label);
+      sourceSessionIdRef.current += 1;
       setFiles(loaded);
       setSourceKind(kind);
       setRootDirHandle(dirHandle);
@@ -526,20 +492,20 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
       setExpandedFolders(new Set());
       setHoveredArc(null);
       setStagedPaths(new Set());
-      setPartialHashes({});
-      setFullHashes({});
+      setLocalFilter('');
+      setBackupFilter('all');
       setUsbMatches({});
       setUsbCheckedAt(null);
-      loadBaselineForRoot(label);
-      void runUsbBackupMatch(loaded, true);
+      setBaseline(null);
     },
-    [loadBaselineForRoot, runUsbBackupMatch]
+    [cancelUsbMatch]
   );
 
   // Primary Browser Folder Picker (<input webkitdirectory>) — works in 100% of desktop browsers & embedded frames
-  const handleWebkitDirectoryPick = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleWebkitDirectoryPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = e.target.files;
     if (!fileList || fileList.length === 0) return;
+    const runId = ++scanRunRef.current;
     setScanning(true);
     setScanCount(0);
 
@@ -560,7 +526,7 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
         parsed.push({
           id: `wk-${i}-${cleanRel}`,
           name: f.name,
-          nameNorm: f.name.toLowerCase(),
+          nameNorm: normalizeMetadataName(f.name),
           relativePath: cleanRel,
           parentPath,
           ext: dot > 0 ? f.name.slice(dot + 1).toLowerCase() : '',
@@ -568,7 +534,13 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
           lastModifiedMs: f.lastModified || Date.now(),
           fileObj: f,
         });
+        if ((i + 1) % 500 === 0 || i === fileList.length - 1) {
+          setScanCount(i + 1);
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+          if (runId !== scanRunRef.current) return;
+        }
       }
+      if (runId !== scanRunRef.current) return;
       setScanCount(parsed.length);
       resetAnalysisWithFiles(label, parsed, 'webkit', null, false);
       onNotify(
@@ -579,7 +551,7 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
         'success'
       );
     } finally {
-      setScanning(false);
+      if (runId === scanRunRef.current) setScanning(false);
       e.target.value = '';
     }
   };
@@ -591,6 +563,7 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
     };
     if (typeof w.showDirectoryPicker !== 'function') return;
 
+    let scanRunId: number | null = null;
     try {
       let rw = false;
       let dirHandle: FileSystemDirectoryHandle;
@@ -602,6 +575,8 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
         dirHandle = await w.showDirectoryPicker({ mode: 'read' });
       }
 
+      const runId = ++scanRunRef.current;
+      scanRunId = runId;
       setScanning(true);
       setScanCount(0);
       const collected: LocalFileItem[] = [];
@@ -611,6 +586,7 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
           values: () => AsyncIterable<FileSystemHandle>;
         }).values();
         for await (const entry of iter) {
+          if (runId !== scanRunRef.current) return;
           if (entry.kind === 'file') {
             const fh = entry as FileSystemFileHandle;
             const file = await fh.getFile();
@@ -619,7 +595,7 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
             collected.push({
               id: `fs-${collected.length}-${cleanRel}`,
               name: entry.name,
-              nameNorm: entry.name.toLowerCase(),
+              nameNorm: normalizeMetadataName(entry.name),
               relativePath: cleanRel,
               parentPath: prefix,
               ext: dot > 0 ? entry.name.slice(dot + 1).toLowerCase() : '',
@@ -628,7 +604,10 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
               fileObj: file,
               fileHandle: fh,
             });
-            if (collected.length % 200 === 0) setScanCount(collected.length);
+            if (collected.length % 200 === 0) {
+              setScanCount(collected.length);
+              await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+            }
             if (collected.length >= 40000) return;
           } else if (entry.kind === 'directory') {
             await walk(entry as FileSystemDirectoryHandle, prefix ? `${prefix}/${entry.name}` : entry.name);
@@ -638,6 +617,8 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
       };
 
       await walk(dirHandle, '');
+      if (runId !== scanRunRef.current) return;
+      setScanCount(collected.length);
       resetAnalysisWithFiles(dirHandle.name, collected, 'fs_api', dirHandle, rw);
       onNotify(
         t(
@@ -651,7 +632,7 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
         onNotify((err as Error).message, 'error');
       }
     } finally {
-      setScanning(false);
+      if (scanRunId !== null && scanRunId === scanRunRef.current) setScanning(false);
     }
   };
 
@@ -686,11 +667,11 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
     return list;
   }, [treeRoot.name, currentFolderPath]);
 
-  // Precompute USB backup stats per folder path
-  const folderBackupStats = useMemo(() => {
+  // Precompute metadata candidate coverage per folder path.
+  const folderCandidateStats = useMemo(() => {
     const map = new Map<string, { backedBytes: number; uniqueBytes: number }>();
     for (const f of files) {
-      const isBacked = (usbMatches[f.relativePath]?.length ?? 0) > 0;
+      const hasCandidate = (usbMatches[f.relativePath]?.length ?? 0) > 0;
       const parts = f.parentPath ? f.parentPath.split('/') : [];
       const paths = [''];
       let acc = '';
@@ -700,7 +681,7 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
       }
       for (const fp of paths) {
         const slot = map.get(fp) ?? { backedBytes: 0, uniqueBytes: 0 };
-        if (isBacked) slot.backedBytes += f.size;
+        if (hasCandidate) slot.backedBytes += f.size;
         else slot.uniqueBytes += f.size;
         map.set(fp, slot);
       }
@@ -955,7 +936,7 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
     return Object.values(groups).sort((a, b) => b.bytes - a.bytes);
   }, [files]);
 
-  // Mode 4: 3-Criterion In-Disk Duplicate Engine (Stage 1: Size/Name -> Stage 2: Sparse 3×64KB -> Stage 3: Targeted Full SHA-256)
+  // Mode 4: metadata candidate and comparison groups; no file content is read.
   const duplicateGroups = useMemo(() => {
     const q = localFilter.trim().toLowerCase();
     const map = new Map<string, LocalFileItem[]>();
@@ -976,7 +957,7 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
         list.push(f);
         map.set(key, list);
       } else {
-        const key = `exact::${f.nameNorm}::${f.size}`;
+        const key = `candidate::${metadataCandidateKey(f.name, f.size)}`;
         const list = map.get(key) ?? [];
         list.push(f);
         map.set(key, list);
@@ -987,10 +968,8 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
       key: string;
       title: string;
       size: number;
-      excessBytes: number;
+      candidateBytes: number;
       items: LocalFileItem[];
-      sparseVerdict: 'unverified' | 'confirmed_same' | 'different_content' | 'partial';
-      fullVerdict: 'unverified' | 'confirmed_same' | 'different_content' | 'partial';
     }[] = [];
 
     for (const [key, list] of map.entries()) {
@@ -1005,26 +984,7 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
       }
 
       const sorted = [...list].sort((a, b) => b.size - a.size || a.relativePath.length - b.relativePath.length);
-      const excessBytes =
-        dupCriterion === 'same_name_diff_size'
-          ? sorted.slice(1).reduce((acc, x) => acc + x.size, 0)
-          : sorted[0].size * (sorted.length - 1);
-
-      const sHashes = sorted.map((it) => partialHashes[it.id]).filter(Boolean);
-      let sparseVerdict: 'unverified' | 'confirmed_same' | 'different_content' | 'partial' = 'unverified';
-      if (sHashes.length === sorted.length) {
-        sparseVerdict = new Set(sHashes).size === 1 ? 'confirmed_same' : 'different_content';
-      } else if (sHashes.length > 0) {
-        sparseVerdict = 'partial';
-      }
-
-      const fHashes = sorted.map((it) => fullHashes[it.id]).filter(Boolean);
-      let fullVerdict: 'unverified' | 'confirmed_same' | 'different_content' | 'partial' = 'unverified';
-      if (fHashes.length === sorted.length) {
-        fullVerdict = new Set(fHashes).size === 1 ? 'confirmed_same' : 'different_content';
-      } else if (fHashes.length > 0) {
-        fullVerdict = 'partial';
-      }
+      const candidateBytes = sorted.reduce((acc, item) => acc + item.size, 0);
 
       groups.push({
         key,
@@ -1033,104 +993,18 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
             ? sorted.map((s) => s.name).slice(0, 2).join(' ≠ ')
             : sorted[0].name,
         size: sorted[0].size,
-        excessBytes,
+        candidateBytes,
         items: sorted,
-        sparseVerdict,
-        fullVerdict,
       });
     }
 
-    return groups.sort((a, b) => b.excessBytes - a.excessBytes);
-  }, [files, dupCriterion, localFilter, partialHashes, fullHashes]);
+    return groups.sort((a, b) => b.candidateBytes - a.candidateBytes);
+  }, [files, dupCriterion, localFilter]);
 
-  const totalDupExcessBytes = useMemo(
-    () => duplicateGroups.reduce((acc, g) => acc + g.excessBytes, 0),
+  const totalCandidateBytes = useMemo(
+    () => duplicateGroups.reduce((acc, g) => acc + g.candidateBytes, 0),
     [duplicateGroups]
   );
-
-  // Stage 2: Sparse 3×64 KB check across all candidate groups (192 KB max read per file)
-  const handleRunSparseFingerprints = async () => {
-    const candidates = duplicateGroups.flatMap((g) => g.items).filter((it) => it.fileObj);
-    if (candidates.length === 0) {
-      onNotify(
-        t(
-          'Откройте реальную папку ПК кнопкой «Открыть папку / диск ПК», чтобы вычислить отпечатки 3×64 КБ по реальным файлам.',
-          'Open a real PC folder via "Open PC Folder / Drive" to compute 3×64 KB fingerprints on local files.'
-        ),
-        'info'
-      );
-      return;
-    }
-    setHashingSparse(true);
-    try {
-      const next: Record<string, string> = { ...partialHashes };
-      for (const item of candidates.slice(0, 400)) {
-        if (item.fileObj && !next[item.id]) {
-          next[item.id] = await computeSparse3x64kHash(item.fileObj);
-        }
-      }
-      setPartialHashes(next);
-      onNotify(
-        t(
-          'Отпечатки 3×64 КБ (начало + середина + хвост) вычислены мгновенно без чтения всего объёма.',
-          'Sparse 3×64 KB fingerprints (head + mid + tail) computed without full-disk reads.'
-        ),
-        'success'
-      );
-    } finally {
-      setHashingSparse(false);
-    }
-  };
-
-  // Stage 3: Targeted Full Byte-by-Byte SHA-256 on ONE selected group before deletion
-  const handleRunFullShaForGroup = async (groupKey: string, items: LocalFileItem[]) => {
-    const withFiles = items.filter((i) => i.fileObj);
-    if (withFiles.length === 0) {
-      onNotify(
-        t(
-          'Побайтовый SHA-256 доступен для реальных папок ПК (откройте папку кнопкой сверху).',
-          'Full byte-by-byte SHA-256 works on real folders opened from your PC.'
-        ),
-        'info'
-      );
-      return;
-    }
-    abortFullHashRef.current = false;
-    setFullHashingGroupKey(groupKey);
-    setFullHashProgressPct(0);
-
-    const totalBytes = withFiles.reduce((acc, f) => acc + f.size, 0) || 1;
-    let completedPriorFilesBytes = 0;
-
-    try {
-      const next: Record<string, string> = { ...fullHashes };
-      for (const item of withFiles) {
-        if (!item.fileObj) continue;
-        const digest = await computeFullFileVerifyDigest(
-          item.fileObj,
-          (fileOffset) => {
-            const pct = Math.min(100, Math.round(((completedPriorFilesBytes + fileOffset) / totalBytes) * 100));
-            setFullHashProgressPct(pct);
-          },
-          () => abortFullHashRef.current
-        );
-        if (digest === null) {
-          onNotify(t('Побайтовая проверка остановлена.', 'Full verification cancelled.'), 'info');
-          return;
-        }
-        next[item.id] = digest;
-        completedPriorFilesBytes += item.size;
-      }
-      setFullHashes(next);
-      onNotify(
-        t('Побайтовый SHA-256 выбранной группы подтверждён.', 'Full byte-by-byte SHA-256 verified for group.'),
-        'success'
-      );
-    } finally {
-      setFullHashingGroupKey(null);
-      setFullHashProgressPct(0);
-    }
-  };
 
   // Mode 6: Baseline Diff ("What grew?")
   const handleSaveBaseline = () => {
@@ -1139,24 +1013,23 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
     for (const [fp, node] of dirMap.entries()) {
       folders[fp || '__root__'] = node.size;
     }
-    const payload: BaselineStore = { savedAtMs: Date.now(), folders };
-    try {
-      window.localStorage.setItem(`${BASELINE_STORAGE_PREFIX}${rootLabel}`, JSON.stringify(payload));
-      setBaseline(payload);
-      onNotify(
-        t(
-          `База размеров папок «${rootLabel}» сохранена локально в браузере.`,
-          `Folder size baseline for "${rootLabel}" saved in browser storage.`
-        ),
-        'success'
-      );
-    } catch (err) {
-      onNotify((err as Error).message, 'error');
-    }
+    const payload: BaselineStore = {
+      sourceSessionId: sourceSessionIdRef.current,
+      savedAtMs: Date.now(),
+      folders,
+    };
+    setBaseline(payload);
+    onNotify(
+      t(
+        `База размеров «${rootLabel}» запомнена только до выбора другой папки или закрытия вкладки.`,
+        `Folder-size baseline for "${rootLabel}" is kept for this source session only.`
+      ),
+      'success'
+    );
   };
 
   const diffRows = useMemo(() => {
-    if (!baseline) return [];
+    if (!baseline || baseline.sourceSessionId !== sourceSessionIdRef.current) return [];
     const allKeys = new Set<string>([
       ...Object.keys(baseline.folders),
       ...Array.from(dirMap.keys()).map((k) => k || '__root__'),
@@ -1193,36 +1066,32 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
   // and NEVER deletes the user's files. Metadata-only matches are not backups.
   const handleExportReviewCsv = () => {
     if (effectiveStagedItems.length === 0) return;
-    const escapeCsv = (value: string) => {
-      const safe = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
-      return `"${safe.replace(/"/g, '""')}"`;
-    };
     const rows = effectiveStagedItems.map((item) =>
       [item.isDir ? 'DIR' : 'FILE', item.path, String(item.size), formatBytes(item.size)]
-        .map(escapeCsv).join(',')
+        .map(escapeReviewCsvCell).join(',')
     );
     triggerDownload('whereisit-review-candidates.csv',
       ['Kind,RelativePath,SizeBytes,SizeHuman', ...rows].join('\n'),
       'text/csv;charset=utf-8');
-    onNotify(t('Список кандидатов сохранён. Не удаляйте файлы без независимой проверки копий.',
-      'Review list exported. Verify copies independently before deleting any files.'), 'info');
+    onNotify(t('Список кандидатов сохранён для ручной проверки. CSV не выполняет действий с файлами.',
+      'Review list exported for manual review. The CSV does not perform file operations.'), 'info');
   };
 
-  const backupSummary = useMemo(() => {
-    let backedFiles = 0;
-    let backedBytes = 0;
-    let uniqueFiles = 0;
-    let uniqueBytes = 0;
+  const usbCandidateSummary = useMemo(() => {
+    let candidateFiles = 0;
+    let candidateBytes = 0;
+    let noCandidateFiles = 0;
+    let noCandidateBytes = 0;
     for (const f of files) {
       if ((usbMatches[f.relativePath]?.length ?? 0) > 0) {
-        backedFiles++;
-        backedBytes += f.size;
+        candidateFiles++;
+        candidateBytes += f.size;
       } else {
-        uniqueFiles++;
-        uniqueBytes += f.size;
+        noCandidateFiles++;
+        noCandidateBytes += f.size;
       }
     }
-    return { backedFiles, backedBytes, uniqueFiles, uniqueBytes };
+    return { candidateFiles, candidateBytes, noCandidateFiles, noCandidateBytes };
   }, [files, usbMatches]);
 
   const bloatLabels: Record<BloatCategory, { title: string; desc: string }> = {
@@ -1255,7 +1124,7 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
       {/* Top Bar: Clear Single Primary Action + Ephemeral Guarantee */}
       <div className="border border-slate-200 dark:border-slate-800 rounded-lg bg-white dark:bg-slate-950 px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2.5">
         <div className="flex flex-wrap items-center gap-2">
-          <label className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-blue-600 text-white text-xs font-medium hover:bg-blue-500 transition-colors whitespace-nowrap shrink-0 cursor-pointer">
+          <label className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-blue-600 text-white text-xs font-medium hover:bg-blue-500 transition-colors whitespace-nowrap shrink-0 ${scanning ? 'opacity-60 pointer-events-none' : 'cursor-pointer'}`}>
             <FolderUp className="w-3.5 h-3.5" />
             <span>
               {scanning
@@ -1268,6 +1137,7 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
               webkitdirectory=""
               directory=""
               multiple
+              disabled={scanning}
               onChange={handleWebkitDirectoryPick}
               className="hidden"
             />
@@ -1277,10 +1147,16 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
             <button
               type="button"
               onClick={() => void handleFsApiPick()}
+              disabled={scanning}
               className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-medium text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap shrink-0 cursor-pointer"
             >
               <FolderOpen className="w-3.5 h-3.5 text-blue-500" />
               {t('Прямой доступ: только чтение', 'Direct FS Access (Read-only)')}
+            </button>
+          )}
+          {scanning && (
+            <button type="button" onClick={cancelLocalScan} className="px-2.5 py-1.5 rounded-md border border-rose-400 text-rose-600 dark:text-rose-400 text-xs">
+              {t(`Остановить чтение (${scanCount})`, `Stop reading (${scanCount})`)}
             </button>
           )}
         </div>
@@ -1307,8 +1183,8 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
             <Info className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
             <span>
               {t(
-                'Показан демонстрационный пример папок для обзора инструментов (TreeSize + DaisyDisk + сверка с 60 USB). Нажмите «Открыть папку / диск ПК», чтобы загрузить реальную папку с вашего компьютера.',
-                'Showing a demo folder layout so you can preview TreeSize + DaisyDisk + 60-USB backup check. Click "Open PC Folder / Drive" to analyze a real folder on your computer.'
+                'Показан демонстрационный пример для обзора дерева, карты и списка кандидатов. Нажмите «Открыть папку / диск ПК», чтобы просмотреть метаданные выбранной папки.',
+                'Showing a demo layout for the tree, map, and candidate review. Choose "Open PC Folder / Drive" to inspect metadata from a folder you select.'
               )}
             </span>
           </div>
@@ -1321,10 +1197,10 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
           {(
             [
               ['tree_map', t('Дерево + Карта', 'Tree + Sunburst')],
-              ['bloat', t('Кэши и мусор', 'Bloat & Caches')],
+              ['bloat', t('Кэши и сборки', 'Caches & Builds')],
               ['largest', t('Крупные и старые', 'Heavy & Stale')],
-              ['duplicates', `${t('Дубликаты', 'Duplicates')} (${duplicateGroups.length})`],
-              ['backup', t('Сверка с 60 USB', 'USB Backup Check')],
+              ['duplicates', `${t('Кандидаты по метаданным', 'Metadata Candidates')} (${duplicateGroups.length})`],
+              ['backup', t('Кандидаты на USB', 'USB Candidates')],
               ['diff', t('Рост папок', 'Growth Diff')],
             ] as const
           ).map(([id, label]) => (
@@ -1358,8 +1234,15 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
             className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 cursor-pointer whitespace-nowrap"
           >
             <HardDrive className="w-3.5 h-3.5 text-teal-500" />
-            {checkingUsb ? t('Сверка…', 'Checking…') : t('Сверить с 60 USB', 'Check 60 USBs')}
+            {checkingUsb
+              ? t(`Кандидаты ${usbCheckProgress?.processed ?? 0}/${usbCheckProgress?.total ?? files.length}`, `Candidates ${usbCheckProgress?.processed ?? 0}/${usbCheckProgress?.total ?? files.length}`)
+              : t('Искать на USB', 'Find on USB')}
           </button>
+          {checkingUsb && (
+            <button type="button" onClick={cancelUsbMatch} className="text-xs text-rose-600 dark:text-rose-400 hover:underline">
+              {t('Отменить', 'Cancel')}
+            </button>
+          )}
           <button
             type="button"
             onClick={handleSaveBaseline}
@@ -1500,8 +1383,8 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
               </div>
               <div className="text-[11px] text-slate-500 text-center">
                 {t(
-                  'Клик по папке — войти внутрь · Клик по файлу — добавить в список очистки',
-                  'Click folder to zoom in · Click file to add to cleanup list'
+                  'Клик по папке — войти внутрь · Клик по файлу — добавить в список проверки',
+                  'Click a folder to open it · Click a file to add it to the review list'
                 )}
               </div>
             </div>
@@ -1515,7 +1398,7 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
                     <th className="py-1.5 px-2 font-medium text-right whitespace-nowrap">{t('Доля', 'Share')}</th>
                     <th className="py-1.5 px-2.5 font-medium text-right whitespace-nowrap">{t('Объём', 'Size')}</th>
                     <th className="py-1.5 px-2 font-medium text-right whitespace-nowrap hidden sm:table-cell">{t('Файлов', 'Files')}</th>
-                    <th className="py-1.5 px-2 font-medium whitespace-nowrap hidden md:table-cell">{t('Копия на USB', 'USB Backup')}</th>
+                    <th className="py-1.5 px-2 font-medium whitespace-nowrap hidden md:table-cell">{t('Кандидаты на USB', 'USB Candidates')}</th>
                     <th className="py-1.5 px-2 font-medium text-right whitespace-nowrap">{t('В план', 'Stage')}</th>
                   </tr>
                 </thead>
@@ -1525,9 +1408,9 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
                       const d = r.dir;
                       const pct = activeDirNode.size > 0 ? (d.size / activeDirNode.size) * 100 : 0;
                       const isStaged = stagedPaths.has(d.fullPath);
-                      const bStats = folderBackupStats.get(d.fullPath);
-                      const hasAnyBackup = (bStats?.backedBytes ?? 0) > 0;
-                      const fullyBacked = hasAnyBackup && (bStats?.uniqueBytes ?? 0) === 0;
+                      const bStats = folderCandidateStats.get(d.fullPath);
+                      const hasAnyCandidate = (bStats?.backedBytes ?? 0) > 0;
+                      const allHaveCandidates = hasAnyCandidate && (bStats?.uniqueBytes ?? 0) === 0;
 
                       return (
                         <tr
@@ -1591,13 +1474,15 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
                           </td>
 
                           <td className="py-1.5 px-2 text-[11px] whitespace-nowrap hidden md:table-cell">
-                            {fullyBacked ? (
+                            {!usbCheckedAt ? (
+                              <span className="text-slate-400">{checkingUsb ? t('Поиск…', 'Searching…') : t('Не проверено', 'Not checked')}</span>
+                            ) : allHaveCandidates ? (
                               <span className="text-emerald-600 dark:text-emerald-400">
-                                {t('Весь на USB', 'All on USB')}
+                                {t('Есть кандидаты для всех файлов', 'Candidates for all files')}
                               </span>
-                            ) : hasAnyBackup ? (
+                            ) : hasAnyCandidate ? (
                               <span className="text-blue-600 dark:text-blue-400">
-                                {t('Частично', 'Partial')} ({formatBytes(bStats!.backedBytes)})
+                                {t('Частичные совпадения-кандидаты', 'Some metadata candidates')} ({formatBytes(bStats!.backedBytes)})
                               </span>
                             ) : (
                               <span className="text-slate-400">—</span>
@@ -1657,10 +1542,10 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
                         <td className="py-1.5 px-2 text-[11px] font-mono whitespace-nowrap hidden md:table-cell">
                           {matches.length > 0 ? (
                             <span className="text-emerald-600 dark:text-emerald-400">
-                              USB #{matches.map((m) => m.volumeId).join(', #')}
+                              {t('Кандидат:', 'Candidate:')} USB #{matches.map((m) => m.volumeId).join(', #')}
                             </span>
                           ) : (
-                            <span className="text-amber-600 dark:text-amber-400">{t('Нет на USB', 'Unique')}</span>
+                            <span className="text-amber-600 dark:text-amber-400">{!usbCheckedAt ? (checkingUsb ? t('Поиск…', 'Searching…') : t('Не проверено', 'Not checked')) : t('Кандидат не найден', 'No metadata candidate')}</span>
                           )}
                         </td>
                         <td className="py-1.5 px-2 text-right whitespace-nowrap">
@@ -1735,7 +1620,7 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
                   <th className="py-1.5 px-3 font-medium">{t('Файл и путь', 'File & Path')}</th>
                   <th className="py-1.5 px-2.5 font-medium text-right whitespace-nowrap">{t('Размер', 'Size')}</th>
                   <th className="py-1.5 px-2.5 font-medium text-right whitespace-nowrap">{t('Возраст', 'Age')}</th>
-                  <th className="py-1.5 px-2.5 font-medium whitespace-nowrap">{t('USB-копии', 'USB Backups')}</th>
+                  <th className="py-1.5 px-2.5 font-medium whitespace-nowrap">{t('Кандидаты на USB', 'USB Candidates')}</th>
                   <th className="py-1.5 px-3 font-medium text-right whitespace-nowrap">{t('В план', 'Stage')}</th>
                 </tr>
               </thead>
@@ -1759,10 +1644,10 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
                       <td className="py-1.5 px-2.5 font-mono text-[11px] whitespace-nowrap">
                         {matches.length > 0 ? (
                           <span className="text-emerald-600 dark:text-emerald-400">
-                            USB #{matches.map((m) => m.volumeId).join(', #')}
+                            {t('Кандидат:', 'Candidate:')} USB #{matches.map((m) => m.volumeId).join(', #')}
                           </span>
                         ) : (
-                          <span className="text-amber-600 dark:text-amber-400">{t('Нет на USB', 'No USB copy')}</span>
+                          <span className="text-amber-600 dark:text-amber-400">{!usbCheckedAt ? (checkingUsb ? t('Поиск…', 'Searching…') : t('Не проверено', 'Not checked')) : t('Кандидат не найден', 'No metadata candidate')}</span>
                         )}
                       </td>
                       <td className="py-1.5 px-3 text-right whitespace-nowrap">
@@ -1871,7 +1756,7 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
         </div>
       )}
 
-      {/* Mode 4: 3-Stage In-Disk Duplicate Engine */}
+      {/* Mode 4: Local metadata candidates */}
       {activeMode === 'duplicates' && (
         <div className="border border-slate-200 dark:border-slate-800 rounded-lg bg-white dark:bg-slate-950 overflow-hidden">
           <div className="px-3.5 py-2.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50 flex flex-col gap-2 text-xs">
@@ -1880,9 +1765,9 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
               <div className="inline-flex flex-wrap p-0.5 rounded bg-slate-200/70 dark:bg-slate-800 gap-0.5">
                 {(
                   [
-                    ['name_size', t('Точные (имя + размер)', 'Exact (Name + Size)')],
-                    ['size_renamed', t('Переименованные (размер ≥ 1 МБ)', 'Renamed (Exact Size ≥ 1 MB)')],
-                    ['same_name_diff_size', t('Разные версии (одно имя)', 'Versions (Same Name, Diff Size)')],
+                    ['name_size', t('Имя + размер', 'Name + Size')],
+                    ['size_renamed', t('Размер совпал, имена разные', 'Same size, different names')],
+                    ['same_name_diff_size', t('Одно имя, размеры разные', 'Same name, different sizes')],
                   ] as const
                 ).map(([crit, lbl]) => (
                   <button
@@ -1902,66 +1787,28 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
 
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-mono tabular-nums text-blue-600 dark:text-blue-400 font-semibold">
-                  {duplicateGroups.length} {t('групп', 'groups')} · {t('избыток', 'excess')}{' '}
-                  {formatBytes(totalDupExcessBytes)}
+                {duplicateGroups.length} {dupCriterion === 'name_size' ? t('групп-кандидатов', 'candidate groups') : t('групп для сравнения', 'comparison groups')} · {t('объём файлов в группах', 'bytes in groups')}{' '}
+                  {formatBytes(totalCandidateBytes)}
                 </span>
-
-                <button
-                  type="button"
-                  onClick={() => void handleRunSparseFingerprints()}
-                  disabled={hashingSparse || duplicateGroups.length === 0}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 cursor-pointer whitespace-nowrap"
-                >
-                  <Sparkles className="w-3.5 h-3.5 text-blue-500" />
-                  {hashingSparse
-                    ? t('Чтение 3×64 КБ…', 'Reading 3×64 KB…')
-                    : t('Этап 2: Отпечаток 3×64 КБ', 'Stage 2: 3×64 KB Fingerprint')}
-                </button>
-
-                {dupCriterion !== 'same_name_diff_size' && (
-                  <button
-                    type="button"
-                    disabled={duplicateGroups.length === 0}
-                    onClick={() => {
-                      setStagedPaths((prev) => {
-                        const next = new Set(prev);
-                        for (const grp of duplicateGroups) {
-                          for (const extra of grp.items.slice(1)) next.add(extra.relativePath);
-                        }
-                        return next;
-                      });
-                      onNotify(
-                        t(
-                          'Лишние копии добавлены в список очистки (по 1 оригиналу оставлено).',
-                          'Redundant copies added to cleanup list (1 original kept per group).'
-                        ),
-                        'success'
-                      );
-                    }}
-                    className="px-2.5 py-1 rounded bg-blue-600 text-white font-medium hover:bg-blue-500 disabled:opacity-40 cursor-pointer whitespace-nowrap"
-                  >
-                    {t('Отобрать лишние копии', 'Stage Extra Copies')}
-                  </button>
-                )}
               </div>
             </div>
 
             <div className="text-[11px] text-slate-500">
-              {t(
-                'Конвейер скорости: 1) Мгновенная группировка по байтовому размеру (0 байт чтения) → 2) Быстрый срез 3×64 КБ (начало+середина+хвост, макс. 192 КБ на файл) → 3) Полный побайтовый SHA-256 точечно только для выбранной группы перед удалением.',
-                'Speed funnel: 1) Instant exact byte-size grouping (0 disk reads) → 2) Fast 3×64 KB sample (head+mid+tail, max 192 KB/file) → 3) Full byte-by-byte SHA-256 on demand per group right before deletion.'
-              )}
+              {dupCriterion === 'name_size'
+                ? t('Совпадают нормализованное имя и точный размер в байтах. Это кандидаты по метаданным, не подтверждение одинакового содержимого.', 'Groups match NFC-normalized, trimmed, case-insensitive names and exact byte size. These are metadata candidates, not proof of equal content.')
+                : dupCriterion === 'size_renamed'
+                  ? t('Только одинаковый размер (≥ 1 МБ) и разные имена: слабый список для ручного просмотра, не копии.', 'Same size (≥ 1 MB) and different names only: a weak review list, not copy matches.')
+                  : t('Одно нормализованное имя при разных размерах: сравнение вариантов, не копий.', 'Same normalized name with different sizes: version comparison, not copy matching.')}
             </div>
           </div>
 
           <div className="divide-y divide-slate-200 dark:divide-slate-800 max-h-[520px] overflow-auto">
             {duplicateGroups.length === 0 ? (
               <div className="py-12 text-center text-xs text-slate-500">
-                {t('По выбранному критерию дубликатов не обнаружено.', 'No duplicates found for this criterion.')}
+                {t('По выбранному правилу нет групп-кандидатов.', 'No candidate groups match this criterion.')}
               </div>
             ) : (
               duplicateGroups.map((grp) => {
-                const isRunningFull = fullHashingGroupKey === grp.key;
                 return (
                   <div key={grp.key} className="p-3 text-xs flex flex-col gap-1.5">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1969,53 +1816,13 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
                         <Layers className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                         <span className="font-semibold text-slate-900 dark:text-white truncate">{grp.title}</span>
                         <span className="font-mono text-slate-500">
-                          · {grp.items.length}× · {formatExactBytes(grp.size, lang)}
+                          · {grp.items.length} {t('файла', 'files')} · {formatExactBytes(grp.size, lang)} {dupCriterion === 'same_name_diff_size' ? t('(максимальный размер)', '(largest size)') : ''}
                         </span>
-
-                        {grp.fullVerdict === 'confirmed_same' ? (
-                          <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
-                            · {t('100% SHA-256 совпал', '100% SHA-256 match')}
-                          </span>
-                        ) : grp.fullVerdict === 'different_content' ? (
-                          <span className="text-red-600 dark:text-red-400 font-semibold">
-                            · {t('SHA-256 отличается!', 'SHA-256 differs!')}
-                          </span>
-                        ) : grp.sparseVerdict === 'confirmed_same' ? (
-                          <span className="text-teal-600 dark:text-teal-400 font-medium">
-                            · {t('3×64 КБ совпал', '3×64 KB match')}
-                          </span>
-                        ) : grp.sparseVerdict === 'different_content' ? (
-                          <span className="text-amber-600 dark:text-amber-400 font-medium">
-                            · {t('3×64 КБ отличается', '3×64 KB differs')}
-                          </span>
-                        ) : null}
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0">
-                        {isRunningFull ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              abortFullHashRef.current = true;
-                            }}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-red-400 text-red-600 dark:text-red-400 font-mono text-[11px] cursor-pointer"
-                          >
-                            <Square className="w-2.5 h-2.5" />
-                            {t(`Стоп (${fullHashProgressPct}%)`, `Stop (${fullHashProgressPct}%)`)}
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            disabled={Boolean(fullHashingGroupKey)}
-                            onClick={() => void handleRunFullShaForGroup(grp.key, grp.items)}
-                            className="px-2 py-0.5 rounded border border-slate-300 dark:border-slate-700 text-[11px] text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
-                          >
-                            {t('Этап 3: Полный SHA-256 группы', 'Stage 3: Full SHA-256 Group')}
-                          </button>
-                        )}
-
                         <span className="font-mono font-semibold tabular-nums text-blue-600 dark:text-blue-400">
-                          +{formatBytes(grp.excessBytes)}
+                          {formatBytes(grp.candidateBytes)}
                         </span>
                       </div>
                     </div>
@@ -2023,25 +1830,15 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
                     <div className="pl-5 flex flex-col gap-1">
                       {grp.items.map((item, idx) => {
                         const isStaged = stagedPaths.has(item.relativePath);
-                        const itemFull = fullHashes[item.id];
-                        const itemSparse = partialHashes[item.id];
                         return (
                           <div key={item.id} className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2 min-w-0">
                               <span className="font-mono text-[11px] text-slate-600 dark:text-slate-400 truncate">
-                                {idx === 0 && dupCriterion !== 'same_name_diff_size'
-                                  ? `[${t('оригинал', 'keep')}] `
-                                  : ''}
                                 {item.relativePath}
                               </span>
                               {dupCriterion === 'same_name_diff_size' && (
                                 <span className="font-mono text-[11px] text-slate-500 shrink-0">
                                   ({formatBytes(item.size)})
-                                </span>
-                              )}
-                              {(itemFull || itemSparse) && (
-                                <span className="font-mono text-[10px] text-slate-400 shrink-0">
-                                  {itemFull ? `sha:${itemFull.slice(0, 10)}` : `3x64k:${itemSparse?.slice(0, 10)}`}
                                 </span>
                               )}
                             </div>
@@ -2068,58 +1865,64 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
         </div>
       )}
 
-      {/* Mode 5: Read-Only USB Backup Coverage */}
+      {/* Mode 5: Read-Only USB metadata candidates */}
       {activeMode === 'backup' && (
         <div className="flex flex-col gap-3">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="border border-slate-200 dark:border-slate-800 rounded-lg bg-white dark:bg-slate-950 p-3">
-              <div className="text-xs text-slate-500">{t('Совпадения по метаданным на USB', 'USB metadata candidates')}</div>
+              <div className="text-xs text-slate-500">{t('Файлы с кандидатом по имени и размеру', 'Files with name-and-size candidates')}</div>
               <div className="mt-1 font-display text-lg font-bold font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
-                {formatBytes(backupSummary.backedBytes)}
+                {usbCheckedAt ? formatBytes(usbCandidateSummary.candidateBytes) : '—'}
               </div>
               <div className="text-[11px] font-mono text-slate-500">
-                {backupSummary.backedFiles} {t('файл. — наличие резервной копии НЕ доказано', 'files — backup is NOT verified')}
+                {usbCheckedAt
+                  ? `${usbCandidateSummary.candidateFiles} ${t('файл.; равенство содержимого и резерв не установлены', 'files; content equality and backup are unverified')}`
+                  : checkingUsb ? t('Поиск…', 'Searching…') : t('Не проверено', 'Not checked')}
               </div>
             </div>
 
             <div className="border border-slate-200 dark:border-slate-800 rounded-lg bg-white dark:bg-slate-950 p-3">
               <div className="text-xs text-slate-500">{t('Без найденного совпадения', 'No metadata match found')}</div>
               <div className="mt-1 font-display text-lg font-bold font-mono tabular-nums text-amber-600 dark:text-amber-400">
-                {formatBytes(backupSummary.uniqueBytes)}
+                {usbCheckedAt ? formatBytes(usbCandidateSummary.noCandidateBytes) : '—'}
               </div>
               <div className="text-[11px] font-mono text-slate-500">
-                {backupSummary.uniqueFiles} {t('файл. — требуется независимая проверка', 'files — verify independently')}
+                {usbCheckedAt
+                  ? `${usbCandidateSummary.noCandidateFiles} ${t('файл. без найденного совпадения по метаданным', 'files with no metadata match found')}`
+                  : checkingUsb ? t('Поиск…', 'Searching…') : t('Не проверено', 'Not checked')}
               </div>
             </div>
 
             <div className="border border-slate-200 dark:border-slate-800 rounded-lg bg-white dark:bg-slate-950 p-3 flex flex-col justify-between">
               <div className="text-xs text-slate-500">
-                {t('Режим сверки (без записи в каталог)', 'Check Mode (Zero Catalog Writes)')}
+                {t('Статус поиска (без записи в каталог)', 'Candidate lookup status (no catalog writes)')}
               </div>
               <div className="text-xs text-slate-800 dark:text-slate-200">
                 {usbCheckedAt
-                  ? t(`Сверено с ${snapshot.volumes.length} USB-дисками`, `Checked against ${snapshot.volumes.length} USB disks`)
-                  : t('Ожидание сверки', 'Pending')}
+                  ? t(`Диски с кандидатами: ${new Set(Object.values(usbMatches).flat().map((hit) => hit.volumeId)).size} из ${snapshot.volumes.length}`, `Disks with candidates: ${new Set(Object.values(usbMatches).flat().map((hit) => hit.volumeId)).size} of ${snapshot.volumes.length}`)
+                  : checkingUsb
+                    ? t(`Поиск: ${usbCheckProgress?.processed ?? 0}/${usbCheckProgress?.total ?? files.length}`, `Searching: ${usbCheckProgress?.processed ?? 0}/${usbCheckProgress?.total ?? files.length}`)
+                    : t('Не проверено', 'Not checked')}
               </div>
               <button
                 type="button"
                 onClick={() => {
-                  const backedPaths = files
+                  const candidatePaths = files
                     .filter((f) => (usbMatches[f.relativePath]?.length ?? 0) > 0)
                     .map((f) => f.relativePath);
                   setStagedPaths((prev) => {
                     const next = new Set(prev);
-                    for (const p of backedPaths) next.add(p);
+                    for (const p of candidatePaths) next.add(p);
                     return next;
                   });
                   onNotify(
-                    t(`Отобрано ${backedPaths.length} кандидатов для проверки.`, `Staged ${backedPaths.length} metadata candidates for review.`),
+                    t(`В список проверки добавлено кандидатов: ${candidatePaths.length}. Резерв не подтверждён.`, `Added ${candidatePaths.length} metadata candidates to the review list. Backup is unverified.`),
                     'success'
                   );
                 }}
                 className="text-left text-xs text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
               >
-                {t('Отобрать кандидатов для проверки →', 'Stage metadata candidates for review →')}
+                {t('Добавить кандидатов в список проверки →', 'Add candidates to review list →')}
               </button>
             </div>
           </div>
@@ -2130,14 +1933,15 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
                 {(
                   [
                     ['all', t('Все файлы', 'All Files')],
-                    ['backed_up', t('Есть на USB', 'On USB')],
-                    ['unbacked', t('Нет на USB', 'Not on USB')],
+                    ['candidate', t('Есть кандидат', 'Has candidate')],
+                    ['no_candidate', t('Нет кандидата', 'No candidate')],
                   ] as const
                 ).map(([k, lbl]) => (
                   <button
                     key={k}
                     type="button"
                     onClick={() => setBackupFilter(k)}
+                    disabled={k !== 'all' && (!usbCheckedAt || checkingUsb)}
                     className={`px-2.5 py-0.5 rounded cursor-pointer ${
                       backupFilter === k
                         ? 'bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-medium'
@@ -2148,7 +1952,7 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
                   </button>
                 ))}
               </div>
-              <span className="text-slate-500">{t('Сравнение по имени + точному числу байт', 'Matched by name + exact byte count')}</span>
+              <span className="text-slate-500">{t('Ключ: имя NFC, без краёв и регистра + точный размер; содержимое не проверяется', 'Key: NFC name, trimmed and case-insensitive + exact byte size; content is not checked')}</span>
             </div>
 
             <div className="overflow-auto max-h-[430px]">
@@ -2157,7 +1961,7 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
                   <tr>
                     <th className="py-1.5 px-3 font-medium">{t('Локальный файл', 'Local File')}</th>
                     <th className="py-1.5 px-2.5 font-medium text-right whitespace-nowrap">{t('Размер', 'Size')}</th>
-                    <th className="py-1.5 px-3 font-medium">{t('Найдено в каталоге USB', 'Found on USB Disks')}</th>
+                    <th className="py-1.5 px-3 font-medium">{t('Совпавшие диски-кандидаты', 'Candidate disks')}</th>
                     <th className="py-1.5 px-3 font-medium text-right whitespace-nowrap">{t('В план', 'Stage')}</th>
                   </tr>
                 </thead>
@@ -2165,8 +1969,8 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
                   {files
                     .filter((f) => {
                       const has = (usbMatches[f.relativePath]?.length ?? 0) > 0;
-                      if (backupFilter === 'backed_up' && !has) return false;
-                      if (backupFilter === 'unbacked' && has) return false;
+                      if (backupFilter === 'candidate' && !has) return false;
+                      if (backupFilter === 'no_candidate' && has) return false;
                       const q = localFilter.trim().toLowerCase();
                       if (q && !f.relativePath.toLowerCase().includes(q)) return false;
                       return true;
@@ -2193,7 +1997,7 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
                             ) : (
                               <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400">
                                 <ShieldAlert className="w-3 h-3" />
-                                {t('Нет резервной копии на USB', 'No USB backup')}
+                                {!usbCheckedAt ? (checkingUsb ? t('Поиск…', 'Searching…') : t('Не проверено', 'Not checked')) : t('Совпадение не найдено', 'No metadata match found')}
                               </span>
                             )}
                           </td>
@@ -2296,16 +2100,16 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
         </div>
       )}
 
-      {/* Docked DaisyDisk Cleanup Plan Collector */}
+      {/* Review list collector: informational only, never a cleanup plan */}
       {effectiveStagedItems.length > 0 && (
         <div className="border border-amber-500/60 dark:border-amber-500/50 rounded-lg bg-amber-50/80 dark:bg-slate-900 px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3 text-xs">
             <span className="font-semibold text-slate-900 dark:text-white">
-              {t('Список очистки:', 'Cleanup Plan:')} {effectiveStagedItems.length}{' '}
+              {t('Список проверки:', 'Review list:')} {effectiveStagedItems.length}{' '}
               {t('объектов', 'items')}
             </span>
             <span className="font-mono font-bold tabular-nums text-amber-700 dark:text-amber-400">
-              {t('Освободится:', 'Reclaimable:')} {formatBytes(totalStagedBytes)}
+              {t('Объём выбранных элементов:', 'Selected item size:')} {formatBytes(totalStagedBytes)}
             </span>
             <button
               type="button"
@@ -2318,7 +2122,7 @@ export const LocalDiskAnalyzer: React.FC<LocalDiskAnalyzerProps> = ({ snapshot, 
 
           <div className="flex flex-wrap items-center gap-1.5 text-xs">
             <span className="text-slate-500 hidden sm:inline">
-              {t('Кандидаты на проверку:', 'Review candidates:')}
+              {t('Только список метаданных:', 'Metadata list only:')}
             </span>
             <button
               type="button"
