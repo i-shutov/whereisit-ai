@@ -59,6 +59,7 @@ export const ArchiveSlicesView: React.FC<ArchiveSlicesViewProps> = ({
 
   const loadSlices = useCallback(async (ticket: ScopedRequestTicket) => {
     const gate = requestGateRef.current!;
+    setData(null); // prevent values from the previous scope being shown as current
     setLoading(true);
     try {
       const resp = await fetch('/api/catalog/slices', {
@@ -156,27 +157,27 @@ export const ArchiveSlicesView: React.FC<ArchiveSlicesViewProps> = ({
   const translateTier = (tier: 'single' | 'paired' | 'excessive') => {
     if (tier === 'single') {
       return {
-        label: t('1 копия (без резерва)', '1 copy (no backup)'),
+        label: t('Один экземпляр по метаданным', 'One metadata instance'),
         desc: t(
-          'Фильмы и видео без дублей на других дисках — приоритет для резервного копирования.',
-          'Videos present on a single USB drive only — highest priority for backup.'
+          'В каталоге нет совпадений по имени и размеру; резервная копия не подтверждена.',
+          'No name-and-size match was found; backup status is unknown.'
         ),
       };
     }
     if (tier === 'paired') {
       return {
-        label: t('2 копии (оптимальный резерв)', '2 copies (protected)'),
+        label: t('2 экземпляра-кандидата', '2 metadata candidates'),
         desc: t(
-          'Основной экземпляр + 1 резервная копия на другом носителе.',
-          'Primary file plus 1 redundant copy on another USB drive.'
+          'Совпадения метаданных на двух дисках; равенство и резерв не подтверждены.',
+          'Metadata matches on two disks; content equality and backup are unverified.'
         ),
       };
     }
     return {
-      label: t('3+ копии (избыточные дубли)', '3+ copies (excess duplicates)'),
+      label: t('3+ экземпляра-кандидата', '3+ metadata candidates'),
       desc: t(
-        'Видеофайлы, продублированные трижды и более — кандидаты на очистку места.',
-        'Video files duplicated 3 or more times — top candidates to reclaim space.'
+        'Три и более совпадений метаданных; проверьте каждый файл независимо.',
+        'Three or more metadata matches; verify each file independently.'
       ),
     };
   };
@@ -250,7 +251,7 @@ export const ArchiveSlicesView: React.FC<ArchiveSlicesViewProps> = ({
             {(
               [
                 ['overview', t('Видео-разрезы', 'Video Slices')],
-                ['duplicates', t('Дубликаты и резерв', 'Duplicates & Backup')],
+                ['duplicates', t('Совпадения-кандидаты', 'Metadata Candidates')],
                 ['volumes', t('Диски и ФС', 'USB Drives & FS')],
               ] as const
             ).map(([k, lbl]) => (
@@ -299,20 +300,20 @@ export const ArchiveSlicesView: React.FC<ArchiveSlicesViewProps> = ({
 
           <div className="border border-slate-200 dark:border-slate-800 rounded-md bg-white dark:bg-slate-950 p-3.5">
             <div className="text-xs text-slate-500 dark:text-slate-400">
-              {t('Уникальный логический объём', 'Unique Logical Size')}
+                {t('Оценка после группировки кандидатов', 'Candidate-Grouped Estimate')}
             </div>
             <div className="mt-1 font-display text-xl font-bold font-mono tabular-nums text-slate-900 dark:text-white">
               {formatBytes(data.uniqueLogicalBytes)}
             </div>
             <div className="mt-0.5 text-[11px] font-mono tabular-nums text-slate-500">
-              {t('Защищено копиями:', 'Protected by copies:')} {dupProtectionPct}%
+              {t('Совпадения метаданных:', 'Metadata candidate coverage:')} {dupProtectionPct}%
             </div>
           </div>
 
           <div className="border border-slate-200 dark:border-slate-800 rounded-md bg-white dark:bg-slate-950 p-3.5 flex flex-col justify-between">
             <div>
               <div className="text-xs text-slate-500 dark:text-slate-400">
-                {t('Побайтовые дубликаты файлов', 'Exact Byte Duplicate Excess')}
+                {t('Избыток по кандидатам имени и размера', 'Name-and-size candidate excess')}
               </div>
               <div className="mt-1 font-display text-xl font-bold font-mono tabular-nums text-blue-600 dark:text-blue-400">
                 {formatBytes(data.duplicateExcessBytes)}
@@ -323,14 +324,14 @@ export const ArchiveSlicesView: React.FC<ArchiveSlicesViewProps> = ({
               onClick={() => onJumpToSearch({ volumeId: scopedVolumeId, folderPrefix: null, query: 'dup:>1' })}
               className="mt-0.5 text-left text-xs text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
             >
-              {t('Открыть дубликаты в Поиске →', 'Open duplicates in Search →')}
+              {t('Открыть совпадения-кандидаты →', 'Open metadata candidates →')}
             </button>
           </div>
 
           <div className="border border-slate-200 dark:border-slate-800 rounded-md bg-white dark:bg-slate-950 p-3.5 flex flex-col justify-between">
             <div>
               <div className="text-xs text-slate-500 dark:text-slate-400">
-                {t('В единственной копии (без резерва)', 'Single Copy (No Backup)')}
+                {t('Без совпадений по имени и размеру', 'No name-and-size match')}
               </div>
               <div className="mt-1 font-display text-xl font-bold font-mono tabular-nums text-amber-600 dark:text-amber-400">
                 {formatBytes(data.singleCopyBytes)}
@@ -341,7 +342,7 @@ export const ArchiveSlicesView: React.FC<ArchiveSlicesViewProps> = ({
               onClick={() => onJumpToSearch({ volumeId: scopedVolumeId, folderPrefix: null, query: 'dup:1' })}
               className="mt-0.5 text-left text-xs text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
             >
-              {t('Показать видео без резерва →', 'Show unbacked videos →')}
+              {t('Показать без совпадений-кандидатов →', 'Show without candidate matches →')}
             </button>
           </div>
         </div>
@@ -359,7 +360,7 @@ export const ArchiveSlicesView: React.FC<ArchiveSlicesViewProps> = ({
               <div className="flex items-center justify-between mb-2">
                 <h2 className="text-sm font-semibold text-slate-900 dark:text-white flex items-center gap-1.5">
                   <Film className="w-4 h-4 text-blue-500" />
-                  {t('Разрешение видео (из заголовков контейнеров)', 'Video Resolution (Container Headers)')}
+                  {t('Разрешение видео (демо-метаданные)', 'Video Resolution (Demo Metadata)')}
                 </h2>
                 <span className="text-xs text-slate-500">{t('Клик — фильтр в Поиске', 'Click to filter')}</span>
               </div>
@@ -586,7 +587,7 @@ export const ArchiveSlicesView: React.FC<ArchiveSlicesViewProps> = ({
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5">
           <section className="lg:col-span-5 border border-slate-200 dark:border-slate-800 rounded-md bg-white dark:bg-slate-950 p-3.5 flex flex-col gap-2.5">
             <h2 className="text-sm font-semibold text-slate-900 dark:text-white">
-              {t('Профиль резервирования видеоархива', 'Archive Redundancy Profile')}
+              {t('Совпадения метаданных видеоархива', 'Video Archive Metadata Matches')}
             </h2>
             <div className="flex flex-col gap-2">
               {data.byDuplicationTier.map((tier) => {
@@ -610,7 +611,7 @@ export const ArchiveSlicesView: React.FC<ArchiveSlicesViewProps> = ({
                       <span>
                         {tier.distinctClasses} {t('уник.', 'uniq')} · {tier.fileInstances} {t('экз.', 'inst')}
                         {tier.reclaimableBytes > 0
-                          ? ` · ${t('избыток', 'excess')} ${formatBytes(tier.reclaimableBytes)}`
+                          ? ` · ${t('совпадения', 'candidate bytes')} ${formatBytes(tier.reclaimableBytes)}`
                           : ''}
                       </span>
                       <button
@@ -633,7 +634,7 @@ export const ArchiveSlicesView: React.FC<ArchiveSlicesViewProps> = ({
           <section className="lg:col-span-7 border border-slate-200 dark:border-slate-800 rounded-md bg-white dark:bg-slate-950 p-3.5 flex flex-col gap-2.5">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-slate-900 dark:text-white">
-                {t('Крупнейшие междисковые копии по байтам', 'Largest Cross-Disk Byte Copies')}
+                {t('Крупнейшие междисковые совпадения', 'Largest Cross-Disk Metadata Matches')}
               </h2>
               <span className="text-xs text-slate-500">{t('Клик — все диски с копией', 'Click for candidate disks')}</span>
             </div>
@@ -649,7 +650,7 @@ export const ArchiveSlicesView: React.FC<ArchiveSlicesViewProps> = ({
                       {g.name}
                     </div>
                     <div className="font-mono text-[11px] text-slate-500 truncate">
-                      {g.copies} {t('копий', 'copies')} · USB #{g.diskIds.join(', #')} ·{' '}
+                        {g.copies} {t('экземпляра-кандидата', 'metadata instances')} · USB #{g.diskIds.join(', #')} ·{' '}
                       {t('экз.', 'each')} {formatBytes(g.size)}
                     </div>
                   </div>
@@ -658,7 +659,7 @@ export const ArchiveSlicesView: React.FC<ArchiveSlicesViewProps> = ({
                       <div className="font-semibold text-blue-600 dark:text-blue-400">
                         +{formatBytes(g.excessBytes)}
                       </div>
-                      <div className="text-[10px] text-slate-500">{t('избыток', 'excess')}</div>
+                      <div className="text-[10px] text-slate-500">{t('объём кандидатов', 'candidate bytes')}</div>
                     </div>
                     <button
                       type="button"
@@ -666,7 +667,7 @@ export const ArchiveSlicesView: React.FC<ArchiveSlicesViewProps> = ({
                       className="inline-flex items-center gap-1 px-2 py-1 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 font-medium cursor-pointer"
                     >
                       <Copy className="w-3 h-3" />
-                      {t('Копии', 'Copies')}
+                      {t('Кандидаты', 'Candidates')}
                     </button>
                   </div>
                 </div>

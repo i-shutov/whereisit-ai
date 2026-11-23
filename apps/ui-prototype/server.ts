@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
+import { countCandidateVolumes, metadataCandidateKey } from './src/utils/metadataCandidates';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -524,7 +525,7 @@ function buildInitialCatalog() {
     }
   }
 
-  // 2. Renamed Byte-Exact Copies on other USB drives (same exact byte count & 3x64KB fingerprint, different name!)
+  // 2. Renamed metadata candidates on other USB drives (same byte count and sampled fingerprint; not proof of equality).
   {
     const p15 = ensureFolderChain(15, 'Downloads_Torrents/UHD_Cinema', 1712600000, 'Классика и Кино СССР');
     pushEntry({
@@ -536,7 +537,7 @@ function buildInitialCatalog() {
       size: 52_237_543_014, // identical byte-for-byte to Солярис_1972_Mosfilm_4K_Remux.mkv!
       modifiedUnix: 1712600000,
       category: 'Классика и Кино СССР',
-      description: 'Переименованная побайтовая копия ремукса Соляриса (с англ. названием раздачи)',
+      description: 'Кандидат по метаданным для ремукса Соляриса (англоязычное имя; содержимое не сверено)',
       tags: 'video,2160p,hevc,renamed',
       fastFingerprint: makeFp(`exact::${52_237_543_014}::9994`),
       videoMeta: {
@@ -563,7 +564,7 @@ function buildInitialCatalog() {
       size: 66_689_972_633, // identical byte-for-byte to Blade_Runner_1982_Final_Cut_UHD.mkv!
       modifiedUnix: 1712900000,
       category: 'Кино UHD / BD-Remux',
-      description: 'Переименованная на русский язык побайтовая копия UHD ремукса',
+      description: 'Кандидат по метаданным для UHD ремукса (имя переведено; содержимое не сверено)',
       tags: 'video,2160p,hevc,renamed',
       fastFingerprint: makeFp(`exact::${66_689_972_633}::7046`),
       videoMeta: {
@@ -1275,7 +1276,7 @@ function compilePredicate(raw: string): (entry: RawEntry) => boolean {
         const target = Number(m[2]);
         return (e) => {
           if (e.kind !== 'file') return false;
-          const cnt = exactSizeClassCounts.get(e.size) ?? 1;
+          const cnt = metadataCandidateVolumeCounts.get(metadataCandidateKey(e.name, e.size)) ?? 1;
           if (op === '=') return cnt === target;
           if (op === '>') return cnt > target;
           if (op === '>=') return cnt >= target;
@@ -1303,14 +1304,20 @@ function compilePredicate(raw: string): (entry: RawEntry) => boolean {
 
 const { volumes: rawVolumes, entries: rawEntries, ensureFolderChain, pushEntry } = buildInitialCatalog();
 
-// Byte-size metadata candidate counter only; NEVER evidence of identical content or backup.
-const exactSizeClassCounts = new Map<number, number>();
+// Name-and-size metadata candidate count only; never evidence of identical content or backup.
+const metadataCandidateCounts = new Map<string, number>();
+const metadataCandidateVolumeCounts = new Map<string, number>();
 function rebuildDuplicateClassCounts() {
-  exactSizeClassCounts.clear();
+  metadataCandidateCounts.clear();
+  metadataCandidateVolumeCounts.clear();
   for (const e of rawEntries) {
     if (e.kind === 'file' && e.size >= MB) {
-      exactSizeClassCounts.set(e.size, (exactSizeClassCounts.get(e.size) ?? 0) + 1);
+      const key = metadataCandidateKey(e.name, e.size);
+      metadataCandidateCounts.set(key, (metadataCandidateCounts.get(key) ?? 0) + 1);
     }
+  }
+  for (const [key, count] of countCandidateVolumes(rawEntries.filter((e) => e.kind === 'file' && e.size >= MB))) {
+    metadataCandidateVolumeCounts.set(key, count);
   }
 }
 rebuildDuplicateClassCounts();
@@ -1571,7 +1578,7 @@ function buildVolumeFolderTree(
           volumeId,
           folderPath: dir.fullPath || null,
           entryId: file.id,
-          duplicateCount: file.size >= MB ? (exactSizeClassCounts.get(file.size) ?? 1) : 1,
+          duplicateCount: file.size >= MB ? (metadataCandidateVolumeCounts.get(metadataCandidateKey(file.name, file.size)) ?? 1) : 1,
           colorIndex: color % 8,
         });
       }
@@ -1732,7 +1739,7 @@ async function executeScanSimulation(
 
       let dups = 0;
       for (const gf of generatedFiles) {
-        if ((exactSizeClassCounts.get(gf.size) ?? 0) > 0) dups++;
+        if ((metadataCandidateCounts.get(metadataCandidateKey(gf.name, gf.size)) ?? 0) > 0) dups++;
         const pId = ensureFolderChain(targetVolId, gf.folder, nowUnix, gf.cat);
         pushEntry({
           volumeId: targetVolId,
@@ -2152,7 +2159,7 @@ async function startServer() {
       const codecStats = new Map<string, { bytes: number; fileCount: number; query: string }>();
       const yearStats = new Map<number, { bytes: number; fileCount: number }>();
       const volFileStats = new Map<number, { bytes: number; fileCount: number }>();
-      const dupClassesInScope = new Map<number, {
+      const dupClassesInScope = new Map<string, {
         sampleEntryId: number;
         name: string;
         size: number;
@@ -2235,9 +2242,10 @@ async function startServer() {
         volFileStats.set(e.volumeId, vSlot);
 
         if (e.size >= MB) {
-          const existingDup = dupClassesInScope.get(e.size);
+          const candidateKey = metadataCandidateKey(e.name, e.size);
+          const existingDup = dupClassesInScope.get(candidateKey);
           if (!existingDup) {
-            dupClassesInScope.set(e.size, {
+            dupClassesInScope.set(candidateKey, {
               sampleEntryId: e.id,
               name: e.name,
               size: e.size,
@@ -2337,20 +2345,24 @@ async function startServer() {
         diskIds: number[];
       }[] = [];
 
-      for (const [byteSize, cls] of dupClassesInScope.entries()) {
-        const globalCopies = exactSizeClassCounts.get(byteSize) ?? cls.copies;
+      const candidateVolumeCounts = countCandidateVolumes(
+        rawEntries.filter((entry) => entry.kind === 'file' && entry.size >= MB)
+      );
+
+      for (const [candidateKey, cls] of dupClassesInScope.entries()) {
+        const globalVolumeCount = candidateVolumeCounts.get(candidateKey) ?? cls.disks.size;
         const occupied = cls.size * cls.copies;
         const excess = cls.size * Math.max(0, cls.copies - 1);
         uniqueLogicalBytes += cls.size;
         duplicateExcessBytes += excess;
 
-        if (globalCopies <= 1) {
+        if (globalVolumeCount <= 1) {
           singleCopyBytes += occupied;
           tiers.single.distinctClasses += 1;
           tiers.single.fileInstances += cls.copies;
           tiers.single.logicalBytes += cls.size;
           tiers.single.occupiedBytes += occupied;
-        } else if (globalCopies === 2) {
+        } else if (globalVolumeCount === 2) {
           multiCopyProtectedBytes += occupied;
           tiers.paired.distinctClasses += 1;
           tiers.paired.fileInstances += cls.copies;
@@ -2383,22 +2395,22 @@ async function startServer() {
       const byDuplicationTier = [
         {
           tier: 'single' as const,
-          label: '1 копия (без резерва)',
-          description: 'Хранятся только на одном USB-диске',
+          label: 'Один диск с кандидатом',
+          description: 'Совпадение метаданных найдено на одном диске; резерв не подтверждён',
           ...tiers.single,
           searchQuery: 'dup:1',
         },
         {
           tier: 'paired' as const,
-          label: '2 копии (основной + зеркало)',
-          description: 'Защищены на двух разных USB-дисках',
+          label: 'Два диска с кандидатом',
+          description: 'Совпадения метаданных найдены на двух дисках; содержимое не сверено',
           ...tiers.paired,
           searchQuery: 'dup:2',
         },
         {
           tier: 'excessive' as const,
-          label: '3+ копий (избыток места)',
-          description: 'Три и более побайтовых копий в архиве',
+          label: '3+ диска с кандидатом',
+          description: 'Совпадения метаданных найдены на трёх и более дисках; содержимое не сверено',
           ...tiers.excessive,
           searchQuery: 'dup:>=3',
         },
@@ -2530,12 +2542,11 @@ async function startServer() {
           res.status(404).json({ error: 'Выбранный файл не найден в каталоге.' });
           return;
         }
-        // Match either exact byte size >= 1MB OR same workKey so user sees all copies/editions of this movie!
+        // Metadata-only candidates: matching name+size or an explicitly recorded work key.
         const allSameClass = rawEntries.filter((e) => {
           if (e.kind !== 'file') return false;
-          if (target.size >= MB && e.size === target.size) return true;
           if (target.videoMeta?.workKey && e.videoMeta?.workKey === target.videoMeta.workKey) return true;
-          return e.nameNorm === target.nameNorm && e.size === target.size;
+          return e.size >= MB && metadataCandidateKey(e.name, e.size) === metadataCandidateKey(target.name, target.size);
         });
 
         const byDisk = new Map<number, number>();
@@ -2723,7 +2734,7 @@ async function startServer() {
               ? 'Разные рипы одного фильма (4K UHD vs 1080p vs 720p)'
               : normMode === 'same_name'
                 ? 'Одноимённые файлы разного размера'
-                : 'Точные побайтовые копии файлов (включая переименованные)';
+                : 'Кандидаты по имени и размеру; содержимое не проверено';
       } else if (mode === 'browse' && volumeId) {
         const targetParent = parentId === null || parentId === undefined ? null : Number(parentId);
         matched = rawEntries
@@ -2766,7 +2777,9 @@ async function startServer() {
       const pagedRaw = matched.slice(safeOffset, safeOffset + clampedLimit);
       const items = pagedRaw.map((e) => {
         const gMeta = itemGroupMeta.get(e.id);
-        const exactCopies = e.kind === 'file' && e.size >= MB ? (exactSizeClassCounts.get(e.size) ?? 1) : 1;
+        const exactCopies = e.kind === 'file' && e.size >= MB
+          ? (metadataCandidateVolumeCounts.get(metadataCandidateKey(e.name, e.size)) ?? 1)
+          : 1;
         return {
           id: e.id,
           volumeId: e.volumeId,
@@ -2998,7 +3011,7 @@ async function startServer() {
       const modUnix = item.lastModifiedMs ? Math.floor(item.lastModifiedMs / 1000) : Math.floor(Date.now() / 1000);
       const size = Math.max(0, Number(item.size) || 0);
 
-      if (size >= MB && (exactSizeClassCounts.get(size) ?? 0) > 0) duplicatesFound++;
+      if (size >= MB && (metadataCandidateCounts.get(metadataCandidateKey(fileName, size)) ?? 0) > 0) duplicatesFound++;
 
       let vMeta: VideoMeta | null = null;
       if (plugins?.videoHeader) {
@@ -3103,7 +3116,7 @@ async function startServer() {
       const capped = Array.isArray(files) ? files.slice(0, 10000) : [];
       const volMap = new Map(rawVolumes.map((v) => [v.id, v.label]));
 
-      // Match by exact byte size (>= 1MB) OR exact name+size so even renamed movies on PC match the 60 USB archive!
+      // This simulated scan only counts name+size metadata candidates; it does not establish content equality.
       const neededSizes = new Set<number>();
       const neededNameSizes = new Set<string>();
       for (const f of capped) {
