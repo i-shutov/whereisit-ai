@@ -1,29 +1,53 @@
 # Windows 1.1 stable acceptance — 23 November 2026
 
-Status: IN_PROGRESS. This pre-build record does not claim an unobserved exact-1.1.0 GUI PASS.
+Status: **PASS for the tested Windows 1.1 implementation; ready for final artifact verification and explicit stable publication**. Windows x64 only, unsigned, as requested by the owner. No remaining confirmed P0/P1 in the accepted scope. The readiness commit changes release records and the RC-publisher stable-version guard, with synthetic tests; it does not change the tested Rust product code. Its rebuilt exact-main installer must still be checked in the GUI before publication. This record identifies the previously measured artifact precisely and does not retroactively certify another installer.
 
-## Scope
+## Scope and exact artifact
 
-Windows x64, Rust/egui, unsigned installer. Tabs/workspaces (#87), archive slices/sunburst (#88) and explicit metadata-only local analyzer (#89) are integrated. macOS/Linux products remain deferred. USB pairing/bound-device rescan stays disabled; no file deletion or cleanup commands. The owner requested completion through stable publication after acceptance.
+- Target: Windows x64 Rust/egui, version 1.1.0, unsigned. USB pairing and bound-media rescan remain disabled; ordinary metadata scanning is supported. macOS/Linux product releases remain deferred while portable compile/tests continue.
+- Exact main source: `9ab97f1662dcc0f5a6490a8d7f721892d6578a38`.
+- Native CI run: `45187054366`; product artifact: `14825485729`.
+- Installer SHA-256: `3733bc6ef67fdbcd0cd1b4cac478a0de0d9ea880738f64a7634212eecf5ff3ff`.
+- Installed GUI SHA-256: `81d6c44ab668849cf20620b8d234df9becb1bd67375526eb66e93aad31dbaa9e`.
+- Installed CLI SHA-256: `a3a048ab67a97665fb200d2e0c30f0cd1f389093518730202e4e2a8a864bdb25`.
 
-## Already observed
+## Installed Windows upgrade and GUI — PASS
 
-The 1.1.0-rc.1 exact-main source b5e36674a901d05d32f3e74f0e80e84c8725befd passed 14 checks / 6 workflows. Its installed product was upgraded from the published 1.0.0 in actual Windows 11 Administrator RDP GUI. Restart, uninstall, published-1.0 rollback and final RC reinstall passed. Two external synthetic SQLite files and a separate user-store were byte-identical, with quick_check=ok; Unicode notes/tags, category assignments and disk preferences remained readable. Search (466 matches), retained context, 60 disks, slices/sunburst navigation, explicit local analysis and one-row review CSV were observed. The detailed sanitized post-build record is PR #90.
+In the Windows 11 Administrator RDP desktop, the published 1.0.0 installation was upgraded to the exact 1.1.0 installer above. Restart and installed-app checks passed. Two generated external SQLite catalogs and a separate SQLite user-store remained byte-identical across upgrade and restart; notes, categories, preferences and existing 60-disk context remained available. The earlier exact RC GUI lifecycle also covered rollback/reinstall; this stable acceptance does not claim a new stable rollback run.
 
-## Remaining exact stable gates
+The exact 1.1.0 GUI displayed the full-catalog map with a 128-node bounded tree, correct full totals, explicit truncation/remainder, and branch navigation. Cancellation was observed; retry worked, and search/page 251–500 remained usable with context retained. The source SQLite hash was unchanged. The initial 5,000-node native chart request was a P1 latency defect; the 128-node native request fix and real-service synthetic regression close that defect for this build. The regression checks a 300-file flat folder, the node cap, full file/byte totals, omitted count and exact remainder accounting.
 
-- Measure search on the complete private derived catalog: six fixed classes, 30 warm samples/class, p50/p95 and process memory/I/O; isolate measurements from compilation/GUI automation. Search p95 target is 150 ms. Do not call uncontrolled cache state a cold-cache test.
-- Measure bounded analytics and cancel/retry on the complete catalog, preserve source SQLite, and report background latency/memory separately from search.
-- Verify supported CTF import/export and unchanged roundtrip on private copies, independent full CSV/Parquet 15-field equality, changed-description export opened in original WhereIsIt, and vendor-saved copy imported by the native parser. No raw data, names, private digests, queries, paths or screenshots are public.
-- Validate the successful exact-main 1.1.0 product artifact and installed executable hashes. Actually operate the final installer and installed GUI, upgrade from published 1.0 with external metadata preserved, and check restart.
-- Record PASS/FAIL and remaining P0/P1 before readiness/publication. Preserve v1.0.0 and RC assets; publication is an explicit final action, never a main-push side effect.
+## Full-catalog performance — PASS for this measured Windows 11 workload
 
-Only synthetic regressions and sanitized aggregates enter GitHub. The original CTF is never an output. Preparation keeps stable_ready=false. Post-build evidence identifies the tested source/artifact explicitly; later documentation/readiness changes do not retroactively certify a different installer.
+The private derived catalog contained 44 volumes and 3,046,133 entries. Six search classes were measured at 30 warm samples each on the exact installed CLI, without concurrent GUI automation. p95 target is 150 ms.
 
-## Full-catalog RC checkpoint and release fix
+| Search class | p50 (ms) | p95 (ms) |
+|---|---:|---:|
+| Global Boolean | 34.829 | 38.711 |
+| Unicode | 15.859 | 20.546 |
+| Volume | 11.179 | 14.673 |
+| Size / extension | 32.402 | 38.075 |
+| Folder | 3.586 | 6.814 |
+| Full count | 50.937 | 58.380 |
 
-A dedicated private SQLite copy contains 44 volumes / 3,046,133 entries. RC search: six classes with 30 warm samples each, maximum p95 50.875 ms and process peak working set 9,424,896 bytes. These are RC observations; repeat the search on the exact stable payload. Cache state is uncontrolled, not a cold-cache result.
+Peak working set was 9,433,088 bytes. The measured workloads passed the 150 ms p95 target. Cache state was uncontrolled; this is not a cold-cache guarantee or a claim about arbitrary hardware/load.
 
-Bounded analytics (128 nodes/depth 4), seven fresh worker processes, matched independent SQL: 2,805,176 files, 239,207 ordinary directories and 62,440,113,273,118 logical file bytes. Archive-container rows are separate from the ordinary-directory counter and their aggregate sizes are not added again. Observed p50 28,389 ms / nearest-rank p95 36,599 ms, peak working set 29,835,264 bytes; source SQLite hash was unchanged across this API measurement. This preliminary RC workload is background aggregation, not the search SLO or final stable GUI acceptance.
+Analytics was measured separately from search using seven fresh workers, depth 4 and a 128-node output cap. Full totals were 2,805,176 files, 239,207 ordinary directories and 62,440,113,273,118 logical file bytes. Archive-container sizes were not double-counted. Analytics p50 was 38,312.898 ms; nearest-rank p95 was 49,456.722 ms; peak working set was 29,749,248 bytes. Cancellation and retry were observed in the GUI. Source SQLite was unchanged. These background aggregation measurements are not search-latency measurements.
 
-Actual RC GUI on this complete copy: cancel showed an explicit cancelled state; retry allowed switching to Search, a new Boolean query and page 251–500 while analysis continued. The full chart eventually rendered correct complete totals and an explicit omitted-node/byte notice. P1 found: its native request asked for 5,000 nodes, producing a several-minute first chart on this workload. The release fix bounds the initial native request to 128 nodes while preserving full totals, explicit truncation and branch navigation. A native-request-to-real-service regression with 300 generated files checks the bounded page, full byte/file totals and exact remainder accounting. Fixed exact-main GUI retest is required before closing this P1.
+## CTF import, roundtrip and exports — PASS
+
+A fresh full CTF import processed 44 volumes and 3,046,133 entries. Catalog validation passed. Four fixed query classes agreed between fast and counted/full search pages. Unchanged CTF export was byte-identical to its input; the original source remained read-only.
+
+Full CSV and Parquet exports were independently compared using DuckDB 1.4.1: all rows and all 15 fields matched. No-clobber refusal passed for CSV, Parquet and CTF export targets. No existing target was overwritten.
+
+Original WhereIsIt 2014.0.0.220 opened the full modified CTF export in the actual GUI. The Unicode Rust note was visible; a changed Unicode note was saved as a new CTF file. The vendor-saved full CTF was imported by the exact installed native 1.1 CLI and validated: 44 volumes and 3,046,133 entries. An independent SQLite comparison covered all 3,046,133 rows and ten fields, allowing exactly the one intended Unicode-description change; all other semantic entry fields and volume metadata matched. Parent identity was resolved by path: vendor Save As reordered some records, so import-local row IDs and import timestamps were excluded from semantic equality. The original source hash remained unchanged. This accepts the exercised supported catalog/layout, not every possible CTF variant.
+
+## Release state and privacy
+
+Exact artifact identity, installed Windows upgrade/GUI, measured search, bounded analytics, full supported CTF import/export and original-vendor compatibility in both directions passed. The 60-disk and analyzer GUI coverage is traced through the earlier implementation/RC records; it is not misrepresented as a newly repeated full stable lifecycle. Exact-main stable CI also passed the published-1.0 upgrade/uninstall/rollback synthetic harness; service/runner acceptance is distinct from interactive GUI. The v1.0.0 tag/assets remain immutable. Publication uses a dedicated explicit control branch only after the final rebuilt artifact's checksum, installed GUI and trusted CI are checked; its identity and outcome are recorded in the release-readiness PR and published provenance.
+
+Only aggregate results and public artifact identities are recorded here. Private CTF/catalog names, paths, source digests, raw rows and screenshots are omitted. Original catalogs are not modified.
+
+## Remaining limitations and defects
+
+Confirmed remaining P0: none. Confirmed remaining P1: none in the accepted Windows scope. Full analytics still takes tens of seconds on this large catalog; it runs outside the UI thread with cancellation and visible truncation. The initial 5,000-node latency defect is closed by the tested 128-node request. Windows 10 coverage is historical owner confirmation, not exact-artifact physical QA. macOS/Linux have compile/test coverage only and no product release claim. The installer is unsigned.

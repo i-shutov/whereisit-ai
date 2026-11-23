@@ -202,7 +202,11 @@ class EguiStablePackagingContract(unittest.TestCase):
         self.assertIn('--draft --latest=false --notes-file "docs/releases/$tag.md"', stable)
         self.assertIn("isPrerelease", stable)
         self.assertIn("--draft=false --latest", stable)
-        self.assertIn("if [[ \"$version\" == '1.0.0' ]]", rc)
+        stable_guard = 'if [[ "$version" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]'
+        rc_guard = '[[ "$version" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+-rc\\.[0-9]+$ ]]'
+        self.assertIn(stable_guard, rc)
+        self.assertIn(rc_guard, rc)
+        self.assertLess(rc.index(stable_guard), rc.index(rc_guard))
         self.assertIn("publish=false", rc)
 
     def _make_repo(self, repo: Path, *, bom: bool = False, version: str = VERSION,
