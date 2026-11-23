@@ -6,7 +6,9 @@ use crate::bridge::{new_scan_job_id, CommandBus, Purpose};
 use eframe::egui::{self, Color32, RichText};
 use serde_json::{json, Value};
 use std::collections::HashSet;
-use std::sync::mpsc::{self, Receiver};
+#[cfg(windows)]
+use std::sync::mpsc;
+use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 const MODES: [(&str, &str); 6] = [
