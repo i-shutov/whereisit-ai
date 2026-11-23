@@ -2,6 +2,7 @@
 mod bridge;
 mod categories;
 mod linked;
+mod local_analyzer;
 mod model;
 mod physical;
 #[cfg(all(feature = "qa-isolated", target_os = "windows"))]

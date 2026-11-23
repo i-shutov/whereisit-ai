@@ -13,6 +13,9 @@ egui_extras = { version = "=0.37.0", default-features = false }
 serde_json.workspace = true
 png = { version = "=0.18.1", optional = true }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_Shell_Common"] }
+
 [features]
 qa-screenshots = ["dep:png"]
 qa-isolated = []
