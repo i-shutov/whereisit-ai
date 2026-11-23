@@ -248,6 +248,9 @@ impl Catalog {
             for (id, label) in volumes(&tx)? {
                 check(&cancelled)?;
                 let (n, b) = volume_totals.get(&id).copied().unwrap_or((0, 0));
+                if category_id.is_some() && n == 0 {
+                    continue;
+                }
                 if emitted >= max_nodes {
                     truncated = true;
                     omitted = omitted.saturating_add(volume_node_count(&tx, id)?.saturating_add(1));
@@ -423,6 +426,18 @@ fn scope_totals(
     f: Option<i64>,
     category: Option<i64>,
 ) -> Result<(u64, u64, u64)> {
+    if category.is_none() && f.is_none() {
+        let result = if let Some(volume_id) = v {
+            c.query_row("SELECT SUM(kind='file'),SUM(kind='directory'),SUM(CASE WHEN kind='file' THEN size ELSE 0 END) FROM entries_core WHERE volume_id=?1",[volume_id], |r| {
+                Ok((sql_u64(r, 0)?, sql_u64(r, 1)?, sql_u64(r, 2)?))
+            })
+        } else {
+            c.query_row("SELECT SUM(kind='file'),SUM(kind='directory'),SUM(CASE WHEN kind='file' THEN size ELSE 0 END) FROM entries_core",[], |r| {
+                Ok((sql_u64(r, 0)?, sql_u64(r, 1)?, sql_u64(r, 2)?))
+            })
+        };
+        return result.map_err(Into::into);
+    }
     let sql=format!("{} SELECT SUM(e.kind='file' AND (?3 IS NULL OR EXISTS(SELECT 1 FROM entry_categories ec WHERE ec.entry_id=e.id AND ec.category_id=?3))),SUM(e.kind='directory'),SUM(CASE WHEN e.kind='file' AND (?3 IS NULL OR EXISTS(SELECT 1 FROM entry_categories ec WHERE ec.entry_id=e.id AND ec.category_id=?3)) THEN e.size ELSE 0 END) FROM entries_core e JOIN scoped s ON s.id=e.id",scope_cte(v,f));
     c.query_row(&sql, params![v, f, category], |r| {
         Ok((sql_u64(r, 0)?, sql_u64(r, 1)?, sql_u64(r, 2)?))
@@ -547,6 +562,24 @@ fn direct_remainder_after(
     offset: u64,
     category: Option<i64>,
 ) -> Result<(u64, u64)> {
+    if category.is_none() {
+        if offset == 0 && p.is_none() {
+            if let Some(volume_id) = v {
+                return c.query_row("SELECT COUNT(*),COALESCE(SUM(CASE WHEN kind='file' THEN size ELSE 0 END),0) FROM entries_core WHERE volume_id=?1",[volume_id],|r|Ok((sql_u64(r,0)?,sql_u64(r,1)?))).map_err(Into::into);
+            }
+        }
+        let volume_clause = if v.is_some() {
+            "e.volume_id=?1 AND "
+        } else {
+            ""
+        };
+        let sql=format!("WITH RECURSIVE rest(id,volume_id) AS (SELECT e.id,e.volume_id FROM entries_core e WHERE {volume_clause}e.parent_id IS ?2 ORDER BY e.name COLLATE NOCASE,e.id LIMIT -1 OFFSET ?3), tree(id,volume_id,kind,size) AS (SELECT e.id,e.volume_id,e.kind,e.size FROM entries_core e JOIN rest r ON r.id=e.id UNION SELECT e.id,e.volume_id,e.kind,e.size FROM entries_core e JOIN tree t ON e.parent_id=t.id AND e.volume_id=t.volume_id) SELECT COUNT(*),COALESCE(SUM(CASE WHEN kind='file' THEN size ELSE 0 END),0) FROM tree");
+        return c
+            .query_row(&sql, params![v, p, offset as i64], |r| {
+                Ok((sql_u64(r, 0)?, sql_u64(r, 1)?))
+            })
+            .map_err(Into::into);
+    }
     let volume_clause = if v.is_some() {
         "e.volume_id=?1 AND "
     } else {
@@ -700,4 +733,88 @@ fn volume_slices(
         })
     })?;
     Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
+#[cfg(test)]
+mod scope_fastpath_tests {
+    use super::*;
+    use crate::NewEntry;
+
+    fn entry(parent_id: Option<i64>, name: &str, path: &str, kind: &str, size: u64) -> NewEntry {
+        NewEntry {
+            parent_id,
+            name: name.into(),
+            relative_path: path.into(),
+            kind: kind.into(),
+            size,
+            modified_unix: None,
+            description: String::new(),
+            tags: String::new(),
+        }
+    }
+    #[test]
+    fn analytics_scope_and_remainder_fastpaths_keep_global_volume_folder_and_zero_byte_counts() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut catalog = Catalog::open(dir.path().join("fastpath.sqlite")).unwrap();
+        let mut folder = 0;
+        let first = catalog
+            .bulk_import("First", "offline", |w| {
+                folder = w.insert(&entry(None, "資料", "資料", "directory", 0))?;
+                w.insert(&entry(Some(folder), "a.txt", "資料/a.txt", "file", 3))?;
+                w.insert(&entry(
+                    Some(folder),
+                    "empty.txt",
+                    "資料/empty.txt",
+                    "file",
+                    0,
+                ))?;
+                w.insert(&entry(None, "root.bin", "root.bin", "file", 4))?;
+                Ok(())
+            })
+            .unwrap()
+            .id;
+        catalog
+            .bulk_import("Second", "offline", |w| {
+                w.insert(&entry(None, "other.bin", "other.bin", "file", 5))?;
+                Ok(())
+            })
+            .unwrap();
+        let global = scope_totals(catalog.conn(), None, None, None).unwrap();
+        assert_eq!(global, (4, 1, 12));
+        let volume = scope_totals(catalog.conn(), Some(first), None, None).unwrap();
+        assert_eq!(volume, (3, 1, 7));
+        let branch = scope_totals(catalog.conn(), Some(first), Some(folder), None).unwrap();
+        assert_eq!(branch, (2, 1, 3));
+        assert_eq!(
+            direct_remainder_after(catalog.conn(), Some(first), None, 0, None).unwrap(),
+            (4, 7)
+        );
+        assert_eq!(
+            direct_remainder_after(catalog.conn(), Some(first), Some(folder), 0, None).unwrap(),
+            (2, 3)
+        );
+        assert_eq!(
+            direct_remainder_after(catalog.conn(), Some(first), Some(folder), 1, None).unwrap(),
+            (1, 0)
+        );
+        let cat = catalog.create_category("Books", None).unwrap();
+        let first_file = catalog.children(first, Some(folder), 0, 10).unwrap().items[0].id;
+        catalog.assign_category(first_file, cat).unwrap();
+        let filtered = catalog
+            .analytics(
+                &AnalyticsRequest {
+                    volume_id: None,
+                    folder_entry_id: None,
+                    group_by: "volumes".into(),
+                    highlight_query: None,
+                    category_id: Some(cat),
+                    max_depth: 4,
+                    max_nodes: 8,
+                },
+                || false,
+            )
+            .unwrap();
+        assert_eq!(filtered.root.children.len(), 1);
+        assert!(filtered.root.children.iter().all(|n| n.item_count > 0));
+    }
 }

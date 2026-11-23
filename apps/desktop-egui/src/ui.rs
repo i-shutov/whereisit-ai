@@ -234,6 +234,7 @@ pub struct DesktopApp {
     analytics_category_id: Option<i64>,
     analytics_group: String,
     analytics_highlight: String,
+    analytics_applied_highlight: String,
     slices_dimension: usize,
     analytics_loaded: bool,
     slices_job_id: Option<String>,
@@ -380,6 +381,7 @@ impl DesktopApp {
             analytics_category_id: None,
             analytics_group: "volumes".to_owned(),
             analytics_highlight: String::new(),
+            analytics_applied_highlight: String::new(),
             slices_dimension: 0,
             analytics_loaded: false,
             slices_job_id: None,
@@ -1408,6 +1410,34 @@ impl DesktopApp {
             volume_id: self.selected_volume,
         };
         self.load_page(ctx);
+    }
+
+    fn submit_search(&mut self, ctx: &egui::Context) {
+        if let Route::BranchSearch {
+            volume_id,
+            parent_id,
+            exact_category_id,
+            ..
+        } = self.route.clone()
+        {
+            if self.active_request.is_some() || self.dialog_open() {
+                return;
+            }
+            self.offset = 0;
+            self.page = Page::default();
+            self.selected = None;
+            self.restore_selection = None;
+            self.reveal_selected = false;
+            self.route = Route::BranchSearch {
+                volume_id,
+                parent_id,
+                query: self.query_input.trim().to_owned(),
+                exact_category_id,
+            };
+            self.load_page(ctx);
+        } else {
+            self.navigate_search(ctx);
+        }
     }
 
     fn navigate_disk(&mut self, volume_id: Option<i64>, ctx: &egui::Context) {
@@ -2802,6 +2832,9 @@ impl DesktopApp {
             },
             category,
         );
+        if !slices {
+            self.analytics_applied_highlight = self.analytics_highlight.trim().to_owned();
+        }
         let request_id = self.bus.send(
             Purpose::Analytics {
                 job_id: job_id.clone(),
@@ -2875,7 +2908,11 @@ impl DesktopApp {
         let scoped_query = exact_category_query(query, exact_category);
         self.history.clear();
         self.selected_volume = volume;
-        self.query_input = query.to_owned();
+        self.query_input = if folder.is_some() {
+            query.to_owned()
+        } else {
+            scoped_query.clone()
+        };
         self.offset = 0;
         self.page = Page::default();
         self.selected = None;
@@ -2970,16 +3007,30 @@ impl DesktopApp {
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         for volume in &rows {
                             let selected = self.analytics_volume == Some(volume.id);
-                            let label = format!(
-                                "#{} · {}\n{} · {}",
-                                volume.id,
-                                volume.label,
-                                bytes_compact(volume.total_bytes),
-                                volume.entry_count
-                            );
-                            if ui.selectable_label(selected, label).clicked() && !selected {
-                                selected_map_volume = Some(Some(volume.id));
+                            let mut short_name: String = volume.label.chars().take(14).collect();
+                            if volume.label.chars().count() > 14 {
+                                short_name.push('…');
                             }
+                            let label = format!("#{} · {short_name}", volume.id);
+                            ui.horizontal(|ui| {
+                                let response =
+                                    ui.selectable_label(selected, label).on_hover_text(format!(
+                                        "{} · {} entries · {} {}",
+                                        volume.label,
+                                        volume.entry_count,
+                                        bytes_compact(volume.total_bytes),
+                                        self.t("логических байт индекса", "logical indexed bytes"),
+                                    ));
+                                if response.clicked() && !selected {
+                                    selected_map_volume = Some(Some(volume.id));
+                                }
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.weak(bytes_compact(volume.total_bytes));
+                                    },
+                                );
+                            });
                         }
                     });
                 });
@@ -3009,6 +3060,10 @@ impl DesktopApp {
             };
             let slices_all_label = self.t("Весь архив", "All archive");
             let slices_all_categories_label = self.t("Все категории", "All categories");
+            let slices_category_label = self.slices_category.map(|id| {
+                self.categories.iter().find(|category| category.id == id).map(|category| category.name.clone())
+                    .unwrap_or_else(|| format!("Категория #{id}"))
+            }).unwrap_or_else(|| slices_all_categories_label.to_owned());
             let highlight_hint = self.t("Подсветить запрос…", "Highlight query…");
             let slice_volumes = self.volumes.clone();
             ui.horizontal_wrapped(|ui| {
@@ -3091,11 +3146,7 @@ impl DesktopApp {
                         .and_then(|d| d["by_category"].as_array().cloned())
                         .unwrap_or_default();
                     egui::ComboBox::from_id_salt("slices_category_scope")
-                        .selected_text(
-                            self.slices_category
-                                .map(|id| format!("Category #{id}"))
-                                .unwrap_or_else(|| slices_all_categories_label.to_owned()),
-                        )
+                            .selected_text(slices_category_label)
                         .show_ui(ui, |ui| {
                             if ui
                                 .selectable_value(
@@ -3170,7 +3221,6 @@ impl DesktopApp {
                 if slices {
                     self.request_analytics(ctx, true);
                 } else {
-                    self.analytics_folder = None;
                     self.request_analytics(ctx, false);
                 }
             }
@@ -3207,7 +3257,7 @@ impl DesktopApp {
                         totals["files"].as_u64().unwrap_or(0).to_string(),
                     ),
                     (
-                        self.t("Папки", "Directories"),
+                        self.t("Папки структуры", "Structural directories"),
                         totals["directories"].as_u64().unwrap_or(0).to_string(),
                     ),
                     (
@@ -3218,11 +3268,17 @@ impl DesktopApp {
                             .to_string(),
                     ),
                 ];
-                for (col, (label, value)) in cols.iter_mut().zip(cards) {
-                    col.group(|ui| {
+                for (index, (col, (label, value))) in cols.iter_mut().zip(cards).enumerate() {
+                    let card = col.group(|ui| {
                         ui.weak(label);
                         ui.strong(value);
                     });
+                    if index == 2 {
+                        card.response.on_hover_text(self.t(
+                            "Число папок в выбранном дисковом охвате; категории фильтруют файлы, не структуру папок.",
+                            "Folder count in the selected disk scope; category filters apply to files, not the folder structure.",
+                        ));
+                    }
                 }
             });
             if slices {
@@ -3447,6 +3503,8 @@ impl DesktopApp {
             let radii = [(0.36, 0.54), (0.56, 0.70), (0.72, 0.84), (0.86, 0.98)];
             let mut ranked = Vec::new();
             let mut hit_regions: Vec<(f64, f64, f32, f32, Value)> = Vec::new();
+            let has_truncated_remainder =
+                data["truncated"] == true && data["remainder_bytes"].as_u64().unwrap_or(0) > 0;
             let start_angle = -std::f64::consts::FRAC_PI_2;
             let mut parents = vec![(
                 root.clone(),
@@ -3459,9 +3517,38 @@ impl DesktopApp {
                 if depth >= 4 {
                     continue;
                 }
+                let container = matches!(
+                    parent["kind"].as_str(),
+                    Some("root" | "volume" | "directory" | "archive")
+                );
+                if !container {
+                    continue;
+                }
                 let Some(children) = parent["children"].as_array() else {
                     continue;
                 };
+                if children.is_empty() {
+                    if has_truncated_remainder
+                        && parent["size"].as_u64().unwrap_or(0) > 0
+                        && parent["item_count"].as_u64().unwrap_or(0) > 0
+                    {
+                        let (inner, outer) = radii[depth];
+                        let p = |r: f32, a: f64| {
+                            center + egui::vec2(a.cos() as f32, a.sin() as f32) * (max_r * r)
+                        };
+                        let steps = (((end - start).abs() * 24.0).ceil() as usize).max(1);
+                        for s in 0..steps {
+                            let a0 = start + (end - start) * s as f64 / steps as f64;
+                            let a1 = start + (end - start) * (s + 1) as f64 / steps as f64;
+                            painter.add(egui::Shape::convex_polygon(
+                                vec![p(inner, a0), p(outer, a0), p(outer, a1), p(inner, a1)],
+                                Color32::DARK_GRAY,
+                                egui::Stroke::NONE,
+                            ));
+                        }
+                    }
+                    continue;
+                }
                 let total = parent["size"]
                     .as_f64()
                     .unwrap_or_else(|| children.iter().filter_map(|n| n["size"].as_f64()).sum())
@@ -3478,6 +3565,10 @@ impl DesktopApp {
                     let size = node["size"].as_f64().unwrap_or(0.0);
                     let sweep = ((end - start) * size / total).max(0.0).min(end - angle);
                     let stop = (angle + sweep).min(end);
+                    if sweep < 0.0005 {
+                        angle = stop;
+                        continue;
+                    }
                     let hue = if depth == 0 {
                         child_index % colors.len()
                     } else {
@@ -3489,13 +3580,20 @@ impl DesktopApp {
                         hit_regions.push((angle, stop, inner * max_r, outer * max_r, node.clone()));
                     }
                     let steps = ((stop - angle).abs() * 24.0).ceil().max(1.0) as usize;
+                    let point = |r: f32, a: f64| {
+                        center + egui::vec2(a.cos() as f32, a.sin() as f32) * (max_r * r)
+                    };
+                    let matched = node["matched_bytes"].as_u64().unwrap_or(0) > 0
+                        || node["matched_files"].as_u64().unwrap_or(0) > 0;
+                    let alpha = if self.analytics_applied_highlight.is_empty() || matched {
+                        255
+                    } else {
+                        54
+                    };
+                    let fill = Color32::from_rgba_unmultiplied(base[0], base[1], base[2], alpha);
                     for s in 0..steps {
                         let a0 = angle + (stop - angle) * s as f64 / steps as f64;
                         let a1 = angle + (stop - angle) * (s + 1) as f64 / steps as f64;
-                        let point = |r: f32, a: f64| {
-                            center + egui::vec2(a.cos() as f32, a.sin() as f32) * (max_r * r)
-                        };
-                        let fill = Color32::from_rgb(base[0], base[1], base[2]);
                         painter.add(egui::Shape::convex_polygon(
                             vec![
                                 point(inner, a0),
@@ -3504,16 +3602,29 @@ impl DesktopApp {
                                 point(inner, a1),
                             ],
                             fill,
-                            egui::Stroke::new(
-                                1.0,
-                                if self.dark {
-                                    Color32::from_gray(20)
-                                } else {
-                                    Color32::WHITE
-                                },
-                            ),
+                            egui::Stroke::NONE,
                         ));
                     }
+                    let boundary = if self.dark {
+                        Color32::from_gray(20)
+                    } else {
+                        Color32::WHITE
+                    };
+                    painter.line_segment(
+                        [point(inner, angle), point(outer, angle)],
+                        egui::Stroke::new(1.0, boundary),
+                    );
+                    painter.line_segment(
+                        [point(inner, stop), point(outer, stop)],
+                        egui::Stroke::new(1.0, boundary),
+                    );
+                    let arc_points: Vec<_> = (0..=steps)
+                        .map(|s| point(outer, angle + (stop - angle) * s as f64 / steps as f64))
+                        .collect();
+                    painter.add(egui::Shape::line(
+                        arc_points,
+                        egui::Stroke::new(1.0, boundary),
+                    ));
                     if depth == 0 {
                         ranked.push(node.clone());
                     }
@@ -3522,7 +3633,7 @@ impl DesktopApp {
                     }
                     angle = stop;
                 }
-                if angle < end - 0.002 {
+                if has_truncated_remainder && angle < end - 0.002 {
                     // Render the bounded/capped tail as an unknown remainder, never redistribute it.
                     let (inner, outer) = radii[depth];
                     let p = |r: f32, a: f64| {
@@ -3535,7 +3646,7 @@ impl DesktopApp {
                         painter.add(egui::Shape::convex_polygon(
                             vec![p(inner, a0), p(outer, a0), p(outer, a1), p(inner, a1)],
                             Color32::DARK_GRAY,
-                            egui::Stroke::new(1.0, Color32::BLACK),
+                            egui::Stroke::NONE,
                         ));
                     }
                 }
@@ -3561,7 +3672,7 @@ impl DesktopApp {
                 }
             }
             let center_node = hovered.as_ref().unwrap_or(root);
-            let center_text = if self.analytics_highlight.trim().is_empty() {
+            let center_text = if self.analytics_applied_highlight.is_empty() {
                 bytes_compact(center_node["size"].as_u64().unwrap_or(0))
             } else {
                 format!(
@@ -3592,7 +3703,7 @@ impl DesktopApp {
                         bytes_compact(node["size"].as_u64().unwrap_or(0)),
                         node["item_count"].as_u64().unwrap_or(0)
                     ));
-                    if !self.analytics_highlight.trim().is_empty() {
+                    if !self.analytics_applied_highlight.is_empty() {
                         ui.weak(format!(
                             "{} · {}",
                             self.t("Совпало", "Matched"),
@@ -3708,7 +3819,7 @@ impl DesktopApp {
                     )
                     .clicked();
                 if enter || clicked {
-                    self.navigate_search(ctx);
+                    self.submit_search(ctx);
                 }
                 if ui
                     .add_enabled(self.db.is_some(), egui::Button::new(self.t("Все", "All")))
@@ -3993,9 +4104,16 @@ impl DesktopApp {
                     Route::Search { .. } => {
                         self.t("Результаты поиска", "Search results").to_owned()
                     }
-                    Route::BranchSearch { parent_id, .. } => format!(
-                        "{} #{parent_id} · {}",
+                    Route::BranchSearch {
+                        parent_id,
+                        exact_category_id,
+                        ..
+                    } => format!(
+                        "{} #{parent_id}{} · {}",
                         self.t("Поиск в папке", "Folder search"),
+                        exact_category_id
+                            .map(|id| format!(" · {} #{id}", self.t("категория", "category")))
+                            .unwrap_or_default(),
                         self.query_input
                     ),
                     Route::Folder { .. } => {
@@ -4891,6 +5009,57 @@ mod shortcut_tests {
     }
 
     #[test]
+    fn map_filter_refresh_keeps_folder_in_captured_analytics_request() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        let temp = tempfile::tempdir().unwrap();
+        app.db = Some(
+            temp.path()
+                .join("catalog.sqlite")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        app.analytics_volume = Some(1);
+        app.analytics_folder = Some(91);
+        app.analytics_group = "extensions".into();
+        app.analytics_highlight = "ext:mkv".into();
+        let captured = Arc::new(std::sync::Mutex::new(None::<Value>));
+        let captured_worker = captured.clone();
+        let missing_db = temp
+            .path()
+            .join("missing-readonly.sqlite")
+            .to_string_lossy()
+            .into_owned();
+        app.bus.set_handler(move |request| {
+            *captured_worker.lock().unwrap() = Some(request.clone());
+            let mut request = request.clone();
+            request["db"] = Value::String(missing_db.clone());
+            let raw = atlas_service::dispatch_json(&request.to_string());
+            serde_json::from_str(&raw).unwrap()
+        });
+
+        // This is the same refresh path used by Apply/group controls in the map.
+        app.request_analytics(&ctx, false);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline && captured.lock().unwrap().is_none() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        while Instant::now() < deadline && app.bus.poll().is_none() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
+        let request = captured
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("analytics request captured");
+        assert_eq!(request["volume_id"], 1);
+        assert_eq!(request["folder_entry_id"], 91);
+        assert_eq!(request["group_by"], "extensions");
+        assert_eq!(request["highlight_query"], "ext:mkv");
+    }
+
+    #[test]
     fn analytics_navigation_does_not_dispatch_behind_a_modal() {
         let ctx = egui::Context::default();
         let mut app = DesktopApp::with_context(&ctx, None);
@@ -4899,6 +5068,39 @@ mod shortcut_tests {
         app.jump_analytics_to_search(&ctx, Some(2), Some(9), "ext:mkv");
         assert_eq!(app.route, route);
         assert!(app.history.is_empty());
+    }
+
+    #[test]
+    fn submitting_a_new_query_keeps_branch_and_exact_category_scope() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.db = Some("synthetic.sqlite".into());
+        app.bus.set_handler(
+            |_| json!({"ok":true,"data":{"items":[],"offset":0,"limit":250,"has_more":false}}),
+        );
+        app.route = Route::BranchSearch {
+            volume_id: 3,
+            parent_id: 44,
+            query: "ext:mkv".into(),
+            exact_category_id: Some(12),
+        };
+        app.query_input = "size:>1GiB".into();
+
+        app.submit_search(&ctx);
+
+        assert_eq!(
+            app.route,
+            Route::BranchSearch {
+                volume_id: 3,
+                parent_id: 44,
+                query: "size:>1GiB".into(),
+                exact_category_id: Some(12),
+            }
+        );
+        assert_eq!(
+            app.route.request("synthetic.sqlite", 0, 250)["query"],
+            "branch_id:44 AND (category_exact_id:12 AND (size:>1GiB))"
+        );
     }
 
     #[test]
