@@ -1607,7 +1607,11 @@ mod tests {
         let mut view = LocalAnalyzer::default();
         view.baseline_id = Some("baseline-1".into());
         view.baseline_root = Some(r"C:\QA\Media".into());
+        assert!(view.baseline_matches_root(r"C:\QA\Media"));
+        #[cfg(windows)]
         assert!(view.baseline_matches_root(r"c:\qa\media\"));
+        #[cfg(not(windows))]
+        assert!(!view.baseline_matches_root(r"c:\qa\media\"));
         assert!(!view.baseline_matches_root(r"C:\QA\Other"));
         assert_eq!(parse_size_mb("100"), Some(104_857_600));
         assert_eq!(parse_size_mb("NaN"), None);
