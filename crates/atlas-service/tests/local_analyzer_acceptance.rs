@@ -7,6 +7,16 @@ use std::{
 };
 
 static SERIAL: AtomicU64 = AtomicU64::new(1);
+
+fn test_tempdir() -> tempfile::TempDir {
+    let parent = std::env::temp_dir().canonicalize().unwrap();
+    let dir = tempfile::Builder::new()
+        .prefix("la-")
+        .tempdir_in(parent)
+        .unwrap();
+    assert_eq!(dir.path().canonicalize().unwrap(), dir.path());
+    dir
+}
 fn request(value: Value) -> Value {
     serde_json::from_str(&atlas_service::dispatch_json(&value.to_string())).unwrap()
 }
@@ -81,7 +91,7 @@ fn fixture(root: &Path) {
 
 #[test]
 fn tree_rollups_empty_dirs_bounds_and_pages_count_files_once() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = test_tempdir();
     fixture(temp.path());
     let session = Session::start(temp.path());
     let page = session.page("tree_map", json!({"max_nodes":3}));
@@ -122,7 +132,7 @@ fn tree_rollups_empty_dirs_bounds_and_pages_count_files_once() {
 
 #[test]
 fn filters_and_candidate_modes_are_exact_and_unicode_preserving() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = test_tempdir();
     fixture(temp.path());
     let session = Session::start(temp.path());
     let candidates = session.page("metadata_candidates", json!({}));
@@ -179,7 +189,7 @@ fn filters_and_candidate_modes_are_exact_and_unicode_preserving() {
 
 #[test]
 fn pre_epoch_modified_time_remains_old_metadata_instead_of_unknown() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = test_tempdir();
     file(temp.path(), "old.bin", 1);
     fs::OpenOptions::new()
         .write(true)
@@ -198,9 +208,8 @@ fn pre_epoch_modified_time_remains_old_metadata_instead_of_unknown() {
 #[cfg(unix)]
 #[test]
 fn special_files_are_reported_without_opening_or_blocking_on_them() {
-    let temp = tempfile::tempdir().unwrap();
-    let _socket =
-        std::os::unix::net::UnixListener::bind(temp.path().join("metadata.socket")).unwrap();
+    let temp = test_tempdir();
+    let _socket = std::os::unix::net::UnixListener::bind(temp.path().join("s")).unwrap();
     let session = Session::start(temp.path());
     let page = session.page("tree_map", json!({}));
     assert_eq!(page["totals"]["files"], 0);
@@ -213,7 +222,7 @@ fn special_files_are_reported_without_opening_or_blocking_on_them() {
 
 #[test]
 fn baseline_survives_rescan_and_rejects_a_different_root() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = test_tempdir();
     fixture(temp.path());
     let session = Session::start(temp.path());
     let baseline = ok(json!({"op":"local_analyzer_save_baseline","job_id":session.0}));
@@ -235,7 +244,7 @@ fn baseline_survives_rescan_and_rejects_a_different_root() {
     assert_eq!(root["previous_bytes"], 70);
     assert_eq!(root["bytes"], 77);
     assert_eq!(root["delta_bytes"], 7);
-    let other = tempfile::tempdir().unwrap();
+    let other = test_tempdir();
     file(other.path(), "other.bin", 20);
     let other = Session::start(other.path());
     let mismatch = request(
@@ -247,7 +256,7 @@ fn baseline_survives_rescan_and_rejects_a_different_root() {
 
 #[test]
 fn baseline_rejects_a_replacement_directory_at_the_identical_path() {
-    let outer = tempfile::tempdir().unwrap();
+    let outer = test_tempdir();
     let root = outer.path().join("source");
     fs::create_dir(&root).unwrap();
     file(&root, "before.bin", 3);
@@ -268,7 +277,7 @@ fn baseline_rejects_a_replacement_directory_at_the_identical_path() {
 
 #[test]
 fn review_export_deduplicates_nested_selection_and_never_overwrites() {
-    let outer = tempfile::tempdir().unwrap();
+    let outer = test_tempdir();
     let root = outer.path().join("source");
     fs::create_dir(&root).unwrap();
     fixture(&root);

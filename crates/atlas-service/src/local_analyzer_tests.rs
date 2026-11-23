@@ -13,9 +13,22 @@ fn test_job() -> Arc<Job> {
     })
 }
 
+// macOS commonly exposes the temporary directory through /var, a symlink to
+// /private/var. Positive fixtures must avoid that alias because the analyzer
+// intentionally rejects roots with symlinked ancestors.
+fn test_tempdir() -> tempfile::TempDir {
+    let parent = std::env::temp_dir().canonicalize().unwrap();
+    let dir = tempfile::Builder::new()
+        .prefix("la-")
+        .tempdir_in(parent)
+        .unwrap();
+    assert_eq!(dir.path().canonicalize().unwrap(), dir.path());
+    dir
+}
+
 #[test]
 fn scan_preserves_empty_directories_unicode_and_exact_logical_totals() {
-    let root = tempfile::tempdir().unwrap();
+    let root = test_tempdir();
     fs::create_dir(root.path().join("empty")).unwrap();
     fs::create_dir_all(root.path().join("資料/é")).unwrap();
     fs::write(root.path().join("資料/é/同名.bin"), vec![1u8; 17]).unwrap();
@@ -55,7 +68,7 @@ fn scan_preserves_empty_directories_unicode_and_exact_logical_totals() {
 
 #[test]
 fn cancelled_scan_never_publishes_snapshot() {
-    let root = tempfile::tempdir().unwrap();
+    let root = test_tempdir();
     fs::write(root.path().join("a"), b"x").unwrap();
     let j = test_job();
     j.cancel.store(true, Ordering::Release);
@@ -70,8 +83,8 @@ fn cancelled_scan_never_publishes_snapshot() {
 #[test]
 fn symlink_child_and_cycle_are_skipped_without_following() {
     use std::os::unix::fs::symlink;
-    let root = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
+    let root = test_tempdir();
+    let outside = test_tempdir();
     fs::write(outside.path().join("secret.bin"), vec![0; 31]).unwrap();
     fs::create_dir(root.path().join("child")).unwrap();
     fs::write(root.path().join("child/ok.bin"), vec![0; 7]).unwrap();
@@ -88,7 +101,7 @@ fn symlink_child_and_cycle_are_skipped_without_following() {
 #[test]
 fn symlink_root_or_ancestor_is_rejected() {
     use std::os::unix::fs::symlink;
-    let base = tempfile::tempdir().unwrap();
+    let base = test_tempdir();
     let target = base.path().join("target");
     fs::create_dir_all(target.join("child")).unwrap();
     let alias = base.path().join("alias");
@@ -103,8 +116,8 @@ fn symlink_root_or_ancestor_is_rejected() {
 
 #[test]
 fn invalid_catalog_check_does_not_leave_job_in_checking_phase() {
-    let root = tempfile::tempdir().unwrap();
-    let catalog_dir = tempfile::tempdir().unwrap();
+    let root = test_tempdir();
+    let catalog_dir = test_tempdir();
     let catalog = catalog_dir.path().join("catalog.sqlite");
     let job_id = "analyzer-invalid-check-test";
     prepare(&json!({"job_id":job_id})).unwrap();
@@ -121,10 +134,10 @@ fn invalid_catalog_check_does_not_leave_job_in_checking_phase() {
 
 #[test]
 fn catalog_check_matches_nfc_name_and_size_with_selected_volume_only() {
-    let root = tempfile::tempdir().unwrap();
+    let root = test_tempdir();
     let local_name = "Caf\u{0065}\u{0301}.MKV";
     fs::write(root.path().join(local_name), vec![1u8; 17]).unwrap();
-    let dbdir = tempfile::tempdir().unwrap();
+    let dbdir = test_tempdir();
     let db = dbdir.path().join("catalog.sqlite");
     let mut catalog = Catalog::open(&db).unwrap();
     let a = catalog
@@ -203,9 +216,9 @@ fn catalog_check_matches_nfc_name_and_size_with_selected_volume_only() {
 
 #[test]
 fn catalog_generation_change_is_rejected_without_publishing_new_matches() {
-    let root = tempfile::tempdir().unwrap();
+    let root = test_tempdir();
     fs::write(root.path().join("match.bin"), b"x").unwrap();
-    let dbdir = tempfile::tempdir().unwrap();
+    let dbdir = test_tempdir();
     let db = dbdir.path().join("catalog.sqlite");
     let mut catalog = Catalog::open(&db).unwrap();
     catalog
@@ -284,11 +297,13 @@ fn interrupt_registry_prunes_handles_after_connections_close() {
     assert_eq!(j.interrupt.lock().unwrap().len(), 1);
 }
 
-#[cfg(unix)]
+// The macOS CI filesystem rejects invalid-byte components, so this fixture is valid on
+// Unix filesystems that support arbitrary filename bytes.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn non_unicode_name_is_reported_as_read_error_instead_of_lossy_row() {
     use std::{ffi::OsString, os::unix::ffi::OsStringExt};
-    let root = tempfile::tempdir().unwrap();
+    let root = test_tempdir();
     let bad = OsString::from_vec(vec![b'x', 0xff, b'.', b't', b'x', b't']);
     fs::write(root.path().join(bad), b"payload").unwrap();
     let j = test_job();
@@ -306,7 +321,7 @@ fn non_unicode_name_is_reported_as_read_error_instead_of_lossy_row() {
 
 #[test]
 fn active_cancel_and_close_prevent_snapshot_publication() {
-    let root = tempfile::tempdir().unwrap();
+    let root = test_tempdir();
     for i in 0..3000 {
         fs::write(root.path().join(format!("f{i:05}.bin")), b"x").unwrap();
     }
@@ -382,7 +397,7 @@ fn active_cancel_and_close_prevent_snapshot_publication() {
 
 #[test]
 fn cancelling_active_view_keeps_completed_local_snapshot_usable() {
-    let root = tempfile::tempdir().unwrap();
+    let root = test_tempdir();
     fs::write(root.path().join("x.bin"), b"x").unwrap();
     let job_id = "analyzer-view-cancel-test";
     prepare(&json!({"job_id":job_id})).unwrap();
@@ -408,9 +423,9 @@ fn cancelling_active_view_keeps_completed_local_snapshot_usable() {
 
 #[test]
 fn pending_operation_cancel_blocks_late_export_and_claim_is_one_shot() {
-    let root = tempfile::tempdir().unwrap();
+    let root = test_tempdir();
     fs::write(root.path().join("row.bin"), b"x").unwrap();
-    let output = tempfile::tempdir().unwrap();
+    let output = test_tempdir();
     let job_id = "analyzer-operation-reservation-test";
     prepare(&json!({"job_id":job_id})).unwrap();
     start(&json!({"job_id":job_id,"root":root.path()})).unwrap();
