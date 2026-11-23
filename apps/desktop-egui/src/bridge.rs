@@ -275,7 +275,7 @@ pub fn analytics_request(
         "volume_id":volume_id, "folder_entry_id":folder_entry_id,
         "group_by":group_by, "highlight_query":highlight_query,
         "category_id":category_id,
-        "max_depth":4, "max_nodes":5000
+        "max_depth":4, "max_nodes":128
     })
 }
 
@@ -449,7 +449,7 @@ mod tests {
         assert_eq!(request["highlight_query"], "ext:mkv");
         assert_eq!(request["category_id"], 9);
         assert_eq!(request["max_depth"], 4);
-        assert_eq!(request["max_nodes"], 5000);
+        assert_eq!(request["max_nodes"], 128);
         assert_eq!(
             analytics_cancel_request("egui-job")["op"],
             "analytics_cancel"
@@ -599,5 +599,85 @@ mod tests {
         assert_eq!(result["data"]["rows"], 3);
         let bytes = fs::read(parquet_path).unwrap();
         assert!(bytes.starts_with(b"PAR1") && bytes.ends_with(b"PAR1"));
+    }
+
+    #[test]
+    fn native_analytics_request_bounds_large_flat_folder_and_preserves_totals() {
+        use std::fs;
+
+        fn service(request: Value) -> Value {
+            serde_json::from_str(&atlas_service::dispatch_json(&request.to_string())).unwrap()
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let media = temp.path().join("generated-media");
+        let flat = media.join("flat-folder");
+        fs::create_dir_all(&flat).unwrap();
+        let file_count: u64 = 300;
+        for index in 1..=file_count {
+            fs::write(
+                flat.join(format!("item-{index:03}.dat")),
+                vec![b'x'; index as usize],
+            )
+            .unwrap();
+        }
+
+        let db = temp.path().join("generated.sqlite");
+        let scan = service(scan_request(
+            db.to_str().unwrap(),
+            media.to_str().unwrap(),
+            "Generated analytics fixture",
+            "native-analytics-bounds-scan",
+        ));
+        assert_eq!(scan["ok"], true, "scan: {scan}");
+        let volume_id = scan["data"]["id"].as_i64().unwrap();
+        let root = service(json!({
+            "op":"children", "db":db, "volume_id":volume_id,
+            "parent_id":null, "offset":0, "limit":20
+        }));
+        assert_eq!(root["ok"], true, "root children: {root}");
+        let folder_id = root["data"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["name"] == "flat-folder")
+            .expect("generated flat folder")["id"]
+            .as_i64()
+            .unwrap();
+
+        let request = analytics_request(
+            db.to_str().unwrap(),
+            "native-analytics-bounds-job",
+            Some(volume_id),
+            Some(folder_id),
+            "volumes",
+            "",
+            None,
+        );
+        assert_eq!(request["max_nodes"], 128);
+        assert_eq!(
+            service(json!({"op":"analytics_prepare", "job_id":request["job_id"]}))["ok"],
+            true
+        );
+        let result = service(request);
+        assert_eq!(result["ok"], true, "analytics: {result}");
+        let data = &result["data"];
+        let expected_bytes = file_count * (file_count + 1) / 2;
+        let returned_nodes = data["root"]["children"].as_array().unwrap();
+        let returned_bytes: u64 = returned_nodes
+            .iter()
+            .map(|node| node["size"].as_u64().unwrap())
+            .sum();
+        assert_eq!(returned_nodes.len(), 128);
+        assert_eq!(data["totals"]["files"], file_count);
+        assert_eq!(data["totals"]["indexed_bytes"], expected_bytes);
+        assert_eq!(data["root"]["item_count"], file_count);
+        assert_eq!(data["root"]["size"], expected_bytes);
+        assert_eq!(data["truncated"], true);
+        assert_eq!(data["omitted_node_count"], file_count - 128);
+        assert_eq!(
+            data["remainder_bytes"].as_u64().unwrap() + returned_bytes,
+            expected_bytes
+        );
     }
 }

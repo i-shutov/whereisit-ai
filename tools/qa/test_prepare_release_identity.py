@@ -18,6 +18,9 @@ class ReleasePreparation(unittest.TestCase):
     def test_stable_identity_updates_all_bundles_without_rc_suffix(self):
         self._check_preparation('1.0.0', '10099')
 
+    def test_next_minor_stable_has_independent_release_identity(self):
+        self._check_preparation('1.1.0', '10099')
+
     def test_next_minor_candidate_has_independent_release_identity(self):
         self._check_preparation('1.1.0-rc.1', '10001')
 

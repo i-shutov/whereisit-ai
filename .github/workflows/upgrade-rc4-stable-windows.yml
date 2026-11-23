@@ -34,6 +34,7 @@ jobs:
           switch ($targetVersion) {
             '1.0.0' { $sourceSha = $env:RC4_SHA; $sourceVersion = '1.0.0-rc.4' }
             '1.1.0-rc.1' { $sourceSha = $env:V100_SHA; $sourceVersion = '1.0.0' }
+            '1.1.0' { $sourceSha = $env:V100_SHA; $sourceVersion = '1.0.0' }
             default { throw "Unsupported upgrade target version: $targetVersion" }
           }
           "source_sha=$sourceSha" >> $env:GITHUB_OUTPUT

@@ -4,7 +4,7 @@ from contextlib import closing
 import sqlite3
 import tempfile
 from pathlib import Path
-from upgrade_catalog_probe import (FORMAT, RC1, RC2, RC3, RC4, STABLE, NEXT_RC1,
+from upgrade_catalog_probe import (FORMAT, RC1, RC2, RC3, RC4, STABLE, NEXT_RC1, NEXT_STABLE,
     ENTRY_NOTE, ENTRY_TAGS, expected_cli_version, validate_checkpoint_versions,
     seed_fixture_annotation, require_fixture_annotation)
 
@@ -84,6 +84,24 @@ class InstalledVersionContract(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "unsupported_upgrade_version_pair"):
                     expected_cli_version("verify", source, target)
 
+    def test_11_stable_pair_uses_pinned_100_predecessor(self):
+        self.assertEqual(expected_cli_version("prepare", STABLE, NEXT_STABLE), "WhereIsIt AI " + STABLE)
+        self.assertEqual(expected_cli_version("verify", STABLE, NEXT_STABLE), "WhereIsIt AI " + NEXT_STABLE)
+        for source, target in [(RC4, NEXT_STABLE), (STABLE, STABLE), (NEXT_STABLE, STABLE)]:
+            with self.subTest(source=source, target=target):
+                with self.assertRaisesRegex(RuntimeError, "unsupported_upgrade_version_pair"):
+                    expected_cli_version("verify", source, target)
+
+    def test_workflow_and_lifecycle_pin_11_stable_to_100(self):
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / ".github/workflows/upgrade-rc4-stable-windows.yml").read_text(encoding="utf-8")
+        lifecycle = (root / "tools/qa/upgrade-rc4-stable-windows.ps1").read_text(encoding="utf-8")
+        pin = "938fece2d74793c2eda7a1b84082ab5db3f8a092"
+        self.assertIn("'1.1.0' { $sourceSha = $env:V100_SHA; $sourceVersion = '1.0.0' }", workflow)
+        self.assertIn("'1.1.0' { @{ source = '1.0.0'; sha = '" + pin + "' } }", lifecycle)
+        self.assertIn("V100_SHA: " + pin, workflow)
+        self.assertIn("$env:TARGET_SHA", lifecycle)
+
     def test_stable_checkpoint_is_exact_rc4_to_100_pair(self):
         checkpoint = {"format": FORMAT, "source_release": RC4, "target_release": STABLE}
         validate_checkpoint_versions(checkpoint, RC4, STABLE)
@@ -96,6 +114,14 @@ class InstalledVersionContract(unittest.TestCase):
         checkpoint = {"format": FORMAT, "source_release": STABLE, "target_release": NEXT_RC1}
         validate_checkpoint_versions(checkpoint, STABLE, NEXT_RC1)
         for source, target in [(RC4, NEXT_RC1), (STABLE, STABLE), (NEXT_RC1, STABLE)]:
+            with self.subTest(source=source, target=target):
+                with self.assertRaisesRegex(RuntimeError, "wrong_checkpoint"):
+                    validate_checkpoint_versions(checkpoint, source, target)
+
+    def test_11_stable_checkpoint_is_exact_100_to_110_pair(self):
+        checkpoint = {"format": FORMAT, "source_release": STABLE, "target_release": NEXT_STABLE}
+        validate_checkpoint_versions(checkpoint, STABLE, NEXT_STABLE)
+        for source, target in [(RC4, NEXT_STABLE), (STABLE, NEXT_RC1), (NEXT_STABLE, STABLE)]:
             with self.subTest(source=source, target=target):
                 with self.assertRaisesRegex(RuntimeError, "wrong_checkpoint"):
                     validate_checkpoint_versions(checkpoint, source, target)
