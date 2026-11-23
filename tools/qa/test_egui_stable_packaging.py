@@ -56,6 +56,7 @@ class EguiStablePackagingContract(unittest.TestCase):
 
     def test_unshipped_macos_run_states_do_not_block_successful_windows_gates(self):
         cases = (
+            ("queued", None, "queued", None),
             ("in_progress", None, "queued", None),
             ("completed", "failure", "completed", "failure"),
             ("completed", "cancelled", "completed", "cancelled"),
@@ -188,6 +189,7 @@ class EguiStablePackagingContract(unittest.TestCase):
         script = textwrap.dedent(workflow[block_start:block_end])
         cases = (
             ("optional_mac_failed", "completed", "failure", None),
+            ("optional_mac_queued_run", "queued", None, "mac_queued"),
             ("optional_mac_queued", "in_progress", None, "mac_queued"),
             ("required_missing", "completed", "failure", "missing"),
             ("required_failed", "completed", "failure", "failure"),
@@ -201,7 +203,10 @@ class EguiStablePackagingContract(unittest.TestCase):
             ("spoofed_event", "completed", "failure", "event"),
             ("spoofed_branch", "completed", "failure", "branch"),
             ("spoofed_run_id", "completed", "failure", "run_id"),
-            ("malformed_run_state", "queued", None, "run_state"),
+            ("queued_with_conclusion", "queued", "success", None),
+            ("in_progress_with_conclusion", "in_progress", "success", None),
+            ("unknown_run_state", "unknown", None, None),
+            ("malformed_completed_conclusion", "completed", "timed_out", None),
         )
         for case, run_status, conclusion, mutation in cases:
             with self.subTest(case=case), tempfile.TemporaryDirectory() as temp:
@@ -247,7 +252,7 @@ class EguiStablePackagingContract(unittest.TestCase):
                        "GITHUB_REPOSITORY": REPOSITORY}
                 result = subprocess.run([sys.executable, "-c", script], cwd=repo, env=env,
                                         capture_output=True, text=True, check=False)
-                if mutation in (None, "mac_queued"):
+                if case.startswith("optional_mac_"):
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 else:
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)

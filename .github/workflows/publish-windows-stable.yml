@@ -68,7 +68,7 @@ jobs:
               runs = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'stable-verification/candidate-runs.json'), encoding='utf-8-sig')).get('workflow_runs', [])
               def allowed_run_state(run):
                   status, conclusion = run.get('status'), run.get('conclusion')
-                  return ((status == 'in_progress' and conclusion is None)
+                  return ((status in ('queued', 'in_progress', 'waiting', 'pending', 'requested') and conclusion is None)
                           or (status == 'completed' and conclusion in ('success', 'failure', 'cancelled')))
               def required_jobs_pass(run_id):
                   response = subprocess.run(
@@ -115,7 +115,7 @@ jobs:
           assert run.get('head_sha') == os.environ['SOURCE_SHA'], 'run SHA mismatch'
           assert run.get('head_branch') == 'main', 'run branch must be main'
           status, conclusion = run.get('status'), run.get('conclusion')
-          assert ((status == 'in_progress' and conclusion is None)
+          assert ((status in ('queued', 'in_progress', 'waiting', 'pending', 'requested') and conclusion is None)
                   or (status == 'completed' and conclusion in ('success', 'failure', 'cancelled'))), 'native run state is not eligible'
           assert run.get('event') in ('push', 'workflow_dispatch'), 'untrusted native run event'
           assert run.get('path') == '.github/workflows/build.yml', 'unexpected workflow path'

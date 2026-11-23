@@ -45,7 +45,8 @@ def prepare_stable_assets() -> None:
 
     run = json.loads(Path("verified-run.json").read_text(encoding="utf-8-sig"))
     run_status, run_conclusion = run.get("status"), run.get("conclusion")
-    eligible_run_state = ((run_status == "in_progress" and run_conclusion is None)
+    eligible_run_state = ((run_status in ("queued", "in_progress", "waiting", "pending", "requested")
+                           and run_conclusion is None)
                           or (run_status == "completed"
                               and run_conclusion in ("success", "failure", "cancelled")))
     if (run.get("head_sha") != sha or run.get("head_branch") != "main"
