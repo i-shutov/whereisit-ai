@@ -1,5 +1,7 @@
 import importlib.util
 import json
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -100,6 +102,65 @@ class CandidatePublicationPolicyTests(unittest.TestCase):
         acceptance, product = manifests()
         self.assertIsNotNone(POLICY.policy_error("1.1.0", acceptance, product))
 
+    def test_actual_workflow_guard_skips_stable_and_unapproved_rc_versions(self):
+        workflow = (ROOT / ".github/workflows/publish-validated-candidate.yml").read_text()
+        lines = workflow.splitlines()
+        start = next(i for i, line in enumerate(lines) if line.strip().startswith('version="$(tr'))
+        stop = next(i for i, line in enumerate(lines[start:], start) if line.strip().startswith('test -f "docs/releases/v$version.md"'))
+        guard_body = "\n".join(line[10:] if line.startswith("          ") else line for line in lines[start:stop])
+
+        bash = shutil.which("bash")
+        process_env = os.environ.copy()
+        git_bins = [Path(r"C:\Program Files\Git\bin"), Path(r"C:\Program Files\Git\usr\bin")]
+        if bash is None:
+            git_bash = git_bins[0] / "bash.exe"
+            if git_bash.is_file():
+                bash = str(git_bash)
+                process_env["PATH"] = os.pathsep.join(
+                    [str(path) for path in git_bins if path.is_dir()] + [process_env.get("PATH", "")])
+        if bash is None:
+            self.skipTest("Bash is unavailable")
+        python_path = Path(sys.executable).as_posix()
+        if os.name == "nt":
+            drive, remainder = os.path.splitdrive(sys.executable)
+            python_path = f"/{drive[0].lower()}{remainder.replace(os.sep, '/') }"
+        guard = f"set -euo pipefail\npython3() {{ '{python_path}' \"$@\"; }}\n{guard_body}"
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "release").mkdir()
+            output = root / "github-output"
+            for version in ("1.0.0", "1.1.0", "2.0.0"):
+                for stable_ready in (False, True):
+                    for approval in (False, True):
+                        (root / "VERSION").write_text(version, encoding="utf-8")
+                        (root / "release/ACCEPTANCE.json").write_text(
+                            json.dumps({"stable_ready": stable_ready,
+                                        "candidate_publication_approved": approval}), encoding="utf-8")
+                        output.write_text("", encoding="utf-8")
+                        result = subprocess.run([bash, "-c", guard], cwd=root,
+                                                env={**process_env, "GITHUB_OUTPUT": str(output)},
+                                                capture_output=True, text=True)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertIn("publish=false", output.read_text(encoding="utf-8"))
+
+            (root / "VERSION").write_text("1.1.0-rc.1", encoding="utf-8")
+            (root / "release/ACCEPTANCE.json").write_text(
+                json.dumps({"candidate_publication_approved": False}), encoding="utf-8")
+            output.write_text("", encoding="utf-8")
+            result = subprocess.run([bash, "-c", guard], cwd=root,
+                                    env={**process_env, "GITHUB_OUTPUT": str(output)},
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("publish=false", output.read_text(encoding="utf-8"))
+
+            for version in ("1.1.0-rc.1garbage", "1.1", "v1.1.0"):
+                (root / "VERSION").write_text(version, encoding="utf-8")
+                result = subprocess.run([bash, "-c", guard], cwd=root,
+                                        env={**process_env, "GITHUB_OUTPUT": str(output)},
+                                        capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0, version)
+
     def test_candidate_publication_guard_precedes_release_creation(self):
         workflow = (ROOT / ".github/workflows/publish-validated-candidate.yml").read_text()
         approval_short_circuit = workflow.index('approval="$(python3 -c')
@@ -110,7 +171,8 @@ class CandidatePublicationPolicyTests(unittest.TestCase):
         self.assertLess(approval_short_circuit, release_view)
         self.assertLess(approval_short_circuit, download)
         self.assertLess(guard, create)
-        self.assertIn("Stable releases use the separate manual Windows stable publisher.", workflow)
+        self.assertIn("Stable releases use the separate Windows stable publisher.", workflow)
+        self.assertIn('[[ "$version" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]', workflow)
 
     def test_macos_packaging_is_gated_by_shipped_platform_scope(self):
         workflow = (ROOT / ".github/workflows/build.yml").read_text()

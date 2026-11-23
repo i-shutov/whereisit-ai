@@ -37,8 +37,8 @@ jobs:
           set -euo pipefail
           test '${{ github.event.workflow_run.path }}' = '.github/workflows/build.yml'
           version="$(tr -d '\r\n' < VERSION)"
-          if [[ "$version" == '1.0.0' ]]; then
-            echo 'Stable releases use the separate manual Windows stable publisher.'
+          if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo 'Stable releases use the separate Windows stable publisher.'
             echo 'publish=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
