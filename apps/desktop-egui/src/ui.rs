@@ -7,6 +7,7 @@ use crate::bridge::{
 };
 use crate::categories::{self, parse_categories, Category};
 use crate::linked::LinkedCtf;
+use crate::local_analyzer::LocalAnalyzer;
 use crate::model::{bytes_compact, parse_volumes, DiskPreferences, Entry, Page, Volume};
 use crate::physical::PhysicalPanel;
 use crate::shelf::{valid_label, ShelfContext, ShelfSnapshot};
@@ -68,7 +69,7 @@ impl WorkspaceTab {
     fn available(self) -> bool {
         matches!(
             self,
-            Self::Search | Self::Slices | Self::VolumeMap | Self::UsbDisks
+            Self::Search | Self::Slices | Self::VolumeMap | Self::UsbDisks | Self::LocalPc
         )
     }
 }
@@ -249,6 +250,7 @@ enum CtfDialog {
 
 pub struct DesktopApp {
     bus: CommandBus,
+    local_analyzer: LocalAnalyzer,
     active_request: Option<u64>,
     db: Option<String>,
     workspace_tab: WorkspaceTab,
@@ -396,6 +398,7 @@ impl DesktopApp {
         });
         Self {
             bus: CommandBus::new(),
+            local_analyzer: LocalAnalyzer::default(),
             active_request: None,
             db: None,
             workspace_tab: WorkspaceTab::Search,
@@ -1599,6 +1602,12 @@ impl DesktopApp {
     }
 
     fn apply_reply(&mut self, mut reply: crate::bridge::Reply, ctx: &egui::Context) {
+        if self
+            .local_analyzer
+            .apply_reply(&mut reply, &mut self.bus, ctx, self.db.as_deref())
+        {
+            return;
+        }
         if let Purpose::AnalyticsCancel = &reply.purpose {
             return;
         }
@@ -2002,7 +2011,8 @@ impl DesktopApp {
             | Purpose::CtfProgress { .. }
             | Purpose::CtfCancel { .. }
             | Purpose::Analytics { .. }
-            | Purpose::AnalyticsCancel => unreachable!("Handled above"),
+            | Purpose::AnalyticsCancel
+            | Purpose::LocalAnalyzer { .. } => unreachable!("Handled above"),
             Purpose::Open { path } | Purpose::Create { path } => {
                 if opening_existing
                     && (!matches!(data["schema_version"].as_i64(), Some(1..=3))
@@ -2769,20 +2779,6 @@ impl DesktopApp {
                     }
                 });
             }
-        });
-    }
-
-    fn unavailable_workspace(&mut self, root: &mut egui::Ui) {
-        egui::CentralPanel::default().show(root, |ui| {
-            self.protect_background(ui);
-            ui.vertical_centered(|ui| {
-                ui.add_space(72.0);
-                ui.heading(self.workspace_tab.label(self.lang));
-                ui.label(RichText::new(self.t(
-                    "Пока недоступно. Здесь появятся только данные из проверенного локального каталога.",
-                    "Not available yet. This workspace will use verified data from the local catalog.",
-                )).weak());
-            });
         });
     }
 
@@ -4957,7 +4953,19 @@ impl eframe::App for DesktopApp {
             WorkspaceTab::LocalPc => {
                 self.cancel_analytics(&ctx, false, false);
                 self.cancel_analytics(&ctx, true, false);
-                self.unavailable_workspace(root)
+                let volumes: Vec<_> = self
+                    .volumes
+                    .iter()
+                    .map(|v| (v.id, v.label.clone()))
+                    .collect();
+                self.local_analyzer.show(
+                    root,
+                    &mut self.bus,
+                    &ctx,
+                    self.db.as_deref(),
+                    &volumes,
+                    self.lang == Language::Russian,
+                )
             }
         }
         self.dialogs(&ctx);
@@ -6200,7 +6208,7 @@ mod shortcut_tests {
         assert!(WorkspaceTab::UsbDisks.available());
         assert!(WorkspaceTab::Slices.available());
         assert!(WorkspaceTab::VolumeMap.available());
-        assert!(!WorkspaceTab::LocalPc.available());
+        assert!(WorkspaceTab::LocalPc.available());
     }
 
     #[test]

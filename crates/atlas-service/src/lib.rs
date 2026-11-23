@@ -18,6 +18,7 @@ mod duplicates;
 mod exports;
 mod focused_children;
 mod legacy;
+mod local_analyzer;
 mod maintenance;
 mod os_probe;
 mod physical_disks;
@@ -39,6 +40,24 @@ pub fn prepare_analytics_job(job_id: &str) -> Result<()> {
 }
 pub fn cancel_analytics_job(job_id: &str) -> Result<()> {
     analytics::cancel(&json!({"job_id":job_id})).map(|_| ())
+}
+
+/// Reserve a local analyzer job ID before the native client starts its worker thread.
+/// Performs bounded in-memory validation only; it does not inspect the selected path.
+pub fn prepare_local_analyzer_job(job_id: &str) -> Result<()> {
+    local_analyzer::prepare(&json!({"job_id":job_id})).map(|_| ())
+}
+
+/// Request cancellation of a prepared or running local analyzer job.
+pub fn cancel_local_analyzer_job(job_id: &str) -> Result<()> {
+    local_analyzer::cancel(&json!({"job_id":job_id})).map(|_| ())
+}
+
+/// Reserve a one-shot local analyzer operation before dispatching its worker.
+/// This is bounded in-memory state only and performs no filesystem or database I/O.
+pub fn prepare_local_analyzer_operation(job_id: &str, operation_id: &str) -> Result<()> {
+    local_analyzer::prepare_operation(&json!({"job_id":job_id,"operation_id":operation_id}))
+        .map(|_| ())
 }
 
 pub fn dispatch_json(input: &str) -> String {
@@ -85,6 +104,17 @@ fn dispatch(input: &str) -> Result<Value> {
         "analytics" => analytics::run(&v)?,
         "analytics_prepare" => analytics::prepare(&v)?,
         "analytics_cancel" => analytics::cancel(&v)?,
+        "local_analyzer_prepare" => local_analyzer::prepare(&v)?,
+        "local_analyzer_prepare_operation" => local_analyzer::prepare_operation(&v)?,
+        "local_analyzer_start" => local_analyzer::start(&v)?,
+        "local_analyzer_progress" => local_analyzer::progress(&v)?,
+        "local_analyzer_cancel" => local_analyzer::cancel(&v)?,
+        "local_analyzer_page" => local_analyzer::page(&v)?,
+        "local_analyzer_check_catalog" => local_analyzer::check_catalog(&v)?,
+        "local_analyzer_save_baseline" => local_analyzer::save_baseline(&v)?,
+        "local_analyzer_export_review_csv" => local_analyzer::export_csv(&v)?,
+        "local_analyzer_close" => local_analyzer::close(&v)?,
+        "local_analyzer_clear_baseline" => local_analyzer::clear_baseline(&v)?,
         "ctf_sync" => ctf_mirror::sync(&v)?,
         "ctf_progress" => ctf_job::progress(&v)?,
         "ctf_cancel" => ctf_job::cancel(&v)?,

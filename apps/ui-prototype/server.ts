@@ -4,7 +4,12 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
-import { countCandidateVolumes, metadataCandidateKey } from './src/utils/metadataCandidates';
+import {
+  buildMetadataCandidateIndex,
+  countCandidateVolumes,
+  metadataCandidateKey,
+  normalizeMetadataName,
+} from './src/utils/metadataCandidates';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -317,7 +322,7 @@ function buildInitialCatalog() {
     entries.push({
       ...e,
       id,
-      nameNorm: e.name.toLowerCase(),
+      nameNorm: normalizeMetadataName(e.name),
       ext,
     });
     return id;
@@ -3116,45 +3121,25 @@ async function startServer() {
       const capped = Array.isArray(files) ? files.slice(0, 10000) : [];
       const volMap = new Map(rawVolumes.map((v) => [v.id, v.label]));
 
-      // This simulated scan only counts name+size metadata candidates; it does not establish content equality.
-      const neededSizes = new Set<number>();
-      const neededNameSizes = new Set<string>();
-      for (const f of capped) {
-        if (!f || !f.name) continue;
-        const sz = Number(f.size) || 0;
-        if (sz >= MB) neededSizes.add(sz);
-        neededNameSizes.add(`${String(f.name).toLowerCase()}::${sz}`);
-      }
-
-      const bySizeIndex = new Map<number, { volumeId: number; volumeLabel: string; relativePath: string }[]>();
-      const byNameSizeIndex = new Map<string, { volumeId: number; volumeLabel: string; relativePath: string }[]>();
-
-      for (const e of rawEntries) {
-        if (e.kind !== 'file') continue;
-        const hitObj = {
-          volumeId: e.volumeId,
-          volumeLabel: volMap.get(e.volumeId) ?? `Disk #${e.volumeId}`,
-          relativePath: e.relativePath,
-        };
-        if (e.size >= MB && neededSizes.has(e.size)) {
-          const arr = bySizeIndex.get(e.size) ?? [];
-          arr.push(hitObj);
-          bySizeIndex.set(e.size, arr);
-        }
-        const nsKey = `${e.nameNorm}::${e.size}`;
-        if (neededNameSizes.has(nsKey)) {
-          const arr2 = byNameSizeIndex.get(nsKey) ?? [];
-          arr2.push(hitObj);
-          byNameSizeIndex.set(nsKey, arr2);
-        }
-      }
+      // This simulated lookup returns name+size metadata candidates only. It never establishes content equality.
+      const byNameSizeIndex = buildMetadataCandidateIndex(
+        rawEntries
+          .filter((e) => e.kind === 'file')
+          .map((e) => ({
+            name: e.name,
+            size: e.size,
+            volumeId: e.volumeId,
+            volumeLabel: volMap.get(e.volumeId) ?? `Disk #${e.volumeId}`,
+            relativePath: e.relativePath,
+          }))
+      );
 
       const matches: Record<string, { volumeId: number; volumeLabel: string; relativePath: string }[]> = {};
       let totalMatchedKeys = 0;
       for (const f of capped) {
         const sz = Number(f.size) || 0;
-        const nsKey = `${String(f.name).toLowerCase()}::${sz}`;
-        const hits = byNameSizeIndex.get(nsKey) ?? (sz >= MB ? bySizeIndex.get(sz) : undefined);
+        const nsKey = metadataCandidateKey(String(f.name ?? ''), sz);
+        const hits = byNameSizeIndex.get(nsKey);
         if (hits && hits.length > 0) {
           matches[f.key] = hits;
           totalMatchedKeys++;

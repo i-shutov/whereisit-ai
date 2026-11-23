@@ -8,7 +8,7 @@
 При отсутствии отдельного файла в архиве остаётся выражение лицензии
 из его манифеста. Наличие файла не заменяет юридического анализа.
 
-SHA-256 Cargo.lock: `c17a634032255bc94e7ff39249c3515b2020ba99922ef6edc58066ff31fbee1f`.
+SHA-256 Cargo.lock: `eb028dec3245f885ff3315d38a3eea7066173d7b05729e6ccfaa303a26da9605`.
 
 ## Встроенный SQLite
 
@@ -372,6 +372,7 @@ rusqlite 0.43.0 + libsqlite3-sys 0.40.0
 | tiny-skia | 0.11.4 | `BSD-3-Clause` | [LICENSE](licenses/tiny-skia-0.11.4/LICENSE) |
 | tiny-skia-path | 0.11.4 | `BSD-3-Clause` | [LICENSE](licenses/tiny-skia-path-0.11.4/LICENSE) |
 | tinystr | 0.8.5 | `Unicode-3.0` | [LICENSE](licenses/tinystr-0.8.5/LICENSE) |
+| tinyvec | 1.13.3 | `Zlib OR Apache-2.0 OR MIT` | [LICENSE-APACHE.md](licenses/tinyvec-1.13.3/LICENSE-APACHE.md), [LICENSE-MIT.md](licenses/tinyvec-1.13.3/LICENSE-MIT.md), [LICENSE-ZLIB.md](licenses/tinyvec-1.13.3/LICENSE-ZLIB.md) |
 | tokio | 1.54.1 | `MIT` | [LICENSE](licenses/tokio-1.54.1/LICENSE) |
 | toml_datetime | 1.1.3+spec-1.1.0 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/toml_datetime-1.1.3+spec-1.1.0/LICENSE-APACHE), [LICENSE-MIT](licenses/toml_datetime-1.1.3+spec-1.1.0/LICENSE-MIT) |
 | toml_edit | 0.25.19+spec-1.1.0 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/toml_edit-0.25.19+spec-1.1.0/LICENSE-APACHE), [LICENSE-MIT](licenses/toml_edit-0.25.19+spec-1.1.0/LICENSE-MIT) |
@@ -388,6 +389,7 @@ rusqlite 0.43.0 + libsqlite3-sys 0.40.0
 | uds_windows | 1.2.1 | `MIT` | [LICENSE](licenses/uds_windows-1.2.1/LICENSE) |
 | unicode-general-category | 1.1.0 | `Apache-2.0` | [LICENSE](licenses/unicode-general-category-1.1.0/LICENSE) |
 | unicode-ident | 1.0.27 | `(MIT OR Apache-2.0) AND Unicode-3.0` | [LICENSE-APACHE](licenses/unicode-ident-1.0.27/LICENSE-APACHE), [LICENSE-MIT](licenses/unicode-ident-1.0.27/LICENSE-MIT), [LICENSE-UNICODE](licenses/unicode-ident-1.0.27/LICENSE-UNICODE) |
+| unicode-normalization | 0.1.25 | `MIT OR Apache-2.0` | [COPYRIGHT](licenses/unicode-normalization-0.1.25/COPYRIGHT), [LICENSE-APACHE](licenses/unicode-normalization-0.1.25/LICENSE-APACHE), [LICENSE-MIT](licenses/unicode-normalization-0.1.25/LICENSE-MIT) |
 | unicode-properties | 0.1.5 | `(MIT OR Apache-2.0) AND Unicode-3.0` | [COPYRIGHT](licenses/unicode-properties-0.1.5/COPYRIGHT), [LICENSE-APACHE](licenses/unicode-properties-0.1.5/LICENSE-APACHE), [LICENSE-MIT](licenses/unicode-properties-0.1.5/LICENSE-MIT), [LICENSE-UNICODE](licenses/unicode-properties-0.1.5/LICENSE-UNICODE) |
 | unicode-script | 0.5.9 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/unicode-script-0.5.9/LICENSE-APACHE), [LICENSE-MIT](licenses/unicode-script-0.5.9/LICENSE-MIT) |
 | unicode-segmentation | 1.13.3 | `MIT OR Apache-2.0` | [COPYRIGHT](licenses/unicode-segmentation-1.13.3/COPYRIGHT), [LICENSE-APACHE](licenses/unicode-segmentation-1.13.3/LICENSE-APACHE), [LICENSE-MIT](licenses/unicode-segmentation-1.13.3/LICENSE-MIT) |

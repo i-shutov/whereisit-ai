@@ -253,6 +253,12 @@ pub enum Purpose {
         slices: bool,
     },
     AnalyticsCancel,
+    LocalAnalyzer {
+        job_id: String,
+        generation: u64,
+        scope_generation: u64,
+        op: String,
+    },
 }
 
 pub fn analytics_request(

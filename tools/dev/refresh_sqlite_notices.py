@@ -7,13 +7,14 @@ user catalogs or personal CTF files. This does not sign a release.
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 import re
 import shutil
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
-REGISTRY = Path.home() / ".cargo" / "registry" / "src"
+REGISTRY = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo")) / "registry" / "src"
 LOCK = ROOT / "Cargo.lock"
 NOTICES = ROOT / "THIRD_PARTY_NOTICES.md"
 LICENSES = ROOT / "licenses"
