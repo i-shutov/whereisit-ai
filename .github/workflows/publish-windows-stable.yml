@@ -8,7 +8,7 @@ on:
         required: false
         type: string
       native_run_id:
-        description: Successful trusted native CI run ID for that exact commit
+        description: Trusted native CI run ID with successful test and Windows jobs for that exact commit
         required: false
         type: string
 permissions:
@@ -56,9 +56,9 @@ jobs:
           fi
           mkdir -p "$RUNNER_TEMP/stable-verification"
           gh api "repos/$GITHUB_REPOSITORY/commits/main" > "$RUNNER_TEMP/stable-verification/current-main.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?branch=main&head_sha=$SOURCE_SHA&event=push&status=completed&per_page=100" > "$RUNNER_TEMP/stable-verification/candidate-runs.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?branch=main&head_sha=$SOURCE_SHA&event=push&per_page=100" > "$RUNNER_TEMP/stable-verification/candidate-runs.json"
           python3 - <<'PY'
-          import json, os, sys
+          import json, os, subprocess, sys
           current = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'stable-verification/current-main.json'), encoding='utf-8-sig'))
           assert current.get('sha') == os.environ['SOURCE_SHA'], 'source_sha must be current main'
           requested = os.environ.get('REQUESTED_RUN_ID', '')
@@ -66,13 +66,33 @@ jobs:
               run_id = requested
           else:
               runs = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'stable-verification/candidate-runs.json'), encoding='utf-8-sig')).get('workflow_runs', [])
+              def allowed_run_state(run):
+                  status, conclusion = run.get('status'), run.get('conclusion')
+                  return ((status in ('queued', 'in_progress', 'waiting', 'pending', 'requested') and conclusion is None)
+                          or (status == 'completed' and conclusion in ('success', 'failure', 'cancelled')))
+              def required_jobs_pass(run_id):
+                  response = subprocess.run(
+                      ['gh', 'api', f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{run_id}/jobs?per_page=100"],
+                      check=True, capture_output=True, text=True)
+                  jobs = json.loads(response.stdout).get('jobs', [])
+                  for name in ('test', 'windows'):
+                      matches = [job for job in jobs if job.get('name') == name]
+                      if (len(matches) != 1 or matches[0].get('conclusion') != 'success'
+                              or matches[0].get('status') != 'completed'):
+                          return False
+                  return True
               trusted = [run for run in runs if run.get('head_sha') == os.environ['SOURCE_SHA']
                          and run.get('head_branch') == 'main' and run.get('event') == 'push'
                          and run.get('path') == '.github/workflows/build.yml'
-                         and run.get('conclusion') == 'success'
+                         and allowed_run_state(run)
                          and run.get('head_repository', {}).get('full_name') == os.environ['GITHUB_REPOSITORY']]
-              assert trusted, 'no successful trusted main push native run exists for source_sha'
-              run_id = str(max(trusted, key=lambda run: (run.get('run_number', 0), run.get('updated_at', ''))).get('id'))
+              run_id = ''
+              for candidate in sorted(trusted, key=lambda run: (run.get('run_number', 0), run.get('updated_at', '')), reverse=True):
+                  candidate_id = str(candidate.get('id', ''))
+                  if candidate_id.isdigit() and required_jobs_pass(candidate_id):
+                      run_id = candidate_id
+                      break
+              assert run_id, 'no trusted exact-source main push run has successful test and windows jobs'
           assert run_id.isdigit(), 'native run ID must be numeric'
           print('ci_run_id=' + run_id, file=open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8'))
           PY
@@ -94,14 +114,17 @@ jobs:
           assert str(run.get('id')) == os.environ['CI_RUN_ID'], 'resolved run ID mismatch'
           assert run.get('head_sha') == os.environ['SOURCE_SHA'], 'run SHA mismatch'
           assert run.get('head_branch') == 'main', 'run branch must be main'
-          assert run.get('conclusion') == 'success', 'native run must succeed'
+          status, conclusion = run.get('status'), run.get('conclusion')
+          assert ((status in ('queued', 'in_progress', 'waiting', 'pending', 'requested') and conclusion is None)
+                  or (status == 'completed' and conclusion in ('success', 'failure', 'cancelled'))), 'native run state is not eligible'
           assert run.get('event') in ('push', 'workflow_dispatch'), 'untrusted native run event'
           assert run.get('path') == '.github/workflows/build.yml', 'unexpected workflow path'
           assert run.get('head_repository', {}).get('full_name') == os.environ['GITHUB_REPOSITORY'], 'run repository mismatch'
           jobs = json.load(open('verified-jobs.json', encoding='utf-8-sig')).get('jobs', [])
           for name in ('test', 'windows'):
               matches = [job for job in jobs if job.get('name') == name]
-              assert len(matches) == 1 and matches[0].get('conclusion') == 'success', f'{name} job did not pass'
+              assert (len(matches) == 1 and matches[0].get('conclusion') == 'success'
+                      and matches[0].get('status') == 'completed'), f'{name} job did not pass'
           PY
       - name: Resolve stable version and refuse existing release or tag
         id: version

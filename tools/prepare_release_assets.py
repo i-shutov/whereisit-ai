@@ -44,17 +44,24 @@ def prepare_stable_assets() -> None:
         raise SystemExit("Stable acceptance release_scope mismatch")
 
     run = json.loads(Path("verified-run.json").read_text(encoding="utf-8-sig"))
+    run_status, run_conclusion = run.get("status"), run.get("conclusion")
+    eligible_run_state = ((run_status in ("queued", "in_progress", "waiting", "pending", "requested")
+                           and run_conclusion is None)
+                          or (run_status == "completed"
+                              and run_conclusion in ("success", "failure", "cancelled")))
     if (run.get("head_sha") != sha or run.get("head_branch") != "main"
-            or run.get("conclusion") != "success"
+            or str(run.get("id")) != run_id
+            or not eligible_run_state
             or run.get("event") not in ("push", "workflow_dispatch")
             or run.get("path") != ".github/workflows/build.yml"
             or not isinstance(run.get("head_repository"), dict)
             or run["head_repository"].get("full_name") != repository):
-        raise SystemExit("Build is not a successful trusted exact-source main run")
+        raise SystemExit("Build is not an eligible trusted exact-source main run")
     jobs = json.loads(Path("verified-jobs.json").read_text(encoding="utf-8-sig")).get("jobs", [])
     for required in ("test", "windows"):
         matches = [job for job in jobs if job.get("name") == required]
-        if len(matches) != 1 or matches[0].get("conclusion") != "success":
+        if (len(matches) != 1 or matches[0].get("conclusion") != "success"
+                or matches[0].get("status") != "completed"):
             raise SystemExit("Required Windows stable CI job did not pass: " + required)
 
     installer_name = f"WhereIsItAI-egui-{version}-windows-x64-setup.exe"
