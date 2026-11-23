@@ -84,6 +84,37 @@ fn sort_register(volumes: &mut [Volume], order: RegisterOrder) {
     }
 }
 
+fn draw_annular_sector(
+    painter: &egui::Painter,
+    center: egui::Pos2,
+    max_radius: f32,
+    radii: (f32, f32),
+    start_angle: f64,
+    end_angle: f64,
+    color: Color32,
+) {
+    let sweep = (end_angle - start_angle).abs();
+    if sweep < 0.0005 {
+        return;
+    }
+    let steps = ((sweep * 24.0).ceil() as usize).max(1);
+    let point = |radius: f32, angle: f64| {
+        center + egui::vec2(angle.cos() as f32, angle.sin() as f32) * (max_radius * radius)
+    };
+    let mut mesh = egui::epaint::Mesh::default();
+    for i in 0..=steps {
+        let angle = start_angle + (end_angle - start_angle) * i as f64 / steps as f64;
+        mesh.colored_vertex(point(radii.0, angle), color);
+        mesh.colored_vertex(point(radii.1, angle), color);
+    }
+    for i in 0..steps {
+        let base = (i * 2) as u32;
+        mesh.add_triangle(base, base + 1, base + 3);
+        mesh.add_triangle(base, base + 3, base + 2);
+    }
+    painter.add(egui::Shape::mesh(mesh));
+}
+
 fn register_matches(
     volume: &Volume,
     display_name: &str,
@@ -3532,20 +3563,15 @@ impl DesktopApp {
                         && parent["size"].as_u64().unwrap_or(0) > 0
                         && parent["item_count"].as_u64().unwrap_or(0) > 0
                     {
-                        let (inner, outer) = radii[depth];
-                        let p = |r: f32, a: f64| {
-                            center + egui::vec2(a.cos() as f32, a.sin() as f32) * (max_r * r)
-                        };
-                        let steps = (((end - start).abs() * 24.0).ceil() as usize).max(1);
-                        for s in 0..steps {
-                            let a0 = start + (end - start) * s as f64 / steps as f64;
-                            let a1 = start + (end - start) * (s + 1) as f64 / steps as f64;
-                            painter.add(egui::Shape::convex_polygon(
-                                vec![p(inner, a0), p(outer, a0), p(outer, a1), p(inner, a1)],
-                                Color32::DARK_GRAY,
-                                egui::Stroke::NONE,
-                            ));
-                        }
+                        draw_annular_sector(
+                            &painter,
+                            center,
+                            max_r,
+                            radii[depth],
+                            start,
+                            end,
+                            Color32::DARK_GRAY,
+                        );
                     }
                     continue;
                 }
@@ -3579,7 +3605,6 @@ impl DesktopApp {
                     if sweep > 0.0 {
                         hit_regions.push((angle, stop, inner * max_r, outer * max_r, node.clone()));
                     }
-                    let steps = ((stop - angle).abs() * 24.0).ceil().max(1.0) as usize;
                     let point = |r: f32, a: f64| {
                         center + egui::vec2(a.cos() as f32, a.sin() as f32) * (max_r * r)
                     };
@@ -3591,20 +3616,8 @@ impl DesktopApp {
                         54
                     };
                     let fill = Color32::from_rgba_unmultiplied(base[0], base[1], base[2], alpha);
-                    for s in 0..steps {
-                        let a0 = angle + (stop - angle) * s as f64 / steps as f64;
-                        let a1 = angle + (stop - angle) * (s + 1) as f64 / steps as f64;
-                        painter.add(egui::Shape::convex_polygon(
-                            vec![
-                                point(inner, a0),
-                                point(outer, a0),
-                                point(outer, a1),
-                                point(inner, a1),
-                            ],
-                            fill,
-                            egui::Stroke::NONE,
-                        ));
-                    }
+                    let steps = ((stop - angle).abs() * 24.0).ceil().max(1.0) as usize;
+                    draw_annular_sector(&painter, center, max_r, (inner, outer), angle, stop, fill);
                     let boundary = if self.dark {
                         Color32::from_gray(20)
                     } else {
@@ -3635,20 +3648,15 @@ impl DesktopApp {
                 }
                 if has_truncated_remainder && angle < end - 0.002 {
                     // Render the bounded/capped tail as an unknown remainder, never redistribute it.
-                    let (inner, outer) = radii[depth];
-                    let p = |r: f32, a: f64| {
-                        center + egui::vec2(a.cos() as f32, a.sin() as f32) * (max_r * r)
-                    };
-                    let steps = (((end - angle).abs() * 24.0).ceil() as usize).max(1);
-                    for s in 0..steps {
-                        let a0 = angle + (end - angle) * s as f64 / steps as f64;
-                        let a1 = angle + (end - angle) * (s + 1) as f64 / steps as f64;
-                        painter.add(egui::Shape::convex_polygon(
-                            vec![p(inner, a0), p(outer, a0), p(outer, a1), p(inner, a1)],
-                            Color32::DARK_GRAY,
-                            egui::Stroke::NONE,
-                        ));
-                    }
+                    draw_annular_sector(
+                        &painter,
+                        center,
+                        max_r,
+                        radii[depth],
+                        angle,
+                        end,
+                        Color32::DARK_GRAY,
+                    );
                 }
             }
             if let Some(pointer) = response.hover_pos() {
