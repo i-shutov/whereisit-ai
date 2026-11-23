@@ -4,7 +4,7 @@ from contextlib import closing
 import sqlite3
 import tempfile
 from pathlib import Path
-from upgrade_catalog_probe import (FORMAT, RC1, RC2, RC3, RC4, STABLE,
+from upgrade_catalog_probe import (FORMAT, RC1, RC2, RC3, RC4, STABLE, NEXT_RC1,
     ENTRY_NOTE, ENTRY_TAGS, expected_cli_version, validate_checkpoint_versions,
     seed_fixture_annotation, require_fixture_annotation)
 
@@ -76,10 +76,26 @@ class InstalledVersionContract(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "unsupported_upgrade_version_pair"):
                     expected_cli_version("verify", source, target)
 
+    def test_11_candidate_pair_uses_pinned_stable_predecessor(self):
+        self.assertEqual(expected_cli_version("prepare", STABLE, NEXT_RC1), "WhereIsIt AI " + STABLE)
+        self.assertEqual(expected_cli_version("verify", STABLE, NEXT_RC1), "WhereIsIt AI " + NEXT_RC1)
+        for source, target in [(RC4, NEXT_RC1), (STABLE, STABLE), (NEXT_RC1, STABLE)]:
+            with self.subTest(source=source, target=target):
+                with self.assertRaisesRegex(RuntimeError, "unsupported_upgrade_version_pair"):
+                    expected_cli_version("verify", source, target)
+
     def test_stable_checkpoint_is_exact_rc4_to_100_pair(self):
         checkpoint = {"format": FORMAT, "source_release": RC4, "target_release": STABLE}
         validate_checkpoint_versions(checkpoint, RC4, STABLE)
         for source, target in [(RC3, STABLE), (RC4, RC4), (STABLE, RC4)]:
+            with self.subTest(source=source, target=target):
+                with self.assertRaisesRegex(RuntimeError, "wrong_checkpoint"):
+                    validate_checkpoint_versions(checkpoint, source, target)
+
+    def test_11_candidate_checkpoint_is_exact_100_to_11rc1_pair(self):
+        checkpoint = {"format": FORMAT, "source_release": STABLE, "target_release": NEXT_RC1}
+        validate_checkpoint_versions(checkpoint, STABLE, NEXT_RC1)
+        for source, target in [(RC4, NEXT_RC1), (STABLE, STABLE), (NEXT_RC1, STABLE)]:
             with self.subTest(source=source, target=target):
                 with self.assertRaisesRegex(RuntimeError, "wrong_checkpoint"):
                     validate_checkpoint_versions(checkpoint, source, target)

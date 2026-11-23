@@ -42,6 +42,7 @@ jobs:
       - run: rustup toolchain install 1.100.0 --profile minimal --component rustfmt,clippy
       - run: python3 tools/dev/verify_release_identity.py
       - run: python3 -m unittest discover -s tools/qa -p 'test_prepare_release_identity.py' -v
+      - run: python3 -m unittest discover -s tools/qa -p 'test_candidate_publication_policy.py' -v
       - run: python3 -m unittest discover -s tools/qa -p 'test_usb_disk_locator_contract.py' -v
       - run: cargo test --workspace --locked
       - run: cargo fmt --all -- --check
@@ -182,12 +183,14 @@ jobs:
             cli_sha256 = (Get-FileHash 'dist/windows-egui-product/payload/atlas.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
             signing = 'unsigned'
             stable_ready = [bool]$acceptance.stable_ready
+            candidate_publication_approved = [bool]$acceptance.candidate_publication_approved
             personal_catalogs_included = $false
           }
           if ($version -notmatch '-rc\.\d+$') {
             if ($acceptance.channel -ne 'stable' -or $acceptance.release_scope.unsigned_windows_stable_approved -ne $true) { throw 'Stable product scope not approved.' }
             $product.release_scope = $acceptance.release_scope
           } elseif ($acceptance.channel -ne 'prerelease' -or $acceptance.stable_ready -ne $false) { throw 'RC cannot masquerade as stable.' }
+          $product.release_scope = $acceptance.release_scope
           $product | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $dir 'provenance.json') -Encoding utf8
       - uses: actions/upload-artifact@v4
         with:
@@ -288,10 +291,22 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - name: Select deferred-platform packaging scope
+      - name: Select explicitly shipped macOS product packaging scope
         id: release
+        shell: bash
         run: |
-          if [[ "$(tr -d '\r\n' < VERSION)" == *-rc.* ]]; then
+          set -euo pipefail
+          version="$(tr -d '\r\n' < VERSION)"
+          acceptance_version="$(python3 -c 'import json; print(json.load(open("release/ACCEPTANCE.json", encoding="utf-8-sig"))["version"])')"
+          [[ "$acceptance_version" == "$version" ]] || { echo 'Release acceptance version mismatch' >&2; exit 1; }
+          if [[ "$version" == *-rc.* ]] && python3 - <<'PY'
+          import json
+          with open('release/ACCEPTANCE.json', encoding='utf-8-sig') as stream:
+              platforms = json.load(stream).get('release_scope', {}).get('ship_platforms')
+          raise SystemExit(0 if isinstance(platforms, list) and
+                           'macos-arm64' in platforms and 'macos-x86_64' in platforms else 1)
+          PY
+          then
             echo 'is_rc=true' >> "$GITHUB_OUTPUT"
           else
             echo 'is_rc=false' >> "$GITHUB_OUTPUT"

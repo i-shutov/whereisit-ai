@@ -27,13 +27,17 @@ RC2 = "1.0.0-rc.2"
 RC3 = "1.0.0-rc.3"
 RC4 = "1.0.0-rc.4"
 STABLE = "1.0.0"
+NEXT_RC1 = "1.1.0-rc.1"
 QUERY = "(ext:mp3 OR ext:mkv) AND size:>0B"
 CATEGORY = "QA-Upgrade-Ω-Категория"
 ENTRY_NOTE = "Synthetic upgrade note — 東京"
 ENTRY_TAGS = "qa,stable-upgrade"
 CTF_PLACEHOLDER = b"GENERATED INVALID CTF PLACEHOLDER; PROVE THAT INSTALLERS PRESERVE EXTERNAL FILES\n"
 FORMAT = "whereisit-native-upgrade-smoke-v1"
-SUPPORTED_PAIRS = {(RC1, RC2), (RC2, RC3), (RC3, RC4), (RC4, STABLE)}
+SUPPORTED_PAIRS = {
+    (RC1, RC2), (RC2, RC3), (RC3, RC4), (RC4, STABLE),
+    (STABLE, NEXT_RC1),
+}
 
 
 def expected_cli_version(mode: str, source: str, target: str) -> str:
