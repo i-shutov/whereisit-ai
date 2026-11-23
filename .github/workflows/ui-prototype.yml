@@ -25,6 +25,8 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Typecheck
         run: bun run lint
+      - name: Workspace async regressions
+        run: bun run test:workspaces
       - name: Build UI
         run: bun run build
       - name: Production server smoke (Express 5)

@@ -40,6 +40,7 @@ import {
   formatUnixDate,
 } from '../utils/format';
 import { useI18n } from '../i18n';
+import { buildSearchJumpDefaults } from '../utils/searchJump';
 
 interface NavigationSnapshot {
   mode: 'search' | 'browse' | 'duplicates' | 'copy_candidates';
@@ -64,6 +65,7 @@ export interface SearchPresetJump {
 }
 
 interface LocatorWorkspaceProps {
+  isActive: boolean;
   snapshot: SystemSnapshot;
   presetJump: SearchPresetJump | null;
   onRefreshSnapshot: () => Promise<void>;
@@ -79,6 +81,7 @@ type RegisterFilterMode = 'all' | 'current_page' | 'copy_candidates';
 type RegisterOrder = 'id' | 'volume';
 
 export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
+  isActive,
   snapshot,
   presetJump,
   onRefreshSnapshot,
@@ -178,7 +181,9 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
   const debounceTimerRef = useRef<number | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const latestRequestIdRef = useRef<string | null>(null);
+  const handledPresetNonceRef = useRef<number | null | undefined>(undefined);
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
+  const keyboardHandlerRef = useRef<((event: KeyboardEvent) => void) | null>(null);
 
   const composeEffectiveQuery = (text: string, typeTok: string, sizeTok: string): string => {
     const parts: string[] = [];
@@ -286,46 +291,47 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
 
   // Handle cross-tab jump from Archive Slices, Sunburst, or Disks table
   useEffect(() => {
+    if (!isActive) return;
+    const nonce = presetJump?.nonce ?? null;
+    if (handledPresetNonceRef.current === nonce) return;
+    handledPresetNonceRef.current = nonce;
     if (!presetJump) {
       void runCatalogQuery({});
       return;
     }
-    if (presetJump.copySourceEntryId) {
-      setMode('copy_candidates');
-      setCopySourceEntryId(presetJump.copySourceEntryId);
-      setCandidateVolumeId(null);
-      setOffset(0);
-      void runCatalogQuery({
-        nextMode: 'copy_candidates',
-        nextSourceEntryId: presetJump.copySourceEntryId,
-        nextCandidateVolumeId: null,
-        nextOffset: 0,
-      });
-      return;
-    }
-
-    const q = presetJump.query ?? '';
-    setQueryInput(q);
+    const jump = buildSearchJumpDefaults(presetJump);
+    setQueryInput(jump.query);
     setActiveTypeChip('');
     setActiveSizeChip('');
-    setAppliedQuery(q);
-    setMode('search');
-    setScopedVolumeId(presetJump.volumeId);
-    setFolderPrefix(presetJump.folderPrefix);
-    setCopySourceEntryId(null);
-    setOffset(0);
-    if (presetJump.volumeId) setSelectedRegisterDiskId(presetJump.volumeId);
+    setAppliedQuery(jump.query);
+    setMode(jump.mode);
+    setDuplicateMode(jump.duplicateMode);
+    setScopedVolumeId(jump.volumeId);
+    setBrowseParentId(jump.parentId);
+    setFolderPrefix(jump.folderPrefix);
+    setSelectedCategory(jump.category);
+    setCopySourceEntryId(jump.sourceEntryId);
+    setCandidateVolumeId(jump.candidateVolumeId);
+    setOffset(jump.offset);
+    setNavStack([]);
+    setPageData(null);
+    setSelectedEntryId(null);
+    setSelectedRegisterDiskId(jump.volumeId ?? 1);
 
     void runCatalogQuery({
-      nextMode: 'search',
-      nextQuery: q,
-      nextVolumeId: presetJump.volumeId,
-      nextFolderPrefix: presetJump.folderPrefix,
-      nextSourceEntryId: null,
-      nextOffset: 0,
+      nextMode: jump.mode,
+      nextDuplicateMode: jump.duplicateMode,
+      nextQuery: jump.query,
+      nextVolumeId: jump.volumeId,
+      nextParentId: jump.parentId,
+      nextFolderPrefix: jump.folderPrefix,
+      nextCategory: jump.category,
+      nextSourceEntryId: jump.sourceEntryId,
+      nextCandidateVolumeId: jump.candidateVolumeId,
+      nextOffset: jump.offset,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [presetJump?.nonce]);
+  }, [isActive, presetJump?.nonce]);
 
   const volumeMap = useMemo(() => {
     const m = new Map<number, CatalogVolume>();
@@ -482,9 +488,15 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
         }
       }
     };
+    keyboardHandlerRef.current = onKeyDown;
+  });
+
+  useEffect(() => {
+    if (!isActive) return;
+    const onKeyDown = (event: KeyboardEvent) => keyboardHandlerRef.current?.(event);
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  });
+  }, [isActive]);
 
   const pushHistory = () => {
     setNavStack((prev) => [

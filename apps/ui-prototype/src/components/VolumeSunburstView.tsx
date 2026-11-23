@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowUpLeft,
   ChevronRight,
@@ -12,8 +12,10 @@ import {
 import type { SunburstNode, SunburstResponse, SystemSnapshot } from '../types/atlas';
 import { formatBytes, formatExactBytes } from '../utils/format';
 import { useI18n } from '../i18n';
+import { ScopedRequestGate, type ScopedRequestTicket } from '../utils/scopedRequest';
 
 interface VolumeSunburstViewProps {
+  isActive: boolean;
   snapshot: SystemSnapshot;
   selectedVolumeId: number | null;
   selectedFolderPath: string | null;
@@ -107,6 +109,7 @@ function describeAnnularSector(
 }
 
 export const VolumeSunburstView: React.FC<VolumeSunburstViewProps> = ({
+  isActive,
   snapshot,
   selectedVolumeId,
   selectedFolderPath,
@@ -125,13 +128,16 @@ export const VolumeSunburstView: React.FC<VolumeSunburstViewProps> = ({
   const [loading, setLoading] = useState(false);
   const [hoveredNode, setHoveredNode] = useState<SunburstNode | null>(null);
   const [hoveredAncestors, setHoveredAncestors] = useState<Set<string>>(new Set());
+  const requestGateRef = useRef<ScopedRequestGate | null>(null);
+  if (!requestGateRef.current) requestGateRef.current = new ScopedRequestGate();
 
   useEffect(() => {
     setHighlightInput(initialHighlightQuery);
     setAppliedHighlight(initialHighlightQuery);
   }, [initialHighlightQuery]);
 
-  const loadSunburst = useCallback(async () => {
+  const loadSunburst = useCallback(async (ticket: ScopedRequestTicket) => {
+    const gate = requestGateRef.current!;
     setLoading(true);
     try {
       const resp = await fetch('/api/catalog/sunburst', {
@@ -145,23 +151,38 @@ export const VolumeSunburstView: React.FC<VolumeSunburstViewProps> = ({
         }),
       });
       const data = await resp.json();
+      if (!gate.isCurrent(ticket)) return;
       if (!resp.ok) {
+        gate.fail(ticket);
         onNotify(data.error || t('Не удалось построить карту объёма', 'Failed to build volume map'), 'error');
         return;
       }
+      if (!gate.succeed(ticket)) return;
       setSunburstData(data as SunburstResponse);
       setHoveredNode(null);
       setHoveredAncestors(new Set());
     } catch (err) {
-      onNotify((err as Error).message, 'error');
+      if (gate.fail(ticket)) onNotify((err as Error).message, 'error');
     } finally {
-      setLoading(false);
+      if (gate.isCurrent(ticket)) setLoading(false);
     }
   }, [selectedVolumeId, selectedFolderPath, groupBy, appliedHighlight, onNotify]);
 
   useEffect(() => {
-    void loadSunburst();
-  }, [loadSunburst, snapshot.totalCatalogEntries, snapshot.pinnedGenerationSha]);
+    if (!isActive) {
+      setLoading(false);
+      return;
+    }
+    const loadKey = JSON.stringify([selectedVolumeId, selectedFolderPath, groupBy, appliedHighlight, snapshot.totalCatalogEntries, snapshot.pinnedGenerationSha]);
+    const gate = requestGateRef.current!;
+    const ticket = gate.begin(loadKey);
+    if (!ticket) {
+      setLoading(false);
+      return;
+    }
+    void loadSunburst(ticket);
+    return () => gate.invalidate(ticket);
+  }, [isActive, loadSunburst, selectedVolumeId, selectedFolderPath, groupBy, appliedHighlight, snapshot.totalCatalogEntries, snapshot.pinnedGenerationSha]);
 
   // Compute all visible Sunburst Arcs up to depth 4 (consolidating micro-slices < 0.9° cleanly)
   const { arcs, topChildren } = useMemo(() => {

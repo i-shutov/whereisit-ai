@@ -32,6 +32,39 @@ enum RegisterOrder {
     IndexedBytes,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WorkspaceTab {
+    Search,
+    Slices,
+    VolumeMap,
+    UsbDisks,
+    LocalPc,
+}
+
+impl WorkspaceTab {
+    const ORDERED: [Self; 5] = [
+        Self::Search,
+        Self::Slices,
+        Self::VolumeMap,
+        Self::UsbDisks,
+        Self::LocalPc,
+    ];
+
+    fn label(self, lang: Language) -> &'static str {
+        match self {
+            Self::Search => lang.text("Поиск", "Search"),
+            Self::Slices => lang.text("Разрезы", "Slices"),
+            Self::VolumeMap => lang.text("Карта объёма", "Volume Map"),
+            Self::UsbDisks => lang.text("Носители", "USB Disks"),
+            Self::LocalPc => lang.text("Локальный ПК", "Local PC"),
+        }
+    }
+
+    fn available(self) -> bool {
+        matches!(self, Self::Search | Self::UsbDisks)
+    }
+}
+
 fn sort_register(volumes: &mut [Volume], order: RegisterOrder) {
     match order {
         RegisterOrder::Id => volumes.sort_by_key(|volume| volume.id),
@@ -179,6 +212,8 @@ pub struct DesktopApp {
     bus: CommandBus,
     active_request: Option<u64>,
     db: Option<String>,
+    workspace_tab: WorkspaceTab,
+    workspace_tab_focus_request: bool,
     integrity: CatalogIntegrity,
     linked_ctf: Option<LinkedCtf>,
     ctf_dialog: Option<CtfDialog>,
@@ -214,6 +249,10 @@ pub struct DesktopApp {
     selected_volume: Option<i64>,
     disk_filter: String,
     register_order: RegisterOrder,
+    disks_filter: String,
+    disks_order: RegisterOrder,
+    disks_selected_volume: Option<i64>,
+    disks_scroll: f32,
     show_catalog_dialog: bool,
     show_categories_dialog: bool,
     categories: Vec<Category>,
@@ -295,6 +334,8 @@ impl DesktopApp {
             bus: CommandBus::new(),
             active_request: None,
             db: None,
+            workspace_tab: WorkspaceTab::Search,
+            workspace_tab_focus_request: false,
             integrity: CatalogIntegrity::Closed,
             linked_ctf: None,
             ctf_dialog: None,
@@ -333,6 +374,10 @@ impl DesktopApp {
             selected_volume: None,
             disk_filter: String::new(),
             register_order: RegisterOrder::Id,
+            disks_filter: String::new(),
+            disks_order: RegisterOrder::Id,
+            disks_selected_volume: None,
+            disks_scroll: 0.0,
             show_catalog_dialog: false,
             show_categories_dialog: false,
             categories: Vec::new(),
@@ -377,6 +422,21 @@ impl DesktopApp {
 
     fn t(&self, ru: &'static str, en: &'static str) -> &'static str {
         self.lang.text(ru, en)
+    }
+
+    fn switch_workspace(&mut self, tab: WorkspaceTab) -> bool {
+        if self.dialog_open() || !tab.available() {
+            return false;
+        }
+        if self.workspace_tab == tab {
+            return true;
+        }
+        self.workspace_tab = tab;
+        self.workspace_tab_focus_request = true;
+        if tab == WorkspaceTab::Search {
+            self.restore_scroll = Some(self.results_scroll);
+        }
+        true
     }
 
     fn queue(&mut self, purpose: Purpose, request: Value, ctx: &egui::Context) {
@@ -698,6 +758,8 @@ impl DesktopApp {
     fn clear_catalog(&mut self) {
         self.physical.close_if_scope_changed(None);
         self.db = None;
+        self.workspace_tab = WorkspaceTab::Search;
+        self.workspace_tab_focus_request = false;
         self.linked_ctf = None;
         self.ctf_dialog = None;
         self.description_entry_id = None;
@@ -714,6 +776,10 @@ impl DesktopApp {
         self.focus_disk_name = false;
         self.disk_draft = DiskPropertiesDraft::default();
         self.selected_volume = None;
+        self.disks_filter.clear();
+        self.disks_order = RegisterOrder::Id;
+        self.disks_selected_volume = None;
+        self.disks_scroll = 0.0;
         self.query_input.clear();
         self.route = Route::Search {
             query: String::new(),
@@ -741,7 +807,7 @@ impl DesktopApp {
     }
 
     fn start_export(&mut self, ctx: &egui::Context) {
-        if self.active_request.is_some() {
+        if self.active_request.is_some() || self.workspace_tab != WorkspaceTab::Search {
             return;
         }
         let Some(db) = self.db.clone() else {
@@ -1278,6 +1344,25 @@ impl DesktopApp {
         }
         self.selected_volume = volume_id;
         self.navigate_search(ctx);
+    }
+
+    fn jump_to_search_on_disk(&mut self, volume_id: i64, ctx: &egui::Context) {
+        if self.dialog_open()
+            || self.active_request.is_some()
+            || !self.volumes.iter().any(|volume| volume.id == volume_id)
+        {
+            return;
+        }
+        self.switch_workspace(WorkspaceTab::Search);
+        self.workspace_tab_focus_request = false;
+        self.selected_volume = Some(volume_id);
+        // PR58's explicit disk action starts a fresh scoped search. Merely
+        // selecting the Search tab above retains its previous context instead.
+        self.query_input.clear();
+        self.results_scroll = 0.0;
+        self.restore_scroll = Some(0.0);
+        ctx.memory_mut(|memory| memory.request_focus(egui::Id::unique(SEARCH_INPUT_ID)));
+        self.navigate_disk(Some(volume_id), ctx);
     }
 
     fn navigate_folder(&mut self, entry: &Entry, ctx: &egui::Context) {
@@ -2133,7 +2218,9 @@ impl DesktopApp {
                         self.error = None;
                         ui.close();
                     }
-                    let can_export = self.db.is_some() && self.active_request.is_none();
+                    let can_export = self.db.is_some()
+                        && self.active_request.is_none()
+                        && self.workspace_tab == WorkspaceTab::Search;
                     if ui
                         .add_enabled(
                             can_export,
@@ -2163,7 +2250,8 @@ impl DesktopApp {
                     .add_enabled(
                         self.db.is_some()
                             && self.linked_ctf.is_none()
-                            && self.active_request.is_none(),
+                            && self.active_request.is_none()
+                            && self.workspace_tab == WorkspaceTab::Search,
                         egui::Button::new(self.t("Категории", "Categories")),
                     )
                     .clicked()
@@ -2210,6 +2298,261 @@ impl DesktopApp {
                     }
                     ui.label(RichText::new(env!("CARGO_PKG_VERSION")).small().weak());
                 });
+            });
+        });
+    }
+
+    fn workspace_tabs(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
+        egui::Panel::top("workspace_tabs").show(root, |ui| {
+            self.protect_background(ui);
+            ui.horizontal(|ui| {
+                ui.add_space(4.0);
+                let mut tab_responses = Vec::with_capacity(WorkspaceTab::ORDERED.len());
+                for tab in WorkspaceTab::ORDERED {
+                    let title = if tab == WorkspaceTab::UsbDisks && self.db.is_some() {
+                        format!("{} ({})", tab.label(self.lang), self.volumes.len())
+                    } else {
+                        tab.label(self.lang).to_owned()
+                    };
+                    let mut response = ui.add_enabled(
+                        tab.available(),
+                        egui::Button::selectable(self.workspace_tab == tab, title),
+                    );
+                    if !tab.available() {
+                        let explanation = self.t(
+                            "Это рабочее пространство готовится для Windows 1.1.",
+                            "This workspace is planned for Windows 1.1.",
+                        );
+                        response = response
+                            .on_hover_text(explanation)
+                            .on_disabled_hover_text(explanation);
+                    } else if response.clicked() && self.switch_workspace(tab) {
+                        response.request_focus();
+                    }
+                    tab_responses.push((tab, response));
+                }
+
+                if self.workspace_tab_focus_request {
+                    if !self.dialog_open() {
+                        if let Some((_, response)) = tab_responses
+                            .iter()
+                            .find(|(tab, _)| *tab == self.workspace_tab)
+                        {
+                            response.request_focus();
+                        }
+                    }
+                    self.workspace_tab_focus_request = false;
+                }
+
+                let focus_inside_tabs = tab_responses
+                    .iter()
+                    .any(|(_, response)| response.has_focus());
+                if focus_inside_tabs {
+                    let (left, right, home, end) = ctx.input(|input| {
+                        let pressed = |key| {
+                            input.events.iter().any(|event| {
+                                matches!(event, egui::Event::Key {
+                                    key: pressed_key,
+                                    pressed: true,
+                                    modifiers,
+                                    ..
+                                } if *pressed_key == key && *modifiers == egui::Modifiers::NONE)
+                            })
+                        };
+                        (
+                            pressed(egui::Key::ArrowLeft),
+                            pressed(egui::Key::ArrowRight),
+                            pressed(egui::Key::Home),
+                            pressed(egui::Key::End),
+                        )
+                    });
+                    if left || right || home || end {
+                        let enabled: Vec<_> = WorkspaceTab::ORDERED
+                            .into_iter()
+                            .filter(|tab| tab.available())
+                            .collect();
+                        let current = enabled
+                            .iter()
+                            .position(|tab| *tab == self.workspace_tab)
+                            .unwrap_or(0);
+                        let next = if home {
+                            0
+                        } else if end {
+                            enabled.len().saturating_sub(1)
+                        } else if right {
+                            (current + 1) % enabled.len()
+                        } else {
+                            (current + enabled.len() - 1) % enabled.len()
+                        };
+                        if self.switch_workspace(enabled[next]) {
+                            ctx.request_repaint();
+                        }
+                    }
+                }
+            });
+        });
+    }
+
+    fn disks_workspace(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
+        egui::CentralPanel::default().show(root, |ui| {
+            self.protect_background(ui);
+            ui.horizontal(|ui| {
+                ui.heading(format!(
+                    "{} ({})",
+                    self.t("Носители", "USB Disks"),
+                    self.volumes.len()
+                ));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let label = match self.disks_order {
+                        RegisterOrder::Id => self.t("Объём ↓", "Size ↓"),
+                        RegisterOrder::IndexedBytes => "#ID",
+                    };
+                    if ui.small_button(label).clicked() {
+                        self.disks_order = match self.disks_order {
+                            RegisterOrder::Id => RegisterOrder::IndexedBytes,
+                            RegisterOrder::IndexedBytes => RegisterOrder::Id,
+                        };
+                    }
+                    ui.label(self.t("Сортировка", "Sort"));
+                });
+            });
+            ui.horizontal(|ui| {
+                ui.label(self.t("Фильтр", "Filter"));
+                let filter_hint = self.t("Имя, метка или #ID", "Name, label, or #ID");
+                ui.add_sized(
+                    [260.0, 24.0],
+                    egui::TextEdit::singleline(&mut self.disks_filter).hint_text(filter_hint),
+                );
+                if ui.button(self.t("Все диски", "All disks")).clicked() {
+                    self.disks_selected_volume = None;
+                }
+            });
+            ui.separator();
+            if self.db.is_none() {
+                ui.label(self.t(
+                    "Откройте каталог, чтобы увидеть записанные диски.",
+                    "Open a catalog to view its recorded disks.",
+                ));
+                return;
+            }
+            let filter = self.disks_filter.trim().to_lowercase();
+            let mut visible: Vec<_> = self
+                .volumes
+                .iter()
+                .filter(|volume| {
+                    register_matches(
+                        volume,
+                        self.display_name(volume),
+                        self.shelf.label(volume.id),
+                        self.disk_preferences
+                            .get(&volume.id)
+                            .map_or("", |preferences| preferences.note.as_str()),
+                        &filter,
+                    )
+                })
+                .cloned()
+                .collect();
+            sort_register(&mut visible, self.disks_order);
+            let table = TableBuilder::new(ui)
+                .id_salt("usb_disks_workspace_table")
+                .striped(true)
+                .column(Column::initial(58.0).at_least(52.0))
+                .column(Column::remainder().at_least(180.0))
+                .column(Column::initial(145.0).at_least(110.0))
+                .column(Column::initial(115.0).at_least(90.0))
+                .column(Column::initial(220.0).at_least(205.0))
+                .vertical_scroll_offset(self.disks_scroll);
+            let output = table
+                .header(26.0, |mut header| {
+                    header.col(|ui| {
+                        ui.strong("ID");
+                    });
+                    header.col(|ui| {
+                        ui.strong(self.t("Имя", "Name"));
+                    });
+                    header.col(|ui| {
+                        ui.strong(self.t("Записанный объём", "Indexed size"));
+                    });
+                    header.col(|ui| {
+                        ui.strong(self.t("Записей", "Entries"));
+                    });
+                    header.col(|ui| {
+                        ui.strong("");
+                    });
+                })
+                .body(|body| {
+                    body.rows(34.0, visible.len(), |mut row| {
+                        let volume = &visible[row.index()];
+                        row.col(|ui| {
+                            ui.label(format!("#{}", volume.id));
+                        });
+                        row.col(|ui| {
+                            let name = self.display_name(volume);
+                            let label = self.shelf.label(volume.id);
+                            let title = if label.is_empty() {
+                                name.to_owned()
+                            } else {
+                                format!("{name} · 🏷 {label}")
+                            };
+                            let selected = self.disks_selected_volume == Some(volume.id);
+                            if ui.selectable_label(selected, title).clicked() {
+                                self.disks_selected_volume = Some(volume.id);
+                            }
+                        });
+                        row.col(|ui| {
+                            ui.label(bytes_compact(volume.total_bytes));
+                        });
+                        row.col(|ui| {
+                            ui.label(volume.entry_count.to_string());
+                        });
+                        row.col(|ui| {
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .small_button(self.t("Поиск на диске", "Search disk"))
+                                    .clicked()
+                                {
+                                    self.jump_to_search_on_disk(volume.id, ctx);
+                                }
+                                if ui.small_button(self.t("Свойства", "Properties")).clicked()
+                                {
+                                    self.disks_selected_volume = Some(volume.id);
+                                    self.open_disk_properties(volume.id);
+                                    self.shelf_editor = self.shelf.label(volume.id).to_owned();
+                                }
+                            });
+                        });
+                    })
+                });
+            self.disks_scroll = output.state.clamped_offset().y;
+            if let Some(id) = self.disks_selected_volume {
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label(self.t(
+                        "Выбранный элемент — запись каталога. Физическое наличие не проверено.",
+                        "Selected item is a catalog record. Physical presence is unverified.",
+                    ));
+                    if ui
+                        .button(self.t("Открыть свойства", "Open properties"))
+                        .clicked()
+                    {
+                        self.open_disk_properties(id);
+                        self.shelf_editor = self.shelf.label(id).to_owned();
+                    }
+                });
+            }
+        });
+    }
+
+    fn unavailable_workspace(&mut self, root: &mut egui::Ui) {
+        egui::CentralPanel::default().show(root, |ui| {
+            self.protect_background(ui);
+            ui.vertical_centered(|ui| {
+                ui.add_space(72.0);
+                ui.heading(self.workspace_tab.label(self.lang));
+                ui.label(RichText::new(self.t(
+                    "Пока недоступно. Здесь появятся только данные из проверенного локального каталога.",
+                    "Not available yet. This workspace will use verified data from the local catalog.",
+                )).weak());
             });
         });
     }
@@ -3036,7 +3379,8 @@ impl DesktopApp {
                         ui.colored_label(Color32::from_rgb(224, 96, 88), error);
                     }
                     ui.horizontal(|ui| {
-                        if ui.add_enabled(self.active_request.is_none(),
+                        if ui.add_enabled(self.active_request.is_none()
+                            && self.workspace_tab == WorkspaceTab::Search,
                             egui::Button::new(self.t("Экспортировать", "Export"))
                         ).clicked() {
                             self.start_export(ctx);
@@ -3264,18 +3608,25 @@ impl DesktopApp {
                 }),
             )
         });
-        if all {
-            self.navigate_disk(None, ctx);
-        }
         if search {
+            self.switch_workspace(WorkspaceTab::Search);
+            self.workspace_tab_focus_request = false;
             ctx.memory_mut(|memory| memory.request_focus(egui::Id::unique(SEARCH_INPUT_ID)));
         }
+        if all && self.workspace_tab == WorkspaceTab::Search {
+            self.navigate_disk(None, ctx);
+        }
         if properties && self.active_request.is_none() {
-            if let Some(id) = self.selected_volume {
+            let selected = match self.workspace_tab {
+                WorkspaceTab::Search => self.selected_volume,
+                WorkspaceTab::UsbDisks => self.disks_selected_volume,
+                WorkspaceTab::Slices | WorkspaceTab::VolumeMap | WorkspaceTab::LocalPc => None,
+            };
+            if let Some(id) = selected {
                 self.open_disk_properties(id);
             }
         }
-        if back {
+        if back && self.workspace_tab == WorkspaceTab::Search {
             self.go_back(ctx);
         }
         if cancel_scan {
@@ -3328,10 +3679,19 @@ impl eframe::App for DesktopApp {
         self.poll_ctf_progress(&ctx);
         self.handle_shortcuts(&ctx);
         self.menu(root, &ctx);
-        self.search_toolbar(root, &ctx);
-        self.disk_sidebar(root, &ctx);
-        self.inspector(root, &ctx);
-        self.results_table(root, &ctx);
+        self.workspace_tabs(root, &ctx);
+        match self.workspace_tab {
+            WorkspaceTab::Search => {
+                self.search_toolbar(root, &ctx);
+                self.disk_sidebar(root, &ctx);
+                self.inspector(root, &ctx);
+                self.results_table(root, &ctx);
+            }
+            WorkspaceTab::UsbDisks => self.disks_workspace(root, &ctx),
+            WorkspaceTab::Slices | WorkspaceTab::VolumeMap | WorkspaceTab::LocalPc => {
+                self.unavailable_workspace(root)
+            }
+        }
         self.dialogs(&ctx);
         self.physical
             .close_if_scope_changed(self.shelf_context.as_ref().map(|s| s.catalog_key.as_str()));
@@ -4424,6 +4784,229 @@ mod shortcut_tests {
         );
         output.textures_delta.clear();
         assert_eq!(app.show_disk_properties, None);
+    }
+
+    #[test]
+    fn workspace_tabs_keep_pr58_order_and_disable_unimplemented_workspaces() {
+        assert_eq!(
+            WorkspaceTab::ORDERED.map(|tab| tab.label(Language::English)),
+            ["Search", "Slices", "Volume Map", "USB Disks", "Local PC"]
+        );
+        assert!(WorkspaceTab::Search.available());
+        assert!(WorkspaceTab::UsbDisks.available());
+        assert!(!WorkspaceTab::Slices.available());
+        assert!(!WorkspaceTab::VolumeMap.available());
+        assert!(!WorkspaceTab::LocalPc.available());
+    }
+
+    #[test]
+    fn changing_workspace_preserves_search_route_page_selection_and_scroll() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        let entry = Entry {
+            id: 41,
+            volume_id: 5,
+            parent_id: Some(8),
+            name: "фильм.mkv".into(),
+            relative_path: "Кино/фильм.mkv".into(),
+            kind: "file".into(),
+            size: 12,
+            modified_unix: None,
+            description: String::new(),
+            tags: String::new(),
+        };
+        app.query_input = "ext:mkv AND name:фильм".into();
+        app.route = Route::Folder {
+            volume_id: 5,
+            parent_id: Some(8),
+        };
+        app.selected_volume = Some(5);
+        app.offset = 250;
+        app.page.items = vec![entry.clone()];
+        app.selected = Some(entry);
+        app.results_scroll = 177.0;
+        app.history.push((
+            Route::Search {
+                query: "ext:mkv".into(),
+                volume_id: Some(5),
+            },
+            0,
+            None,
+            Some(5),
+            64.0,
+        ));
+
+        assert!(app.switch_workspace(WorkspaceTab::UsbDisks));
+        app.disks_filter = "#5".into();
+        app.disks_selected_volume = Some(5);
+        assert!(app.switch_workspace(WorkspaceTab::Search));
+
+        assert_eq!(app.query_input, "ext:mkv AND name:фильм");
+        assert_eq!(
+            app.route,
+            Route::Folder {
+                volume_id: 5,
+                parent_id: Some(8)
+            }
+        );
+        assert_eq!(app.selected_volume, Some(5));
+        assert_eq!(app.offset, 250);
+        assert_eq!(app.page.items[0].id, 41);
+        assert_eq!(app.selected.as_ref().map(|row| row.id), Some(41));
+        assert_eq!(app.results_scroll, 177.0);
+        assert_eq!(app.history.len(), 1);
+        assert_eq!(app.disks_filter, "#5");
+        assert_eq!(app.disks_selected_volume, Some(5));
+        assert_eq!(app.restore_scroll, Some(177.0));
+        assert!(!app.switch_workspace(WorkspaceTab::Slices));
+        assert_eq!(app.workspace_tab, WorkspaceTab::Search);
+        app.show_export_dialog = true;
+        assert!(!app.switch_workspace(WorkspaceTab::UsbDisks));
+        assert_eq!(app.workspace_tab, WorkspaceTab::Search);
+    }
+
+    #[test]
+    fn page_reply_while_disks_workspace_is_active_updates_search_session_only() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.active_request = Some(12);
+        app.workspace_tab = WorkspaceTab::UsbDisks;
+        app.disks_filter = "#5".into();
+        app.disks_selected_volume = Some(5);
+        let route = Route::Search {
+            query: "ext:mkv".into(),
+            volume_id: Some(5),
+        };
+        app.apply_reply(
+            crate::bridge::Reply {
+                id: 12,
+                purpose: Purpose::Page {
+                    route: route.clone(),
+                },
+                response: json!({"ok":true,"data":{"items":[{
+                    "id":41,"volume_id":5,"parent_id":null,"name":"фильм.mkv",
+                    "relative_path":"Кино/фильм.mkv","kind":"file","size":12
+                }],"offset":0,"limit":250,"has_more":false}}),
+            },
+            &ctx,
+        );
+        assert_eq!(app.workspace_tab, WorkspaceTab::UsbDisks);
+        assert_eq!(app.route, route);
+        assert_eq!(app.page.items[0].id, 41);
+        assert_eq!(app.disks_filter, "#5");
+        assert_eq!(app.disks_selected_volume, Some(5));
+        assert_eq!(app.active_request, None);
+
+        app.active_request = Some(14);
+        app.page.items.clear();
+        app.apply_reply(
+            crate::bridge::Reply {
+                id: 13,
+                purpose: Purpose::Page {
+                    route: Route::Search { query: "stale".into(), volume_id: None },
+                },
+                response: json!({"ok":true,"data":{"items":[],"offset":0,"limit":250,"has_more":false}}),
+            },
+            &ctx,
+        );
+        assert_eq!(app.active_request, Some(14));
+        assert!(app.page.items.is_empty());
+        assert_eq!(app.route, route);
+    }
+
+    #[test]
+    fn disk_workspace_search_action_starts_fresh_scope_like_pr58() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.db = Some("synthetic.sqlite".into());
+        app.volumes.push(Volume {
+            id: 5,
+            label: "Disk Five".into(),
+            root_path: String::new(),
+            entry_count: 1,
+            total_bytes: 42,
+        });
+        app.workspace_tab = WorkspaceTab::UsbDisks;
+        app.disks_filter = "#5".into();
+        app.disks_selected_volume = Some(5);
+        app.route = Route::Search {
+            query: "ext:mkv AND name:фильм".into(),
+            volume_id: None,
+        };
+        app.query_input = "ext:mkv AND name:фильм".into();
+        app.results_scroll = 120.0;
+        app.history
+            .push((app.route.clone(), 250, None, Some(5), 120.0));
+        let (sent, received) = std::sync::mpsc::channel();
+        app.bus.set_handler(move |request| {
+            sent.send(request.clone()).unwrap();
+            json!({"ok":true,"data":{"items":[],"offset":0,"limit":250,"has_more":false}})
+        });
+
+        app.jump_to_search_on_disk(5, &ctx);
+        let request = received
+            .recv_timeout(Duration::from_secs(2))
+            .expect("search request was not sent");
+        assert_eq!(app.workspace_tab, WorkspaceTab::Search);
+        assert!(app.query_input.is_empty());
+        assert_eq!(app.selected_volume, Some(5));
+        assert_eq!(request["op"], "search_fast");
+        assert_eq!(request["query"], "");
+        assert_eq!(request["volume_id"], 5);
+        assert_eq!(app.disks_filter, "#5");
+        assert_eq!(app.disks_selected_volume, Some(5));
+        assert!(app.history.is_empty());
+        assert_eq!(app.results_scroll, 0.0);
+        assert_eq!(app.restore_scroll, Some(0.0));
+    }
+
+    #[test]
+    fn clear_catalog_resets_disk_workspace_state() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.workspace_tab = WorkspaceTab::UsbDisks;
+        app.disks_filter = "#5".into();
+        app.disks_selected_volume = Some(5);
+        app.disks_scroll = 900.0;
+        app.clear_catalog();
+        assert_eq!(app.workspace_tab, WorkspaceTab::Search);
+        assert!(app.disks_filter.is_empty());
+        assert_eq!(app.disks_selected_volume, None);
+        assert_eq!(app.disks_scroll, 0.0);
+    }
+
+    #[test]
+    fn properties_shortcut_uses_only_active_workspace_selection() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        selected_volume(&mut app);
+        app.selected_volume = Some(60);
+        app.disks_selected_volume = None;
+        app.workspace_tab = WorkspaceTab::UsbDisks;
+        let mut output = ctx.run_pass(
+            key_input(egui::Key::F2, egui::Modifiers::default()),
+            |ctx| app.handle_shortcuts(ctx),
+        );
+        output.textures_delta.clear();
+        assert_eq!(app.show_disk_properties, None);
+
+        app.disks_selected_volume = Some(60);
+        app.workspace_tab = WorkspaceTab::Slices;
+        let mut output = ctx.run_pass(
+            key_input(egui::Key::F2, egui::Modifiers::default()),
+            |ctx| app.handle_shortcuts(ctx),
+        );
+        output.textures_delta.clear();
+        assert_eq!(app.show_disk_properties, None);
+
+        app.workspace_tab = WorkspaceTab::UsbDisks;
+        let mut output = ctx.run_pass(
+            key_input(egui::Key::F2, egui::Modifiers::default()),
+            |ctx| app.handle_shortcuts(ctx),
+        );
+        output.textures_delta.clear();
+        assert_eq!(app.show_disk_properties, Some(60));
+        assert_eq!(app.selected_volume, Some(60));
     }
 }
 #[cfg(test)]

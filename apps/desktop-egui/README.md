@@ -1,5 +1,7 @@
 # WhereIsIt AI / Desktop egui — R2 native preview
 
+> Current development: [Windows 1.1 PR58 workspaces](../../docs/qa/WINDOWS_1_1_WORKSPACES_PR58_20261122.md). The released Windows 1.0 remains immutable. This first 1.1 slice ports the prototype's tab order and retained Search/USB Disks state; Slices, Volume Map and Local PC remain unavailable until their real backend/UI work is accepted. The older R2/R3/R4 sections below are implementation history, not the present release verdict. [Current roadmap](../../docs/ROADMAP.md).
+
 This is a **real Rust/egui executable**, not the PR58 React UI. The visual and behavioral
 authority remains `apps/ui-prototype` from PR #58. This R2 slice uses the existing
 `atlas-service` Rust API for real **SQLite v3** operations, not a simulated JS backend.
