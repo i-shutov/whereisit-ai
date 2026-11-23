@@ -104,10 +104,15 @@
   },
   "publication_verification": {
     "manual_final_action": true,
-    "require_current_main_successful_exact_source_ci": true,
     "require_rebuilt_readiness_artifact_provenance_and_checksum": true,
     "require_final_installer_gui_before_publication": true,
     "later_builds_not_certified_retroactively": true,
-    "preserve_previous_release_and_tag": true
+    "preserve_previous_release_and_tag": true,
+    "require_current_main_successful_required_ci_jobs": true,
+    "required_completed_unique_jobs": [
+      "test",
+      "windows"
+    ],
+    "unshipped_platform_jobs_are_not_windows_publication_gates": true
   }
 }

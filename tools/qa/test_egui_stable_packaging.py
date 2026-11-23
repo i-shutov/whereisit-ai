@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -53,6 +54,31 @@ class EguiStablePackagingContract(unittest.TestCase):
             result = self._prepare(repo)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_unshipped_macos_run_states_do_not_block_successful_windows_gates(self):
+        cases = (
+            ("in_progress", None, "queued", None),
+            ("completed", "failure", "completed", "failure"),
+            ("completed", "cancelled", "completed", "cancelled"),
+        )
+        for run_status, conclusion, mac_status, mac_conclusion in cases:
+            with self.subTest(run_status=run_status, mac_status=mac_status), tempfile.TemporaryDirectory() as temp:
+                repo = Path(temp)
+                self._make_repo(repo)
+                run_path = repo / "verified-run.json"
+                run = json.loads(run_path.read_text(encoding="utf-8"))
+                run["status"] = run_status
+                run["conclusion"] = conclusion
+                run_path.write_text(json.dumps(run), encoding="utf-8")
+                jobs_path = repo / "verified-jobs.json"
+                jobs = json.loads(jobs_path.read_text(encoding="utf-8"))
+                jobs["jobs"][2]["status"] = mac_status
+                jobs["jobs"][2]["conclusion"] = mac_conclusion
+                jobs_path.write_text(json.dumps(jobs), encoding="utf-8")
+                result = self._prepare(repo)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                provenance = json.loads((repo / "release-assets/provenance.json").read_text(encoding="utf-8"))
+                self.assertEqual(provenance["required_jobs"], {"test": "success", "windows": "success"})
+
     def test_windows_11_stable_accepts_empty_deferred_features(self):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)
@@ -95,30 +121,136 @@ class EguiStablePackagingContract(unittest.TestCase):
                 self.assertIn("numeric stable VERSION", result.stdout + result.stderr)
                 self.assertFalse((repo / "release-assets").exists())
 
-    def test_wrong_source_or_failed_required_job_blocks_stable(self):
-        for case in ("source", "repository", "job"):
+    def test_spoofed_or_malformed_run_identity_blocks_stable(self):
+        for case in ("source", "repository", "branch", "event", "workflow_path", "run_id", "run_state", "malformed_status"):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as temp:
                 repo = Path(temp)
                 self._make_repo(repo)
+                path = repo / "verified-run.json"
+                run = json.loads(path.read_text(encoding="utf-8"))
                 if case == "source":
-                    path = repo / "verified-run.json"
-                    run = json.loads(path.read_text(encoding="utf-8"))
                     run["head_sha"] = "f" * 40
-                    path.write_text(json.dumps(run), encoding="utf-8")
-                else:
-                    path = repo / "verified-jobs.json"
-                    if case == "repository":
-                        run_path = repo / "verified-run.json"
-                        run = json.loads(run_path.read_text(encoding="utf-8"))
-                        run["head_repository"]["full_name"] = "attacker/fork"
-                        run_path.write_text(json.dumps(run), encoding="utf-8")
-                    else:
-                        jobs = json.loads(path.read_text(encoding="utf-8"))
-                        jobs["jobs"][1]["conclusion"] = "failure"
-                        path.write_text(json.dumps(jobs), encoding="utf-8")
+                elif case == "repository":
+                    run["head_repository"]["full_name"] = "attacker/fork"
+                elif case == "branch":
+                    run["head_branch"] = "attacker"
+                elif case == "event":
+                    run["event"] = "pull_request"
+                elif case == "workflow_path":
+                    run["path"] = ".github/workflows/untrusted.yml"
+                elif case == "run_id":
+                    run["id"] = "987654321"
+                elif case == "run_state":
+                    run["conclusion"] = "timed_out"
+                elif case == "malformed_status":
+                    run["status"] = "queued"
+                path.write_text(json.dumps(run), encoding="utf-8")
                 result = self._prepare(repo)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse((repo / "release-assets").exists())
+
+    def test_required_test_and_windows_jobs_must_be_unique_completed_successes(self):
+        cases = ("failure", "cancelled", "queued", "in_progress_success", "missing", "duplicate", "status_missing")
+        for required in ("test", "windows"):
+            for case in cases:
+                with self.subTest(required=required, case=case), tempfile.TemporaryDirectory() as temp:
+                    repo = Path(temp)
+                    self._make_repo(repo)
+                    jobs_path = repo / "verified-jobs.json"
+                    jobs = json.loads(jobs_path.read_text(encoding="utf-8"))
+                    matches = [job for job in jobs["jobs"] if job["name"] == required]
+                    if case == "missing":
+                        jobs["jobs"].remove(matches[0])
+                    elif case == "duplicate":
+                        jobs["jobs"].append(dict(matches[0]))
+                    elif case == "failure":
+                        matches[0]["conclusion"] = "failure"
+                    elif case == "cancelled":
+                        matches[0]["conclusion"] = "cancelled"
+                    elif case == "in_progress_success":
+                        matches[0]["status"] = "in_progress"
+                    elif case == "status_missing":
+                        del matches[0]["status"]
+                    else:
+                        matches[0]["status"] = "queued"
+                        matches[0]["conclusion"] = None
+                    jobs_path.write_text(json.dumps(jobs), encoding="utf-8")
+                    result = self._prepare(repo)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse((repo / "release-assets").exists())
+
+    def test_actual_publisher_python_gate_allows_optional_macos_failure_only(self):
+        workflow = (ROOT / ".github/workflows/publish-windows-stable.yml").read_text(encoding="utf-8")
+        anchor = workflow.index("- name: Verify current main and successful source-bound Windows CI")
+        marker = "python3 - <<'PY'\n"
+        block_start = workflow.index(marker, anchor) + len(marker)
+        block_end = workflow.index("\n          PY", block_start)
+        script = textwrap.dedent(workflow[block_start:block_end])
+        cases = (
+            ("optional_mac_failed", "completed", "failure", None),
+            ("optional_mac_queued", "in_progress", None, "mac_queued"),
+            ("required_missing", "completed", "failure", "missing"),
+            ("required_failed", "completed", "failure", "failure"),
+            ("required_cancelled", "completed", "cancelled", "cancelled"),
+            ("required_duplicate", "completed", "failure", "duplicate"),
+            ("required_status_missing", "completed", "failure", "status_missing"),
+            ("required_in_progress_success", "completed", "failure", "in_progress_success"),
+            ("spoofed_source", "completed", "failure", "source"),
+            ("spoofed_path", "completed", "failure", "path"),
+            ("spoofed_repository", "completed", "failure", "repository"),
+            ("spoofed_event", "completed", "failure", "event"),
+            ("spoofed_branch", "completed", "failure", "branch"),
+            ("spoofed_run_id", "completed", "failure", "run_id"),
+            ("malformed_run_state", "queued", None, "run_state"),
+        )
+        for case, run_status, conclusion, mutation in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temp:
+                repo = Path(temp)
+                run = {"id": RUN_ID, "head_sha": SHA, "head_branch": "main", "status": run_status,
+                       "conclusion": conclusion, "event": "push", "path": ".github/workflows/build.yml",
+                       "head_repository": {"full_name": REPOSITORY}}
+                if mutation == "source":
+                    run["head_sha"] = "f" * 40
+                elif mutation == "path":
+                    run["path"] = ".github/workflows/untrusted.yml"
+                elif mutation == "repository":
+                    run["head_repository"]["full_name"] = "attacker/fork"
+                elif mutation == "event":
+                    run["event"] = "pull_request"
+                elif mutation == "branch":
+                    run["head_branch"] = "attacker"
+                elif mutation == "run_id":
+                    run["id"] = "987654321"
+                jobs = [
+                    {"name": "test", "status": "completed", "conclusion": "success"},
+                    {"name": "windows", "status": "completed", "conclusion": "success"},
+                    {"name": "macos (macos-15)", "status": "completed", "conclusion": "failure"},
+                ]
+                if mutation == "mac_queued":
+                    jobs[2]["status"] = "queued"
+                    jobs[2]["conclusion"] = None
+                elif mutation == "missing":
+                    jobs = [job for job in jobs if job["name"] != "windows"]
+                elif mutation == "failure":
+                    jobs[1]["conclusion"] = "failure"
+                elif mutation == "cancelled":
+                    jobs[1]["conclusion"] = "cancelled"
+                elif mutation == "duplicate":
+                    jobs.append(dict(jobs[1]))
+                elif mutation == "status_missing":
+                    del jobs[1]["status"]
+                elif mutation == "in_progress_success":
+                    jobs[1]["status"] = "in_progress"
+                (repo / "verified-run.json").write_text(json.dumps(run), encoding="utf-8")
+                (repo / "verified-jobs.json").write_text(json.dumps({"jobs": jobs}), encoding="utf-8")
+                env = {**os.environ, "SOURCE_SHA": SHA, "CI_RUN_ID": RUN_ID,
+                       "GITHUB_REPOSITORY": REPOSITORY}
+                result = subprocess.run([sys.executable, "-c", script], cwd=repo, env=env,
+                                        capture_output=True, text=True, check=False)
+                if mutation in (None, "mac_queued"):
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                else:
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_unsigned_policy_and_acceptance_gates_are_mandatory(self):
         for case in ("approval", "stable_ready", "catalogs", "open_gates", "jobs"):
@@ -193,15 +325,24 @@ class EguiStablePackagingContract(unittest.TestCase):
         self.assertIn("source_sha:", stable)
         self.assertIn("native_run_id:", stable)
         self.assertIn("current main", stable)
-        self.assertIn("actions/workflows/build.yml/runs?branch=main&head_sha=$SOURCE_SHA&event=push&status=completed", stable)
+        self.assertIn("actions/workflows/build.yml/runs?branch=main&head_sha=$SOURCE_SHA&event=push&per_page=100", stable)
         self.assertIn("run.get('head_sha') == os.environ['SOURCE_SHA']", stable)
         self.assertIn("run.get('event') == 'push'", stable)
         self.assertIn("run.get('path') == '.github/workflows/build.yml'", stable)
-        self.assertIn("run.get('conclusion') == 'success'", stable)
+        self.assertIn("allowed_run_state(run)", stable)
+        self.assertIn("required_jobs_pass(candidate_id)", stable)
+        self.assertNotIn("run.get('conclusion') == 'success'", stable)
+        self.assertIn("matches[0].get('status') == 'completed'", stable)
         self.assertIn("--stable", stable)
         self.assertIn('--draft --latest=false --notes-file "docs/releases/$tag.md"', stable)
         self.assertIn("isPrerelease", stable)
         self.assertIn("--draft=false --latest", stable)
+        release_check = stable.index('if gh release view "$tag"')
+        tag_check = stable.index('if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag"')
+        create_release = stable.index('gh release create "$tag"')
+        self.assertLess(release_check, create_release)
+        self.assertLess(tag_check, create_release)
+        self.assertIn("refusing to move it.", stable)
         stable_guard = 'if [[ "$version" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]'
         rc_guard = '[[ "$version" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+-rc\\.[0-9]+$ ]]'
         self.assertIn(stable_guard, rc)
@@ -232,14 +373,15 @@ class EguiStablePackagingContract(unittest.TestCase):
                       "release_scope": scope}
         (repo / "release/ACCEPTANCE.json").write_text(json.dumps(acceptance),
                                                        encoding="utf-8-sig" if bom else "utf-8")
-        run = {"head_sha": SHA, "head_branch": "main", "conclusion": "success",
+        run = {"id": RUN_ID, "head_sha": SHA, "head_branch": "main", "status": "completed",
+               "conclusion": "success",
                "event": "push", "path": ".github/workflows/build.yml",
                "head_repository": {"full_name": REPOSITORY}}
         (repo / "verified-run.json").write_text(json.dumps(run), encoding="utf-8")
         (repo / "verified-jobs.json").write_text(json.dumps({"jobs": [
-            {"name": "test", "conclusion": "success"},
-            {"name": "windows", "conclusion": "success"},
-            {"name": "macos (macos-15)", "conclusion": "cancelled"},
+            {"name": "test", "status": "completed", "conclusion": "success"},
+            {"name": "windows", "status": "completed", "conclusion": "success"},
+            {"name": "macos (macos-15)", "status": "completed", "conclusion": "cancelled"},
         ]}), encoding="utf-8")
         incoming = repo / "incoming/WhereIsItAI-egui-windows-x64-unsigned-candidate"
         incoming.mkdir(parents=True)
