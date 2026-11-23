@@ -1,7 +1,7 @@
 //! Nonblocking native UI bridge to the existing Rust/SQLite service.
 //! Every call executes on a worker; main thread never opens CTF/SQLite.
 use eframe::egui;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;

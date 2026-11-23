@@ -5,16 +5,16 @@
 #[path = "local_analyzer_views.rs"]
 mod views;
 use atlas_core::{Error, Result};
-use rusqlite::{Connection, OptionalExtension, params};
-use serde_json::{Value, json};
+use rusqlite::{params, Connection, OptionalExtension};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, VecDeque},
     fs,
     path::{Component, Path, PathBuf},
     sync::{
-        Arc, Mutex, OnceLock, Weak,
         atomic::{AtomicBool, Ordering},
+        Arc, Mutex, OnceLock, Weak,
     },
     time::Instant,
 };

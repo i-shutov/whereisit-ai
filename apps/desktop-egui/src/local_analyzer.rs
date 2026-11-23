@@ -2,9 +2,9 @@
 //! metadata-only jobs; this view never reads file contents or claims backup equality.
 #[path = "local_analyzer_chart.rs"]
 mod chart;
-use crate::bridge::{CommandBus, Purpose, new_scan_job_id};
+use crate::bridge::{new_scan_job_id, CommandBus, Purpose};
 use eframe::egui::{self, Color32, RichText};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
@@ -20,6 +20,117 @@ const MODES: [(&str, &str); 6] = [
     ("catalog_check", "Кандидаты в каталоге / Catalog candidates"),
     ("growth_diff", "Рост папок / Folder growth"),
 ];
+
+// Keep room for the page status and navigation controls below result content.
+const PAGE_FOOTER_RESERVE: f32 = 88.0;
+
+fn scroll_content_height(ui: &egui::Ui) -> f32 {
+    (ui.available_height() - PAGE_FOOTER_RESERVE).max(96.0)
+}
+
+fn draw_bloat_cards(
+    ui: &mut egui::Ui,
+    rows: &[Value],
+    groups: &[Value],
+    staged: &mut HashSet<String>,
+    lang_ru: bool,
+) -> (Vec<egui::Rect>, Vec<egui::Rect>) {
+    let classes = ["cache", "dev", "installers", "archives"];
+    let card_width = ((ui.available_width() - 8.0) / 2.0).max(180.0);
+    let mut card_rects = Vec::with_capacity(4);
+    let mut action_rects = Vec::new();
+    egui::Grid::new("bloat_category_cards")
+        .num_columns(2)
+        .spacing([8.0, 8.0])
+        .show(ui, |ui| {
+            for (index, class) in classes.iter().enumerate() {
+                ui.vertical(|ui| {
+                    let card = egui::Frame::group(ui.style()).show(ui, |ui| {
+                        ui.set_width(card_width - 20.0);
+                        ui.vertical(|ui| {
+                            ui.strong(match (*class, lang_ru) {
+                                ("cache", true) => "Кэши",
+                                ("dev", true) => "Сборки и зависимости",
+                                ("installers", true) => "Установщики",
+                                ("archives", true) => "Архивы",
+                                ("cache", false) => "Caches",
+                                ("dev", false) => "Builds and dependencies",
+                                ("installers", false) => "Installers",
+                                (_, false) => "Archives",
+                                (_, true) => "Другие файлы",
+                            });
+                            let summary = groups.iter().find(|row| row["classification"] == *class);
+                            let files = summary.and_then(|r| r["files"].as_u64()).unwrap_or(0);
+                            let bytes = summary.and_then(|r| r["bytes"].as_u64()).unwrap_or(0);
+                            ui.label(format!("{files} · {}", format_bytes(bytes)));
+                            let previews: Vec<_> = rows
+                                .iter()
+                                .filter(|row| row["classification"] == *class)
+                                .take(3)
+                                .collect();
+                            if previews.is_empty() {
+                                ui.label(if lang_ru {
+                                    "Нет элементов в показанной странице."
+                                } else {
+                                    "No rows in the current page."
+                                });
+                            }
+                            for item in previews {
+                                let id = item["id"].as_str().unwrap_or("");
+                                let path = item["relative_path"].as_str().unwrap_or("?");
+                                ui.horizontal(|ui| {
+                                    let path_width =
+                                        (ui.available_width() - 104.0 - 76.0 - 16.0).max(40.0);
+                                    ui.add_sized(
+                                        [path_width, 20.0],
+                                        egui::Label::new(path).truncate(),
+                                    )
+                                    .on_hover_text(path);
+                                    ui.add_sized(
+                                        [76.0, 20.0],
+                                        egui::Label::new(format_bytes(
+                                            item["bytes"].as_u64().unwrap_or(0),
+                                        )),
+                                    );
+                                    let selected = staged.contains(id);
+                                    let label = if selected {
+                                        if lang_ru {
+                                            "В очереди"
+                                        } else {
+                                            "In CSV queue"
+                                        }
+                                    } else if lang_ru {
+                                        "Добавить"
+                                    } else {
+                                        "Add to CSV"
+                                    };
+                                    let enabled = selected || staged.len() < 10_000;
+                                    let response = ui.add_enabled(
+                                        enabled,
+                                        egui::Button::new(label).min_size(egui::vec2(104.0, 22.0)),
+                                    );
+                                    action_rects.push(response.rect);
+                                    if response.clicked() && !staged.insert(id.to_owned()) {
+                                        staged.remove(id);
+                                    }
+                                });
+                            }
+                            ui.small(if lang_ru {
+                                "Предпросмотр первых строк; карточка не выбирает всю группу."
+                            } else {
+                                "Preview rows only; this card does not select the whole group."
+                            });
+                        });
+                    });
+                    card_rects.push(card.response.rect);
+                });
+                if index % 2 == 1 {
+                    ui.end_row();
+                }
+            }
+        });
+    (card_rects, action_rects)
+}
 
 fn draw_arc(
     painter: &egui::Painter,
@@ -132,6 +243,7 @@ fn result_rows(
     let mut open_folder = None;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
+        .max_height(scroll_content_height(ui))
         .show(ui, |ui| {
             egui::Grid::new(("local_rows", mode))
                 .striped(true)
@@ -244,9 +356,10 @@ fn result_rows(
                                     egui::Button::new(label),
                                 )
                                 .clicked()
-                                && !staged.insert(id.to_owned()) {
-                                    staged.remove(id);
-                                }
+                                && !staged.insert(id.to_owned())
+                            {
+                                staged.remove(id);
+                            }
                         } else {
                             ui.label("—");
                         }
@@ -541,6 +654,8 @@ impl LocalAnalyzer {
             }
             "catalog" => {
                 if reply.response["ok"] == true {
+                    self.page_requested_scope = None;
+                    self.error = None;
                     self.phase = reply.response["data"]["phase"]
                         .as_str()
                         .unwrap_or("checking_catalog")
@@ -581,7 +696,7 @@ impl LocalAnalyzer {
                     self.fail(&reply.response);
                 }
             }
-            "export" => {
+            "export_review_csv" => {
                 self.export_pending = false;
                 self.active_operation_id = None;
                 if reply.response["ok"] == true {
@@ -608,7 +723,12 @@ impl LocalAnalyzer {
                 .to_owned(),
         );
         if response.pointer("/error/code").and_then(Value::as_str) == Some("cancelled") {
-            self.phase = "cancelled".into();
+            self.phase = if self.progress["results_ready"] == true {
+                "completed"
+            } else {
+                "cancelled"
+            }
+            .into();
         } else if self.phase != "completed" {
             self.phase = "failed".into();
         }
@@ -624,6 +744,15 @@ impl LocalAnalyzer {
         self.scope_generation = self.scope_generation.wrapping_add(1);
         self.page_requested_scope = None;
         self.page = None;
+    }
+
+    fn invalidate_cancel_scope(&mut self) {
+        // Canceling a save/export does not invalidate the completed local view.
+        // Keep it regardless of whether its reply or the cancel acknowledgment wins.
+        let keep_page = self.export_pending || self.baseline_pending;
+        let page = if keep_page { self.page.take() } else { None };
+        self.invalidate_scope();
+        self.page = page;
     }
 
     fn sync_catalog_db(&mut self, db: Option<&str>) {
@@ -797,6 +926,11 @@ impl LocalAnalyzer {
     }
 
     fn request_page(&mut self, bus: &mut CommandBus, ctx: &egui::Context, db: Option<&str>) {
+        // The comparison is dispatched before its asynchronous reply changes phase.
+        // Do not consume the page scope while that operation still owns the job.
+        if self.phase != "completed" || self.active_operation_id.is_some() {
+            return;
+        }
         let Some(id) = self.job_id.clone() else {
             return;
         };
@@ -891,11 +1025,28 @@ impl LocalAnalyzer {
             && self
                 .last_poll
                 .is_none_or(|at| at.elapsed() >= Duration::from_millis(400))
-            {
-                self.progress_request_id = self.send(bus, ctx, "progress", json!({}));
-                self.progress_pending = true;
-                self.last_poll = Some(Instant::now());
-            }
+        {
+            self.progress_request_id = self.send(bus, ctx, "progress", json!({}));
+            self.progress_pending = true;
+            self.last_poll = Some(Instant::now());
+        }
+        let work_in_flight = matches!(
+            self.phase.as_str(),
+            "scanning"
+                | "checking_catalog"
+                | "preparing"
+                | "starting"
+                | "cancelling"
+                | "cancel_requested"
+        ) || self.progress_pending
+            || self.page_pending
+            || self.export_pending
+            || self.baseline_pending
+            || self.active_operation_id.is_some()
+            || self.operation_cancel_requested;
+        if work_in_flight {
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
         egui::CentralPanel::default().show(root,|ui| {
             ui.heading(t("Анализ локальной папки","Local folder analysis"));
             ui.label(t("Только метаданные файловой системы. Содержимое файлов не читается.","Filesystem metadata only. File contents are never read."));
@@ -904,7 +1055,7 @@ impl LocalAnalyzer {
                 ui.add(egui::TextEdit::singleline(&mut self.root_input).desired_width(410.0).hint_text(t("Абсолютный путь к папке", "Absolute folder path")));
                 if ui.button(t("Открыть папку / диск ПК…", "Open PC folder / drive…")).clicked() { self.open_folder_picker(ctx); }
                 if ui.button(t("Анализировать папку", "Analyze folder")).clicked() { self.begin(bus,ctx); }
-                if (matches!(self.phase.as_str(),"scanning"|"checking_catalog"|"starting"|"preparing")||self.page_pending||self.export_pending||self.baseline_pending||self.active_operation_id.is_some()) && ui.button(t("Отмена", "Cancel")).clicked() { self.send(bus,ctx,"cancel",json!({})); self.operation_cancel_requested=true; self.progress_pending=false; self.progress_request_id=None; self.invalidate_scope(); self.page_pending=false;self.page_request_id=None;self.phase="cancel_requested".into(); self.error=None; }
+                if (matches!(self.phase.as_str(),"scanning"|"checking_catalog"|"starting"|"preparing")||self.page_pending||self.export_pending||self.baseline_pending||self.active_operation_id.is_some()) && ui.button(t("Отмена", "Cancel")).clicked() { self.send(bus,ctx,"cancel",json!({})); self.operation_cancel_requested=true; self.progress_pending=false; self.progress_request_id=None; self.invalidate_cancel_scope(); self.page_pending=false;self.page_request_id=None;self.phase="cancel_requested".into(); self.error=None; }
             });
             if !self.phase.is_empty() { let p=&self.progress; ui.label(format!("{} · {} {} · {} {} · {} · {} {} · {} {}",phase_label(&self.phase,lang_ru),p["files_seen"].as_u64().unwrap_or(0),t("файлов","files"),p["dirs_seen"].as_u64().unwrap_or(0),t("папок","folders"),format_bytes(p["logical_bytes"].as_u64().unwrap_or(0)),p["read_errors"].as_u64().unwrap_or(0),t("ошибок чтения","read errors"),p["symlinks_skipped"].as_u64().unwrap_or(0),t("ссылок пропущено","links skipped"))); if p["read_errors"].as_u64().unwrap_or(0)>0 {ui.colored_label(Color32::YELLOW,t("Результат неполный: есть недоступные пути.","Results are incomplete: some paths could not be read."));} }
             if let Some(e)=&self.error { ui.colored_label(Color32::LIGHT_RED,e); }
@@ -943,7 +1094,7 @@ impl LocalAnalyzer {
                         cols[0].horizontal(|ui|{for crumb in data["breadcrumbs"].as_array().into_iter().flatten(){let id=crumb["id"].as_str().unwrap_or("root");if ui.link(crumb["name"].as_str().unwrap_or("Folder")).clicked(){self.folder_id=id.into();self.page_offset=0;self.invalidate_scope();self.request_page(bus,ctx,db);}ui.label("›");}});
                         cols[0].strong(t("Карта папок · 4 уровня","Folder map · 4 rings"));
                         let breadcrumbs=data["breadcrumbs"].as_array().cloned().unwrap_or_default();
-                        let chart_height=cols[0].available_height().min(460.0);
+                        let chart_height=(cols[0].available_height()-PAGE_FOOTER_RESERVE).clamp(192.0,460.0);
                         let clicked=chart::draw_tree_ring(&mut cols[0],data["nodes"].as_array().map(Vec::as_slice).unwrap_or(&[]),&breadcrumbs,chart_height,&data["selected_totals"],lang_ru);
                         if let Some((id,kind))=clicked {if kind=="folder"{self.folder_id=id;self.page_offset=0;self.invalidate_scope();self.request_page(bus,ctx,db);}else if !self.staged.insert(id.clone()){self.staged.remove(&id);}}
                         cols[1].strong(t("Папки и крупнейшие файлы","Folders and largest files"));
@@ -952,21 +1103,13 @@ impl LocalAnalyzer {
                 } else if self.mode=="bloat" {
                     ui.strong(t("Группы по метаданным","Metadata groups"));
                     if let Some(rows)=data["items"].as_array(){
-                        egui::Grid::new("bloat_category_cards").num_columns(2).spacing([8.0,8.0]).show(ui,|ui|{
-                            for (index,class) in ["cache","dev","installers","archives"].iter().enumerate(){
-                                let summary=data["groups"].as_array().into_iter().flatten().find(|r|r["classification"]==*class);
-                                let files=summary.and_then(|r|r["files"].as_u64()).unwrap_or(0);let bytes=summary.and_then(|r|r["bytes"].as_u64()).unwrap_or(0);
-                                egui::Frame::group(ui.style()).show(ui,|ui|{
-                                    ui.strong(match (*class,lang_ru){("cache",true)=>"Кэши",("dev",true)=>"Сборки и зависимости",("installers",true)=>"Установщики",("archives",true)=>"Архивы",("cache",false)=>"Caches",("dev",false)=>"Builds and dependencies",("installers",false)=>"Installers",(_,false)=>"Archives",(_,true)=>"Другие файлы"});
-                                    ui.label(format!("{files} · {}",format_bytes(bytes)));
-                                    let previews:Vec<_>=rows.iter().filter(|r|r["classification"]==*class).take(3).collect();
-                                    if previews.is_empty(){ui.label(t("Нет элементов в показанной странице.","No rows in the current page."));}
-                                    for item in previews{let id=item["id"].as_str().unwrap_or("");ui.horizontal(|ui|{ui.label(format!("{} · {}",item["relative_path"].as_str().unwrap_or("?"),format_bytes(item["bytes"].as_u64().unwrap_or(0))));let enabled=self.staged.contains(id)||self.staged.len()<10_000;if ui.add_enabled(enabled,egui::Button::new(if self.staged.contains(id){t("В очереди","In CSV queue")}else{t("Добавить","Add to CSV")})).clicked()&& !self.staged.insert(id.to_owned()){self.staged.remove(id);}});}
-                                    ui.small(t("Предпросмотр первых строк; карточка не выбирает всю группу.","Preview rows only; this card does not select the whole group."));
-                                });
-                                if index%2==1{ui.end_row();}
-                            }
-                        });
+                        draw_bloat_cards(
+                            ui,
+                            rows,
+                            data["groups"].as_array().map(Vec::as_slice).unwrap_or(&[]),
+                            &mut self.staged,
+                            lang_ru,
+                        );
                     }
                 } else if self.mode=="largest" {
                     ui.label(format!("{} · {}",t("Отобрано файлов","Files in scope"),data["total"].as_u64().unwrap_or(0)));
@@ -976,7 +1119,7 @@ impl LocalAnalyzer {
                     if let Some(rows)=data["items"].as_array(){
                         let mut groups:std::collections::BTreeMap<String,Vec<&Value>>=std::collections::BTreeMap::new();
                         for row in rows {let key=row["metadata_group_key"].to_string();groups.entry(key).or_default().push(row);}
-                        egui::ScrollArea::vertical().show(ui,|ui|{for (_key,items) in groups {egui::Frame::group(ui.style()).show(ui,|ui|{let first=items.first();let name=first.and_then(|row|row["name"].as_str()).unwrap_or("");let size=first.and_then(|row|row["bytes"].as_u64()).unwrap_or(0);let hint=match self.criterion.as_str(){"size"=>format!("{}: {}",t("Размер","Size"),format_bytes(size)),"name"=>format!("{}: {name}",t("Имя","Name")),_=>format!("{name} · {}",format_bytes(size))};ui.strong(format!("{} · {}",if lang_ru{"Группа кандидатов"}else{"Candidate group"},items.len()));ui.small(hint);for item in items{let id=item["id"].as_str().unwrap_or("");ui.horizontal(|ui|{ui.label(format!("{} · {}",item["relative_path"].as_str().unwrap_or("?"),format_bytes(item["bytes"].as_u64().unwrap_or(0))));let enabled=self.staged.contains(id)||self.staged.len()<10_000;if ui.add_enabled(enabled,egui::Button::new(if self.staged.contains(id){t("В очереди","In CSV queue")}else{t("Добавить","Add to CSV")})).clicked()&& !self.staged.insert(id.to_owned()){self.staged.remove(id);}});}});}});
+                        egui::ScrollArea::vertical().max_height(scroll_content_height(ui)).show(ui,|ui|{for (_key,items) in groups {egui::Frame::group(ui.style()).show(ui,|ui|{let first=items.first();let name=first.and_then(|row|row["name"].as_str()).unwrap_or("");let size=first.and_then(|row|row["bytes"].as_u64()).unwrap_or(0);let hint=match self.criterion.as_str(){"size"=>format!("{}: {}",t("Размер","Size"),format_bytes(size)),"name"=>format!("{}: {name}",t("Имя","Name")),_=>format!("{name} · {}",format_bytes(size))};ui.strong(format!("{} · {}",if lang_ru{"Группа кандидатов"}else{"Candidate group"},items.len()));ui.small(hint);for item in items{let id=item["id"].as_str().unwrap_or("");ui.horizontal(|ui|{ui.label(format!("{} · {}",item["relative_path"].as_str().unwrap_or("?"),format_bytes(item["bytes"].as_u64().unwrap_or(0))));let enabled=self.staged.contains(id)||self.staged.len()<10_000;if ui.add_enabled(enabled,egui::Button::new(if self.staged.contains(id){t("В очереди","In CSV queue")}else{t("Добавить","Add to CSV")})).clicked()&& !self.staged.insert(id.to_owned()){self.staged.remove(id);}});}});}});
                     }
                 } else if self.mode=="catalog_check" {
                     ui.columns(3,|cols|{for (i,(label,value)) in [(t("Файлов просканировано","Files scanned"),data.pointer("/totals/files").and_then(Value::as_u64).unwrap_or(0)),(t("Файлов в локальной области","Files in local scope"),data.pointer("/selected_totals/files").and_then(Value::as_u64).unwrap_or(0)),(t("Строк по фильтру","Rows matching filter"),data["total"].as_u64().unwrap_or(0))].iter().enumerate(){egui::Frame::group(cols[i].style()).show(&mut cols[i],|ui|{ui.strong(*label);ui.heading(value.to_string());});}});
@@ -1004,11 +1147,11 @@ impl LocalAnalyzer {
 fn windows_folder_dialog() -> Option<Result<String, String>> {
     use std::ptr::{null, null_mut};
     use windows_sys::Win32::System::Com::{
-        COINIT_APARTMENTTHREADED, CoInitializeEx, CoTaskMemFree, CoUninitialize,
+        CoInitializeEx, CoTaskMemFree, CoUninitialize, COINIT_APARTMENTTHREADED,
     };
     use windows_sys::Win32::UI::Shell::{
-        BIF_EDITBOX, BIF_NEWDIALOGSTYLE, BIF_RETURNONLYFSDIRS, BROWSEINFOW, SHBrowseForFolderW,
-        SHGetPathFromIDListEx,
+        SHBrowseForFolderW, SHGetPathFromIDListEx, BIF_EDITBOX, BIF_NEWDIALOGSTYLE,
+        BIF_RETURNONLYFSDIRS, BROWSEINFOW,
     };
     unsafe {
         let hr = CoInitializeEx(null(), COINIT_APARTMENTTHREADED as u32);
@@ -1053,6 +1196,312 @@ fn windows_folder_dialog() -> Option<Result<String, String>> {
 mod tests {
     use super::*;
     use crate::bridge::Reply;
+
+    #[test]
+    fn tree_map_chart_and_hundred_rows_keep_pagination_visible() {
+        let rows: Vec<Value> = (0..100)
+            .map(|index| {
+                json!({
+                    "id": format!("file:{index}"),
+                    "kind": "file",
+                    "name": format!("file-{index}.mkv"),
+                    "relative_path": format!("Folder/file-{index}.mkv"),
+                    "bytes": 1024,
+                })
+            })
+            .collect();
+        let nodes: Vec<Value> = (0..100)
+            .map(|index| {
+                json!({
+                    "id": format!("file:{index}"),
+                    "parent_id": "root",
+                    "kind": "file",
+                    "name": format!("file-{index}.mkv"),
+                    "bytes": 1024,
+                })
+            })
+            .collect();
+        let breadcrumbs = vec![json!({"id":"root", "name":"All files"})];
+        let totals = json!({"logical_bytes":102_400, "files":100});
+
+        for width in [1366.0, 1024.0] {
+            let ctx = egui::Context::default();
+            let mut staged = HashSet::new();
+            let mut next_rect = None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, 768.0),
+                    )),
+                    ..Default::default()
+                },
+                |root| {
+                    egui::CentralPanel::default().show(root, |ui| {
+                        ui.heading("Local analysis");
+                        // Approximate the folder, progress, mode and filter controls above the page.
+                        ui.add_space(220.0);
+                        ui.label("Page status · selected totals · scan issues");
+                        ui.columns(2, |columns| {
+                            columns[0].strong("Folder map · 4 rings");
+                            let chart_height = (columns[0].available_height()
+                                - PAGE_FOOTER_RESERVE)
+                                .clamp(192.0, 460.0);
+                            chart::draw_tree_ring(
+                                &mut columns[0],
+                                &nodes,
+                                &breadcrumbs,
+                                chart_height,
+                                &totals,
+                                false,
+                            );
+                            columns[1].strong("Folders and largest files");
+                            result_rows(&mut columns[1], &rows, "tree_map", &mut staged, false);
+                        });
+                        ui.label("Omitted nodes · remainder bytes");
+                        ui.horizontal(|ui| {
+                            let _ = ui.button("Previous");
+                            ui.label("1 / 100");
+                            next_rect = Some(ui.button("Next").rect);
+                        });
+                    });
+                },
+            );
+            output.textures_delta.clear();
+            let rect = next_rect.expect("pagination control should be rendered");
+            assert!(
+                rect.min.y >= 0.0,
+                "pagination starts on screen at {width}px"
+            );
+            assert!(
+                rect.max.y <= 768.0,
+                "pagination ends on screen at {width}px"
+            );
+        }
+    }
+
+    #[test]
+    fn bloat_cards_and_all_stage_actions_fit_two_columns() {
+        let classes = ["cache", "cache", "dev", "installers", "archives"];
+        let rows: Vec<Value> = classes
+            .iter()
+            .enumerate()
+            .map(|(index, class)| {
+                json!({
+                    "id": format!("file:{index}"),
+                    "classification": class,
+                    "relative_path": format!("a/very/long/path/that/must/be/truncated/file-{index}.bin"),
+                    "bytes": 1024,
+                })
+            })
+            .collect();
+        let groups: Vec<Value> = ["cache", "dev", "installers", "archives"]
+            .iter()
+            .map(|class| json!({"classification":class,"files":1,"bytes":1024}))
+            .collect();
+
+        for width in [1366.0, 1024.0] {
+            let ctx = egui::Context::default();
+            let mut staged = HashSet::new();
+            let mut cards = Vec::new();
+            let mut actions = Vec::new();
+            for _ in 0..3 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(width, 768.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |root| {
+                        egui::CentralPanel::default().show(root, |ui| {
+                            ui.heading("Metadata groups");
+                            let (card_rects, action_rects) =
+                                draw_bloat_cards(ui, &rows, &groups, &mut staged, false);
+                            cards = card_rects;
+                            actions = action_rects;
+                        });
+                    },
+                );
+                output.textures_delta.clear();
+            }
+            assert_eq!(cards.len(), 4, "all four category cards are laid out");
+            assert_eq!(actions.len(), 5, "all five staged rows have buttons");
+            for rect in cards.iter().chain(&actions) {
+                assert!(rect.min.x >= 0.0 && rect.max.x <= width);
+                assert!(rect.min.y >= 0.0 && rect.max.y <= 768.0);
+            }
+            assert!(
+                cards[1].min.x > cards[0].min.x,
+                "first two cards share a row"
+            );
+            assert!(
+                cards[2].min.y > cards[0].min.y,
+                "remaining cards use the next row"
+            );
+        }
+    }
+
+    #[test]
+    fn local_work_requests_repaint_after_progress_frames_settle() {
+        let ctx = egui::Context::default();
+        let mut bus = CommandBus::new();
+        let mut view = LocalAnalyzer::default();
+        view.phase = "scanning".into();
+        view.last_poll = Some(Instant::now());
+        let mut repaint_delay = Duration::ZERO;
+        for frame in 0..8 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(f64::from(frame) * 0.2),
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1024.0, 768.0),
+                    )),
+                    ..Default::default()
+                },
+                |root| view.show(root, &mut bus, &ctx, None, &[], false),
+            );
+            repaint_delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
+            output.textures_delta.clear();
+        }
+        assert!(
+            !repaint_delay.is_zero() && repaint_delay <= Duration::from_millis(100),
+            "busy analyzer should schedule another frame, got {repaint_delay:?}"
+        );
+    }
+
+    #[test]
+    fn late_cancelled_save_and_export_keep_the_local_snapshot_completed() {
+        for op in ["baseline", "export_review_csv"] {
+            for acknowledgment_first in [true, false] {
+                let ctx = egui::Context::default();
+                let mut bus = CommandBus::new();
+                let mut view = LocalAnalyzer::default();
+                view.job_id = Some("completed-job".into());
+                view.generation = 2;
+                view.scope_generation = 4;
+                view.phase = "cancel_requested".into();
+                view.progress = json!({"results_ready":true});
+                view.baseline_pending = op == "baseline";
+                view.export_pending = op == "export_review_csv";
+                view.active_operation_id = Some("operation-1".into());
+                view.page = Some(json!({"items":[{"id":"file:1","name":"kept"}]}));
+                view.invalidate_cancel_scope();
+                let mut acknowledgment = Reply {
+                    id: 9,
+                    purpose: Purpose::LocalAnalyzer {
+                        job_id: "completed-job".into(),
+                        generation: 2,
+                        scope_generation: 4,
+                        op: "cancel".into(),
+                    },
+                    response: json!({"ok":true,"data":{"scope":"operation","pending":false}}),
+                };
+                if acknowledgment_first {
+                    view.apply_reply(&mut acknowledgment, &mut bus, &ctx, None);
+                }
+                let mut reply = Reply {
+                    id: 8,
+                    purpose: Purpose::LocalAnalyzer {
+                        job_id: "completed-job".into(),
+                        generation: 2,
+                        scope_generation: 4,
+                        op: op.into(),
+                    },
+                    response: json!({"ok":false,"error":{"code":"cancelled","message":"cancelled"}}),
+                };
+                assert!(view.apply_reply(&mut reply, &mut bus, &ctx, None));
+                if !acknowledgment_first {
+                    view.apply_reply(&mut acknowledgment, &mut bus, &ctx, None);
+                }
+                assert_eq!(view.phase, "completed");
+                assert_eq!(view.page.as_ref().unwrap()["items"][0]["name"], "kept");
+                assert_eq!(view.job_id.as_deref(), Some("completed-job"));
+                assert!(!view.baseline_pending && !view.export_pending);
+                assert!(view.active_operation_id.is_none());
+                assert!(
+                    bus.poll().is_none(),
+                    "operation cancellation must not close the snapshot"
+                );
+            }
+        }
+
+        let mut view = LocalAnalyzer::default();
+        view.phase = "scanning".into();
+        view.fail(&json!({"ok":false,"error":{"code":"cancelled"}}));
+        assert_eq!(view.phase, "cancelled");
+    }
+
+    #[test]
+    fn catalog_dispatch_does_not_consume_the_page_scope_before_completion() {
+        let ctx = egui::Context::default();
+        let mut bus = CommandBus::new();
+        let mut view = LocalAnalyzer::default();
+        view.job_id = Some("catalog-job".into());
+        view.phase = "completed".into();
+        view.mode = "catalog_check".into();
+        view.invalidate_scope();
+        view.active_operation_id = Some("catalog-operation".into());
+        // Same-frame automatic page request after the Compare button dispatches.
+        view.request_page(&mut bus, &ctx, Some("synthetic.sqlite"));
+        assert!(view.page_requested_scope.is_none());
+        assert!(view.error.is_none());
+        let mut reply = Reply {
+            id: 1,
+            purpose: Purpose::LocalAnalyzer {
+                job_id: "catalog-job".into(),
+                generation: view.generation,
+                scope_generation: view.scope_generation,
+                op: "catalog".into(),
+            },
+            response: json!({"ok":true,"data":{"phase":"checking_catalog"}}),
+        };
+        // Also recover an earlier not-ready scope, rather than suppressing results.
+        view.page_requested_scope = Some(view.scope_generation);
+        view.apply_reply(&mut reply, &mut bus, &ctx, Some("synthetic.sqlite"));
+        assert!(view.page_requested_scope.is_none());
+        assert_eq!(view.phase, "checking_catalog");
+        view.request_page(&mut bus, &ctx, Some("synthetic.sqlite"));
+        assert!(view.page_requested_scope.is_none());
+        assert!(view.error.is_none());
+    }
+
+    #[test]
+    fn review_csv_reply_releases_the_operation_on_success_and_failure() {
+        for response in [
+            json!({"ok":true,"data":{"rows":1}}),
+            json!({"ok":false,"error":{"code":"file_exists","message":"exists"}}),
+        ] {
+            let ctx = egui::Context::default();
+            let mut bus = CommandBus::new();
+            let mut view = LocalAnalyzer::default();
+            view.job_id = Some("csv-job".into());
+            view.generation = 2;
+            view.scope_generation = 3;
+            view.phase = "completed".into();
+            view.export_pending = true;
+            view.active_operation_id = Some("csv-op".into());
+            let mut reply = Reply {
+                id: 7,
+                purpose: Purpose::LocalAnalyzer {
+                    job_id: "csv-job".into(),
+                    generation: 2,
+                    scope_generation: 3,
+                    op: "export_review_csv".into(),
+                },
+                response,
+            };
+            let success = reply.response["ok"] == true;
+            assert!(view.apply_reply(&mut reply, &mut bus, &ctx, None));
+            assert!(!view.export_pending);
+            assert!(view.active_operation_id.is_none());
+            assert_eq!(view.phase, "completed");
+            assert_eq!(view.message.is_some(), success);
+            assert_eq!(view.error.is_some(), !success);
+        }
+    }
 
     #[test]
     fn stale_local_worker_reply_cannot_replace_the_active_job() {
@@ -1172,10 +1621,9 @@ mod tests {
         view.root_input = "relative-folder".into();
         view.begin(&mut bus, &ctx);
         assert!(view.job_id.is_none());
-        assert!(
-            view.error
-                .as_deref()
-                .is_some_and(|s| s.contains("absolute"))
-        );
+        assert!(view
+            .error
+            .as_deref()
+            .is_some_and(|s| s.contains("absolute")));
     }
 }

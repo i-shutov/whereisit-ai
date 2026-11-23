@@ -1,6 +1,6 @@
 //! Shared command service for native clients and CLI.
 use atlas_core::{Catalog, Error, Result};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 mod analytics;
 mod copy_candidates;
 mod ctf_annotation_backup;
@@ -236,7 +236,7 @@ mod modern_sha2_regression {
 #[cfg(test)]
 mod release_scope_regression {
     use super::dispatch_json;
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     #[test]
     fn physical_pairing_and_bound_rescan_fail_before_touching_paths() {

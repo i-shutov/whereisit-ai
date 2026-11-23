@@ -1,19 +1,19 @@
 //! PR58-first native workbench. Every user-visible catalog fact comes from atlas-service;
 //! no fictitious USB mount badges, byte-duplicate claims or on-disk delete operations.
 use crate::bridge::{
-    CommandBus, ExportKind, Purpose, Route, analytics_cancel_request, analytics_request,
-    exact_category_query, extension_search_query, new_scan_job_id, primary_category_search_query,
-    scan_request,
+    analytics_cancel_request, analytics_request, exact_category_query, extension_search_query,
+    new_scan_job_id, primary_category_search_query, scan_request, CommandBus, ExportKind, Purpose,
+    Route,
 };
-use crate::categories::{self, Category, parse_categories};
+use crate::categories::{self, parse_categories, Category};
 use crate::linked::LinkedCtf;
 use crate::local_analyzer::LocalAnalyzer;
-use crate::model::{DiskPreferences, Entry, Page, Volume, bytes_compact, parse_volumes};
+use crate::model::{bytes_compact, parse_volumes, DiskPreferences, Entry, Page, Volume};
 use crate::physical::PhysicalPanel;
-use crate::shelf::{ShelfContext, ShelfSnapshot, valid_label};
+use crate::shelf::{valid_label, ShelfContext, ShelfSnapshot};
 use eframe::egui::{self, Color32, RichText};
 use egui_extras::{Column, TableBuilder};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
@@ -202,7 +202,11 @@ fn preference_platform() -> Option<&'static str> {
 }
 impl Language {
     fn text(self, ru: &'static str, en: &'static str) -> &'static str {
-        if self == Self::Russian { ru } else { en }
+        if self == Self::Russian {
+            ru
+        } else {
+            en
+        }
     }
 }
 

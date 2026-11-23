@@ -440,16 +440,14 @@ fn pending_operation_cancel_blocks_late_export_and_claim_is_one_shot() {
         progress(&json!({"job_id":job_id})).unwrap()["operation_reserved"],
         true
     );
-    assert!(
-        job(&json!({"job_id":job_id}))
-            .unwrap()
-            .1
-            .inner
-            .lock()
-            .unwrap()
-            .snapshot
-            .is_some()
-    );
+    assert!(job(&json!({"job_id":job_id}))
+        .unwrap()
+        .1
+        .inner
+        .lock()
+        .unwrap()
+        .snapshot
+        .is_some());
 
     let result =
         page(&json!({"job_id":job_id,"operation_id":operation_id,"view":"largest","limit":10}))
