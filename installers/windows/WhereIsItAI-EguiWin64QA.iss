@@ -1,6 +1,6 @@
 ; Native Rust/egui Win64 QA — separate unsigned installer, for prerelease testing.
 #ifndef AppVersion
-  #define AppVersion "1.1.0-rc.1"
+  #define AppVersion "1.1.0"
 #endif
 #ifndef BuildDir
   #define BuildDir "../../target/release"

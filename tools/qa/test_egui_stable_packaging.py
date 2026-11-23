@@ -53,8 +53,50 @@ class EguiStablePackagingContract(unittest.TestCase):
             result = self._prepare(repo)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_windows_11_stable_accepts_empty_deferred_features(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            scope = {**SCOPE, "target_version": "1.1.0", "deferred_features": [],
+                     "deferred_platforms": ["macos", "linux"]}
+            self._make_repo(repo, version="1.1.0", scope=scope)
+            result = self._prepare(repo)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            provenance = json.loads((repo / "release-assets/provenance.json").read_text())
+            self.assertEqual(provenance["version"], "1.1.0")
+            self.assertEqual(provenance["release_scope"]["deferred_features"], [])
+
+    def test_unready_stable_and_scope_version_mismatch_are_rejected(self):
+        for case in ("not_ready", "acceptance_version", "scope_version"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temp:
+                repo = Path(temp)
+                scope = {**SCOPE, "target_version": "1.1.0", "deferred_features": [],
+                         "deferred_platforms": ["macos", "linux"]}
+                self._make_repo(repo, version="1.1.0", scope=scope)
+                path = repo / "release/ACCEPTANCE.json"
+                acceptance = json.loads(path.read_text(encoding="utf-8"))
+                if case == "not_ready":
+                    acceptance["stable_ready"] = False
+                elif case == "acceptance_version":
+                    acceptance["version"] = "1.0.0"
+                else:
+                    acceptance["release_scope"]["target_version"] = "1.0.0"
+                path.write_text(json.dumps(acceptance), encoding="utf-8")
+                result = self._prepare(repo)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse((repo / "release-assets").exists())
+
+    def test_prerelease_and_malformed_versions_are_rejected_for_stable(self):
+        for version in ("1.1.0-rc.1", "one.point.one"):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as temp:
+                repo = Path(temp)
+                self._make_repo(repo, version=version)
+                result = self._prepare(repo)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("numeric stable VERSION", result.stdout + result.stderr)
+                self.assertFalse((repo / "release-assets").exists())
+
     def test_wrong_source_or_failed_required_job_blocks_stable(self):
-        for case in ("source", "job"):
+        for case in ("source", "repository", "job"):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as temp:
                 repo = Path(temp)
                 self._make_repo(repo)
@@ -65,9 +107,15 @@ class EguiStablePackagingContract(unittest.TestCase):
                     path.write_text(json.dumps(run), encoding="utf-8")
                 else:
                     path = repo / "verified-jobs.json"
-                    jobs = json.loads(path.read_text(encoding="utf-8"))
-                    jobs["jobs"][1]["conclusion"] = "failure"
-                    path.write_text(json.dumps(jobs), encoding="utf-8")
+                    if case == "repository":
+                        run_path = repo / "verified-run.json"
+                        run = json.loads(run_path.read_text(encoding="utf-8"))
+                        run["head_repository"]["full_name"] = "attacker/fork"
+                        run_path.write_text(json.dumps(run), encoding="utf-8")
+                    else:
+                        jobs = json.loads(path.read_text(encoding="utf-8"))
+                        jobs["jobs"][1]["conclusion"] = "failure"
+                        path.write_text(json.dumps(jobs), encoding="utf-8")
                 result = self._prepare(repo)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse((repo / "release-assets").exists())
@@ -106,7 +154,7 @@ class EguiStablePackagingContract(unittest.TestCase):
             self.assertFalse((repo / "release-assets").exists())
 
     def test_product_manifest_must_record_approved_unsigned_scope_and_checksum(self):
-        for case in ("policy", "checksum"):
+        for case in ("policy", "scope", "checksum"):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as temp:
                 repo = Path(temp)
                 self._make_repo(repo)
@@ -115,13 +163,17 @@ class EguiStablePackagingContract(unittest.TestCase):
                     product = json.loads(manifest.read_text(encoding="utf-8"))
                     product["signing"] = "signed"
                     manifest.write_text(json.dumps(product), encoding="utf-8")
+                elif case == "scope":
+                    product = json.loads(manifest.read_text(encoding="utf-8"))
+                    product["release_scope"]["target_version"] = "9.9.9"
+                    manifest.write_text(json.dumps(product), encoding="utf-8")
                 else:
                     installer = next((repo / "incoming").rglob("*.exe"))
                     installer.write_bytes(installer.read_bytes() + b"tamper")
                 result = self._prepare(repo)
                 self.assertNotEqual(result.returncode, 0)
                 output = result.stdout + result.stderr
-                self.assertIn("manifest identity, scope, or unsigned policy mismatch" if case == "policy"
+                self.assertIn("manifest identity, scope, or unsigned policy mismatch" if case in ("policy", "scope")
                               else "Product checksum mismatch", output)
                 self.assertFalse((repo / "release-assets").exists())
 
@@ -132,10 +184,11 @@ class EguiStablePackagingContract(unittest.TestCase):
         self.assertIn("  create:", stable)
         self.assertIn("github.event_name == 'create'", stable)
         self.assertIn("github.event.ref_type == 'branch'", stable)
-        self.assertIn("github.event.ref == 'release/windows-1.0-publish'", stable)
+        self.assertIn("release/windows-([0-9]+)", stable)
         self.assertIn("github.ref == 'refs/heads/main'", stable)
-        self.assertIn("github.ref == 'refs/heads/release/windows-1.0-publish'", stable)
+        self.assertIn("release/windows-${version%.*}-publish", stable)
         self.assertIn("SOURCE_SHA: ${{ inputs.source_sha || github.sha }}", stable)
+        self.assertIn("PUBLICATION_EVENT_REF: ${{ github.event.ref }}", stable)
         self.assertIn("ref: ${{ inputs.source_sha || github.sha }}", stable)
         self.assertIn("source_sha:", stable)
         self.assertIn("native_run_id:", stable)
@@ -146,13 +199,14 @@ class EguiStablePackagingContract(unittest.TestCase):
         self.assertIn("run.get('path') == '.github/workflows/build.yml'", stable)
         self.assertIn("run.get('conclusion') == 'success'", stable)
         self.assertIn("--stable", stable)
-        self.assertIn("--draft --latest=false --notes-file docs/releases/v1.0.0.md", stable)
+        self.assertIn('--draft --latest=false --notes-file "docs/releases/$tag.md"', stable)
         self.assertIn("isPrerelease", stable)
         self.assertIn("--draft=false --latest", stable)
         self.assertIn("if [[ \"$version\" == '1.0.0' ]]", rc)
         self.assertIn("publish=false", rc)
 
-    def _make_repo(self, repo: Path, *, bom: bool = False) -> None:
+    def _make_repo(self, repo: Path, *, bom: bool = False, version: str = VERSION,
+                   scope: dict | None = None) -> None:
         (repo / "tools/qa").mkdir(parents=True)
         (repo / "release").mkdir()
         (repo / "docs/validation").mkdir(parents=True)
@@ -164,12 +218,14 @@ class EguiStablePackagingContract(unittest.TestCase):
         (repo / "docs/validation/database-package.json").write_text(
             json.dumps({"archive": "local-only-not-distributed", "entries": 1}) + "\n", encoding="utf-8")
         (repo / "docs/validation/performance.json").write_text(json.dumps({"samples": [1]}) + "\n", encoding="utf-8")
-        (repo / "docs/releases/v1.0.0.md").write_text("Synthetic stable notes.\n", encoding="utf-8")
-        (repo / "VERSION").write_text(VERSION + "\n", encoding="utf-8")
-        acceptance = {"version": VERSION, "channel": "stable", "stable_ready": True,
+        (repo / f"docs/releases/v{version}.md").write_text("Synthetic stable notes.\n", encoding="utf-8")
+        (repo / "VERSION").write_text(version + "\n", encoding="utf-8")
+        scope = dict(scope or SCOPE)
+        scope.setdefault("target_version", version)
+        acceptance = {"version": version, "channel": "stable", "stable_ready": True,
                       "personal_catalogs_in_release": False, "known_open_gates": [],
                       "publication_requires_successful_jobs": ["test", "windows"],
-                      "release_scope": SCOPE}
+                      "release_scope": scope}
         (repo / "release/ACCEPTANCE.json").write_text(json.dumps(acceptance),
                                                        encoding="utf-8-sig" if bom else "utf-8")
         run = {"head_sha": SHA, "head_branch": "main", "conclusion": "success",
@@ -183,17 +239,17 @@ class EguiStablePackagingContract(unittest.TestCase):
         ]}), encoding="utf-8")
         incoming = repo / "incoming/WhereIsItAI-egui-windows-x64-unsigned-candidate"
         incoming.mkdir(parents=True)
-        installer_name = f"WhereIsItAI-egui-{VERSION}-windows-x64-setup.exe"
+        installer_name = f"WhereIsItAI-egui-{version}-windows-x64-setup.exe"
         installer = incoming / installer_name
         installer.write_bytes(b"synthetic setup bytes")
         checksum = f"{hashlib.sha256(installer.read_bytes()).hexdigest()}  {installer_name}\n"
         (incoming / "SHA256SUMS.txt").write_text(checksum, encoding="utf-8-sig" if bom else "ascii")
         product = {"schema": "whereisit-egui-product-candidate-v1", "channel": "stable",
                    "target_ui": "Rust/egui", "platform": "windows", "architecture": "x64",
-                   "version": VERSION, "commit": SHA, "run_id": RUN_ID,
+                   "version": version, "commit": SHA, "run_id": RUN_ID,
                    "installer_sha256": hashlib.sha256(installer.read_bytes()).hexdigest(),
                    "signing": "unsigned", "stable_ready": True,
-                   "personal_catalogs_included": False, "release_scope": SCOPE}
+                   "personal_catalogs_included": False, "release_scope": scope}
         (incoming / "provenance.json").write_text(json.dumps(product), encoding="utf-8-sig" if bom else "utf-8")
 
     @staticmethod

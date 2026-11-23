@@ -1,0 +1,64 @@
+{
+  "format": "whereisit-release-acceptance-v1",
+  "version": "1.1.0-rc.1",
+  "channel": "prerelease",
+  "stable_ready": false,
+  "candidate_publication_approved": false,
+  "publication_is_manual_after_QA": true,
+  "personal_catalogs_in_release": false,
+  "synthetic_data_is_not_real_data_acceptance": true,
+  "manual_acceptance_is_distinct_from_CI": true,
+  "publication_requires_successful_jobs": [
+    "test",
+    "windows",
+    "macos (macos-15)",
+    "macos (macos-15-intel)"
+  ],
+  "previous_stable": {
+    "version": "1.0.0",
+    "tag": "v1.0.0",
+    "source_commit": "938fece2d74793c2eda7a1b84082ab5db3f8a092",
+    "acceptance": "release/history/v1.0.0.json",
+    "immutable_published_assets": true
+  },
+  "release_scope": {
+    "target_version": "1.1.0-rc.1",
+    "ship_platforms": [
+      "windows-x64"
+    ],
+    "deferred_platforms": [
+      "macos",
+      "linux"
+    ],
+    "unsigned_windows_candidate": true,
+    "unsigned_windows_stable_approved": false,
+    "usb_binding_enabled": false,
+    "runtime": "Rust/egui; no web runtime"
+  },
+  "integrated_feature_prs": [
+    87,
+    88,
+    89
+  ],
+  "candidate_features": [
+    "PR58 tabs and retained workspace state",
+    "Read-only archive slices and bounded sunburst",
+    "Explicit metadata-only local analyzer and new review CSV"
+  ],
+  "build_time_acceptance": {
+    "installed_windows_1_0_to_1_1_gui": "PENDING_EXACT_MAIN_ARTIFACT",
+    "external_sqlite_notes_categories_preservation": "PENDING_EXACT_MAIN_ARTIFACT",
+    "original_user_ctf_access_allowed": false,
+    "current_real_ctf_compatibility": "NOT_RUN_FOR_1_1; historical 1.0 evidence is separate",
+    "windows10": "OWNER_CONFIRMED_HISTORICAL; exact 1.1 candidate not tested",
+    "macos_linux": "COMPILE_TESTS_ONLY; product releases deferred"
+  },
+  "known_open_gates": [
+    "Record exact-main installed Windows GUI and 1.0 to 1.1 upgrade evidence",
+    "Separate Windows 1.1 stable release decision and publication authorization"
+  ],
+  "signing": {
+    "windows": "unsigned candidate",
+    "macos": "deferred platform release"
+  }
+}

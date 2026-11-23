@@ -28,6 +28,7 @@ RC3 = "1.0.0-rc.3"
 RC4 = "1.0.0-rc.4"
 STABLE = "1.0.0"
 NEXT_RC1 = "1.1.0-rc.1"
+NEXT_STABLE = "1.1.0"
 QUERY = "(ext:mp3 OR ext:mkv) AND size:>0B"
 CATEGORY = "QA-Upgrade-Ω-Категория"
 ENTRY_NOTE = "Synthetic upgrade note — 東京"
@@ -36,7 +37,7 @@ CTF_PLACEHOLDER = b"GENERATED INVALID CTF PLACEHOLDER; PROVE THAT INSTALLERS PRE
 FORMAT = "whereisit-native-upgrade-smoke-v1"
 SUPPORTED_PAIRS = {
     (RC1, RC2), (RC2, RC3), (RC3, RC4), (RC4, STABLE),
-    (STABLE, NEXT_RC1),
+    (STABLE, NEXT_RC1), (STABLE, NEXT_STABLE),
 }
 
 

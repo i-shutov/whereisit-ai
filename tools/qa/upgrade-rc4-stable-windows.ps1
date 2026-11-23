@@ -14,6 +14,7 @@ $targetVersion = (Get-Content -LiteralPath (Join-Path $targetRoot 'VERSION') -Ra
 $pair = switch ($targetVersion) {
     '1.0.0' { @{ source = '1.0.0-rc.4'; sha = '751fa5454c813e60b61800b517685ccab7e9776a' } }
     '1.1.0-rc.1' { @{ source = '1.0.0'; sha = '938fece2d74793c2eda7a1b84082ab5db3f8a092' } }
+    '1.1.0' { @{ source = '1.0.0'; sha = '938fece2d74793c2eda7a1b84082ab5db3f8a092' } }
     default { throw "Unsupported target release: $targetVersion" }
 }
 if ($sourceVersion -ne $pair.source -or $sourceSha -ne $pair.sha) { throw 'Wrong exact predecessor source.' }

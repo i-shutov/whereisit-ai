@@ -1,7 +1,7 @@
 {
   "format": "whereisit-release-acceptance-v1",
-  "version": "1.1.0-rc.1",
-  "channel": "prerelease",
+  "version": "1.1.0",
+  "channel": "stable",
   "stable_ready": false,
   "candidate_publication_approved": false,
   "publication_is_manual_after_QA": true,
@@ -10,9 +10,7 @@
   "manual_acceptance_is_distinct_from_CI": true,
   "publication_requires_successful_jobs": [
     "test",
-    "windows",
-    "macos (macos-15)",
-    "macos (macos-15-intel)"
+    "windows"
   ],
   "previous_stable": {
     "version": "1.0.0",
@@ -22,17 +20,18 @@
     "immutable_published_assets": true
   },
   "release_scope": {
-    "target_version": "1.1.0-rc.1",
+    "target_version": "1.1.0",
     "ship_platforms": [
       "windows-x64"
     ],
-    "deferred_platforms": [
-      "macos",
+    "deferred_product_platforms": [
+      "macos-arm64",
+      "macos-x86_64",
       "linux"
     ],
-    "unsigned_windows_candidate": true,
-    "unsigned_windows_stable_approved": false,
+    "unsigned_windows_stable_approved": true,
     "usb_binding_enabled": false,
+    "deferred_features": [],
     "runtime": "Rust/egui; no web runtime"
   },
   "integrated_feature_prs": [
@@ -46,16 +45,16 @@
     "Explicit metadata-only local analyzer and new review CSV"
   ],
   "build_time_acceptance": {
-    "installed_windows_1_0_to_1_1_gui": "PENDING_EXACT_MAIN_ARTIFACT",
-    "external_sqlite_notes_categories_preservation": "PENDING_EXACT_MAIN_ARTIFACT",
-    "original_user_ctf_access_allowed": false,
-    "current_real_ctf_compatibility": "NOT_RUN_FOR_1_1; historical 1.0 evidence is separate",
-    "windows10": "OWNER_CONFIRMED_HISTORICAL; exact 1.1 candidate not tested",
+    "installed_rc_1_0_to_1_1": "PASS; PR90 exact main b5e3667; independent installed Windows GUI",
+    "full_catalog_and_ctf_1_1": "PENDING",
+    "installed_stable_windows_gui": "PENDING_EXACT_MAIN_ARTIFACT",
+    "original_ctf_write_allowed": false,
+    "windows10": "OWNER_CONFIRMED_HISTORICAL; exact 1.1 not tested",
     "macos_linux": "COMPILE_TESTS_ONLY; product releases deferred"
   },
   "known_open_gates": [
-    "Record exact-main installed Windows GUI and 1.0 to 1.1 upgrade evidence",
-    "Separate Windows 1.1 stable release decision and publication authorization"
+    "Complete full-catalog search/analytics and CTF/export acceptance on private copies",
+    "Observe exact-main 1.1.0 installed GUI before publication"
   ],
   "signing": {
     "windows": "unsigned candidate",

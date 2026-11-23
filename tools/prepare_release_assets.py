@@ -23,8 +23,8 @@ def prepare_stable_assets() -> None:
         raise SystemExit("Missing repository identity")
 
     version = (root / "VERSION").read_text(encoding="utf-8-sig").strip()
-    if version != "1.0.0":
-        raise SystemExit("Stable publisher requires VERSION 1.0.0")
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        raise SystemExit("Stable publisher requires a numeric stable VERSION")
     acceptance_path = root / "release/ACCEPTANCE.json"
     acceptance = json.loads(acceptance_path.read_text(encoding="utf-8-sig"))
     if (acceptance.get("version") != version or acceptance.get("channel") != "stable"
@@ -33,16 +33,14 @@ def prepare_stable_assets() -> None:
             or acceptance.get("known_open_gates") != []
             or acceptance.get("publication_requires_successful_jobs") != ["test", "windows"]):
         raise SystemExit("Stable acceptance manifest is not ready")
-    expected_scope = {
-        "ship_platforms": ["windows-x64"],
-        "deferred_product_platforms": ["macos-arm64", "macos-x86_64", "linux"],
-        "unsigned_windows_stable_approved": True,
-        "usb_binding_enabled": False,
-        "deferred_features": ["tabs_workspaces", "sunburst_archive_slices", "local_analyzer"],
-    }
     acceptance_scope = acceptance.get("release_scope")
     if (not isinstance(acceptance_scope, dict)
-            or any(acceptance_scope.get(key) != value for key, value in expected_scope.items())):
+            or acceptance_scope.get("target_version") != version
+            or acceptance_scope.get("ship_platforms") != ["windows-x64"]
+            or acceptance_scope.get("unsigned_windows_stable_approved") is not True
+            or acceptance_scope.get("usb_binding_enabled") is not False
+            or not isinstance(acceptance_scope.get("deferred_features"), list)
+            or not isinstance(acceptance_scope.get("deferred_product_platforms", acceptance_scope.get("deferred_platforms")), list)):
         raise SystemExit("Stable acceptance release_scope mismatch")
 
     run = json.loads(Path("verified-run.json").read_text(encoding="utf-8-sig"))

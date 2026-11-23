@@ -4,12 +4,12 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $expected = (Get-Content (Join-Path $root 'VERSION') -Raw).Trim()
 if (-not $Version) { $Version = $expected }
 if ($Version -ne $expected -or $Version -notmatch '^\d+\.\d+\.\d+(-rc\.\d+)?$') { throw 'Egui product version must match VERSION.' }
-# RC remains prerelease-only; stable 1.0 requires the explicit owner-approved Windows scope.
+# RC remains prerelease-only; stable Windows packages require explicit owner-approved scope.
 $releaseLabel = 'unsigned prerelease'
 if ($Version -notmatch '-rc\.\d+$') {
     $acceptance = Get-Content (Join-Path $root 'release/ACCEPTANCE.json') -Raw | ConvertFrom-Json
     $scope = $acceptance.release_scope
-    if ($Version -ne '1.0.0' -or $acceptance.version -ne $Version -or $acceptance.channel -ne 'stable' -or
+    if ($acceptance.version -ne $Version -or $acceptance.channel -ne 'stable' -or
         $scope.target_version -ne $Version -or $scope.unsigned_windows_stable_approved -ne $true -or
         $scope.usb_binding_enabled -ne $false -or @($scope.ship_platforms).Count -ne 1 -or
         $scope.ship_platforms[0] -ne 'windows-x64') { throw 'Stable Windows package requires explicit owner-approved scope.' }
