@@ -138,6 +138,9 @@ export const VolumeSunburstView: React.FC<VolumeSunburstViewProps> = ({
 
   const loadSunburst = useCallback(async (ticket: ScopedRequestTicket) => {
     const gate = requestGateRef.current!;
+    setSunburstData(null); // avoid presenting the old scope as the newly selected scope
+    setHoveredNode(null);
+    setHoveredAncestors(new Set());
     setLoading(true);
     try {
       const resp = await fetch('/api/catalog/sunburst', {
@@ -547,6 +550,9 @@ export const VolumeSunburstView: React.FC<VolumeSunburstViewProps> = ({
                     return (
                       <path
                         key={arc.id}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`${arc.node.name}, ${formatBytes(arc.node.size)}`}
                         d={arc.pathD}
                         fill={arc.fill}
                         fillOpacity={opacity}
@@ -557,6 +563,12 @@ export const VolumeSunburstView: React.FC<VolumeSunburstViewProps> = ({
                           setHoveredAncestors(new Set(arc.ancestorIds));
                         }}
                         onClick={() => handleNodeClick(arc.node)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            handleNodeClick(arc.node);
+                          }
+                        }}
                       />
                     );
                   })}
@@ -638,6 +650,9 @@ export const VolumeSunburstView: React.FC<VolumeSunburstViewProps> = ({
                 return (
                   <div
                     key={item.id}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`${item.name}, ${formatBytes(item.size)}`}
                     onMouseEnter={() => {
                       setHoveredNode(item);
                       setHoveredAncestors(new Set([item.id]));
@@ -647,6 +662,12 @@ export const VolumeSunburstView: React.FC<VolumeSunburstViewProps> = ({
                       setHoveredAncestors(new Set());
                     }}
                     onClick={() => handleNodeClick(item)}
+                    onKeyDown={(event) => {
+                      if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+                        event.preventDefault();
+                        handleNodeClick(item);
+                      }
+                    }}
                     className={`px-3 py-1.5 text-xs transition-colors cursor-pointer ${
                       isHovered
                         ? 'bg-slate-100 dark:bg-slate-900'
@@ -687,6 +708,8 @@ export const VolumeSunburstView: React.FC<VolumeSunburstViewProps> = ({
                         {item.kind === 'file' && (item.duplicateCount ?? 1) > 1 && item.entryId && (
                           <button
                             type="button"
+                            aria-label={t('Открыть совпадения-кандидаты', 'Open metadata candidates')}
+                            title={t('Кандидаты по метаданным', 'Metadata candidates')}
                             onClick={() => onJumpToCopyCandidates(item.entryId!)}
                             className="inline-flex items-center gap-0.5 text-blue-600 dark:text-blue-400 hover:underline font-medium cursor-pointer"
                           >
