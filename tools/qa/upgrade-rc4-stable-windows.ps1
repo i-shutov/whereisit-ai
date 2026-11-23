@@ -1,4 +1,4 @@
-# RC4 to stable egui product upgrade and rollback on a disposable hosted runner.
+# Exact-source egui product upgrade and rollback on a disposable hosted runner.
 param([Parameter(Mandatory)][string]$SourceRoot)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -6,12 +6,19 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hoste
     throw 'Hosted GitHub Actions Windows runner required.'
 }
 $targetRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
-$sourceSha = git -C $SourceRoot rev-parse HEAD
-if ($LASTEXITCODE -ne 0 -or $sourceSha -ne '751fa5454c813e60b61800b517685ccab7e9776a') { throw 'Wrong RC4 source.' }
-$targetSha = git -C $targetRoot rev-parse HEAD
-if ($LASTEXITCODE -ne 0 -or $targetSha -ne $env:STABLE_SHA -or $targetSha -notmatch '^[0-9a-f]{40}$') { throw 'Wrong stable target source.' }
-$old = Join-Path $SourceRoot 'dist/windows-egui-product/WhereIsItAI-egui-1.0.0-rc.4-windows-x64-setup.exe'
-$new = Join-Path $targetRoot 'dist/windows-egui-product/WhereIsItAI-egui-1.0.0-windows-x64-setup.exe'
+$sourceSha = (git -C $SourceRoot rev-parse HEAD).Trim()
+$targetSha = (git -C $targetRoot rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $targetSha -ne $env:TARGET_SHA -or $targetSha -notmatch '^[0-9a-f]{40}$') { throw 'Wrong exact target source.' }
+$sourceVersion = (Get-Content -LiteralPath (Join-Path $SourceRoot 'VERSION') -Raw).Trim()
+$targetVersion = (Get-Content -LiteralPath (Join-Path $targetRoot 'VERSION') -Raw).Trim()
+$pair = switch ($targetVersion) {
+    '1.0.0' { @{ source = '1.0.0-rc.4'; sha = '751fa5454c813e60b61800b517685ccab7e9776a' } }
+    '1.1.0-rc.1' { @{ source = '1.0.0'; sha = '938fece2d74793c2eda7a1b84082ab5db3f8a092' } }
+    default { throw "Unsupported target release: $targetVersion" }
+}
+if ($sourceVersion -ne $pair.source -or $sourceSha -ne $pair.sha) { throw 'Wrong exact predecessor source.' }
+$old = Join-Path $SourceRoot "dist/windows-egui-product/WhereIsItAI-egui-$sourceVersion-windows-x64-setup.exe"
+$new = Join-Path $targetRoot "dist/windows-egui-product/WhereIsItAI-egui-$targetVersion-windows-x64-setup.exe"
 $work = Join-Path $env:RUNNER_TEMP ('whereisit-egui-upgrade-' + [guid]::NewGuid().ToString('N'))
 New-Item -Path $work -ItemType Directory | Out-Null
 $installed = Join-Path $work 'Installed'
@@ -48,7 +55,7 @@ function Remove-Product {
     if ((Test-Path -LiteralPath $gui) -or (Test-Path -LiteralPath $cli)) { throw 'Product executables survived uninstall.' }
 }
 function Run-Probe([string]$Phase) {
-    & python $probe $Phase --cli $cli --db $db --fixture-root $fixture --snapshot $snapshot --source-release 1.0.0-rc.4 --target-release 1.0.0
+    & python $probe $Phase --cli $cli --db $db --fixture-root $fixture --snapshot $snapshot --source-release $sourceVersion --target-release $targetVersion
     if ($LASTEXITCODE -ne 0) { throw "Synthetic catalog probe failed during $Phase." }
 }
 function Verify-External([string]$CatalogSha, [string]$CtfSha) {
@@ -59,30 +66,30 @@ function Verify-External([string]$CatalogSha, [string]$CtfSha) {
 
 $oldSha = File-Sha $old
 $newSha = File-Sha $new
-Install-Product $old $SourceRoot '1.0.0-rc.4'
+Install-Product $old $SourceRoot $sourceVersion
 Run-Probe prepare
 $beforeUpgrade = File-Sha $db
 $ctfSha = File-Sha $placeholder
-Install-Product $new $targetRoot '1.0.0'
+Install-Product $new $targetRoot $targetVersion
 Verify-External $beforeUpgrade $ctfSha
 Run-Probe verify
 $beforeRollback = File-Sha $db
 Remove-Product
 Verify-External $beforeRollback $ctfSha
-Install-Product $old $SourceRoot '1.0.0-rc.4'
+Install-Product $old $SourceRoot $sourceVersion
 Verify-External $beforeRollback $ctfSha
 & $cli validate $db | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'Reinstalled RC4 could not validate the external catalog.' }
+if ($LASTEXITCODE -ne 0) { throw 'Reinstalled predecessor could not validate the external catalog.' }
 Remove-Product
 Verify-External $beforeRollback $ctfSha
 
 $out = Join-Path $targetRoot 'dist/qa-egui-upgrade'
 New-Item -Path $out -ItemType Directory -Force | Out-Null
 @{
-    format = 'whereisit-egui-rc4-to-1.0-upgrade-v1'
+    format = "whereisit-egui-$sourceVersion-to-$targetVersion-upgrade-v1"
     platform = 'windows-x64'
-    source_version = '1.0.0-rc.4'
-    target_version = '1.0.0'
+    source_version = $sourceVersion
+    target_version = $targetVersion
     source_commit = $sourceSha
     target_commit = $targetSha
     source_package_sha256 = $oldSha

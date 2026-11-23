@@ -43,6 +43,12 @@ jobs:
             exit 0
           fi
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]] || { echo 'Only release candidates are allowed'; exit 1; }
+          approval="$(python3 -c 'import json; print(json.load(open("release/ACCEPTANCE.json", encoding="utf-8-sig")).get("candidate_publication_approved") is True)')"
+          if [[ "$approval" != 'True' ]]; then
+            echo 'Candidate publication is not explicitly approved; skipping release creation.'
+            echo 'publish=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           test -f "docs/releases/v$version.md"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           if gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
@@ -64,6 +70,10 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID/jobs?per_page=100" > verified-jobs.json
           gh run download "$CI_RUN_ID" --repo "$GITHUB_REPOSITORY" --dir incoming --pattern 'WhereIsItAI-egui-*-unsigned-candidate'
           python3 tools/prepare_release_assets.py
+      - name: Require explicit candidate publication approval
+        if: steps.identity.outputs.publish == 'true'
+        shell: bash
+        run: python3 tools/dev/candidate_publication_allowed.py --candidate-dir incoming
       - name: Create draft, verify downloadable bytes, then publish prerelease
         if: steps.identity.outputs.publish == 'true'
         env:

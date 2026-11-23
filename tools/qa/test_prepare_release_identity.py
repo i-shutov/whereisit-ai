@@ -18,6 +18,9 @@ class ReleasePreparation(unittest.TestCase):
     def test_stable_identity_updates_all_bundles_without_rc_suffix(self):
         self._check_preparation('1.0.0', '10099')
 
+    def test_next_minor_candidate_has_independent_release_identity(self):
+        self._check_preparation('1.1.0-rc.1', '10001')
+
     def _check_preparation(self, version, build):
         with tempfile.TemporaryDirectory() as directory:
             fixture = Path(directory)
@@ -49,6 +52,8 @@ class ReleasePreparation(unittest.TestCase):
                 self.assertEqual(info['CFBundleVersion'], build)
             for relative in paths[-3:]:
                 self.assertIn(f'#define AppVersion "{version}"',
+                              (fixture / relative).read_text(encoding='utf-8'))
+                self.assertIn('VersionInfoVersion=' + version.split('-')[0] + '.0',
                               (fixture / relative).read_text(encoding='utf-8'))
 
 
