@@ -50,7 +50,13 @@ fn app(ctx: &egui::Context, dir: &Path) -> DesktopApp {
 }
 
 fn settle(app: &mut DesktopApp, ctx: &egui::Context) {
-    while app.active_request.is_some() {
+    while app.active_request.is_some()
+        || app.tree_ancestors_request_id.is_some()
+        || app
+            .tree_children
+            .values()
+            .any(|page| page.loading_request.is_some())
+    {
         let reply = next_reply(app);
         app.apply_reply(reply, ctx);
     }

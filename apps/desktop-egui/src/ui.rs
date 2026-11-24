@@ -4704,13 +4704,16 @@ impl DesktopApp {
                 if back.clicked() {
                     self.go_back(ctx);
                 }
-                let can_go_up = matches!(
-                    &self.route,
+                let can_go_up = match &self.route {
                     Route::Folder {
-                        parent_id: Some(_),
+                        parent_id: Some(id),
                         ..
-                    }
-                );
+                    } => self
+                        .folder_crumbs
+                        .last()
+                        .is_some_and(|crumb| crumb.id == *id),
+                    _ => false,
+                };
                 if ui
                     .add_enabled(
                         can_go_up && self.active_request.is_none(),

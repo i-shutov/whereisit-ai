@@ -173,3 +173,11 @@ stale from the preceding full-copy window. Fresh window selection and explicit
 activation did not recover input. The owner must return the RDP session to an
 unlocked ordinary desktop before input is retried. This is not a product PASS
 or a proven application defect. No Windows security settings were changed.
+
+Cross-platform CI on `020909d` passed Linux tests/Clippy, Windows and native
+DuckDB checks, but macOS exposed a test scheduling race: its CTF fixture waited
+only for the central page, then invoked Up before the independent ancestor
+reply. The workflow harness now drains pending tree replies as well. Up is
+disabled until the current structural parent is confirmed. All 105 isolated
+Windows desktop tests and strict all-target Clippy passed after this change;
+CI must be evaluated again on the new head. No macOS product GUI PASS is implied.
