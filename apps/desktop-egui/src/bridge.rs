@@ -173,18 +173,9 @@ pub enum Purpose {
     },
     // Retained for the complete-sync regression harness.
     #[allow(dead_code)]
-    LinkCtf {
-        path: String,
-        cache_root: String,
-    },
     CtfPreviewOpen {
         path: String,
         cache_root: String,
-    },
-    CtfIndexBackground {
-        path: String,
-        cache_root: String,
-        job_id: String,
     },
     CtfPreviewClose,
     ImportCtf {
@@ -200,6 +191,7 @@ pub enum Purpose {
     LinkedRead {
         inner: Box<Purpose>,
         generation: String,
+        job_id: Option<String>,
     },
     CtfProgress {
         job_id: String,

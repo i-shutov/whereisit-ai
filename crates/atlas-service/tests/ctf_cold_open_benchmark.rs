@@ -10,6 +10,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+static BENCHMARK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn source_digest(path: &std::path::Path) -> Vec<u8> {
     let mut source = std::fs::File::open(path).unwrap();
     let mut digest = Sha256::new();
@@ -89,6 +91,7 @@ fn benchmark_source(temp: &std::path::Path) -> std::path::PathBuf {
 #[test]
 #[ignore = "manual cold-open benchmark, release mode, no concurrent benchmarks"]
 fn cold_open_until_first_usable_page() {
+    let _guard = BENCHMARK_LOCK.lock().unwrap();
     let temp = tempfile::tempdir().unwrap();
     let source = benchmark_source(temp.path());
     let bytes_before = std::fs::metadata(&source).unwrap().len();
@@ -147,6 +150,7 @@ fn cold_open_until_first_usable_page() {
 #[test]
 #[ignore = "manual direct CTF opening benchmark, release mode, no concurrent benchmarks"]
 fn direct_ctf_until_first_directory_page_without_indexes() {
+    let _guard = BENCHMARK_LOCK.lock().unwrap();
     let temp = tempfile::tempdir().unwrap();
     let source = benchmark_source(temp.path());
     let digest_before = source_digest(&source);
@@ -187,5 +191,98 @@ fn direct_ctf_until_first_directory_page_without_indexes() {
     assert!(
         !temp.path().join("cache").exists(),
         "opening must not build search indexes"
+    );
+}
+
+#[test]
+#[ignore = "manual full-catalog first-search and parity benchmark; release mode only"]
+fn direct_ctf_first_search_and_query_latency() {
+    let _guard = BENCHMARK_LOCK.lock().unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let source = benchmark_source(temp.path());
+    let digest_before = source_digest(&source);
+    let samples: usize = std::env::var("CTF_BENCH_SAMPLES")
+        .unwrap_or_else(|_| "5".into())
+        .parse()
+        .unwrap();
+    assert!((1..=100).contains(&samples));
+    let reference = std::env::var_os("CTF_BENCH_SQLITE")
+        .map(|path| atlas_core::Catalog::open_readonly(std::path::PathBuf::from(path)).unwrap());
+    let start = Instant::now();
+    let opened = invoke(json!({"op":"ctf_preview_open", "path":source}));
+    assert_eq!(opened["ok"], true, "direct open failed (details omitted)");
+    let open_ms = start.elapsed().as_millis();
+    let generation = opened["data"]["generation"].clone();
+    let first = invoke(json!({"op":"ctf_preview_search", "path":source,
+        "generation":generation,"query":"mkv","limit":250}));
+    assert_eq!(first["ok"], true, "first direct search failed");
+    eprintln!(
+        "open_ms={open_ms} open_through_first_search_ms={} entries={} volumes={}",
+        start.elapsed().as_millis(),
+        opened["data"]["entries"],
+        opened["data"]["volumes"]
+    );
+    let queries = [
+        ("empty", "", false),
+        ("extension", "ext:mkv", false),
+        ("default_text", "mkv", false),
+        (
+            "boolean",
+            "(ext:mkv OR ext:mp3) AND NOT name:__synthetic_absent__",
+            false,
+        ),
+        ("unicode", "name:東京", false),
+        ("absent_name", "name:__synthetic_absent_716291__", false),
+        ("absent_default_text", "__synthetic_absent_716291__", false),
+        ("absent_path", "path:__synthetic_absent_716291__", false),
+        (
+            "absent_description",
+            "description:__synthetic_absent_716291__",
+            false,
+        ),
+        ("size_count", "ext:mkv AND size:>1MiB", true),
+    ];
+    for (label, query, full_count) in queries {
+        let expected = reference.as_ref().map(|reference| {
+            if full_count {
+                serde_json::to_value(reference.search(query, None, 0, 250).unwrap()).unwrap()
+            } else {
+                serde_json::to_value(reference.search_fast(query, None, 0, 250).unwrap()).unwrap()
+            }
+        });
+        let mut timings = Vec::with_capacity(samples);
+        for _ in 0..samples {
+            let request_start = Instant::now();
+            let response = invoke(
+                json!({"op":"ctf_preview_search","path":source,"generation":generation,
+                "query":query,"limit":250,"offset":0,"full_count":full_count}),
+            );
+            timings.push(request_start.elapsed().as_secs_f64() * 1000.0);
+            assert_eq!(response["ok"], true, "direct query failed: {label}");
+            if let Some(expected) = &expected {
+                assert!(
+                    &response["data"]["result"] == expected,
+                    "SQLite parity failed: {label} (rows intentionally omitted)"
+                );
+            }
+        }
+        timings.sort_by(f64::total_cmp);
+        let nearest_rank = |quantile: f64| {
+            timings[((timings.len() as f64 * quantile).ceil() as usize).saturating_sub(1)]
+        };
+        eprintln!(
+            "class={label} samples={samples} p50_ms={:.3} p95_ms={:.3}",
+            nearest_rank(0.5),
+            nearest_rank(0.95)
+        );
+    }
+    assert!(
+        source_digest(&source) == digest_before,
+        "source bytes changed"
+    );
+    assert!(!temp.path().join("cache").exists());
+    assert_eq!(
+        invoke(json!({"op":"ctf_preview_close","path":source,"generation":generation}))["ok"],
+        true
     );
 }

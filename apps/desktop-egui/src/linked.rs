@@ -14,11 +14,13 @@ pub struct LinkedCtf {
 }
 
 impl LinkedCtf {
+    #[cfg(test)]
     pub fn matches_source_snapshot(&self, path: &str, source_sha256: &str) -> bool {
         self.path == path && self.source_sha256 == source_sha256
     }
 
     /// Parse the `data` member of a successful `ctf_sync` service response.
+    #[cfg(test)]
     pub fn parse_sync(path: String, cache_root: String, data: &Value) -> Result<Self, String> {
         if path.trim().is_empty() || cache_root.trim().is_empty() {
             return Err("CTF source and cache paths are required".to_owned());
@@ -45,10 +47,10 @@ impl LinkedCtf {
         })
     }
 
-    /// Fast read-only source view used while the derived search index builds.
+    /// Validated read-only source view used directly for browsing and search.
     pub fn parse_preview(path: String, cache_root: String, data: &Value) -> Result<Self, String> {
-        if path.trim().is_empty() || cache_root.trim().is_empty() {
-            return Err("CTF source and cache paths are required".to_owned());
+        if path.trim().is_empty() {
+            return Err("CTF source path is required".to_owned());
         }
         if data.get("state").and_then(Value::as_str) != Some("browsable")
             || data.get("original_ctf_read_only").and_then(Value::as_bool) != Some(true)
@@ -79,19 +81,33 @@ impl LinkedCtf {
             let mut out = Map::new();
             out.insert("path".to_owned(), json!(self.path));
             out.insert("generation".to_owned(), json!(self.generation));
-            let (mapped_op, fields): (&str, &[&str]) = match op {
-                "volumes" => ("ctf_preview_volumes", &[]),
-                "children" => (
-                    "ctf_preview_children",
-                    &["volume_id", "parent_id", "offset", "limit"],
-                ),
-                _ => {
-                    return Err(
-                        "Search preparation is in progress; folder browsing is available"
+            let (mapped_op, fields): (&str, &[&str]) =
+                match op {
+                    "volumes" => ("ctf_preview_volumes", &[]),
+                    "search_fast" => (
+                        "ctf_preview_search",
+                        &[
+                            "query",
+                            "volume_id",
+                            "offset",
+                            "limit",
+                            "full_count",
+                            "job_id",
+                        ],
+                    ),
+                    "children" => (
+                        "ctf_preview_children",
+                        &["volume_id", "parent_id", "offset", "limit"],
+                    ),
+                    "children_focused" => (
+                        "ctf_preview_children_focused",
+                        &["volume_id", "parent_id", "entry_id", "limit"],
+                    ),
+                    _ => return Err(
+                        "This operation requires importing the CTF into a native SQLite catalog"
                             .to_owned(),
-                    )
-                }
-            };
+                    ),
+                };
             out.insert("op".to_owned(), json!(mapped_op));
             copy_fields(&request, &mut out, fields);
             return Ok(Value::Object(out));
@@ -334,7 +350,7 @@ mod tests {
         let preview_generation = "a".repeat(64);
         let preview = LinkedCtf::parse_preview(
             "source.ctf".into(),
-            "cache".into(),
+            String::new(),
             &json!({
                 "state":"browsable", "generation":preview_generation, "source_sha256":source_sha(),
                 "source_bytes":140000000, "original_ctf_read_only":true,
@@ -359,10 +375,27 @@ mod tests {
         assert_eq!(children["op"], "ctf_preview_children");
         assert_eq!(children["parent_id"], 4);
         assert_eq!(children["limit"], 25);
+        let focused = preview
+            .rewrite(json!({"op":"children_focused","volume_id":2,"parent_id":4,"entry_id":19,"limit":250}))
+            .unwrap();
+        assert_eq!(focused["op"], "ctf_preview_children_focused");
+        assert_eq!(focused["entry_id"], 19);
+        let search = preview
+            .rewrite(json!({"op":"search_fast","query":"ext:mkv AND name:фильм",
+                "volume_id":4,"offset":50,"limit":25,"job_id":"search-1"}))
+            .unwrap();
+        assert_eq!(search["op"], "ctf_preview_search");
+        assert_eq!(search["path"], "source.ctf");
+        assert_eq!(search["generation"], preview_generation);
+        assert_eq!(search["query"], "ext:mkv AND name:фильм");
+        assert_eq!(search["volume_id"], 4);
+        assert_eq!(search["offset"], 50);
+        assert_eq!(search["limit"], 25);
+        assert_eq!(search["job_id"], "search-1");
         assert!(preview
-            .rewrite(json!({"op":"search_fast","query":"ext:mkv"}))
+            .rewrite(json!({"op":"categories","db":"ignored.sqlite"}))
             .unwrap_err()
-            .contains("preparation is in progress"));
+            .contains("requires importing"));
         assert!(preview
             .rewrite(json!({"op":"update_ctf_description","entry_id":1}))
             .is_err());

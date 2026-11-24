@@ -120,6 +120,8 @@ fn dispatch(input: &str) -> Result<Value> {
         "ctf_preview_open" => ctf_preview::open(&v)?,
         "ctf_preview_volumes" => ctf_preview::volumes(&v)?,
         "ctf_preview_children" => ctf_preview::children(&v)?,
+        "ctf_preview_children_focused" => ctf_preview::children_focused(&v)?,
+        "ctf_preview_search" => ctf_preview::search(&v)?,
         "ctf_preview_close" => ctf_preview::close(&v)?,
         "ctf_progress" => ctf_job::progress(&v)?,
         "ctf_cancel" => ctf_job::cancel(&v)?,

@@ -80,9 +80,354 @@ enum PredicateKind {
     ExtensionExclusion,
 }
 
+#[derive(Clone, Debug)]
+enum Expr {
+    True,
+    And(Box<Expr>, Box<Expr>),
+    Or(Box<Expr>, Box<Expr>),
+    Not(Box<Expr>),
+    Contains(Field, String, Vec<char>, Vec<usize>),
+    Glob(Field, String, Vec<char>),
+    Extension(String),
+    Size(&'static str, i64),
+    KindFile,
+    Video,
+    NameExact(String),
+    Category(MetadataCategoryPredicate),
+    Branch(i64),
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Field {
+    Text,
+    Name,
+    Path,
+    Description,
+    Tag,
+}
+
+/// Category operation to resolve against the catalog's category metadata.
+#[derive(Clone, Debug)]
+pub enum MetadataCategoryPredicate {
+    PrimaryId(i64),
+    ExactId(i64),
+    Id(i64),
+    Name(String),
+}
+
+/// Borrowed metadata needed to evaluate a query without materializing `Entry`s.
+pub struct MetadataRecord<'a> {
+    pub id: i64,
+    pub name: &'a str,
+    pub kind: &'a str,
+    pub size: u64,
+    pub extension: &'a str,
+    pub description: &'a str,
+    pub tags: &'a str,
+}
+
+/// Catalog-specific data resolved only when a query needs it.
+pub trait MetadataQueryContext {
+    fn relative_path(&self) -> &str;
+    fn is_branch_descendant(&self, anchor_id: i64) -> bool;
+    fn category_matches(&self, predicate: &MetadataCategoryPredicate) -> bool;
+}
+
+/// Parsed Atlas query that can be evaluated against borrowed in-memory metadata.
+pub struct MetadataQuery {
+    expr: Expr,
+}
+
+impl MetadataQuery {
+    pub fn compile_metadata(input: &str) -> Result<Self> {
+        let (predicate, _) = compile_predicate(input)?;
+        Ok(Self {
+            expr: predicate.expr,
+        })
+    }
+
+    pub fn matches<C: MetadataQueryContext>(
+        &self,
+        record: &MetadataRecord<'_>,
+        context: &C,
+    ) -> bool {
+        eval(&self.expr, record, context)
+    }
+
+    pub fn needs_relative_path(&self) -> bool {
+        needs_path(&self.expr)
+    }
+
+    pub fn needs_extension(&self) -> bool {
+        needs_extension(&self.expr)
+    }
+}
+
+fn needs_path(expr: &Expr) -> bool {
+    match expr {
+        Expr::Contains(Field::Path | Field::Text, _, _, _)
+        | Expr::Glob(Field::Path | Field::Text, _, _) => true,
+        Expr::And(a, b) | Expr::Or(a, b) => needs_path(a) || needs_path(b),
+        Expr::Not(a) => needs_path(a),
+        _ => false,
+    }
+}
+
+fn needs_extension(expr: &Expr) -> bool {
+    match expr {
+        Expr::Extension(_) | Expr::Video => true,
+        Expr::And(a, b) | Expr::Or(a, b) => needs_extension(a) || needs_extension(b),
+        Expr::Not(a) => needs_extension(a),
+        _ => false,
+    }
+}
+
+fn field_kind(field: &str) -> Field {
+    match field {
+        "name" => Field::Name,
+        "path" => Field::Path,
+        "description" => Field::Description,
+        "tag" => Field::Tag,
+        _ => Field::Text,
+    }
+}
+
+fn contains_expr(field: Field, value: String) -> Expr {
+    let target: Vec<char> = value.chars().collect();
+    let mut failure = vec![0; target.len()];
+    let mut matched = 0;
+    for i in 1..target.len() {
+        while matched > 0 && target[i] != target[matched] {
+            matched = failure[matched - 1];
+        }
+        if target[i] == target[matched] {
+            matched += 1;
+        }
+        failure[i] = matched;
+    }
+    Expr::Contains(field, value, target, failure)
+}
+
+fn glob_expr(field: Field, value: String) -> Expr {
+    let pattern = value.chars().collect();
+    Expr::Glob(field, value, pattern)
+}
+
+fn eval<C: MetadataQueryContext>(expr: &Expr, row: &MetadataRecord<'_>, ctx: &C) -> bool {
+    match expr {
+        Expr::True => true,
+        Expr::And(a, b) => eval(a, row, ctx) && eval(b, row, ctx),
+        Expr::Or(a, b) => eval(a, row, ctx) || eval(b, row, ctx),
+        Expr::Not(a) => !eval(a, row, ctx),
+        Expr::Extension(v) => lower_eq(row.extension, v),
+        Expr::Size(op, n) => compare_size(row.size, op, *n),
+        Expr::KindFile => row.kind == "file",
+        Expr::Video => [
+            "mkv", "mp4", "avi", "mov", "m4v", "webm", "mpg", "mpeg", "wmv", "ts", "m2ts", "vob",
+            "flv",
+        ]
+        .iter()
+        .any(|ext| lower_eq(row.extension, ext)),
+        Expr::NameExact(v) => lower_eq(row.name, v),
+        Expr::Category(
+            MetadataCategoryPredicate::PrimaryId(_) | MetadataCategoryPredicate::ExactId(_),
+        ) if row.kind != "file" => false,
+        Expr::Category(p) => ctx.category_matches(p),
+        Expr::Branch(id) => ctx.is_branch_descendant(*id),
+        Expr::Contains(field, needle, target, failure) => match field {
+            Field::Text if !target.contains(&'\n') => {
+                // A term without a separator cannot straddle search_text fields.
+                // Check the already available strings first, then request the path.
+                lower_contains(row.name, needle, target, failure)
+                    || lower_contains(row.description, needle, target, failure)
+                    || lower_contains(row.tags, needle, target, failure)
+                    || lower_contains(ctx.relative_path(), needle, target, failure)
+            }
+            Field::Text => lower_contains_parts(
+                &[row.name, ctx.relative_path(), row.description, row.tags],
+                needle,
+                target,
+                failure,
+            ),
+            Field::Name => lower_contains(row.name, needle, target, failure),
+            Field::Path => lower_contains(ctx.relative_path(), needle, target, failure),
+            Field::Description => lower_contains(row.description, needle, target, failure),
+            Field::Tag => lower_contains(row.tags, needle, target, failure),
+        },
+        Expr::Glob(field, _pattern_text, pattern) => {
+            let val = match field {
+                Field::Text => {
+                    return glob_match(
+                        &format!(
+                            "{}\n{}\n{}\n{}",
+                            row.name,
+                            ctx.relative_path(),
+                            row.description,
+                            row.tags
+                        )
+                        .to_lowercase(),
+                        pattern,
+                    )
+                }
+                Field::Name => row.name.to_lowercase(),
+                Field::Path => ctx.relative_path().to_lowercase(),
+                Field::Description => row.description.to_lowercase(),
+                Field::Tag => row.tags.to_lowercase(),
+            };
+            glob_match(&val, pattern)
+        }
+    }
+}
+
+fn lower_eq(value: &str, lowered: &str) -> bool {
+    if value.is_ascii() && lowered.is_ascii() {
+        value.eq_ignore_ascii_case(lowered)
+    } else {
+        value.to_lowercase() == lowered
+    }
+}
+
+fn lower_contains(value: &str, needle: &str, target: &[char], failure: &[usize]) -> bool {
+    lower_contains_parts(&[value], needle, target, failure)
+}
+
+fn lower_contains_parts(parts: &[&str], needle: &str, target: &[char], failure: &[usize]) -> bool {
+    if target.is_empty() {
+        return true;
+    }
+    if !needle.contains('\n') && needle.is_ascii() && parts.iter().all(|part| part.is_ascii()) {
+        let pattern = needle.as_bytes();
+        return parts.iter().any(|part| {
+            part.as_bytes()
+                .windows(pattern.len())
+                .any(|window| window.eq_ignore_ascii_case(pattern))
+        });
+    }
+    // Rust's str lowercase includes contextual final sigma; char lowercase does
+    // not. Preserve exact SQLite unicode_lower semantics on those rare records.
+    if parts.iter().any(|part| part.contains('Σ')) {
+        let mut lowered = String::new();
+        for (i, part) in parts.iter().enumerate() {
+            if i > 0 {
+                lowered.push('\n');
+            }
+            lowered.push_str(&part.to_lowercase());
+        }
+        let needle: String = target.iter().collect();
+        return lowered.contains(&needle);
+    }
+    let mut matched = 0usize;
+    for ch in parts.iter().enumerate().flat_map(|(i, p)| {
+        let separator = (i > 0).then_some('\n').into_iter();
+        separator.chain(p.chars())
+    }) {
+        for c in ch.to_lowercase() {
+            while matched > 0 && c != target[matched] {
+                matched = failure[matched - 1];
+            }
+            if c == target[matched] {
+                matched += 1;
+                if matched == target.len() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn compare_size(size: u64, op: &str, n: i64) -> bool {
+    let n = n as u64;
+    match op {
+        ">" => size > n,
+        ">=" => size >= n,
+        "<" => size < n,
+        "<=" => size <= n,
+        _ => size == n,
+    }
+}
+
+// SQLite GLOB wildcard semantics: * matches any sequence, ? one Unicode scalar,
+// and bracket classes support ranges and leading ^ negation.
+fn glob_match(value: &str, p: &[char]) -> bool {
+    fn atom(p: &[char], j: usize, value: char) -> Option<(bool, usize)> {
+        if p[j] == '?' {
+            return Some((true, j + 1));
+        }
+        if p[j] != '[' {
+            return Some((value == p[j], j + 1));
+        }
+        let mut k = j + 1;
+        let neg = k < p.len() && p[k] == '^';
+        if neg {
+            k += 1;
+        }
+        let mut hit = false;
+        let mut any = false;
+        while k < p.len() {
+            if p[k] == ']' && any {
+                break;
+            }
+            let start = p[k];
+            any = true;
+            if k + 2 < p.len() && p[k + 1] == '-' && p[k + 2] != ']' {
+                hit |= value >= start && value <= p[k + 2];
+                k += 3;
+            } else {
+                hit |= value == start;
+                k += 1;
+            }
+        }
+        if k == p.len() {
+            return Some((false, j + 1));
+        }
+        Some((hit != neg, k + 1))
+    }
+    // SQLite's GLOB implementation treats an embedded U+0000 as the end of
+    // the UTF-8 string, even when the bound TEXT value has a larger byte len.
+    let value = value.split('\0').next().unwrap_or("");
+    let mut vi = 0;
+    let mut pi = 0;
+    let mut star_pattern = None;
+    let mut star_value = 0;
+    while vi < value.len() {
+        let ch = value[vi..].chars().next().unwrap();
+        if pi < p.len() && p[pi] == '*' {
+            star_pattern = Some(pi + 1);
+            pi += 1;
+            star_value = vi;
+            continue;
+        }
+        if pi < p.len() {
+            let (hit, next) = atom(p, pi, ch).unwrap();
+            if hit {
+                vi += ch.len_utf8();
+                pi = next;
+                continue;
+            }
+        }
+        if let Some(after_star) = star_pattern {
+            if star_value >= value.len() {
+                return false;
+            }
+            let c = value[star_value..].chars().next().unwrap();
+            star_value += c.len_utf8();
+            vi = star_value;
+            pi = after_star;
+        } else {
+            return false;
+        }
+    }
+    while pi < p.len() && p[pi] == '*' {
+        pi += 1;
+    }
+    pi == p.len()
+}
+
 pub(crate) struct Predicate {
     pub(crate) sql: String,
     kind: PredicateKind,
+    expr: Expr,
 }
 
 impl Predicate {
@@ -90,6 +435,15 @@ impl Predicate {
         Self {
             sql,
             kind: PredicateKind::Other,
+            expr: Expr::True,
+        }
+    }
+
+    fn with_expr(sql: String, expr: Expr) -> Self {
+        Self {
+            sql,
+            kind: PredicateKind::Other,
+            expr,
         }
     }
 
@@ -123,7 +477,8 @@ impl Parser {
         while self.t.get(self.i) == Some(&Token::Or) {
             self.i += 1;
             let y = self.and()?;
-            x = Predicate::other(format!("({} OR {})", x.sql, y.sql));
+            let expr = Expr::Or(Box::new(x.expr), Box::new(y.expr));
+            x = Predicate::with_expr(format!("({} OR {})", x.sql, y.sql), expr);
         }
         Ok(x)
     }
@@ -142,7 +497,8 @@ impl Parser {
                 self.i += 1
             }
             let y = self.unary()?;
-            x = Predicate::other(format!("({} AND {})", x.sql, y.sql));
+            let expr = Expr::And(Box::new(x.expr), Box::new(y.expr));
+            x = Predicate::with_expr(format!("({} AND {})", x.sql, y.sql), expr);
         }
         Ok(x)
     }
@@ -152,6 +508,7 @@ impl Parser {
             let inner = self.unary()?;
             return Ok(Predicate {
                 sql: format!("(NOT {})", inner.sql),
+                expr: Expr::Not(Box::new(inner.expr)),
                 kind: if inner.kind == PredicateKind::ExtensionMatch {
                     PredicateKind::ExtensionExclusion
                 } else {
@@ -169,6 +526,7 @@ impl Parser {
             return Ok(Predicate {
                 sql: format!("({})", x.sql),
                 kind: x.kind,
+                expr: x.expr,
             });
         }
         let w = match self.t.get(self.i) {
@@ -193,6 +551,7 @@ impl Parser {
             return Ok(Predicate {
                 sql: "ext = ?".into(),
                 kind: PredicateKind::ExtensionMatch,
+                expr: Expr::Extension(v.trim_start_matches('.').to_owned()),
             });
         }
         let sql = match field.as_str() {
@@ -208,7 +567,7 @@ impl Parser {
                         )
                     })?;
                 self.args.push(Value::Integer(id));
-                Ok("id IN (SELECT e.id FROM entries e WHERE e.kind='file' AND COALESCE((SELECT MIN(category_id) FROM entry_categories WHERE entry_id=e.id),0)=?)".into())
+                Ok(("id IN (SELECT e.id FROM entries e WHERE e.kind='file' AND COALESCE((SELECT MIN(category_id) FROM entry_categories WHERE entry_id=e.id),0)=?)".into(), Expr::Category(MetadataCategoryPredicate::PrimaryId(id))))
             }
             "category_exact_id" => {
                 let id = value
@@ -222,7 +581,7 @@ impl Parser {
                         )
                     })?;
                 self.args.push(Value::Integer(id));
-                Ok("id IN (SELECT e.id FROM entries e WHERE e.kind='file' AND EXISTS(SELECT 1 FROM entry_categories ec WHERE ec.entry_id=e.id AND ec.category_id=?))".into())
+                Ok(("id IN (SELECT e.id FROM entries e WHERE e.kind='file' AND EXISTS(SELECT 1 FROM entry_categories ec WHERE ec.entry_id=e.id AND ec.category_id=?))".into(), Expr::Category(MetadataCategoryPredicate::ExactId(id))))
             }
             "branch_id" => {
                 let id = value
@@ -233,7 +592,7 @@ impl Parser {
                         Error::new("invalid_query", "branch_id requires a positive integer")
                     })?;
                 self.args.push(Value::Integer(id));
-                Ok("id IN (WITH RECURSIVE branch(id,volume_id) AS (SELECT child.id,child.volume_id FROM entries anchor JOIN entries child ON child.parent_id=anchor.id AND child.volume_id=anchor.volume_id WHERE anchor.id=? UNION SELECT child.id,child.volume_id FROM entries child JOIN branch parent ON child.parent_id=parent.id AND child.volume_id=parent.volume_id) SELECT id FROM branch)".into())
+                Ok(("id IN (WITH RECURSIVE branch(id,volume_id) AS (SELECT child.id,child.volume_id FROM entries anchor JOIN entries child ON child.parent_id=anchor.id AND child.volume_id=anchor.volume_id WHERE anchor.id=? UNION SELECT child.id,child.volume_id FROM entries child JOIN branch parent ON child.parent_id=parent.id AND child.volume_id=parent.volume_id) SELECT id FROM branch)".into(), Expr::Branch(id)))
             }
             "size" => {
                 let (op, num) = if let Some(x) = v.strip_prefix(">=") {
@@ -251,20 +610,20 @@ impl Parser {
                 };
                 let (op, size) = parse_size(op, num)?;
                 self.args.push(Value::Integer(size));
-                Ok(format!("size {op} ?"))
+                Ok((format!("size {op} ?"), Expr::Size(op, size)))
             }
             "name_exact" => {
                 // Case-folded literal equality: any recorded size, any disk.
                 // Bound parameter, never filename interpolation or hash inference.
-                self.args.push(Value::Text(v));
-                Ok("name_norm = ?".into())
+                self.args.push(Value::Text(v.clone()));
+                Ok(("name_norm = ?".into(), Expr::NameExact(v)))
             }
-            "kind" if v == "file" => Ok("kind = 'file'".into()),
+            "kind" if v == "file" => Ok(("kind = 'file'".into(), Expr::KindFile)),
             "kind" => Err(Error::new(
                 "invalid_query",
                 "Unsupported kind filter; kind:file selects recorded files only",
             )),
-            "type" if v == "video" => Ok(VIDEO_EXTENSION_SQL.into()),
+            "type" if v == "video" => Ok((VIDEO_EXTENSION_SQL.into(), Expr::Video)),
             "type" => Err(Error::new(
                 "invalid_query",
                 "Unsupported type filter; type:video checks filename extensions only",
@@ -276,14 +635,14 @@ impl Parser {
                     Error::new("invalid_query", "category_id requires a positive integer")
                 })?;
                 self.args.push(Value::Integer(id));
-                Ok("id IN (WITH RECURSIVE category_tree(id) AS (SELECT id FROM categories WHERE id=? UNION SELECT child.id FROM categories child JOIN category_tree parent ON child.parent_id=parent.id), marked(id,volume_id) AS (SELECT e.id,e.volume_id FROM category_tree c JOIN entry_categories ec ON ec.category_id=c.id JOIN entries e ON e.id=ec.entry_id UNION SELECT child.id,child.volume_id FROM marked m JOIN entries child ON child.volume_id=m.volume_id AND child.parent_id=m.id) SELECT id FROM marked)".into())
+                Ok(("id IN (WITH RECURSIVE category_tree(id) AS (SELECT id FROM categories WHERE id=? UNION SELECT child.id FROM categories child JOIN category_tree parent ON child.parent_id=parent.id), marked(id,volume_id) AS (SELECT e.id,e.volume_id FROM category_tree c JOIN entry_categories ec ON ec.category_id=c.id JOIN entries e ON e.id=ec.entry_id UNION SELECT child.id,child.volume_id FROM marked m JOIN entries child ON child.volume_id=m.volume_id AND child.parent_id=m.id) SELECT id FROM marked)".into(), Expr::Category(MetadataCategoryPredicate::Id(id))))
             }
             "category" => {
-                self.args.push(Value::Text(v));
+                self.args.push(Value::Text(v.clone()));
                 // Legacy name search intentionally unions same-named categories.
                 // Like category_id, it includes category descendants and files
                 // under explicitly assigned folders.
-                Ok("id IN (WITH RECURSIVE category_tree(id) AS (SELECT id FROM categories WHERE name_norm=? UNION SELECT child.id FROM categories child JOIN category_tree parent ON child.parent_id=parent.id), marked(id,volume_id) AS (SELECT e.id,e.volume_id FROM category_tree c JOIN entry_categories ec ON ec.category_id=c.id JOIN entries e ON e.id=ec.entry_id UNION SELECT child.id,child.volume_id FROM marked m JOIN entries child ON child.volume_id=m.volume_id AND child.parent_id=m.id) SELECT id FROM marked)".into())
+                Ok(("id IN (WITH RECURSIVE category_tree(id) AS (SELECT id FROM categories WHERE name_norm=? UNION SELECT child.id FROM categories child JOIN category_tree parent ON child.parent_id=parent.id), marked(id,volume_id) AS (SELECT e.id,e.volume_id FROM category_tree c JOIN entry_categories ec ON ec.category_id=c.id JOIN entries e ON e.id=ec.entry_id UNION SELECT child.id,child.volume_id FROM marked m JOIN entries child ON child.volume_id=m.volume_id AND child.parent_id=m.id) SELECT id FROM marked)".into(), Expr::Category(MetadataCategoryPredicate::Name(v.clone()))))
             }
             "text" | "name" | "path" | "description" | "tag" => {
                 let col = match field.as_str() {
@@ -306,11 +665,18 @@ impl Parser {
                 };
                 if literal.chars().count() >= 3 {
                     self.args.push(Value::Text(trigram_query(&literal)));
-                    self.args.push(Value::Text(v));
-                    Ok(format!("(id IN (SELECT rowid FROM entries_trigram WHERE entries_trigram MATCH ?) AND {condition})"))
+                    self.args.push(Value::Text(v.clone()));
+                    Ok((format!("(id IN (SELECT rowid FROM entries_trigram WHERE entries_trigram MATCH ?) AND {condition})"), if wildcard { glob_expr(field_kind(&field), v) } else { contains_expr(field_kind(&field), v) }))
                 } else {
-                    self.args.push(Value::Text(v));
-                    Ok(condition)
+                    self.args.push(Value::Text(v.clone()));
+                    Ok((
+                        condition,
+                        if wildcard {
+                            glob_expr(field_kind(&field), v)
+                        } else {
+                            contains_expr(field_kind(&field), v)
+                        },
+                    ))
                 }
             }
             _ => Err(Error::new(
@@ -318,7 +684,7 @@ impl Parser {
                 format!("Unknown field: {field}"),
             )),
         }?;
-        Ok(Predicate::other(sql))
+        Ok(Predicate::with_expr(sql.0, sql.1))
     }
 }
 pub fn compile(s: &str) -> Result<(String, Vec<Value>)> {
@@ -506,6 +872,202 @@ mod tests {
     use super::*;
     use crate::Catalog;
     use rusqlite::params_from_iter;
+
+    #[test]
+    fn glob_match_agrees_with_sqlite_on_bracket_and_wildcard_edges() {
+        fn strings(alphabet: &[char], max_len: usize) -> Vec<String> {
+            let mut out = vec![String::new()];
+            let mut layer = vec![String::new()];
+            for _ in 0..max_len {
+                let mut next = Vec::new();
+                for prefix in &layer {
+                    for ch in alphabet {
+                        let mut s = prefix.clone();
+                        s.push(*ch);
+                        next.push(s);
+                    }
+                }
+                out.extend(next.iter().cloned());
+                layer = next;
+            }
+            out
+        }
+        let catalog = Catalog::open(":memory:").unwrap();
+        let mut stmt = catalog
+            .conn()
+            .prepare("SELECT unicode_lower(?1) GLOB unicode_lower(?2)")
+            .unwrap();
+        let mut values = strings(&['a', ']', '['], 3);
+        values.extend(["é".into(), "İ".into(), "Σ".into(), "a\0b".into()]);
+        let mut patterns = strings(&['a', ']', '[', '^', '-', '*', '?'], 3);
+        patterns.extend([
+            "[]]".into(),
+            "[a]".into(),
+            "[^a]".into(),
+            "[a-z]".into(),
+            "[unclosed".into(),
+            "[a-]".into(),
+            "[-a]".into(),
+        ]);
+        for value in &values {
+            for pattern in &patterns {
+                let expected: bool = stmt.query_row((value, pattern), |row| row.get(0)).unwrap();
+                let actual = glob_match(
+                    &value.to_lowercase(),
+                    &pattern.to_lowercase().chars().collect::<Vec<_>>(),
+                );
+                assert_eq!(actual, expected, "value={value:?}, pattern={pattern:?}");
+            }
+        }
+    }
+
+    struct EntryContext<'a>(&'a crate::Entry);
+    impl MetadataQueryContext for EntryContext<'_> {
+        fn relative_path(&self) -> &str {
+            &self.0.relative_path
+        }
+        fn is_branch_descendant(&self, anchor_id: i64) -> bool {
+            // The parity fixture is shallow; production contexts resolve ancestry lazily.
+            self.0.parent_id == Some(anchor_id)
+        }
+        fn category_matches(&self, predicate: &MetadataCategoryPredicate) -> bool {
+            matches!(predicate, MetadataCategoryPredicate::PrimaryId(0)) && self.0.kind == "file"
+        }
+    }
+
+    fn metadata_record(entry: &crate::Entry) -> MetadataRecord<'_> {
+        let ext = std::path::Path::new(&entry.name)
+            .extension()
+            .and_then(|x| x.to_str())
+            .unwrap_or("");
+        MetadataRecord {
+            id: entry.id,
+            name: &entry.name,
+            kind: &entry.kind,
+            size: entry.size,
+            extension: ext,
+            description: &entry.description,
+            tags: &entry.tags,
+        }
+    }
+
+    #[test]
+    fn in_memory_evaluator_matches_sql_for_shared_query_grammar() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut catalog = Catalog::open(dir.path().join("metadata-query.sqlite")).unwrap();
+        catalog
+            .bulk_import("Disk", "offline", |w| {
+                for (name, path, kind, size, description, tags) in [
+                    (
+                        "résumé.TXT",
+                        "資料/résumé.TXT",
+                        "file",
+                        12,
+                        "Notes about Café",
+                        "Personal",
+                    ),
+                    (
+                        "movie.MKV",
+                        "Media/movie.MKV",
+                        "file",
+                        2_000_000,
+                        "Feature film",
+                        "Video",
+                    ),
+                    (
+                        "archive.zip",
+                        "Media/archive.zip",
+                        "file",
+                        90,
+                        "Bundle",
+                        "backup",
+                    ),
+                    ("Café", "資料/Café", "directory", 0, "Folder", ""),
+                    (
+                        "a[b].dat",
+                        "Meta/a[b].dat",
+                        "file",
+                        33,
+                        "literal bracket",
+                        "",
+                    ),
+                    (
+                        "İstanbul.TXT",
+                        "Unicode/İstanbul.TXT",
+                        "file",
+                        34,
+                        "dotted I",
+                        "",
+                    ),
+                    ("Σίγμα.bin", "Unicode/Σίγμα.bin", "file", 35, "sigma", ""),
+                    (
+                        "ΟΣ.TXT",
+                        "Unicode/ΟΣ.TXT",
+                        "file",
+                        37,
+                        "greek final sigma",
+                        "",
+                    ),
+                    ("a\"b.txt", "Meta/a\"b.txt", "file", 36, "quoted", ""),
+                ] {
+                    w.insert(&crate::NewEntry {
+                        parent_id: None,
+                        name: name.into(),
+                        relative_path: path.into(),
+                        kind: kind.into(),
+                        size,
+                        modified_unix: None,
+                        description: description.into(),
+                        tags: tags.into(),
+                    })?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let all = catalog.search("", None, 0, 100).unwrap().items;
+        for query in [
+            "",
+            "name:résumé",
+            "path:資料",
+            "description:café",
+            "tag:personal",
+            "ext:MKV",
+            "size:>1mb",
+            "kind:file",
+            "type:video",
+            "(ext:txt OR ext:mkv) AND NOT size:<100",
+            "text:café",
+            "name:*.mkv",
+            "text:feature*",
+            "name:*[a-z]*",
+            "name:[^m]*",
+            "name:[abc].dat",
+            "name:[unclosed",
+            "name:résumé?",
+            "name_exact:İSTANBUL.TXT",
+            "name:ος",
+            "name_exact:ΟΣ.TXT",
+            "text:\"résumé.TXT\n資料\"",
+            "name:\"a\\\"b.txt\"",
+            "primary_category_id:0",
+            "(name:résumé OR name:movie) archive",
+        ] {
+            let sql_page = catalog.search(query, None, 0, 100).unwrap();
+            let compiled = MetadataQuery::compile_metadata(query).unwrap();
+            let expected = sql_page.items.iter().map(|e| e.id).collect::<Vec<_>>();
+            let mut actual = Vec::new();
+            for entry in &all {
+                let record = metadata_record(entry);
+                if compiled.matches(&record, &EntryContext(entry)) {
+                    actual.push(entry.id);
+                }
+            }
+            assert_eq!(actual, expected, "query={query}");
+        }
+        for bad in ["unknown:x", "size:nope", "(name:x", "name:\"unterminated"] {
+            assert!(MetadataQuery::compile_metadata(bad).is_err(), "{bad}");
+        }
+    }
 
     #[test]
     fn branch_id_searches_only_same_volume_descendants_excluding_anchor() {
