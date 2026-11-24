@@ -22,6 +22,16 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: native-duckdb-${{ runner.os }}-${{ runner.arch }}-1.100-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            rust-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Install pinned Rust toolchain
         shell: pwsh
         run: |
