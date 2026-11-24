@@ -629,6 +629,11 @@ pub fn children_pinned(v: &Value) -> Result<Value> {
     })
 }
 
+/// Return the root-to-entry chain from the exact pinned, read-only mirror.
+pub fn ancestors_pinned(v: &Value) -> Result<Value> {
+    read_pinned(v, |db| crate::focused_children::ancestors(db, v))
+}
+
 #[cfg(test)]
 mod recipe_tests {
     use super::*;

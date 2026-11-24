@@ -70,3 +70,18 @@ catalog switching and cancellation/source-generation safety. Then observe the
 native implementation on a protected full working copy. Record actual tested
 builds separately from installer/release acceptance. `stable_ready=false` and
 published releases remain unchanged.
+
+## Backend checkpoint
+
+The new `entry_ancestors`, `ctf_preview_ancestors` and `ctf_ancestors_pinned`
+operations return `{volume_id, items:[{id,parent_id,name,kind}]}` in root-to-self
+order. The native SQLite operation opens an existing catalog read-only; a
+missing path is rejected without creating a database. Direct CTF and pinned
+mirror operations retain their existing source/generation verification.
+Cycles, excessive depth, non-container parents, missing entries and crossed
+volume boundaries are rejected. Breadcrumb IDs are never derived from names.
+
+The Windows release-mode service suite with the optional DuckDB feature passed
+73 tests. New generated cases cover SQLite/direct/pinned response parity,
+Unicode/nested archives, invalid ancestry and source preservation. Native UI
+integration and exact candidate CI remain separate checks.
