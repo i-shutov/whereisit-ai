@@ -43,6 +43,42 @@ fn volume(id: i64) -> Volume {
     }
 }
 
+fn tree_directory(id: i64, parent_id: Option<i64>, name: String) -> Entry {
+    Entry {
+        id,
+        volume_id: 30,
+        parent_id,
+        name: name.clone(),
+        relative_path: name,
+        kind: "directory".into(),
+        size: 0,
+        modified_unix: None,
+        description: String::new(),
+        tags: String::new(),
+    }
+}
+
+fn render_tree_once(app: &mut DesktopApp, ctx: &egui::Context, time: f64) -> (f32, f32) {
+    let mut result = None;
+    let mut input = egui::RawInput::default();
+    input.screen_rect = Some(egui::Rect::from_min_size(
+        egui::Pos2::ZERO,
+        egui::vec2(640.0, 360.0),
+    ));
+    input.time = Some(time);
+    let mut output = ctx.run_pass(input, |ctx| {
+        egui::Area::new(egui::Id::unique("late-ancestor-tree-area")).show(ctx, |ui| {
+            let scroll = egui::ScrollArea::vertical()
+                .id_salt("late-ancestor-tree-regression")
+                .max_height(120.0)
+                .show(ui, |ui| app.draw_tree_children(ui, (30, Some(70)), 2, ctx));
+            result = Some((scroll.content_size.y, scroll.state.clamped_offset().y));
+        });
+    });
+    output.textures_delta.clear();
+    result.expect("tree ScrollArea should be rendered")
+}
+
 #[test]
 fn initial_overview_is_not_a_global_empty_search() {
     let ctx = egui::Context::default();
@@ -182,6 +218,56 @@ fn stale_ancestor_reply_from_an_old_catalog_is_ignored() {
     assert_eq!(app.tree_ancestors_request_id, Some(77));
     assert_eq!(app.tree_ancestors_target, Some((30, 9464)));
     assert!(app.error.is_none());
+}
+
+#[test]
+fn late_ancestor_reveal_survives_loading_sibling_pages_and_scrolls_after_reflow() {
+    let ctx = egui::Context::default();
+    let mut app = DesktopApp::with_context(&ctx, None);
+    let parent_key = (30, Some(70));
+    let late = BrowseCrumb {
+        id: 9_999,
+        parent_id: Some(70),
+        name: "zz-late-folder".into(),
+        kind: "directory".into(),
+    };
+    app.tree_children.insert(
+        parent_key,
+        TreeChildren {
+            loading_request: Some(41),
+            ..TreeChildren::default()
+        },
+    );
+    app.tree_path_nodes.insert(parent_key, vec![late.clone()]);
+    app.tree_reveal_target = Some((30, Some(late.id)));
+
+    let first = render_tree_once(&mut app, &ctx, 1.0);
+    assert_eq!(app.tree_reveal_target, Some((30, Some(late.id))));
+    assert_eq!(app.tree_path_nodes[&parent_key], vec![late.clone()]);
+
+    let page = app.tree_children.get_mut(&parent_key).unwrap();
+    page.items = (0..250)
+        .map(|index| tree_directory(1000 + index, Some(70), format!("branch-{index:03}")))
+        .collect();
+    page.next_offset = 250;
+    page.has_more = true;
+    page.loading_request = None;
+
+    let mut final_frame = first;
+    for frame in 0..8 {
+        final_frame = render_tree_once(&mut app, &ctx, 1.1 + frame as f64 * 0.1);
+    }
+
+    assert_eq!(app.tree_reveal_target, None);
+    assert_eq!(app.tree_path_nodes[&parent_key], vec![late]);
+    assert!(
+        final_frame.0 > 120.0,
+        "the 250 siblings and pinned late row must reflow the tree"
+    );
+    assert!(
+        final_frame.1 > 0.0,
+        "the reflowed tree should scroll to the pinned late row"
+    );
 }
 
 #[test]

@@ -1529,7 +1529,16 @@ impl DesktopApp {
                     .on_hover_text(&crumb.name);
                 if self.tree_reveal_target == Some(child_key) {
                     response.scroll_to_me(Some(egui::Align::Center));
-                    self.tree_reveal_target = None;
+                    // Ancestors are pinned before lazy sibling pages arrive.
+                    // Those pages can insert rows above this node on a later
+                    // frame, so retain the reveal until the layout settles.
+                    if self
+                        .tree_children
+                        .values()
+                        .all(|page| page.loading_request.is_none())
+                    {
+                        self.tree_reveal_target = None;
+                    }
                 }
                 if response.clicked() {
                     self.navigate_tree_folder(key.0, crumb.id, ctx);

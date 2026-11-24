@@ -142,3 +142,20 @@ map scope/category preservation, imported catalog browsing before edit/export,
 and the existing narrow-window Path regression. `cargo fmt --all -- --check`
 and `git diff --check` passed. Final native GUI verification remains pending
 until the rebuilt executable is exercised.
+
+The `989042d` isolated executable was exercised again. Enter opened a selected
+Unicode container, disk 30 focused reveal selected the exact duplicate-name
+file on child page 251-302 and scrolled the central table to it, Back restored
+the branch query and selected result, and the explicit All action returned 60
+generated disk results. Cold lazy sibling loading exposed a second scroll
+race: the pinned ancestor's initial position moved after 250 siblings arrived.
+The reveal target now survives pending child requests; an egui render/reflow
+regression was added. The 104-test desktop suite passed with this fix.
+
+On a protected read-only full working copy, native GUI verified the 44-disk,
+3,046,133-entry overview, a large disk's six direct root children, a nested
+folder's 43 direct children, synchronized tree/breadcrumbs, Enter, Back with
+selected child restoration, and a file inspector retaining disk and recorded
+path. Original, frozen copy and navigation copy byte hashes still match the
+private baseline. No filenames, paths or screenshots from that catalog are
+included here. Final cold-tree scroll retest remains pending on the rebuilt fix.
