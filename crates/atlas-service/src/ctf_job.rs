@@ -82,6 +82,20 @@ impl Job {
         }
     }
 
+    /// Shared checkpoint for parallel native query workers. It shares only the
+    /// cancellation/progress state, never the registry-owning Job identifier.
+    #[cfg(feature = "duckdb-query")]
+    pub(crate) fn observer(&self) -> Arc<dyn Fn(u64) -> Result<()> + Send + Sync> {
+        let state = self.state.clone();
+        Arc::new(move |entries| {
+            if state.status.load(Ordering::Acquire) == CANCELLED {
+                return Err(cancelled());
+            }
+            state.entries.fetch_add(entries, Ordering::Relaxed);
+            Ok(())
+        })
+    }
+
     pub(crate) fn identity(
         &self,
         path: &std::path::Path,

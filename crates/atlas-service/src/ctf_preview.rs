@@ -21,17 +21,19 @@ use std::{
 
 const MAX_SOURCE_BYTES: u64 = 2_000_000_000;
 
-struct Snapshot {
+pub(super) struct Snapshot {
     path: PathBuf,
     open_path: PathBuf,
     generation: String,
     source_sha256: String,
     source_bytes: u64,
-    parsed: Arc<CtfCatalog>,
+    pub(super) parsed: Arc<CtfCatalog>,
     volumes: Vec<Volume>,
-    id_bases: Vec<i64>,
+    pub(super) id_bases: Vec<i64>,
     children: Vec<HashMap<Option<i64>, Vec<usize>>>,
     name_order: OnceLock<Vec<RowRef>>,
+    #[cfg(feature = "duckdb-query")]
+    pub(super) duckdb: Mutex<Option<crate::ctf_duckdb::Engine>>,
 }
 
 #[derive(Clone, Copy)]
@@ -45,6 +47,33 @@ struct SearchHit<'a> {
     name: &'a str,
     id: i64,
     row: RowRef,
+}
+
+struct CandidateHit {
+    volume_id: i64,
+    path: String,
+    id: i64,
+    row: RowRef,
+}
+
+impl PartialEq for CandidateHit {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+impl Eq for CandidateHit {}
+impl PartialOrd for CandidateHit {
+    fn partial_cmp(&self, other: &Self) -> Option<CmpOrdering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for CandidateHit {
+    fn cmp(&self, other: &Self) -> CmpOrdering {
+        self.volume_id
+            .cmp(&other.volume_id)
+            .then_with(|| self.path.cmp(&other.path))
+            .then_with(|| self.id.cmp(&other.id))
+    }
 }
 
 impl PartialEq for SearchHit<'_> {
@@ -189,6 +218,8 @@ fn build_snapshot(
         id_bases,
         children: all_children,
         name_order: OnceLock::new(),
+        #[cfg(feature = "duckdb-query")]
+        duckdb: Mutex::new(None),
     })
 }
 
@@ -242,7 +273,7 @@ pub fn open(v: &Value) -> Result<Value> {
     }))
 }
 
-fn selected(v: &Value, job: Option<&crate::ctf_job::Job>) -> Result<Arc<Snapshot>> {
+pub(super) fn selected(v: &Value, job: Option<&crate::ctf_job::Job>) -> Result<Arc<Snapshot>> {
     let generation = text(v, "generation")?;
     let requested_path = canonical_source(v)?;
     let found = current()
@@ -268,7 +299,7 @@ fn selected(v: &Value, job: Option<&crate::ctf_job::Job>) -> Result<Arc<Snapshot
     Ok(found)
 }
 
-fn checked_result(
+pub(super) fn checked_result(
     snapshot: &Snapshot,
     result: Value,
     job: Option<&crate::ctf_job::Job>,
@@ -480,7 +511,7 @@ fn name_order(snapshot: &Snapshot) -> &[RowRef] {
     })
 }
 
-fn entry_at(snapshot: &Snapshot, volume_index: usize, entry_index: usize) -> Entry {
+pub(super) fn entry_at(snapshot: &Snapshot, volume_index: usize, entry_index: usize) -> Entry {
     let disk = &snapshot.parsed.disks[volume_index];
     let source = &disk.entries[entry_index];
     let id_base = snapshot.id_bases[volume_index];
@@ -502,6 +533,37 @@ fn entry_at(snapshot: &Snapshot, volume_index: usize, entry_index: usize) -> Ent
         description: source.description.clone(),
         tags: String::new(),
     }
+}
+
+fn find_id(snapshot: &Snapshot, id: i64) -> Option<(usize, usize, &ctf_format::CtfEntry)> {
+    snapshot
+        .id_bases
+        .iter()
+        .enumerate()
+        .find_map(|(volume_index, base)| {
+            let entry_index = usize::try_from(id.checked_sub(*base)?).ok()?;
+            let entry = snapshot
+                .parsed
+                .disks
+                .get(volume_index)?
+                .entries
+                .get(entry_index)?;
+            Some((volume_index, entry_index, entry))
+        })
+}
+
+fn copy_path_order(snapshot: &Snapshot, a: RowRef, b: RowRef) -> CmpOrdering {
+    let av = a.volume_index as usize;
+    let ai = a.entry_index as usize;
+    let bv = b.volume_index as usize;
+    let bi = b.entry_index as usize;
+    (av as i64 + 1)
+        .cmp(&(bv as i64 + 1))
+        .then_with(|| {
+            relative_path(&snapshot.parsed.disks[av], ai)
+                .cmp(&relative_path(&snapshot.parsed.disks[bv], bi))
+        })
+        .then_with(|| (snapshot.id_bases[av] + ai as i64).cmp(&(snapshot.id_bases[bv] + bi as i64)))
 }
 
 fn children_page(
@@ -535,6 +597,405 @@ pub fn search(v: &Value) -> Result<Value> {
     search_with_job(v, crate::ctf_job::Job::start(v)?)
 }
 
+pub fn copy_candidates(v: &Value) -> Result<Value> {
+    let job = crate::ctf_job::Job::start(v)?;
+    job.phase("preview_copy_candidates")?;
+    let snapshot = selected(v, Some(&job))?;
+    let source_id = optional_id(v, "entry_id")?
+        .ok_or_else(|| failure("invalid_request", "Select a positive file entry_id"))?;
+    let offset = unsigned(v, "offset", 0)?.min(i64::MAX as u64);
+    let limit = unsigned(v, "limit", 200)?.clamp(1, 1000);
+    let candidate_volume_id = optional_id(v, "candidate_volume_id")?;
+    let other_disks_only = match v.get("other_disks_only") {
+        None => false,
+        Some(Value::Bool(value)) => *value,
+        _ => {
+            return Err(failure(
+                "invalid_request",
+                "other_disks_only must be boolean",
+            ))
+        }
+    };
+    let source = find_id(&snapshot, source_id)
+        .filter(|(_, _, entry)| entry.kind == EntryKind::File)
+        .ok_or_else(|| failure("not_found", "Selected file is unavailable in this CTF"))?;
+    let source_volume_id = source.0 as i64 + 1;
+    let name_key = source.2.name.to_lowercase();
+    let size = source.2.size;
+    let mut groups = Vec::new();
+    const MAX_HEAP_OFFSET: u64 = 50_000;
+    let heap_page = offset <= MAX_HEAP_OFFSET;
+    let retain = offset.saturating_add(limit) as usize;
+    let mut best = BinaryHeap::with_capacity(if heap_page { retain } else { 0 });
+    let mut ordered_rows = if heap_page { None } else { Some(Vec::new()) };
+    for (volume_index, disk) in snapshot.parsed.disks.iter().enumerate() {
+        let volume_id = volume_index as i64 + 1;
+        let mut group_count = 0i64;
+        for (entry_index, entry) in disk.entries.iter().enumerate() {
+            job.entry()?;
+            if entry.kind == EntryKind::File
+                && entry.size == size
+                && entry.name.to_lowercase() == name_key
+            {
+                group_count += 1;
+                if (!other_disks_only || volume_id != source_volume_id)
+                    && candidate_volume_id.is_none_or(|filter| filter == volume_id)
+                {
+                    let row = RowRef {
+                        volume_index: volume_index as u32,
+                        entry_index: entry_index as u32,
+                    };
+                    if let Some(rows) = &mut ordered_rows {
+                        rows.push(row);
+                    } else {
+                        let hit = CandidateHit {
+                            volume_id,
+                            path: relative_path(disk, entry_index),
+                            id: snapshot.id_bases[volume_index] + entry_index as i64,
+                            row,
+                        };
+                        if best.len() < retain {
+                            best.push(hit);
+                        } else if best.peek().is_some_and(|largest| hit < *largest) {
+                            best.pop();
+                            best.push(hit);
+                        }
+                    }
+                }
+            }
+        }
+        if group_count > 0 {
+            groups.push(
+                json!({"volume_id":volume_id,"label":disk.name.as_str(),"count":group_count}),
+            );
+        }
+    }
+    let all_total: i64 = groups.iter().filter_map(|g| g["count"].as_i64()).sum();
+    let other_total: i64 = groups
+        .iter()
+        .filter(|g| g["volume_id"].as_i64() != Some(source_volume_id))
+        .filter_map(|g| g["count"].as_i64())
+        .sum();
+    if other_disks_only {
+        groups.retain(|g| g["volume_id"].as_i64() != Some(source_volume_id));
+    }
+    let distinct_disks = groups.len();
+    let scoped_total = if other_disks_only {
+        other_total
+    } else {
+        all_total
+    };
+    let total = candidate_volume_id.map_or(scoped_total, |focused| {
+        groups
+            .iter()
+            .find(|g| g["volume_id"] == focused)
+            .and_then(|g| g["count"].as_i64())
+            .unwrap_or(0)
+    });
+    let page_rows = if let Some(mut rows) = ordered_rows {
+        rows.sort_unstable_by(|a, b| copy_path_order(&snapshot, *a, *b));
+        let start = usize::try_from(offset)
+            .unwrap_or(usize::MAX)
+            .min(rows.len());
+        let end = start.saturating_add(limit as usize).min(rows.len());
+        rows[start..end].to_vec()
+    } else {
+        let mut hits = best.into_vec();
+        hits.sort_unstable();
+        hits.into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .map(|hit| hit.row)
+            .collect()
+    };
+    let items: Vec<Value> = page_rows
+        .iter()
+        .map(|row| {
+            let mut item = serde_json::to_value(entry_at(
+                &snapshot,
+                row.volume_index as usize,
+                row.entry_index as usize,
+            ))
+            .expect("Entry serializes");
+            item["duplicate_count"] = json!(all_total);
+            item
+        })
+        .collect();
+    let result = json!({
+        "items":items,"total":total,"all_total":all_total,"other_total":other_total,
+        "other_disks_only":other_disks_only,"offset":offset,"limit":limit,
+        "has_more":offset.saturating_add(limit)<total as u64,
+        "source_entry_id":source_id,"source_volume_id":source_volume_id,
+        "candidate_volume_id":candidate_volume_id,"distinct_disks":distinct_disks,
+        "disk_groups":groups,"basis":"exact_normalized_name_and_size",
+        "verified":false,"read_only":true
+    });
+    checked_result(&snapshot, result, Some(&job))
+}
+
+pub fn export(v: &Value) -> Result<Value> {
+    let job = crate::ctf_job::Job::start(v)?;
+    export_with_job(v, job)
+}
+
+fn export_with_job(v: &Value, job: crate::ctf_job::Job) -> Result<Value> {
+    let format_name = text(v, "format")?;
+    let (format, extension) = match format_name {
+        "csv" => ("export_csv", "csv"),
+        "json" => ("export_json", "json"),
+        "parquet" => ("export_parquet", "parquet"),
+        _ => {
+            return Err(failure(
+                "invalid_request",
+                "CTF preview export supports csv, json or parquet",
+            ))
+        }
+    };
+    let output = PathBuf::from(text(v, "output")?);
+    if output
+        .extension()
+        .and_then(|x| x.to_str())
+        .is_none_or(|x| !x.eq_ignore_ascii_case(extension))
+    {
+        return Err(failure(
+            "invalid_request",
+            "Output filename must match the requested format",
+        ));
+    }
+    let mode = match v.get("mode") {
+        None => "search",
+        Some(Value::String(s)) => s.as_str(),
+        _ => return Err(failure("invalid_request", "mode must be a string")),
+    };
+    if !matches!(mode, "search" | "children" | "all" | "copy_candidates") {
+        return Err(failure(
+            "invalid_request",
+            "Unsupported direct CTF export scope",
+        ));
+    }
+    let query_text = match v.get("query") {
+        None => "",
+        Some(Value::String(s)) => s.as_str(),
+        _ => return Err(failure("invalid_request", "query must be a string")),
+    };
+    if mode == "copy_candidates" && !query_text.is_empty() {
+        return Err(failure(
+            "invalid_request",
+            "copy_candidates does not accept query text",
+        ));
+    }
+    let query = MetadataQuery::compile_metadata(query_text)?;
+    let volume_id = optional_id(v, "volume_id")?;
+    let parent_id = optional_id(v, "parent_id")?;
+    if mode == "children" && volume_id.is_none() {
+        return Err(failure(
+            "invalid_request",
+            "children export requires volume_id",
+        ));
+    }
+    if mode == "copy_candidates" && (volume_id.is_some() || parent_id.is_some()) {
+        return Err(failure(
+            "invalid_request",
+            "copy_candidates uses candidate_volume_id scope",
+        ));
+    }
+    let candidate_volume_id = optional_id(v, "candidate_volume_id")?;
+    let other_disks_only = match v.get("other_disks_only") {
+        None => false,
+        Some(Value::Bool(value)) => *value,
+        _ => {
+            return Err(failure(
+                "invalid_request",
+                "other_disks_only must be boolean",
+            ))
+        }
+    };
+    job.phase("preview_export")?;
+    let snapshot = selected(v, Some(&job))?;
+    let selected_key = if mode == "copy_candidates" {
+        let id = optional_id(v, "entry_id")?
+            .ok_or_else(|| failure("invalid_request", "Select a positive file entry_id"))?;
+        let (vi, ei, entry) = find_id(&snapshot, id)
+            .filter(|(_, _, entry)| entry.kind == EntryKind::File)
+            .ok_or_else(|| failure("not_found", "Selected file is unavailable in this CTF"))?;
+        Some((id, vi, ei, entry.name.to_lowercase(), entry.size))
+    } else {
+        None
+    };
+    let parent_scope = if let Some(id) = parent_id {
+        let (vi, ei, entry) = find_id(&snapshot, id)
+            .ok_or_else(|| failure("not_found", "Export parent is unavailable"))?;
+        Some((vi, ei, entry.kind))
+    } else {
+        None
+    };
+    if let Some((parent_volume, _, _)) = parent_scope {
+        if volume_id != Some(parent_volume as i64 + 1) {
+            return Err(failure(
+                "invalid_request",
+                "Export parent must belong to volume_id",
+            ));
+        }
+    }
+
+    let parent = output
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let parent = parent
+        .canonicalize()
+        .map_err(|_| failure("invalid_path", "Output directory is unavailable"))?;
+    let name = output
+        .file_name()
+        .ok_or_else(|| failure("invalid_path", "Output needs a filename"))?;
+    let target = parent.join(name);
+    if target == snapshot.path || target.exists() || target.is_symlink() {
+        return Err(failure(
+            "file_exists",
+            "Output must be a new file; existing files are never replaced",
+        ));
+    }
+    let mut stage = tempfile::Builder::new()
+        .prefix(".whereisit-preview-export-")
+        .tempfile_in(&parent)?;
+    let mut volume_index = 0usize;
+    let mut entry_index = 0usize;
+    let rows = std::iter::from_fn(|| loop {
+        if volume_index >= snapshot.parsed.disks.len() {
+            return None;
+        }
+        let disk = &snapshot.parsed.disks[volume_index];
+        if entry_index >= disk.entries.len() {
+            volume_index += 1;
+            entry_index = 0;
+            continue;
+        }
+        let vi = volume_index;
+        let ei = entry_index;
+        entry_index += 1;
+        let checkpoint = if mode == "copy_candidates" {
+            job.entry()
+        } else {
+            job.check()
+        };
+        if let Err(error) = checkpoint {
+            return Some(Err(error));
+        }
+        let source = &disk.entries[ei];
+        let row = RowRef {
+            volume_index: vi as u32,
+            entry_index: ei as u32,
+        };
+        let in_scope = match mode {
+            "all" => true,
+            "children" => {
+                volume_id == Some(vi as i64 + 1)
+                    && parent_scope
+                        .is_none_or(|(pvi, pei, _)| pvi == vi && is_descendant(disk, ei, pei))
+            }
+            "copy_candidates" => {
+                selected_key
+                    .as_ref()
+                    .is_some_and(|(_, source_vi, _, norm, size)| {
+                        source.kind == EntryKind::File
+                            && source.size == *size
+                            && source.name.to_lowercase() == *norm
+                            && (!other_disks_only || *source_vi != vi)
+                            && candidate_volume_id.is_none_or(|id| id == vi as i64 + 1)
+                    })
+            }
+            _ => true,
+        };
+        if !in_scope {
+            continue;
+        }
+        if mode != "copy_candidates" {
+            match matches_row(
+                &snapshot,
+                row,
+                &query,
+                query.needs_extension(),
+                volume_id,
+                &job,
+            ) {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(error) => return Some(Err(error)),
+            }
+        }
+        let entry = entry_at(&snapshot, vi, ei);
+        let export_size = match i64::try_from(entry.size) {
+            Ok(size) => size,
+            Err(_) => {
+                return Some(Err(failure(
+                    "ctf_limit",
+                    "CTF entry size exceeds export schema",
+                )))
+            }
+        };
+        let (duplicate_count, duplicate_group) = ("0".to_owned(), String::new());
+        let record = crate::exports::ExportRow::from_parts(
+            [
+                Some(entry.id),
+                Some(entry.volume_id),
+                entry.parent_id,
+                Some(export_size),
+                None,
+            ],
+            [
+                entry.name,
+                entry.relative_path,
+                entry.kind,
+                entry.description,
+                entry.tags,
+                disk.name.clone(),
+                String::new(),
+                duplicate_count,
+                duplicate_group,
+            ],
+            crate::dates::dos_local(source.modified_dos),
+        );
+        return Some(Ok(record));
+    });
+    let rows_written = crate::exports::write_rows(
+        stage.as_file_mut(),
+        format,
+        v.get("bom").and_then(Value::as_bool).unwrap_or(false),
+        rows,
+    )?;
+    job.check()?;
+    let bytes = stage.as_file().metadata()?.len();
+    let result = json!({"path":target,"rows":rows_written,"bytes":bytes,"format":extension,
+        "scope":mode,"duplicate_candidates":mode == "copy_candidates"});
+    let verified = checked_result(&snapshot, result, Some(&job))?;
+    job.begin_publication()?;
+    stage.persist_noclobber(&target).map_err(|error| {
+        let code = if error.error.kind() == std::io::ErrorKind::AlreadyExists {
+            "file_exists"
+        } else {
+            "export"
+        };
+        Error::new(code, "CTF preview export publication failed")
+    })?;
+    let mut verified = verified;
+    verified["result"]["path"] = json!(target);
+    verified["result"]["source_snapshot_verified_before_publication"] = json!(true);
+    verified["result"]["output_no_clobber"] = json!(true);
+    Ok(verified)
+}
+
+fn is_descendant(disk: &ctf_format::CtfDisk, mut index: usize, ancestor: usize) -> bool {
+    loop {
+        if index == ancestor {
+            return true;
+        }
+        let Some(parent) = disk.entries.get(index).and_then(|entry| entry.parent) else {
+            return false;
+        };
+        index = parent;
+    }
+}
+
 fn search_with_job(v: &Value, job: crate::ctf_job::Job) -> Result<Value> {
     let query_text = text(v, "query")?;
     let query = MetadataQuery::compile_metadata(query_text)?;
@@ -548,9 +1009,77 @@ fn search_with_job(v: &Value, job: crate::ctf_job::Job) -> Result<Value> {
         Some(Value::Bool(value)) => *value,
         _ => return Err(failure("invalid_request", "full_count must be boolean")),
     };
+    let use_duckdb = match v.get("executor") {
+        None | Some(Value::Null) => cfg!(feature = "duckdb-query"),
+        Some(Value::String(name)) if name == "rust" => false,
+        Some(Value::String(name)) if name == "duckdb" => true,
+        _ => return Err(failure("invalid_request", "Unknown CTF query executor")),
+    };
+    #[cfg(not(feature = "duckdb-query"))]
+    if use_duckdb {
+        return Err(failure(
+            "unsupported",
+            "DuckDB query prototype is not enabled in this build",
+        ));
+    }
     job.phase("preview_search")?;
     let snapshot = selected(v, Some(&job))?;
     job.check()?;
+    #[cfg(feature = "duckdb-query")]
+    if use_duckdb {
+        let page = {
+            let mut engine = snapshot
+                .duckdb
+                .lock()
+                .map_err(|_| failure("internal", "CTF query executor is unavailable"))?;
+            if engine.is_none() {
+                *engine = Some(crate::ctf_duckdb::Engine::new(snapshot.parsed.clone())?);
+            }
+            let result = engine.as_mut().expect("engine initialized").query(
+                &query,
+                volume_id,
+                offset.min(i64::MAX as u64),
+                limit,
+                full_count,
+                job.observer(),
+            );
+            // Prefer the cooperative cancellation result to an engine wrapper
+            // error, and never publish rows after a cancellation request.
+            job.check()?;
+            result?
+        };
+        let items = page
+            .ids
+            .iter()
+            .map(|id| {
+                let (volume_index, entry_index, _) = find_id(&snapshot, *id)
+                    .ok_or_else(|| failure("integrity", "Query returned an unknown CTF entry"))?;
+                Ok(entry_at(&snapshot, volume_index, entry_index))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let result = if full_count {
+            let total = page
+                .total
+                .ok_or_else(|| failure("integrity", "Query did not return a complete count"))?;
+            serde_json::to_value(Page {
+                items,
+                total,
+                offset,
+                limit,
+            })
+        } else {
+            serde_json::to_value(FastPage {
+                items,
+                offset,
+                limit,
+                has_more: page.has_more,
+            })
+        }
+        .map_err(|_| failure("internal", "Cannot encode CTF query result"))?;
+        let mut response = checked_result(&snapshot, result, Some(&job))?;
+        response["query_executor"] = json!("duckdb");
+        return Ok(response);
+    }
     let effective_offset = offset.min(i64::MAX as u64);
     let page_end = effective_offset.saturating_add(limit);
     let mut total = 0u64;
@@ -641,7 +1170,9 @@ fn search_with_job(v: &Value, job: crate::ctf_job::Job) -> Result<Value> {
         })
     }
     .map_err(|_| failure("internal", "Cannot encode CTF search result"))?;
-    checked_result(&snapshot, result, Some(&job))
+    let mut response = checked_result(&snapshot, result, Some(&job))?;
+    response["query_executor"] = json!("rust");
+    Ok(response)
 }
 
 pub fn close(v: &Value) -> Result<Value> {
@@ -852,6 +1383,76 @@ mod tests {
     }
 
     #[test]
+    fn preview_copy_candidates_use_sqlite_path_order_for_pages() {
+        let _serial = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reverse-copy-paths.ctf");
+        let matching = |parent| {
+            let mut item = entry("Film.MKV", Some(parent), EntryKind::File);
+            item.size = 4096;
+            item
+        };
+        let bytes = write_ctf(&CtfCatalog {
+            name: "reverse candidate path ordering".into(),
+            opaque_trailer: vec![37, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, b'G', 0],
+            disks: vec![
+                CtfDisk {
+                    name: "disk".into(),
+                    opaque_header: vec![],
+                    entries: vec![
+                        entry("Z-folder", None, EntryKind::Directory),
+                        matching(0),
+                        entry("A-folder", None, EntryKind::Directory),
+                        matching(2),
+                        entry("M-folder", None, EntryKind::Directory),
+                        matching(4),
+                    ],
+                },
+                CtfDisk {
+                    name: "second disk".into(),
+                    opaque_header: vec![],
+                    entries: vec![entry("0-folder", None, EntryKind::Directory), matching(0)],
+                },
+            ],
+        })
+        .unwrap();
+        fs::write(&path, bytes).unwrap();
+        let opened = open(&json!({"path":path})).unwrap();
+        let generation = opened["generation"].as_str().unwrap();
+        let snapshot = selected(&req(&path, generation), None).unwrap();
+        let selected_id = snapshot
+            .parsed
+            .disks
+            .iter()
+            .enumerate()
+            .find_map(|(volume_index, disk)| {
+                disk.entries
+                    .iter()
+                    .enumerate()
+                    .find_map(|(entry_index, item)| {
+                        (item.name == "Film.MKV"
+                            && item.size == 4096
+                            && item.kind == EntryKind::File)
+                            .then_some(snapshot.id_bases[volume_index] + entry_index as i64)
+                    })
+            })
+            .unwrap();
+        let mut catalog = atlas_core::Catalog::open(dir.path().join("copy-order.sqlite")).unwrap();
+        crate::legacy::import(&mut catalog, &json!({"path":path})).unwrap();
+        // Volume ID is the primary key even though the second disk has the
+        // lexically first path; paths and IDs order rows within each disk.
+        for offset in 0..4 {
+            let request = json!({"path":path,"generation":generation,
+                "entry_id":selected_id,"offset":offset,"limit":1});
+            let actual = copy_candidates(&request).unwrap();
+            let expected = crate::copy_candidates::page(&catalog, &request).unwrap();
+            assert_eq!(actual["result"], expected, "offset={offset}");
+        }
+    }
+
+    #[test]
     fn direct_search_matches_sqlite_queries_pagination_and_shapes() {
         let _serial = TEST_LOCK
             .lock()
@@ -1012,5 +1613,166 @@ mod tests {
             search_with_job(&request, job).unwrap_err().code,
             "cancelled"
         );
+    }
+
+    #[test]
+    fn preview_copy_candidates_and_exports_preserve_contracts() {
+        let _serial = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("candidate-export.ctf");
+        let mut first = entry("Shelf", None, EntryKind::Directory);
+        first.modified_dos = (((2024 - 1980) << 9 | 3 << 5 | 5) << 16) | (9 << 11 | 12 << 5 | 4);
+        let mut selected = entry("映画 🎬.mkv", Some(0), EntryKind::File);
+        selected.size = 4096;
+        selected.description = "候補".into();
+        selected.modified_dos = first.modified_dos;
+        let mut same_volume = entry("映画 🎬.mkv", Some(0), EntryKind::File);
+        same_volume.size = 4096;
+        same_volume.modified_dos = first.modified_dos;
+        let mut second_root = entry("Shelf B", None, EntryKind::Directory);
+        second_root.modified_dos = first.modified_dos;
+        let mut other_volume = entry("映画 🎬.MKV", Some(0), EntryKind::File);
+        other_volume.size = 4096;
+        other_volume.description = "別候補".into();
+        other_volume.modified_dos = first.modified_dos;
+        let bytes = write_ctf(&CtfCatalog {
+            name: "candidate export synthetic".into(),
+            opaque_trailer: vec![37, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, b'G', 0],
+            disks: vec![
+                CtfDisk {
+                    name: "Disk A".into(),
+                    opaque_header: vec![],
+                    entries: vec![first, selected, same_volume],
+                },
+                CtfDisk {
+                    name: "Disk B".into(),
+                    opaque_header: vec![],
+                    entries: vec![second_root, other_volume],
+                },
+            ],
+        })
+        .unwrap();
+        fs::write(&path, bytes).unwrap();
+        let source_before = fs::read(&path).unwrap();
+        let opened = open(&json!({"path":path})).unwrap();
+        let generation = opened["generation"].as_str().unwrap();
+        let mut catalog = atlas_core::Catalog::open(dir.path().join("candidate.sqlite")).unwrap();
+        crate::legacy::import(&mut catalog, &json!({"path":path})).unwrap();
+
+        let request = json!({"path":path,"generation":generation,"entry_id":2,"limit":20});
+        let candidates = copy_candidates(&request).unwrap();
+        let imported_candidates = crate::copy_candidates::page(&catalog, &request).unwrap();
+        assert_eq!(candidates["result"], imported_candidates);
+        let other_scope = json!({"path":path,"generation":generation,"entry_id":2,
+            "other_disks_only":true,"candidate_volume_id":2,"offset":0,"limit":1});
+        let scoped = copy_candidates(&other_scope).unwrap();
+        let imported_scoped = crate::copy_candidates::page(&catalog, &other_scope).unwrap();
+        assert_eq!(scoped["result"], imported_scoped);
+
+        for format in ["csv", "json", "parquet"] {
+            let expected_path = dir.path().join(format!("sqlite.{format}"));
+            let preview_path = dir.path().join(format!("preview.{format}"));
+            let expected = crate::exports::export(
+                &catalog,
+                &json!({"path":expected_path,
+                "db":dir.path().join("candidate.sqlite"),"mode":"all"}),
+                &format!("export_{format}"),
+            )
+            .unwrap();
+            let actual = export(&json!({"path":path,"generation":generation,
+                "output":preview_path,"format":format,"mode":"all"}))
+            .unwrap();
+            assert_eq!(actual["result"]["rows"], expected["rows"]);
+            assert_eq!(actual["result"]["format"], format);
+            assert_eq!(actual["result"]["output_no_clobber"], true);
+            if format == "json" {
+                let expected_json: Value =
+                    serde_json::from_slice(&fs::read(&expected_path).unwrap()).unwrap();
+                let actual_json: Value =
+                    serde_json::from_slice(&fs::read(&preview_path).unwrap()).unwrap();
+                assert_eq!(actual_json, expected_json);
+                assert_eq!(actual_json["entries"][1]["volume_label"], "Disk A");
+                assert_eq!(actual_json["entries"][1]["description"], "候補");
+                assert_eq!(
+                    actual_json["entries"][1]["modified_local"],
+                    "2024-03-05 09:12:08"
+                );
+            }
+            if format == "csv" {
+                assert_eq!(
+                    fs::read(&expected_path).unwrap(),
+                    fs::read(&preview_path).unwrap()
+                );
+            }
+            if format == "parquet" {
+                use parquet::file::reader::{FileReader, SerializedFileReader};
+                let decode = |path: &Path| {
+                    let reader = SerializedFileReader::new(fs::File::open(path).unwrap()).unwrap();
+                    assert_eq!(
+                        reader
+                            .metadata()
+                            .file_metadata()
+                            .schema_descr()
+                            .num_columns(),
+                        15
+                    );
+                    reader
+                        .get_row_iter(None)
+                        .unwrap()
+                        .map(|row| {
+                            let row = row.unwrap();
+                            assert_eq!(row.len(), 15);
+                            row.into_columns()
+                                .into_iter()
+                                .map(|(name, field)| (name, format!("{field:?}")))
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(decode(&preview_path), decode(&expected_path));
+            }
+        }
+        assert_eq!(fs::read(&path).unwrap(), source_before);
+
+        let existing = dir.path().join("existing.csv");
+        fs::write(&existing, b"keep").unwrap();
+        let no_clobber = export(&json!({"path":path,"generation":generation,
+            "output":existing,"format":"csv","mode":"all","overwrite":true}));
+        assert_eq!(no_clobber.unwrap_err().code, "file_exists");
+        assert_eq!(fs::read(existing).unwrap(), b"keep");
+        let invalid = export(&json!({"path":path,"generation":generation,
+            "output":dir.path().join("bad.csv"),"format":"csv","mode":"unknown"}));
+        assert_eq!(invalid.unwrap_err().code, "invalid_request");
+        let mut changed = fs::read(&path).unwrap();
+        changed.push(0);
+        fs::write(&path, changed).unwrap();
+        let changed_result = export(&json!({"path":path,"generation":generation,
+            "output":dir.path().join("changed.csv"),"format":"csv","mode":"all"}));
+        assert_eq!(changed_result.unwrap_err().code, "source_changed");
+        assert!(!dir.path().join("changed.csv").exists());
+    }
+
+    #[test]
+    fn pre_cancelled_preview_export_does_not_publish_output() {
+        let _serial = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("cancel-export.ctf");
+        write_fixture(&source, "cancel");
+        let opened = open(&json!({"path":source})).unwrap();
+        let output = dir.path().join("cancelled.json");
+        let request = json!({"path":source,"generation":opened["generation"],
+            "output":output,"format":"json","mode":"all","job_id":"cancel-preview-export-test"});
+        let job = json!({"job_id":"cancel-preview-export-test"});
+        let running_job = crate::ctf_job::Job::start(&request).unwrap();
+        crate::ctf_job::cancel(&job).unwrap();
+        assert_eq!(
+            export_with_job(&request, running_job).unwrap_err().code,
+            "cancelled"
+        );
+        assert!(!output.exists());
     }
 }

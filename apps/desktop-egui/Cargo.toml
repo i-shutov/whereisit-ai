@@ -17,6 +17,7 @@ png = { version = "=0.18.1", optional = true }
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_Shell_Common"] }
 
 [features]
+qa-duckdb = ["atlas-service/duckdb-query"]
 qa-screenshots = ["dep:png"]
 qa-isolated = []
 

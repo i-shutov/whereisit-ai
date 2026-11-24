@@ -539,13 +539,27 @@ impl DesktopApp {
             return;
         }
         let mut request = request;
-        let preview_search_job = if self
-            .linked_ctf
-            .as_ref()
-            .is_some_and(|link| link.preview && request["op"] == "search_fast")
-        {
+        let preview_long_job = if self.linked_ctf.as_ref().is_some_and(|link| {
+            link.preview
+                && matches!(
+                    request["op"].as_str(),
+                    Some(
+                        "search_fast"
+                            | "copy_candidates"
+                            | "export_csv"
+                            | "export_json"
+                            | "export_parquet"
+                    )
+                )
+        }) {
             let job_id = self.begin_ctf_job();
-            self.ctf_phase = "preview_search".to_owned();
+            self.ctf_phase = match request["op"].as_str() {
+                Some("copy_candidates") => "preview_copies".to_owned(),
+                Some("export_csv" | "export_json" | "export_parquet") => {
+                    "preview_export".to_owned()
+                }
+                _ => "preview_search".to_owned(),
+            };
             request["job_id"] = json!(job_id);
             Some(job_id)
         } else {
@@ -566,7 +580,7 @@ impl DesktopApp {
                 let mapped = match link.rewrite(request) {
                     Ok(mapped) => mapped,
                     Err(error) => {
-                        if preview_search_job.is_some() {
+                        if preview_long_job.is_some() {
                             self.ctf_job_id = None;
                         }
                         self.error = Some(error);
@@ -577,7 +591,7 @@ impl DesktopApp {
                     Purpose::LinkedRead {
                         inner: Box::new(purpose),
                         generation: link.generation.clone(),
-                        job_id: preview_search_job,
+                        job_id: preview_long_job,
                     },
                     mapped,
                 )
@@ -683,6 +697,9 @@ impl DesktopApp {
             "reading_catalog" => self.t("Чтение каталога", "Reading catalog"),
             "encoding" => self.t("Подготовка CTF", "Preparing CTF"),
             "preview_search" => self.t("Поиск в CTF", "Searching CTF"),
+            "preview_copies" => self.t("Поиск кандидатов", "Finding copy candidates"),
+            "preview_copy_candidates" => self.t("Поиск кандидатов", "Finding copy candidates"),
+            "preview_export" => self.t("Экспорт CTF", "Exporting CTF metadata"),
             "writing" | "publishing" => self.t("Сохранение результата", "Saving result"),
             _ => self.t("Подготовка", "Preparing"),
         }
@@ -1623,7 +1640,7 @@ impl DesktopApp {
     }
 
     fn apply_reply(&mut self, mut reply: crate::bridge::Reply, ctx: &egui::Context) {
-        let linked_search_job_id = match &reply.purpose {
+        let linked_operation_job_id = match &reply.purpose {
             Purpose::LinkedRead { job_id, .. } => job_id.clone(),
             _ => None,
         };
@@ -1856,7 +1873,7 @@ impl DesktopApp {
             return;
         }
         self.active_request = None;
-        if linked_search_job_id
+        if linked_operation_job_id
             .as_ref()
             .is_some_and(|job_id| self.ctf_job_id.as_ref() == Some(job_id))
         {
@@ -1954,10 +1971,21 @@ impl DesktopApp {
                 .and_then(Value::as_str)
                 .unwrap_or("Unknown service error");
             let error_message = message.to_owned();
-            if linked_search_job_id.is_some() && code == Some("cancelled") {
+            if linked_operation_job_id.is_some() && code == Some("cancelled") {
                 self.selected = None;
                 self.page = Page::default();
-                self.status = StatusText::new("Поиск в CTF отменён", "CTF search cancelled");
+                self.status = match &reply.purpose {
+                    Purpose::Export { .. } => {
+                        StatusText::new("Экспорт CTF отменён", "CTF export cancelled")
+                    }
+                    Purpose::Page {
+                        route: Route::Copies { .. },
+                    } => StatusText::new(
+                        "Поиск кандидатов отменён",
+                        "Copy-candidate search cancelled",
+                    ),
+                    _ => StatusText::new("Поиск в CTF отменён", "CTF search cancelled"),
+                };
                 self.error = None;
                 return;
             }

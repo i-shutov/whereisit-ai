@@ -81,33 +81,87 @@ impl LinkedCtf {
             let mut out = Map::new();
             out.insert("path".to_owned(), json!(self.path));
             out.insert("generation".to_owned(), json!(self.generation));
-            let (mapped_op, fields): (&str, &[&str]) =
-                match op {
-                    "volumes" => ("ctf_preview_volumes", &[]),
-                    "search_fast" => (
-                        "ctf_preview_search",
-                        &[
-                            "query",
-                            "volume_id",
-                            "offset",
-                            "limit",
-                            "full_count",
-                            "job_id",
-                        ],
-                    ),
-                    "children" => (
-                        "ctf_preview_children",
-                        &["volume_id", "parent_id", "offset", "limit"],
-                    ),
-                    "children_focused" => (
-                        "ctf_preview_children_focused",
-                        &["volume_id", "parent_id", "entry_id", "limit"],
-                    ),
-                    _ => return Err(
+            let (mapped_op, fields): (&str, &[&str]) = match op {
+                "volumes" => ("ctf_preview_volumes", &[]),
+                "search_fast" => (
+                    "ctf_preview_search",
+                    &[
+                        "query",
+                        "volume_id",
+                        "offset",
+                        "limit",
+                        "full_count",
+                        "job_id",
+                    ],
+                ),
+                "children" => (
+                    "ctf_preview_children",
+                    &["volume_id", "parent_id", "offset", "limit"],
+                ),
+                "children_focused" => (
+                    "ctf_preview_children_focused",
+                    &["volume_id", "parent_id", "entry_id", "limit"],
+                ),
+                "copy_candidates" => (
+                    "ctf_preview_copy_candidates",
+                    &[
+                        "entry_id",
+                        "candidate_volume_id",
+                        "other_disks_only",
+                        "offset",
+                        "limit",
+                        "job_id",
+                    ],
+                ),
+                "export_csv" | "export_json" | "export_parquet" => {
+                    if request.get("overwrite").and_then(Value::as_bool) == Some(true) {
+                        return Err("CTF exports never overwrite an existing file".to_owned());
+                    }
+                    let format = match op {
+                        "export_csv" => "csv",
+                        "export_json" => "json",
+                        _ => "parquet",
+                    };
+                    let output = request
+                        .get("path")
+                        .and_then(Value::as_str)
+                        .filter(|path| !path.trim().is_empty())
+                        .ok_or_else(|| "A new export output path is required".to_owned())?;
+                    if std::path::Path::new(output)
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .is_none_or(|ext| !ext.eq_ignore_ascii_case(format))
+                    {
+                        return Err("Export filename extension must match its format".to_owned());
+                    }
+                    if output.eq_ignore_ascii_case(&self.path) {
+                        return Err("CTF export cannot target its source file".to_owned());
+                    }
+                    out.insert("op".to_owned(), json!("ctf_preview_export"));
+                    out.insert("output".to_owned(), json!(output));
+                    out.insert("format".to_owned(), json!(format));
+                    out.insert("overwrite".to_owned(), json!(false));
+                    let fields = [
+                        "mode",
+                        "entry_id",
+                        "query",
+                        "volume_id",
+                        "parent_id",
+                        "duplicate_mode",
+                        "candidate_volume_id",
+                        "other_disks_only",
+                        "job_id",
+                    ];
+                    copy_fields(&request, &mut out, &fields);
+                    return Ok(Value::Object(out));
+                }
+                _ => {
+                    return Err(
                         "This operation requires importing the CTF into a native SQLite catalog"
                             .to_owned(),
-                    ),
-                };
+                    )
+                }
+            };
             out.insert("op".to_owned(), json!(mapped_op));
             copy_fields(&request, &mut out, fields);
             return Ok(Value::Object(out));
@@ -380,6 +434,20 @@ mod tests {
             .unwrap();
         assert_eq!(focused["op"], "ctf_preview_children_focused");
         assert_eq!(focused["entry_id"], 19);
+        let copies = preview
+            .rewrite(
+                json!({"op":"copy_candidates","entry_id":19,"candidate_volume_id":8,
+                "other_disks_only":true,"offset":25,"limit":25,"job_id":"copies-1"}),
+            )
+            .unwrap();
+        assert_eq!(copies["op"], "ctf_preview_copy_candidates");
+        assert_eq!(copies["generation"], preview_generation);
+        assert_eq!(copies["entry_id"], 19);
+        assert_eq!(copies["candidate_volume_id"], 8);
+        assert_eq!(copies["other_disks_only"], true);
+        assert_eq!(copies["offset"], 25);
+        assert_eq!(copies["limit"], 25);
+        assert_eq!(copies["job_id"], "copies-1");
         let search = preview
             .rewrite(json!({"op":"search_fast","query":"ext:mkv AND name:фильм",
                 "volume_id":4,"offset":50,"limit":25,"job_id":"search-1"}))
@@ -392,6 +460,49 @@ mod tests {
         assert_eq!(search["offset"], 50);
         assert_eq!(search["limit"], 25);
         assert_eq!(search["job_id"], "search-1");
+        for (op, format, output) in [
+            ("export_csv", "csv", "C:/fixtures/results.csv"),
+            ("export_json", "json", "C:/fixtures/results.json"),
+            ("export_parquet", "parquet", "C:/fixtures/results.parquet"),
+        ] {
+            let export = preview
+                .rewrite(
+                    json!({"op":op,"path":output,"overwrite":false,"mode":"search","job_id":"export-1",
+                    "query":"ext:mkv","volume_id":4}),
+                )
+                .unwrap();
+            assert_eq!(export["op"], "ctf_preview_export");
+            assert_eq!(export["path"], "source.ctf");
+            assert_eq!(export["generation"], preview_generation);
+            assert_eq!(export["output"], output);
+            assert_eq!(export["format"], format);
+            assert_eq!(export["overwrite"], false);
+            assert_eq!(export["mode"], "search");
+            assert_eq!(export["query"], "ext:mkv");
+            assert_eq!(export["volume_id"], 4);
+            assert_eq!(export["job_id"], "export-1");
+            assert!(export.get("limit").is_none());
+        }
+        for rejected in [
+            json!({"op":"export_csv","path":"C:/fixtures/results.csv","overwrite":true}),
+            json!({"op":"export_csv","path":"C:/fixtures/results.json","overwrite":false}),
+        ] {
+            assert!(preview.rewrite(rejected).is_err());
+        }
+        let candidate_export = preview
+            .rewrite(json!({"op":"export_csv","path":"C:/fixtures/candidates.csv","overwrite":false,
+                "mode":"copy_candidates","entry_id":19,"candidate_volume_id":8,"other_disks_only":true}))
+            .unwrap();
+        assert_eq!(candidate_export["mode"], "copy_candidates");
+        assert_eq!(candidate_export["entry_id"], 19);
+        assert_eq!(candidate_export["candidate_volume_id"], 8);
+        assert_eq!(candidate_export["other_disks_only"], true);
+        let mut same_path = preview.clone();
+        same_path.path = "C:/fixtures/results.csv".to_owned();
+        assert!(same_path
+            .rewrite(json!({"op":"export_csv","path":"C:/fixtures/results.csv","overwrite":false}))
+            .unwrap_err()
+            .contains("source file"));
         assert!(preview
             .rewrite(json!({"op":"categories","db":"ignored.sqlite"}))
             .unwrap_err()

@@ -138,6 +138,33 @@ pub struct MetadataQuery {
     expr: Expr,
 }
 
+/// Reusable matcher for SQLite-compatible GLOB over already normalized text.
+pub struct MetadataGlobPattern {
+    pattern: Vec<char>,
+}
+
+impl MetadataGlobPattern {
+    /// Compile a lowercase GLOB pattern once for repeated row checks.
+    pub fn new(lowered_pattern: &str) -> Self {
+        Self {
+            pattern: lowered_pattern.chars().collect(),
+        }
+    }
+
+    /// Match a lowercase value using SQLite GLOB behavior.
+    pub fn is_match(&self, lowered_value: &str) -> bool {
+        glob_match(lowered_value, &self.pattern)
+    }
+}
+
+/// Parameterized DuckDB predicate for the normalized `ctf_rows` table.
+/// Wildcard queries use `atlas_glob(value, pattern)` and require a compatible UDF.
+pub struct DuckDbPredicate {
+    pub sql: String,
+    pub args: Vec<Value>,
+    pub requires_glob_udf: bool,
+}
+
 impl MetadataQuery {
     pub fn compile_metadata(input: &str) -> Result<Self> {
         let (predicate, _) = compile_predicate(input)?;
@@ -160,6 +187,79 @@ impl MetadataQuery {
 
     pub fn needs_extension(&self) -> bool {
         needs_extension(&self.expr)
+    }
+
+    /// Emit a parameterized predicate for CTF rows, whose category assignments
+    /// are empty. Bind `args` in order. Register SQLite-compatible `atlas_glob`
+    /// when `requires_glob_udf` is true.
+    pub fn duckdb_predicate(&self) -> DuckDbPredicate {
+        let mut args = Vec::new();
+        let mut requires_glob_udf = false;
+        let sql = emit_duckdb(&self.expr, &mut args, &mut requires_glob_udf);
+        DuckDbPredicate {
+            sql,
+            args,
+            requires_glob_udf,
+        }
+    }
+}
+
+fn emit_duckdb(expr: &Expr, args: &mut Vec<Value>, requires_glob_udf: &mut bool) -> String {
+    match expr {
+        Expr::True => "TRUE".into(),
+        Expr::And(a, b) => format!(
+            "({} AND {})",
+            emit_duckdb(a, args, requires_glob_udf),
+            emit_duckdb(b, args, requires_glob_udf)
+        ),
+        Expr::Or(a, b) => format!(
+            "({} OR {})",
+            emit_duckdb(a, args, requires_glob_udf),
+            emit_duckdb(b, args, requires_glob_udf)
+        ),
+        Expr::Not(inner) => format!("(NOT {})", emit_duckdb(inner, args, requires_glob_udf)),
+        Expr::Contains(field, value, _, _) => {
+            args.push(Value::Text(value.clone()));
+            format!("strpos({}, ?) > 0", duckdb_field(*field))
+        }
+        Expr::Glob(field, value, _) => {
+            *requires_glob_udf = true;
+            args.push(Value::Text(value.clone()));
+            format!("atlas_glob({}, ?)", duckdb_field(*field))
+        }
+        Expr::Extension(value) => {
+            args.push(Value::Text(value.clone()));
+            "ext = ?".into()
+        }
+        Expr::Size(op, size) => {
+            args.push(Value::Integer(*size));
+            format!("size {op} ?")
+        }
+        Expr::KindFile => "kind = 'file'".into(),
+        Expr::Video => {
+            "ext IN ('mkv','mp4','avi','mov','m4v','webm','mpg','mpeg','wmv','ts','m2ts','vob','flv')".into()
+        }
+        Expr::NameExact(value) => {
+            args.push(Value::Text(value.clone()));
+            "name_norm = ?".into()
+        }
+        Expr::Category(MetadataCategoryPredicate::PrimaryId(0)) => "kind = 'file'".into(),
+        // CTF import deliberately has no category assignments.
+        Expr::Category(_) => "FALSE".into(),
+        Expr::Branch(anchor) => {
+            args.push(Value::Integer(*anchor));
+            "id IN (WITH RECURSIVE branch(id, volume_id) AS (SELECT child.id, child.volume_id FROM ctf_rows anchor JOIN ctf_rows child ON child.parent_id = anchor.id AND child.volume_id = anchor.volume_id WHERE anchor.id = ? UNION SELECT child.id, child.volume_id FROM ctf_rows child JOIN branch parent ON child.parent_id = parent.id AND child.volume_id = parent.volume_id) SELECT id FROM branch)".into()
+        }
+    }
+}
+
+fn duckdb_field(field: Field) -> &'static str {
+    match field {
+        Field::Text => "(name_norm || chr(10) || path_norm || chr(10) || description_norm || chr(10) || tags_norm)",
+        Field::Name => "name_norm",
+        Field::Path => "path_norm",
+        Field::Description => "description_norm",
+        Field::Tag => "tags_norm",
     }
 }
 
@@ -919,6 +1019,51 @@ mod tests {
                 assert_eq!(actual, expected, "value={value:?}, pattern={pattern:?}");
             }
         }
+    }
+
+    #[test]
+    fn duckdb_predicate_emits_ast_fields_and_parameters_in_order() {
+        let query = MetadataQuery::compile_metadata(
+            "name:Résumé OR (path:資料 AND size:>2mb) AND branch_id:17",
+        )
+        .unwrap();
+        let emitted = query.duckdb_predicate();
+        assert_eq!(
+            emitted.sql,
+            "(strpos(name_norm, ?) > 0 OR ((strpos(path_norm, ?) > 0 AND size > ?) AND id IN (WITH RECURSIVE branch(id, volume_id) AS (SELECT child.id, child.volume_id FROM ctf_rows anchor JOIN ctf_rows child ON child.parent_id = anchor.id AND child.volume_id = anchor.volume_id WHERE anchor.id = ? UNION SELECT child.id, child.volume_id FROM ctf_rows child JOIN branch parent ON child.parent_id = parent.id AND child.volume_id = parent.volume_id) SELECT id FROM branch)))"
+        );
+        assert_eq!(
+            emitted.args,
+            vec![
+                Value::Text("résumé".into()),
+                Value::Text("資料".into()),
+                Value::Integer(2_000_000),
+                Value::Integer(17),
+            ]
+        );
+        assert!(!emitted.requires_glob_udf);
+
+        let glob = MetadataQuery::compile_metadata("text:movie*")
+            .unwrap()
+            .duckdb_predicate();
+        assert!(glob.requires_glob_udf);
+        assert!(glob.sql.starts_with("atlas_glob((name_norm || chr(10)"));
+        assert_eq!(glob.args, vec![Value::Text("movie*".into())]);
+    }
+
+    #[test]
+    fn duckdb_ctf_category_predicates_reflect_empty_assignments() {
+        let zero = MetadataQuery::compile_metadata("primary_category_id:0")
+            .unwrap()
+            .duckdb_predicate();
+        assert_eq!(zero.sql, "kind = 'file'");
+        assert!(zero.args.is_empty());
+
+        let positive = MetadataQuery::compile_metadata("NOT category_id:3")
+            .unwrap()
+            .duckdb_predicate();
+        assert_eq!(positive.sql, "(NOT FALSE)");
+        assert!(positive.args.is_empty());
     }
 
     struct EntryContext<'a>(&'a crate::Entry);

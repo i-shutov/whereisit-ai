@@ -1,6 +1,6 @@
 # DuckDB RAM executor experiment — 24 November 2026
 
-Status: **promising candidate, not integrated or release-accepted**. The owner asked whether in-memory DuckDB would be preferable for search. No production dependency, installer or published release was changed by this experiment.
+Status: **historical materialized-table experiment; native follow-up measured, not release-accepted**. The owner asked whether in-memory DuckDB would be preferable for search. No default production dependency, installer or published release was changed by this experiment. The subsequent [native CTF executor prototype](NATIVE_DUCKDB_CTF_PROTOTYPE_20261124.md) reads the actual parsed CTF directly and records separate end-to-end measurements; do not combine its timings with this Python experiment.
 
 ## Scope and method
 
@@ -42,7 +42,7 @@ Unicode normalization needs an explicit shared contract. The installed DuckDB's 
 
 Do not replace filename substring/mask semantics with a default linguistic FTS configuration. The documented FTS extension has language/token normalization options and is a separately constructed index. It is not required for these measured scalar-filter queries. [DuckDB FTS documentation](https://duckdb.org/docs/current/core_extensions/full_text_search).
 
-SQLite retains durable user state and existing native catalogs during this work. Removing that proven persistence layer does not accelerate CTF reads; any later migration needs its own data-preservation and crash-recovery evidence. Current native direct-read integration still needs restoration of linked tabular exports and copy candidates before product parity. Keep `stable_ready=false`.
+SQLite retains durable user state and existing native catalogs during this work. Removing that proven persistence layer does not accelerate CTF reads; any later migration needs its own data-preservation and crash-recovery evidence. The native follow-up restores linked tabular exports and copy candidates, with synthetic equivalence, decoded 15-field Parquet and cancellation/no-clobber coverage. Exact product-artifact acceptance remains pending. Keep `stable_ready=false`.
 
 ## Native direct-read checkpoint
 

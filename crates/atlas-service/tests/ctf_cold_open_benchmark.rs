@@ -12,6 +12,48 @@ use std::{
 
 static BENCHMARK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+#[cfg(windows)]
+fn report_process_memory() {
+    #[repr(C)]
+    struct ProcessMemoryCounters {
+        cb: u32,
+        page_fault_count: u32,
+        peak_working_set_size: usize,
+        working_set_size: usize,
+        quota_peak_paged_pool_usage: usize,
+        quota_paged_pool_usage: usize,
+        quota_peak_non_paged_pool_usage: usize,
+        quota_non_paged_pool_usage: usize,
+        pagefile_usage: usize,
+        peak_pagefile_usage: usize,
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentProcess() -> *mut std::ffi::c_void;
+        fn K32GetProcessMemoryInfo(
+            process: *mut std::ffi::c_void,
+            counters: *mut ProcessMemoryCounters,
+            size: u32,
+        ) -> i32;
+    }
+    // SAFETY: all-zero counters are valid output storage. The API receives the
+    // exact repr(C) buffer size and a non-owning current-process pseudo-handle.
+    unsafe {
+        let mut counters: ProcessMemoryCounters = std::mem::zeroed();
+        let size = std::mem::size_of::<ProcessMemoryCounters>() as u32;
+        counters.cb = size;
+        if K32GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, size) != 0 {
+            eprintln!(
+                "process_peak_working_set_bytes={} process_working_set_bytes={}",
+                counters.peak_working_set_size, counters.working_set_size
+            );
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn report_process_memory() {}
+
 fn source_digest(path: &std::path::Path) -> Vec<u8> {
     let mut source = std::fs::File::open(path).unwrap();
     let mut digest = Sha256::new();
@@ -201,6 +243,7 @@ fn direct_ctf_first_search_and_query_latency() {
     let temp = tempfile::tempdir().unwrap();
     let source = benchmark_source(temp.path());
     let digest_before = source_digest(&source);
+    let executor = std::env::var("CTF_BENCH_EXECUTOR").ok();
     let samples: usize = std::env::var("CTF_BENCH_SAMPLES")
         .unwrap_or_else(|_| "5".into())
         .parse()
@@ -214,13 +257,20 @@ fn direct_ctf_first_search_and_query_latency() {
     let open_ms = start.elapsed().as_millis();
     let generation = opened["data"]["generation"].clone();
     let first = invoke(json!({"op":"ctf_preview_search", "path":source,
-        "generation":generation,"query":"mkv","limit":250}));
+        "generation":generation,"query":"mkv","limit":250,"executor":executor}));
     assert_eq!(first["ok"], true, "first direct search failed");
+    if let Some(executor) = &executor {
+        assert_eq!(
+            first["data"]["query_executor"].as_str(),
+            Some(executor.as_str())
+        );
+    }
     eprintln!(
-        "open_ms={open_ms} open_through_first_search_ms={} entries={} volumes={}",
+        "open_ms={open_ms} open_through_first_search_ms={} entries={} volumes={} executor={}",
         start.elapsed().as_millis(),
         opened["data"]["entries"],
-        opened["data"]["volumes"]
+        opened["data"]["volumes"],
+        first["data"]["query_executor"]
     );
     let queries = [
         ("empty", "", false),
@@ -255,7 +305,7 @@ fn direct_ctf_first_search_and_query_latency() {
             let request_start = Instant::now();
             let response = invoke(
                 json!({"op":"ctf_preview_search","path":source,"generation":generation,
-                "query":query,"limit":250,"offset":0,"full_count":full_count}),
+                "query":query,"limit":250,"offset":0,"full_count":full_count,"executor":executor}),
             );
             timings.push(request_start.elapsed().as_secs_f64() * 1000.0);
             assert_eq!(response["ok"], true, "direct query failed: {label}");
@@ -281,6 +331,7 @@ fn direct_ctf_first_search_and_query_latency() {
         "source bytes changed"
     );
     assert!(!temp.path().join("cache").exists());
+    report_process_memory();
     assert_eq!(
         invoke(json!({"op":"ctf_preview_close","path":source,"generation":generation}))["ok"],
         true

@@ -93,7 +93,7 @@ fn link(app: &mut DesktopApp, ctx: &egui::Context, source: &Path) {
         app.error
     );
     assert!(app.ctf_job_id.is_none());
-    assert_eq!(app.volumes[0].label, "Диск A");
+    assert!(!app.volumes.is_empty());
 }
 
 fn start_import(app: &mut DesktopApp, ctx: &egui::Context, source: &Path, target: &Path) {
@@ -210,7 +210,9 @@ fn ctf_open_and_search_use_direct_read_only_preview_without_sync() {
 
 #[test]
 fn linked_ctf_browse_import_edit_and_export_through_the_service() {
-    let _preview_lock = CTF_PREVIEW_TEST_LOCK.lock().unwrap();
+    let _preview_lock = CTF_PREVIEW_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp = tempfile::tempdir().unwrap();
     let (seed, _) = seed_catalog(temp.path());
     let source = temp.path().join("Исходник.CTF");
@@ -327,7 +329,9 @@ fn linked_ctf_browse_import_edit_and_export_through_the_service() {
 
 #[test]
 fn changed_linked_source_refuses_import_and_hides_stale_rows() {
-    let _preview_lock = CTF_PREVIEW_TEST_LOCK.lock().unwrap();
+    let _preview_lock = CTF_PREVIEW_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp = tempfile::tempdir().unwrap();
     let (seed, id) = seed_catalog(temp.path());
     let source = temp.path().join("original.CTF");
@@ -379,6 +383,144 @@ fn changed_linked_source_refuses_import_and_hides_stale_rows() {
     assert!(app.selected.is_none());
     assert!(app.page.items.is_empty());
     assert_eq!(fs::read(&source).unwrap(), modified);
+}
+
+#[test]
+fn direct_ctf_copy_candidates_and_exports_keep_scope_and_never_clobber() {
+    let _preview_lock = CTF_PREVIEW_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let temp = tempfile::tempdir().unwrap();
+    let disk_a = temp.path().join("disk-a");
+    let disk_b = temp.path().join("disk-b");
+    fs::create_dir_all(&disk_a).unwrap();
+    fs::create_dir_all(&disk_b).unwrap();
+    fs::write(disk_a.join("film.mkv"), b"same-metadata-size").unwrap();
+    fs::write(disk_b.join("film.mkv"), b"same-metadata-size").unwrap();
+    let db = temp.path().join("catalog.sqlite");
+    successful(json!({"op":"scan","db":db,"root":disk_a,"label":"Disk A","hash":false}));
+    successful(json!({"op":"scan","db":db,"root":disk_b,"label":"Disk B","hash":false}));
+    let source = temp.path().join("source.CTF");
+    successful(json!({"op":"export_ctf","db":db,"path":source}));
+    let source_bytes = fs::read(&source).unwrap();
+
+    let ctx = egui::Context::default();
+    let mut app = app(&ctx, temp.path());
+    link(&mut app, &ctx, &source);
+    let original = app
+        .page
+        .items
+        .iter()
+        .find(|entry| entry.name == "film.mkv")
+        .unwrap()
+        .clone();
+    app.selected = Some(original.clone());
+    app.navigate_copies(&ctx);
+    settle(&mut app, &ctx);
+    assert!(
+        app.error.is_none(),
+        "direct copy candidates: {:?}",
+        app.error
+    );
+    assert!(
+        !app.page.items.is_empty(),
+        "fixture should produce a metadata candidate"
+    );
+    assert!(app
+        .page
+        .items
+        .iter()
+        .all(|candidate| candidate.id != original.id));
+    assert!(app
+        .page
+        .items
+        .iter()
+        .all(|candidate| candidate.volume_id != original.volume_id));
+
+    let copies_csv = temp.path().join("copy-candidates.csv");
+    app.export_path = copies_csv.to_string_lossy().into_owned();
+    app.export_kind = ExportKind::Csv;
+    app.start_export(&ctx);
+    settle(&mut app, &ctx);
+    assert!(app.error.is_none(), "copy CSV export: {:?}", app.error);
+    let csv_bytes = fs::read(&copies_csv).unwrap();
+    let csv = String::from_utf8(csv_bytes.clone()).unwrap();
+    assert!(csv.starts_with("id,volume_id,parent_id,name,"));
+    assert!(csv.contains("film.mkv"));
+
+    app.route = Route::Search {
+        query: "ext:mkv".into(),
+        volume_id: None,
+    };
+    app.query_input = "ext:mkv".into();
+    app.offset = 0;
+    app.load_page(&ctx);
+    settle(&mut app, &ctx);
+    assert!(
+        app.error.is_none(),
+        "search before exports: {:?}",
+        app.error
+    );
+
+    let results_json = temp.path().join("results.json");
+    app.export_path = results_json.to_string_lossy().into_owned();
+    app.export_kind = ExportKind::Json;
+    app.start_export(&ctx);
+    settle(&mut app, &ctx);
+    assert!(app.error.is_none(), "JSON export: {:?}", app.error);
+    let json_data: Value = serde_json::from_slice(&fs::read(&results_json).unwrap()).unwrap();
+    assert_eq!(json_data["entries"].as_array().unwrap().len(), 2);
+
+    let results_parquet = temp.path().join("results.parquet");
+    app.export_path = results_parquet.to_string_lossy().into_owned();
+    app.export_kind = ExportKind::Parquet;
+    app.start_export(&ctx);
+    settle(&mut app, &ctx);
+    assert!(app.error.is_none(), "Parquet export: {:?}", app.error);
+    let parquet = fs::read(&results_parquet).unwrap();
+    assert!(parquet.starts_with(b"PAR1") && parquet.ends_with(b"PAR1"));
+
+    let prior_csv = fs::read(&copies_csv).unwrap();
+    app.export_path = copies_csv.to_string_lossy().into_owned();
+    app.export_kind = ExportKind::Csv;
+    app.start_export(&ctx);
+    assert!(app.active_request.is_none());
+    assert!(
+        app.error.is_some(),
+        "existing result path must not be overwritten"
+    );
+    assert_eq!(fs::read(&copies_csv).unwrap(), prior_csv);
+
+    let raced_export = temp.path().join("raced.csv");
+    let competing_path = raced_export.clone();
+    app.bus.set_handler(move |request| {
+        if request["op"] == "ctf_preview_export" {
+            use std::io::Write;
+            assert_eq!(request["output"], json!(competing_path));
+            fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&competing_path)
+                .unwrap()
+                .write_all(b"competing output")
+                .unwrap();
+        }
+        dispatch(request)
+    });
+    app.export_path = raced_export.to_string_lossy().into_owned();
+    app.export_kind = ExportKind::Csv;
+    app.start_export(&ctx);
+    settle(&mut app, &ctx);
+    assert!(
+        app.error.is_some(),
+        "racing output creation must be refused"
+    );
+    assert_eq!(fs::read(raced_export).unwrap(), b"competing output");
+    assert_eq!(
+        fs::read(&source).unwrap(),
+        source_bytes,
+        "preview and exports keep CTF source unchanged"
+    );
 }
 
 #[test]
