@@ -11,6 +11,13 @@ export interface EmptyQueryDestination {
   parentId: number | null;
 }
 
+export interface FolderIdentity {
+  id: number;
+  name: string;
+  volumeId: number;
+  parentId: number | null;
+}
+
 export function destinationForEmptyQuery(volumeId: number | null, parentId: number | null): EmptyQueryDestination {
   return volumeId === null
     ? { view: 'overview', volumeId: null, parentId: null }
@@ -25,4 +32,10 @@ export function breadcrumbPath(ancestors: FolderCrumb[], index: number): { paren
 
 export function folderChildrenOnPage(items: CatalogEntry[]): CatalogEntry[] {
   return items.filter((item) => item.kind === 'directory');
+}
+
+/** Keep a known ancestor visible when it lies beyond the current raw-child page. */
+export function includeFocusedFolder(folders: FolderIdentity[], focused: FolderIdentity | null): FolderIdentity[] {
+  if (!focused || folders.some((folder) => folder.id === focused.id)) return folders;
+  return [...folders, focused];
 }

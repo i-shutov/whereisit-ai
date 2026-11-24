@@ -21,7 +21,7 @@ interface VolumeSunburstViewProps {
   selectedFolderPath: string | null;
   initialHighlightQuery?: string;
   onNavigateScope: (volumeId: number | null, folderPath: string | null) => void;
-  onJumpToSearch: (params: { volumeId: number | null; folderPrefix: string | null; query?: string }) => void;
+  onJumpToSearch: (params: { volumeId: number | null; folderPrefix: string | null; folderEntryId?: number | null; query?: string }) => void;
   onJumpToCopyCandidates: (entryId: number) => void;
   onOpenSlices: (volumeId: number | null) => void;
   onNotify: (message: string, tone?: 'info' | 'error' | 'success') => void;
@@ -297,6 +297,7 @@ export const VolumeSunburstView: React.FC<VolumeSunburstViewProps> = ({
         onJumpToSearch({
           volumeId: node.volumeId,
           folderPrefix: node.folderPath,
+          folderEntryId: node.folderEntryId,
           query: `name:"${node.name}"`,
         });
       }
@@ -493,6 +494,7 @@ export const VolumeSunburstView: React.FC<VolumeSunburstViewProps> = ({
                 onJumpToSearch({
                   volumeId: selectedVolumeId,
                   folderPrefix: selectedFolderPath,
+                  folderEntryId: sunburstData?.root.entryId ?? null,
                   query: appliedHighlight,
                 })
               }
@@ -724,6 +726,7 @@ export const VolumeSunburstView: React.FC<VolumeSunburstViewProps> = ({
                               onJumpToSearch({
                                 volumeId: item.volumeId,
                                 folderPrefix: item.folderPath,
+                                folderEntryId: item.kind === 'directory' ? item.entryId : item.folderEntryId,
                               })
                             }
                             className="text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"

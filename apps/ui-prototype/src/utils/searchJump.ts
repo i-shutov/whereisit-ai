@@ -1,16 +1,17 @@
 export interface SearchJumpInput {
   volumeId: number | null;
   folderPrefix: string | null;
+  folderEntryId?: number | null;
   query?: string;
   copySourceEntryId?: number | null;
 }
 
 export interface SearchJumpDefaults {
-  mode: 'search' | 'copy_candidates';
+  mode: 'search' | 'browse' | 'copy_candidates';
   duplicateMode: 'video_rips';
   query: string;
   volumeId: number | null;
-  parentId: null;
+  parentId: number | null;
   folderPrefix: string | null;
   category: null;
   sourceEntryId: number | null;
@@ -36,12 +37,17 @@ export function buildSearchJumpDefaults(jump: SearchJumpInput): SearchJumpDefaul
     };
   }
 
+  const query = jump.query ?? '';
+  const folderEntryId = Number.isInteger(jump.folderEntryId) && (jump.folderEntryId ?? 0) > 0 ? jump.folderEntryId! : null;
+  const parentId = jump.volumeId === null ? null : folderEntryId;
+  const knownBrowseTarget = parentId !== null || (jump.volumeId !== null && jump.folderPrefix === null);
+  const mode = !query.trim() && knownBrowseTarget ? 'browse' : 'search';
   return {
-    mode: 'search',
+    mode,
     duplicateMode: 'video_rips',
-    query: jump.query ?? '',
+    query,
     volumeId: jump.volumeId,
-    parentId: null,
+    parentId,
     folderPrefix: jump.folderPrefix,
     category: null,
     sourceEntryId: null,

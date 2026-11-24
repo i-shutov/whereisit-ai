@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight, Folder, HardDrive, LoaderCircle } from 'lucide-react';
 import type { CatalogEntry, CatalogVolume } from '../types/atlas';
 import { useI18n } from '../i18n';
-import { folderChildrenOnPage } from '../utils/catalogNavigation';
+import { folderChildrenOnPage, includeFocusedFolder, type FolderIdentity } from '../utils/catalogNavigation';
 
 interface ChildPage {
   items: CatalogEntry[];
@@ -26,7 +26,8 @@ interface CatalogNavigationTreeProps {
   activeCrumbIds: number[];
   browseActive: boolean;
   onOpenVolume: (volume: CatalogVolume) => void;
-  onOpenFolder: (folder: CatalogEntry) => void;
+  onOpenFolder: (folder: FolderIdentity) => void;
+  focusedAncestors: { id: number; name: string }[];
 }
 
 const rootKey = (volumeId: number) => `v:${volumeId}:root`;
@@ -39,6 +40,7 @@ export const CatalogNavigationTree: React.FC<CatalogNavigationTreeProps> = ({
   activeParentId,
   activeCrumbIds,
   browseActive,
+  focusedAncestors,
   onOpenVolume,
   onOpenFolder,
 }) => {
@@ -120,7 +122,18 @@ export const CatalogNavigationTree: React.FC<CatalogNavigationTreeProps> = ({
     const page = pages.get(key);
     if (!page) return <div className="px-2 py-1 text-[10px] text-slate-500" style={{ paddingLeft: `${12 + depth * 12}px` }}>{t('Загрузка…', 'Loading…')}</div>;
     return <>
-      {page.folders.map((folder) => {
+      {includeFocusedFolder(
+        page.folders,
+        (() => {
+          const parentIndex = parentId === null ? -1 : focusedAncestors.findIndex((crumb) => crumb.id === parentId);
+          const crumb = parentId === null
+            ? focusedAncestors[0]
+            : parentIndex >= 0
+              ? focusedAncestors[parentIndex + 1]
+              : undefined;
+          return crumb ? { ...crumb, volumeId: volume.id, parentId } : null;
+        })()
+      ).map((folder) => {
         const childKey = folderKey(volume.id, folder.id);
         const childExpanded = expanded.has(childKey);
         const selected = activeVolumeId === volume.id && activeParentId === folder.id;

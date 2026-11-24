@@ -103,11 +103,12 @@ export default function App() {
   }, [selectTab]);
 
   const jumpToSearch = useCallback(
-    (params: { volumeId: number | null; folderPrefix: string | null; query?: string; copySourceEntryId?: number | null }) => {
+    (params: { volumeId: number | null; folderPrefix: string | null; folderEntryId?: number | null; query?: string; copySourceEntryId?: number | null }) => {
       setSearchJump({
         nonce: Date.now(),
         volumeId: params.volumeId,
         folderPrefix: params.folderPrefix,
+        folderEntryId: params.folderEntryId ?? null,
         query: params.query,
         copySourceEntryId: params.copySourceEntryId ?? null,
       });

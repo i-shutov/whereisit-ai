@@ -42,12 +42,15 @@ import {
 import { useI18n } from '../i18n';
 import { CatalogNavigationTree } from './CatalogNavigationTree';
 import { buildSearchJumpDefaults } from '../utils/searchJump';
-import { breadcrumbPath, destinationForEmptyQuery } from '../utils/catalogNavigation';
+import { breadcrumbPath, destinationForEmptyQuery, type FolderIdentity } from '../utils/catalogNavigation';
 
 interface NavigationSnapshot {
   mode: 'search' | 'browse' | 'duplicates' | 'copy_candidates';
   duplicateMode: DuplicateCriterion;
   query: string;
+  queryInput: string;
+  activeTypeChip: string;
+  activeSizeChip: string;
   volumeId: number | null;
   parentId: number | null;
   folderPrefix: string | null;
@@ -64,6 +67,7 @@ export interface SearchPresetJump {
   nonce: number;
   volumeId: number | null;
   folderPrefix: string | null;
+  folderEntryId?: number | null;
   query?: string;
   copySourceEntryId?: number | null;
 }
@@ -298,6 +302,10 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
 
   // Handle cross-tab jump from Archive Slices, Sunburst, or Disks table
   useEffect(() => {
+    ancestorsRequestRef.current++;
+  }, [snapshot.pinnedGenerationSha]);
+
+  useEffect(() => {
     if (!isActive) return;
     const nonce = presetJump?.nonce ?? null;
     if (handledPresetNonceRef.current === nonce) return;
@@ -308,8 +316,8 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
     }
     const jump = buildSearchJumpDefaults(presetJump);
     const emptyGlobalJump = jump.mode === 'search' && !jump.query.trim() && jump.volumeId === null && !jump.folderPrefix;
-    const emptyDiskJump = jump.mode === 'search' && !jump.query.trim() && jump.volumeId !== null && !jump.folderPrefix;
-    const jumpMode = emptyDiskJump ? 'browse' : jump.mode;
+    const emptyFolderJump = jump.mode === 'browse' && jump.parentId !== null;
+    const jumpMode = jump.mode;
     setQueryInput(jump.query);
     setActiveTypeChip('');
     setActiveSizeChip('');
@@ -320,7 +328,7 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
     setScopedVolumeId(jump.volumeId);
     setBrowseParentId(jump.parentId);
     setBrowseCrumbs([]);
-    setFolderPrefix(jump.folderPrefix);
+    setFolderPrefix(emptyFolderJump ? null : jump.folderPrefix);
     setSelectedCategory(jump.category);
     setCopySourceEntryId(jump.sourceEntryId);
     setCandidateVolumeId(jump.candidateVolumeId);
@@ -329,6 +337,18 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
     setPageData(null);
     setSelectedEntryId(null);
     setSelectedRegisterDiskId(jump.volumeId ?? 1);
+
+    const ancestorRequest = ++ancestorsRequestRef.current;
+    if (jump.parentId !== null && jump.volumeId !== null) {
+      void fetch('/api/catalog/ancestors', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ volumeId: jump.volumeId, parentId: jump.parentId }),
+      }).then((response) => response.json()).then((data) => {
+        if (ancestorRequest === ancestorsRequestRef.current) setBrowseCrumbs(Array.isArray(data.ancestors) ? data.ancestors : []);
+      }).catch(() => {
+        if (ancestorRequest === ancestorsRequestRef.current) setBrowseCrumbs([]);
+      });
+    }
 
     if (emptyGlobalJump) {
       setPageData(null);
@@ -340,7 +360,7 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
       nextQuery: jump.query,
       nextVolumeId: jump.volumeId,
       nextParentId: jump.parentId,
-      nextFolderPrefix: jump.folderPrefix,
+      nextFolderPrefix: emptyFolderJump ? null : jump.folderPrefix,
       nextCategory: jump.category,
       nextSourceEntryId: jump.sourceEntryId,
       nextCandidateVolumeId: jump.candidateVolumeId,
@@ -511,6 +531,9 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
         mode,
         duplicateMode,
         query: appliedQuery,
+        queryInput,
+        activeTypeChip,
+        activeSizeChip,
         volumeId: scopedVolumeId,
         parentId: browseParentId,
         folderPrefix,
@@ -542,7 +565,8 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
       if (destination.view === 'browse') {
         setCatalogOverview(false);
         setMode('browse');
-        void runCatalogQuery({ nextMode: 'browse', nextVolumeId: destination.volumeId, nextParentId: destination.parentId, nextQuery: '', nextOffset: 0 });
+        setFolderPrefix(null);
+        void runCatalogQuery({ nextMode: 'browse', nextVolumeId: destination.volumeId, nextParentId: destination.parentId, nextFolderPrefix: null, nextQuery: '', nextOffset: 0 });
       } else {
         setCatalogOverview(true);
         setPageData(null);
@@ -594,6 +618,8 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
     if (targetVolId === null) setRegisterMode('all');
     setAppliedQuery('');
     setQueryInput('');
+    setActiveTypeChip('');
+    setActiveSizeChip('');
     if (targetVolId !== null) setMode('browse');
     else setMode('search');
     setCopySourceEntryId(null);
@@ -637,12 +663,19 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
     setBrowseParentId(entry.parentId);
     setFolderPrefix(null);
     setCopySourceEntryId(null);
+    setQueryInput('');
+    setAppliedQuery('');
+    setActiveTypeChip('');
+    setActiveSizeChip('');
+    setSelectedCategory(null);
     setOffset(0);
     void runCatalogQuery({
       nextMode: 'browse',
       nextVolumeId: entry.volumeId,
       nextParentId: entry.parentId,
       nextFolderPrefix: null,
+      nextQuery: '',
+      nextCategory: null,
       nextSourceEntryId: null,
       nextOffset: 0,
       restoreEntryId: entry.id,
@@ -654,6 +687,8 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
       body: JSON.stringify({ volumeId: entry.volumeId, parentId: entry.parentId }),
     }).then((response) => response.json()).then((data) => {
       if (request === ancestorsRequestRef.current) setBrowseCrumbs(Array.isArray(data.ancestors) ? data.ancestors : []);
+    }).catch(() => {
+      if (request === ancestorsRequestRef.current) setBrowseCrumbs([]);
     });
   };
 
@@ -667,6 +702,11 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
     setBrowseParentId(nextParentId);
     setMode('browse');
     setCatalogOverview(false);
+    setQueryInput('');
+    setAppliedQuery('');
+    setActiveTypeChip('');
+    setActiveSizeChip('');
+    setSelectedCategory(null);
     setOffset(0);
     void runCatalogQuery({ nextMode: 'browse', nextVolumeId: scopedVolumeId, nextParentId, nextFolderPrefix: null, nextQuery: '', nextOffset: 0 });
   };
@@ -682,11 +722,16 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
     setMode('browse');
     setCatalogOverview(false);
     setFolderPrefix(null);
+    setQueryInput('');
+    setAppliedQuery('');
+    setActiveTypeChip('');
+    setActiveSizeChip('');
+    setSelectedCategory(null);
     setOffset(0);
     void runCatalogQuery({ nextMode: 'browse', nextVolumeId: scopedVolumeId, nextParentId: target.parentId, nextFolderPrefix: null, nextQuery: '', nextOffset: 0 });
   };
 
-  const handleOpenFolder = (folder: CatalogEntry) => {
+  const handleOpenFolder = (folder: FolderIdentity) => {
     pushHistory(folder.id);
     setCatalogOverview(false);
     setMode('browse');
@@ -694,6 +739,11 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
     setBrowseParentId(folder.id);
     setFolderPrefix(null);
     setCopySourceEntryId(null);
+    setQueryInput('');
+    setAppliedQuery('');
+    setActiveTypeChip('');
+    setActiveSizeChip('');
+    setSelectedCategory(null);
     setOffset(0);
     const request = ++ancestorsRequestRef.current;
     void fetch('/api/catalog/ancestors', {
@@ -712,6 +762,9 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
     setCatalogOverview(prev.catalogOverview);
     setDuplicateMode(prev.duplicateMode);
     setAppliedQuery(prev.query);
+    setQueryInput(prev.queryInput);
+    setActiveTypeChip(prev.activeTypeChip);
+    setActiveSizeChip(prev.activeSizeChip);
     setScopedVolumeId(prev.volumeId);
     setBrowseParentId(prev.parentId);
     setBrowseCrumbs(prev.crumbs);
@@ -949,7 +1002,7 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
 
           <button
             type="button"
-            onClick={() => onOpenSunburst(scopedVolumeId, folderPrefix)}
+            onClick={() => onOpenSunburst(scopedVolumeId, mode === 'browse' ? browseCrumbs.map((crumb) => crumb.name).join('/') || null : folderPrefix)}
             className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap shrink-0 cursor-pointer"
           >
             <PieChart className="w-3.5 h-3.5 text-blue-500" />
@@ -1328,6 +1381,7 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
                 activeParentId={browseParentId}
                 activeCrumbIds={browseCrumbs.map((crumb) => crumb.id)}
                 browseActive={mode === 'browse'}
+                focusedAncestors={browseCrumbs}
                 onOpenVolume={(volume) => handleSelectScopeDisk(volume.id)}
                 onOpenFolder={handleOpenFolder}
               />
@@ -1826,10 +1880,11 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      const folder =
-                        selectedEntry && selectedEntry.relativePath.includes('/')
-                          ? selectedEntry.relativePath.slice(0, selectedEntry.relativePath.lastIndexOf('/'))
-                          : null;
+                      const folder = selectedEntry && selectedEntry.relativePath.includes('/')
+                        ? selectedEntry.relativePath.slice(0, selectedEntry.relativePath.lastIndexOf('/'))
+                        : mode === 'browse'
+                          ? browseCrumbs.map((crumb) => crumb.name).join('/') || null
+                          : folderPrefix;
                       onOpenSunburst(activeDisk.id, folder);
                     }}
                     className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 whitespace-nowrap shrink-0 cursor-pointer"

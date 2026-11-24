@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { breadcrumbPath, destinationForEmptyQuery, folderChildrenOnPage } from './catalogNavigation';
+import { breadcrumbPath, destinationForEmptyQuery, folderChildrenOnPage, includeFocusedFolder } from './catalogNavigation';
 import type { CatalogEntry } from '../types/atlas';
 
 test('clearing a query returns to the remembered disk and folder, or catalog overview', () => {
@@ -23,4 +23,15 @@ test('tree pagination exposes only directories from each page without implying c
   assert.deepEqual(folders.map((folder) => folder.id), [1, 3]);
   // Whether more pages exist is maintained separately by the API response; filtering a page never marks it complete.
   assert.equal(folders.length, 2);
+});
+
+test('focused ancestor remains visible beyond the first 250 sibling entries without marking the page complete', () => {
+  const page = Array.from({ length: 250 }, (_, index) => ({
+    id: index + 1, name: `folder-${index + 1}`, volumeId: 4, parentId: 10,
+  }));
+  const focused = { id: 320, name: 'focused-folder', volumeId: 4, parentId: 10 };
+  const merged = includeFocusedFolder(page, focused);
+  assert.equal(merged.length, 251);
+  assert.equal(merged.find((folder) => folder.id === 320)?.name, 'focused-folder');
+  assert.equal(includeFocusedFolder(merged, focused).length, 251);
 });

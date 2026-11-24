@@ -105,3 +105,11 @@ query returned to that disk's direct root children.
 TypeScript lint, 16 prototype runtime utility tests and the Vite production build
 passed. Vite reports its existing `__dirname`/future-loader warning. The prototype
 contains simulated metadata only; it is not a native or installed-product test.
+
+The follow-up passes 21 utility tests, lint and production build. Stable folder
+IDs now survive map/search workspace jumps. Actual browser interaction verified
+folder browse -> map of that folder -> empty-query jump back to its immediate
+children, with the same expanded ancestor tree and breadcrumb. The upper map
+action was corrected after this check exposed that it used only search scope.
+Generated tests also cover an ancestor beyond 250 siblings and distinguish
+known folder IDs from legacy path-only search targets.
