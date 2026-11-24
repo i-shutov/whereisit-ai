@@ -51,7 +51,7 @@ The following are our proposed engineering choices, inferred from the study and 
 - **Bound memory and result work.** A memory-resident design is only useful if allocation and layout are controlled. Page rows and UI results; avoid copying all matches or all paths for each keystroke. Measure the query, count and sort stages separately. Keep rapid-query cancellation outside the UI thread.
 - **Account for verification separately.** Current pinned reads fully hash the source around reads, so first-response costs include more than matching. Measure those passes explicitly. Do not silently weaken the existing source-change contract to improve timings; any alternative snapshot-version/locking strategy needs an explicit decision and source-replacement regressions.
 
-Changing the shared core/query boundary needs a follow-up architectural decision; this research alone does not approve deleting SQLite or shipping a new backend. The current preview-only candidate is an intermediate implementation and must not be released as the completed fix.
+The owner subsequently directed implementation of this redesign. [ADR-0005](../decisions/ADR-0005-direct-ctf-metadata-search.md) records the changed CTF read/query boundary while preserving SQLite and ADR-0003 authority rules. The current preview-only candidate is an intermediate implementation and must not be released as the completed fix.
 
 ## Acceptance required before a hotfix
 
