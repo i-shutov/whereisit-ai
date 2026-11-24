@@ -11,6 +11,7 @@ use std::{
     fs,
     io::{ErrorKind, Read, Write},
     path::Path,
+    sync::Arc,
 };
 
 const CTF_BLOCK_BYTES: usize = 256 * 1024;
@@ -142,7 +143,14 @@ pub(crate) fn import_with_job(
         ));
     }
     job.phase("parsing")?;
-    let parsed = ctf_format::parse_ctf(&bytes, &Limits::default()).map_err(fail)?;
+    // A validated in-memory preview may already hold the exact parsed source.
+    // The byte SHA is computed by `read` first, so only an exact path+digest
+    // match can reuse it; otherwise retain the normal fail-closed parse path.
+    let parsed = match crate::ctf_preview::parsed_for_import(Path::new(text(v, "path")?), &sha) {
+        Some(parsed) => parsed,
+        None => Arc::new(ctf_format::parse_ctf(&bytes, &Limits::default()).map_err(fail)?),
+    };
+    drop(bytes);
     job.check()?;
     let source_path = Path::new(text(v, "path")?)
         .canonicalize()?
@@ -153,7 +161,6 @@ pub(crate) fn import_with_job(
     let diagnostics = ctf_format::diagnostics(&parsed).map_err(fail)?;
     // Parsing completes before any catalog rows are changed. All volumes and legacy
     // metadata then commit together; a parser/SQL/validation error leaves no partial import.
-    drop(bytes);
     job.phase("importing")?;
     let result=c.bulk_import_many_fast_fts(|session|{
   session.transaction().execute("INSERT INTO ctf_sources(sha256,source_path,catalog_name,trailer,utc_offset_minutes,disk_count) VALUES(?1,?2,?3,?4,?5,?6)",params![sha,source_path,source_name,parsed.opaque_trailer,offset,disk_count as i64])?;

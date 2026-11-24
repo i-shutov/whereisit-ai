@@ -99,6 +99,178 @@ fn start_import(app: &mut DesktopApp, ctx: &egui::Context, source: &Path, target
 }
 
 #[test]
+fn preview_browses_while_index_runs_and_defers_same_source_promotion() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = egui::Context::default();
+    let mut app = DesktopApp::with_context(&ctx, None);
+    let path = dir
+        .path()
+        .join("snapshot.ctf")
+        .to_string_lossy()
+        .into_owned();
+    let cache_root = dir.path().join("ctf-cache").to_string_lossy().into_owned();
+    let source_sha = "b".repeat(64);
+    let preview_generation = "c".repeat(64);
+    let ready_generation = "d".repeat(64);
+    app.bus.set_handler({
+        let source_sha = source_sha.clone();
+        let ready_generation = ready_generation.clone();
+        move |request| match request["op"].as_str().unwrap_or("") {
+            "ctf_preview_children" => json!({"ok":true,"data":{
+                "generation":request["generation"],"source_sha256":source_sha,"read_only":true,
+                "result":{"items":[{"id":71,"volume_id":4,"parent_id":50,"name":"film.mkv",
+                    "relative_path":"folder/film.mkv","kind":"file","size":99,"modified_unix":null,
+                    "description":"","tags":""}],"total":300,"offset":request["offset"],"limit":250}
+            }}),
+            "ctf_sync" => json!({"ok":true,"data":{"state":"ready","generation":ready_generation,
+                "source_sha256":source_sha,"original_ctf_read_only":true,
+                "native_annotation_writes_allowed":false}}),
+            "ctf_preview_close" => {
+                json!({"ok":true,"data":{"closed":true,"generation":request["generation"]}})
+            }
+            "ctf_volumes_pinned" => json!({"ok":true,"data":{"generation":ready_generation,
+                "source_sha256":source_sha,"read_only":true,"result":[]}}),
+            other => {
+                json!({"ok":false,"error":{"code":"unexpected_test_operation","message":other}})
+            }
+        }
+    });
+
+    let preview = LinkedCtf::parse_preview(
+        path.clone(),
+        cache_root.clone(),
+        &json!({
+            "state":"browsable","generation":preview_generation,"source_sha256":source_sha,
+            "original_ctf_read_only":true,"native_annotation_writes_allowed":false
+        }),
+    )
+    .unwrap();
+    app.db = Some(path.clone());
+    app.linked_ctf = Some(preview.clone());
+    app.integrity = CatalogIntegrity::LinkedReadOnly;
+    app.route = Route::Folder {
+        volume_id: 4,
+        parent_id: Some(50),
+    };
+    app.selected = Some(
+        Entry::parse(&json!({"id":71,"volume_id":4,"parent_id":50,
+        "name":"film.mkv","relative_path":"folder/film.mkv","kind":"file","size":99,
+        "modified_unix":null,"description":"","tags":""}))
+        .unwrap(),
+    );
+    app.restore_selection = app.selected.clone();
+    app.offset = 0;
+
+    let job_id = "preview-index-job".to_owned();
+    app.ctf_job_id = Some(job_id.clone());
+    let index_id = app.bus.send(
+        Purpose::CtfIndexBackground {
+            path: path.clone(),
+            cache_root: cache_root.clone(),
+            job_id: job_id.clone(),
+        },
+        json!({"op":"ctf_sync","path":path,"cache_root":cache_root,"job_id":job_id}),
+        &ctx,
+    );
+    app.ctf_index_request = Some(index_id);
+    assert!(
+        app.active_request.is_none(),
+        "background index must not occupy foreground slot"
+    );
+
+    app.load_page(&ctx);
+    let browse_id = app.active_request.expect("preview browse request");
+    let mut browse_reply = None;
+    let mut index_reply = None;
+    while browse_reply.is_none() || index_reply.is_none() {
+        let reply = next_reply(&app);
+        match reply.id {
+            id if id == browse_id => browse_reply = Some(reply),
+            id if id == index_id => index_reply = Some(reply),
+            _ => panic!("unexpected worker reply"),
+        }
+    }
+    app.apply_reply(browse_reply.unwrap(), &ctx);
+    assert!(app.error.is_none(), "preview browse: {:?}", app.error);
+    assert_eq!(app.page.items[0].name, "film.mkv");
+    assert_eq!(
+        app.linked_ctf.as_ref().unwrap().generation,
+        preview_generation
+    );
+
+    app.offset = 250;
+    app.restore_selection = app.selected.clone();
+    app.load_page(&ctx);
+    let second_browse_id = app.active_request.expect("second foreground browse");
+    app.apply_reply(index_reply.unwrap(), &ctx);
+    assert!(
+        app.active_request.is_some(),
+        "index reply must not replace foreground browse"
+    );
+    assert!(app.ctf_ready_pending.is_some());
+    assert_eq!(
+        app.linked_ctf.as_ref().unwrap().generation,
+        preview_generation
+    );
+
+    let page_reply = loop {
+        let reply = next_reply(&app);
+        if reply.id == second_browse_id {
+            break reply;
+        }
+    };
+    app.apply_reply(page_reply, &ctx);
+    assert_eq!(app.offset, 250);
+    assert_eq!(app.selected.as_ref().map(|row| row.id), Some(71));
+    assert_eq!(
+        app.route,
+        Route::Folder {
+            volume_id: 4,
+            parent_id: Some(50)
+        }
+    );
+    app.promote_ready_ctf(&ctx);
+    assert_eq!(
+        app.linked_ctf.as_ref().unwrap().generation,
+        ready_generation
+    );
+    assert_eq!(app.offset, 250, "promotion preserves pagination position");
+    assert_eq!(
+        app.selected.as_ref().map(|row| row.id),
+        Some(71),
+        "promotion preserves selection"
+    );
+    assert_eq!(
+        app.route,
+        Route::Folder {
+            volume_id: 4,
+            parent_id: Some(50)
+        }
+    );
+
+    app.clear_catalog();
+    app.apply_reply(
+        crate::bridge::Reply {
+            id: index_id,
+            purpose: Purpose::CtfIndexBackground {
+                path,
+                cache_root,
+                job_id,
+            },
+            response: json!({"ok":true,"data":{"state":"ready","generation":ready_generation,
+            "source_sha256":source_sha,"original_ctf_read_only":true,
+            "native_annotation_writes_allowed":false}}),
+        },
+        &ctx,
+    );
+    assert!(
+        app.linked_ctf.is_none(),
+        "stale index completion must not reopen a switched catalog"
+    );
+    assert!(app.db.is_none());
+}
+
+#[test]
 fn linked_ctf_browse_import_edit_and_export_through_the_service() {
     let temp = tempfile::tempdir().unwrap();
     let (seed, _) = seed_catalog(temp.path());

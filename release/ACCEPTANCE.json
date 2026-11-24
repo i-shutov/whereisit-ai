@@ -2,7 +2,17 @@
   "format": "whereisit-release-acceptance-v1",
   "version": "1.1.0",
   "channel": "stable",
-  "stable_ready": true,
+  "stable_ready": false,
+  "post_release_defects": [
+    {
+      "id": "P1-CTF-COLD-OPEN",
+      "status": "OPEN",
+      "reported_on": "2026-11-24",
+      "summary": "First opening of a large CTF waits for complete import and indexing; owner reports over 15 minutes on Windows 10.",
+      "acceptance_gap": "Warm derived-SQLite search measurements do not validate first CTF open latency.",
+      "report": "docs/qa/CTF_COLD_OPEN_DEFECT_20261124.md"
+    }
+  ],
   "candidate_publication_approved": false,
   "publication_is_manual_after_QA": true,
   "personal_catalogs_in_release": false,

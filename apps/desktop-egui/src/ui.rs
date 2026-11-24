@@ -288,6 +288,8 @@ pub struct DesktopApp {
     ctf_job_id: Option<String>,
     ctf_progress_request: Option<u64>,
     ctf_cancel_request: Option<u64>,
+    ctf_index_request: Option<u64>,
+    ctf_ready_pending: Option<LinkedCtf>,
     ctf_cancel_requested: bool,
     ctf_job_registered: bool,
     ctf_phase: String,
@@ -436,6 +438,8 @@ impl DesktopApp {
             ctf_job_id: None,
             ctf_progress_request: None,
             ctf_cancel_request: None,
+            ctf_index_request: None,
+            ctf_ready_pending: None,
             ctf_cancel_requested: false,
             ctf_job_registered: false,
             ctf_phase: String::new(),
@@ -647,6 +651,7 @@ impl DesktopApp {
         self.ctf_job_id = Some(id.clone());
         self.ctf_progress_request = None;
         self.ctf_cancel_request = None;
+        self.ctf_index_request = None;
         self.ctf_cancel_requested = false;
         self.ctf_job_registered = false;
         self.ctf_phase = "preparing".into();
@@ -686,17 +691,17 @@ impl DesktopApp {
             return;
         };
         let cache_root = parent.join("ctf-cache").to_string_lossy().into_owned();
-        let job = self.begin_ctf_job();
         self.show_catalog_dialog = false;
-        self.status = StatusText::new("Подготовка связанного CTF…", "Preparing linked CTF…");
-        self.queue(
-            Purpose::LinkCtf {
+        self.status = StatusText::new("Быстрое открытие CTF…", "Opening CTF preview…");
+        self.error = None;
+        self.active_request = Some(self.bus.send(
+            Purpose::CtfPreviewOpen {
                 path: path.clone(),
-                cache_root: cache_root.clone(),
+                cache_root,
             },
-            json!({"op":"ctf_sync","path":path,"cache_root":cache_root,"job_id":job}),
+            json!({"op":"ctf_preview_open","path":path}),
             ctx,
-        );
+        ));
     }
 
     fn start_ctf_transfer(&mut self, ctx: &egui::Context) {
@@ -848,6 +853,30 @@ impl DesktopApp {
     }
 
     fn clear_catalog(&mut self) {
+        if self.ctf_index_request.is_some() {
+            if let Some(job_id) = self.ctf_job_id.clone() {
+                let _ = self.bus.send(
+                    Purpose::CtfCancel {
+                        job_id: job_id.clone(),
+                    },
+                    json!({"op":"ctf_cancel","job_id":job_id}),
+                    &egui::Context::default(),
+                );
+            }
+        }
+        self.ctf_index_request = None;
+        self.ctf_ready_pending = None;
+        self.ctf_job_id = None;
+        self.ctf_progress_request = None;
+        self.ctf_cancel_request = None;
+        self.ctf_job_registered = false;
+        if let Some(link) = self.linked_ctf.as_ref().filter(|link| link.preview) {
+            let _ = self.bus.send(
+                Purpose::CtfPreviewClose,
+                json!({"op":"ctf_preview_close","path":link.path,"generation":link.generation}),
+                &egui::Context::default(),
+            );
+        }
         for job_id in [self.analytics_job_id.take(), self.slices_job_id.take()]
             .into_iter()
             .flatten()
@@ -912,6 +941,32 @@ impl DesktopApp {
         self.show_categories_dialog = false;
         self.show_export_dialog = false;
         self.show_scan_dialog = false;
+    }
+
+    fn promote_ready_ctf(&mut self, ctx: &egui::Context) {
+        let Some(ready) = self.ctf_ready_pending.take() else {
+            return;
+        };
+        let is_same_source = self.linked_ctf.as_ref().is_some_and(|preview| {
+            preview.preview && preview.matches_source_snapshot(&ready.path, &ready.source_sha256)
+        });
+        if !is_same_source {
+            return;
+        }
+        self.restore_selection = self.selected.clone();
+        self.restore_scroll = Some(self.results_scroll);
+        if let Some(preview) = self.linked_ctf.as_ref() {
+            let _ = self.bus.send(
+                Purpose::CtfPreviewClose,
+                json!({"op":"ctf_preview_close","path":preview.path,"generation":preview.generation}),
+                ctx,
+            );
+        }
+        // Keep the current route, page offset, selection, and history. Only
+        // switch the backing adapter from preview pages to the ready index.
+        self.linked_ctf = Some(ready);
+        self.status = StatusText::new("Индекс CTF готов", "CTF search index is ready");
+        self.load_volumes(ctx);
     }
 
     fn start_export(&mut self, ctx: &egui::Context) {
@@ -1728,6 +1783,80 @@ impl DesktopApp {
             }
             return;
         }
+        if matches!(&reply.purpose, Purpose::CtfPreviewClose) {
+            return;
+        }
+        if let Purpose::CtfIndexBackground {
+            path,
+            cache_root,
+            job_id,
+        } = &reply.purpose
+        {
+            if self.ctf_index_request != Some(reply.id) || self.ctf_job_id.as_ref() != Some(job_id)
+            {
+                return;
+            }
+            self.ctf_index_request = None;
+            self.ctf_job_id = None;
+            self.ctf_progress_request = None;
+            self.ctf_cancel_request = None;
+            self.ctf_job_registered = false;
+            if reply.response["ok"] == true {
+                match LinkedCtf::parse_sync(
+                    path.clone(),
+                    cache_root.clone(),
+                    &reply.response["data"],
+                ) {
+                    Ok(ready)
+                        if self.linked_ctf.as_ref().is_some_and(|preview| {
+                            preview.preview
+                                && preview.matches_source_snapshot(path, &ready.source_sha256)
+                        }) =>
+                    {
+                        if self.active_request.is_some() {
+                            self.ctf_ready_pending = Some(ready);
+                            ctx.request_repaint_after(Duration::from_millis(100));
+                            return;
+                        }
+                        self.ctf_ready_pending = Some(ready);
+                        self.promote_ready_ctf(ctx);
+                    }
+                    Ok(_) => {
+                        self.clear_catalog();
+                        self.error = Some("CTF source changed while its index was being prepared; reopen the source.".into());
+                    }
+                    Err(error) => {
+                        self.error = Some(error);
+                    }
+                }
+            } else {
+                let code = reply
+                    .response
+                    .pointer("/error/code")
+                    .and_then(Value::as_str);
+                let message = reply
+                    .response
+                    .pointer("/error/message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("CTF search index preparation failed")
+                    .to_owned();
+                if code == Some("source_changed") {
+                    self.clear_catalog();
+                    self.status = StatusText::new(
+                        "CTF закрыт: источник изменился",
+                        "CTF closed because the source changed",
+                    );
+                } else {
+                    self.status = StatusText::new(
+                        "Быстрый просмотр CTF доступен",
+                        "CTF preview remains available",
+                    );
+                }
+                self.error = Some(message);
+            }
+            ctx.request_repaint();
+            return;
+        }
         if let Purpose::LinkedRead { inner, generation } = &reply.purpose {
             if self.active_request != Some(reply.id) {
                 return;
@@ -1913,6 +2042,12 @@ impl DesktopApp {
                 .and_then(Value::as_str)
                 .unwrap_or("Unknown service error");
             let error_message = message.to_owned();
+            if matches!(&reply.purpose, Purpose::CtfPreviewOpen { .. }) {
+                self.ctf_job_id = None;
+                self.ctf_progress_request = None;
+                self.ctf_index_request = None;
+                self.ctf_job_registered = false;
+            }
             self.status = StatusText::new("Операция отклонена", "Operation refused");
             if matches!(&reply.purpose, Purpose::Categories) {
                 self.categories.clear();
@@ -1961,6 +2096,43 @@ impl DesktopApp {
         let data = &reply.response["data"];
         let opening_existing = matches!(&reply.purpose, Purpose::Open { .. });
         match reply.purpose {
+            Purpose::CtfPreviewOpen { path, cache_root } => {
+                match LinkedCtf::parse_preview(path.clone(), cache_root.clone(), data) {
+                    Ok(link) => {
+                        self.clear_catalog();
+                        self.begin_ctf_job();
+                        let source_sha256 = link.source_sha256.clone();
+                        self.db = Some(path.clone());
+                        self.path_input = path.clone();
+                        self.integrity = CatalogIntegrity::LinkedReadOnly;
+                        self.shelf_context =
+                            ShelfContext::from_sqlite(&path).ok().map(|mut scope| {
+                                scope.catalog_key = format!("ctf:{source_sha256}");
+                                if let Some(store) = user_store() {
+                                    scope.user_store = store.to_string_lossy().into_owned();
+                                }
+                                scope
+                            });
+                        self.linked_ctf = Some(link);
+                        self.status = StatusText::new(
+                            "Просмотр доступен; подготовка поиска…",
+                            "Preview is ready; preparing search…",
+                        );
+                        self.load_volumes(ctx);
+                        if let Some(job_id) = self.ctf_job_id.clone() {
+                            self.ctf_index_request = Some(self.bus.send(
+                                Purpose::CtfIndexBackground { path: path.clone(), cache_root: cache_root.clone(), job_id: job_id.clone() },
+                                json!({"op":"ctf_sync","path":path,"cache_root":cache_root,"job_id":job_id}),
+                                ctx,
+                            ));
+                        }
+                    }
+                    Err(error) => {
+                        self.ctf_job_id = None;
+                        self.error = Some(error);
+                    }
+                }
+            }
             Purpose::LinkCtf { path, cache_root } => {
                 match LinkedCtf::parse_sync(path, cache_root, data) {
                     Ok(link) => {
@@ -2007,6 +2179,9 @@ impl DesktopApp {
                     self.load_page(ctx);
                 }
             }
+            Purpose::CtfIndexBackground { .. } | Purpose::CtfPreviewClose => {
+                unreachable!("Background CTF replies handled above")
+            }
             Purpose::LinkedRead { .. }
             | Purpose::CtfProgress { .. }
             | Purpose::CtfCancel { .. }
@@ -2046,8 +2221,33 @@ impl DesktopApp {
             Purpose::Volumes => match parse_volumes(data) {
                 Ok(volumes) => {
                     self.volumes = volumes;
-                    self.status = StatusText::new("Каталог открыт", "Catalog opened");
-                    self.load_disk_preferences(ctx);
+                    if self.linked_ctf.as_ref().is_some_and(|link| link.preview) {
+                        if let Some(volume) = self
+                            .volumes
+                            .iter()
+                            .find(|volume| volume.entry_count > 0)
+                            .or_else(|| self.volumes.first())
+                        {
+                            self.route = Route::Folder {
+                                volume_id: volume.id,
+                                parent_id: None,
+                            };
+                            self.offset = 0;
+                            self.status = StatusText::new(
+                                "Быстрый просмотр; поиск готовится…",
+                                "Quick preview; search is preparing…",
+                            );
+                            self.load_page(ctx);
+                        } else {
+                            self.status = StatusText::new(
+                                "В CTF нет доступных дисков",
+                                "CTF has no browsable volumes",
+                            );
+                        }
+                    } else {
+                        self.status = StatusText::new("Каталог открыт", "Catalog opened");
+                        self.load_disk_preferences(ctx);
+                    }
                 }
                 Err(e) => self.error = Some(e),
             },
@@ -4923,6 +5123,9 @@ impl eframe::App for DesktopApp {
         while let Some(reply) = self.bus.poll() {
             self.apply_reply(reply, &ctx);
         }
+        if self.active_request.is_none() {
+            self.promote_ready_ctf(&ctx);
+        }
         self.poll_scan_progress(&ctx);
         self.poll_ctf_progress(&ctx);
         self.handle_shortcuts(&ctx);
@@ -5163,6 +5366,7 @@ mod shortcut_tests {
             cache_root: "cache".into(),
             generation: "a".repeat(64),
             source_sha256: "b".repeat(64),
+            preview: false,
         });
         app.confirm_rescan = true;
         app.start_rescan(7, &ctx);

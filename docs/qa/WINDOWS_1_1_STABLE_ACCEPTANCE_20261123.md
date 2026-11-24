@@ -1,5 +1,7 @@
 # Windows 1.1 stable acceptance — 23 November 2026
 
+**Correction, 24 November 2026:** the owner reports that first opening a large CTF on Windows 10 still processes records after 15 minutes. This exposes P1-CTF-COLD-OPEN and invalidates the completeness of the earlier no-remaining-P1 conclusion below. The GUI full-catalog checks used a prepared SQLite derivative; the warm search benchmark did not cover cold CTF opening. Historical import completion and roundtrip integrity remain evidence for those specific operations, not acceptable first-open latency. See [defect and measurements](CTF_COLD_OPEN_DEFECT_20261124.md). Published tags and artifacts remain immutable; working-branch readiness is revoked pending a corrected candidate and actual GUI verification.
+
 Status: **PASS for the tested Windows 1.1 implementation; ready for final artifact verification and explicit stable publication**. Windows x64 only, unsigned, as requested by the owner. No remaining confirmed P0/P1 in the accepted scope. The readiness commit changes release records and the RC-publisher stable-version guard, with synthetic tests; it does not change the tested Rust product code. Its rebuilt exact-main installer must still be checked in the GUI before publication. This record identifies the previously measured artifact precisely and does not retroactively certify another installer.
 
 ## Scope and exact artifact

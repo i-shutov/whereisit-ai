@@ -10,9 +10,14 @@ pub struct LinkedCtf {
     pub cache_root: String,
     pub generation: String,
     pub source_sha256: String,
+    pub preview: bool,
 }
 
 impl LinkedCtf {
+    pub fn matches_source_snapshot(&self, path: &str, source_sha256: &str) -> bool {
+        self.path == path && self.source_sha256 == source_sha256
+    }
+
     /// Parse the `data` member of a successful `ctf_sync` service response.
     pub fn parse_sync(path: String, cache_root: String, data: &Value) -> Result<Self, String> {
         if path.trim().is_empty() || cache_root.trim().is_empty() {
@@ -36,6 +41,30 @@ impl LinkedCtf {
             cache_root,
             generation,
             source_sha256,
+            preview: false,
+        })
+    }
+
+    /// Fast read-only source view used while the derived search index builds.
+    pub fn parse_preview(path: String, cache_root: String, data: &Value) -> Result<Self, String> {
+        if path.trim().is_empty() || cache_root.trim().is_empty() {
+            return Err("CTF source and cache paths are required".to_owned());
+        }
+        if data.get("state").and_then(Value::as_str) != Some("browsable")
+            || data.get("original_ctf_read_only").and_then(Value::as_bool) != Some(true)
+            || data
+                .get("native_annotation_writes_allowed")
+                .and_then(Value::as_bool)
+                != Some(false)
+        {
+            return Err("CTF preview did not confirm a browsable read-only source".to_owned());
+        }
+        Ok(Self {
+            path,
+            cache_root,
+            generation: digest_field(data, "generation")?,
+            source_sha256: digest_field(data, "source_sha256")?,
+            preview: true,
         })
     }
 
@@ -46,6 +75,27 @@ impl LinkedCtf {
             .get("op")
             .and_then(Value::as_str)
             .ok_or_else(|| "Request operation is missing".to_owned())?;
+        if self.preview {
+            let mut out = Map::new();
+            out.insert("path".to_owned(), json!(self.path));
+            out.insert("generation".to_owned(), json!(self.generation));
+            let (mapped_op, fields): (&str, &[&str]) = match op {
+                "volumes" => ("ctf_preview_volumes", &[]),
+                "children" => (
+                    "ctf_preview_children",
+                    &["volume_id", "parent_id", "offset", "limit"],
+                ),
+                _ => {
+                    return Err(
+                        "Search preparation is in progress; folder browsing is available"
+                            .to_owned(),
+                    )
+                }
+            };
+            out.insert("op".to_owned(), json!(mapped_op));
+            copy_fields(&request, &mut out, fields);
+            return Ok(Value::Object(out));
+        }
         let mut out = Map::new();
         out.insert("path".to_owned(), json!(self.path));
         out.insert("cache_root".to_owned(), json!(self.cache_root));
@@ -277,6 +327,52 @@ mod tests {
         ] {
             assert!(linked.rewrite(json!({"op":op})).is_err(), "{op}");
         }
+    }
+
+    #[test]
+    fn preview_routes_only_folder_browsing_and_pins_source_generation() {
+        let preview_generation = "a".repeat(64);
+        let preview = LinkedCtf::parse_preview(
+            "source.ctf".into(),
+            "cache".into(),
+            &json!({
+                "state":"browsable", "generation":preview_generation, "source_sha256":source_sha(),
+                "source_bytes":140000000, "original_ctf_read_only":true,
+                "native_annotation_writes_allowed":false
+            }),
+        )
+        .unwrap();
+        assert!(preview.preview);
+        assert!(preview.matches_source_snapshot("source.ctf", &source_sha()));
+        assert!(!preview.matches_source_snapshot("other.ctf", &source_sha()));
+        assert!(!preview.matches_source_snapshot("source.ctf", &"c".repeat(64)));
+        let volumes = preview
+            .rewrite(json!({"op":"volumes","db":"ignored.sqlite"}))
+            .unwrap();
+        assert_eq!(volumes["op"], "ctf_preview_volumes");
+        assert_eq!(volumes["path"], "source.ctf");
+        assert_eq!(volumes["generation"], "a".repeat(64));
+        assert!(volumes.get("db").is_none());
+        let children = preview
+            .rewrite(json!({"op":"children","volume_id":2,"parent_id":4,"offset":50,"limit":25}))
+            .unwrap();
+        assert_eq!(children["op"], "ctf_preview_children");
+        assert_eq!(children["parent_id"], 4);
+        assert_eq!(children["limit"], 25);
+        assert!(preview
+            .rewrite(json!({"op":"search_fast","query":"ext:mkv"}))
+            .unwrap_err()
+            .contains("preparation is in progress"));
+        assert!(preview
+            .rewrite(json!({"op":"update_ctf_description","entry_id":1}))
+            .is_err());
+    }
+
+    #[test]
+    fn preview_open_rejects_non_browsable_or_write_enabled_sources() {
+        let data = json!({"state":"browsable","generation":source_sha(),"source_sha256":source_sha(),
+            "original_ctf_read_only":true,"native_annotation_writes_allowed":true});
+        assert!(LinkedCtf::parse_preview("x.ctf".into(), "cache".into(), &data).is_err());
     }
 
     #[test]

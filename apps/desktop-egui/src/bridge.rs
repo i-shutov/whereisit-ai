@@ -171,10 +171,22 @@ pub enum Purpose {
     CheckCatalogIntegrity {
         path: String,
     },
+    // Retained for the complete-sync regression harness.
+    #[allow(dead_code)]
     LinkCtf {
         path: String,
         cache_root: String,
     },
+    CtfPreviewOpen {
+        path: String,
+        cache_root: String,
+    },
+    CtfIndexBackground {
+        path: String,
+        cache_root: String,
+        job_id: String,
+    },
+    CtfPreviewClose,
     ImportCtf {
         output: String,
     },

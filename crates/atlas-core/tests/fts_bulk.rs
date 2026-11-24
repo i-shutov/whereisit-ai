@@ -183,6 +183,7 @@ fn failed_initial_fast_import_restores_every_trigger_and_all_rows() {
 fn panicking_bulk_import_does_not_leave_fts_trigger_or_data_damage() {
     let dir = tempfile::tempdir().unwrap();
     let mut c = Catalog::open(dir.path().join("panic.sqlite")).unwrap();
+    let indexes_before = index_definitions(&c);
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _: Result<()> = c.bulk_import_many_fast_fts(|s| {
             s.start_volume("new", "offline")?;
@@ -191,6 +192,7 @@ fn panicking_bulk_import_does_not_leave_fts_trigger_or_data_damage() {
         });
     }));
     assert!(outcome.is_err(), "panic must propagate after rollback");
+    assert_eq!(index_definitions(&c), indexes_before);
     assert_eq!(c.volumes().unwrap().len(), 0);
     let triggers: i64 = c
         .conn()
@@ -236,4 +238,87 @@ fn already_populated_v3_falls_back_to_normal_incremental_triggers() {
     write_synthetic(&mut c, true).unwrap();
     fts_integrity(&c);
     assert_eq!(c.search("ext:flac", None, 0, 5).unwrap().total, 251);
+}
+
+fn index_definitions(c: &Catalog) -> Vec<(String, String)> {
+    c.conn().prepare("SELECT name,sql FROM sqlite_master WHERE type='index' AND tbl_name='entries_core' ORDER BY name")
+        .unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap().collect::<std::result::Result<_, _>>().unwrap()
+}
+
+#[test]
+fn fresh_bulk_defers_secondary_indexes_and_restores_exact_schema() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = Catalog::open(dir.path().join("index-build.sqlite")).unwrap();
+    let before = index_definitions(&c);
+    assert_eq!(before.len(), 6);
+    c.bulk_import_many_fast_fts(|s| {
+        let indexes: i64 = s.transaction().query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='index' AND tbl_name='entries_core'",
+            [],
+            |r| r.get(0),
+        )?;
+        assert_eq!(
+            indexes, 0,
+            "secondary indexes must be built once after loading"
+        );
+        s.start_volume("Synthetic", "offline")?;
+        let parent = s.insert(&entry("東京", "東京", None, "directory", ""))?;
+        for n in (0..1000).rev() {
+            let name = format!("item-{n:04}.flac");
+            s.insert(&entry(
+                &name,
+                &format!("東京/{name}"),
+                Some(parent),
+                "file",
+                "",
+            ))?;
+        }
+        s.finish_volume()?;
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(index_definitions(&c), before);
+    fts_integrity(&c);
+    assert_eq!(c.search("ext:flac", None, 0, 10).unwrap().total, 1000);
+    // Existing catalogs keep every index throughout incremental import.
+    c.bulk_import_many_fast_fts(|s| {
+        let indexes: i64 = s.transaction().query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='index' AND tbl_name='entries_core'",
+            [],
+            |r| r.get(0),
+        )?;
+        assert_eq!(indexes, 6);
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn failed_bulk_restores_secondary_indexes_exactly() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = Catalog::open(dir.path().join("index-rollback.sqlite")).unwrap();
+    let before = index_definitions(&c);
+    let outcome: Result<()> = c.bulk_import_many_fast_fts(|s| {
+        s.start_volume("Synthetic", "offline")?;
+        s.insert(&entry("bad", "bad", Some(i64::MAX), "file", ""))?;
+        Ok(())
+    });
+    assert!(outcome.is_err());
+    assert_eq!(index_definitions(&c), before);
+    assert!(c.volumes().unwrap().is_empty());
+    fts_integrity(&c);
+}
+
+#[test]
+fn fast_bulk_never_suspends_a_replaced_unique_index() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = Catalog::open(dir.path().join("unique-index.sqlite")).unwrap();
+    c.conn().execute_batch("DROP INDEX entries_name_size; CREATE UNIQUE INDEX entries_name_size ON entries_core(volume_id,name);").unwrap();
+    let before = index_definitions(&c);
+    let outcome: Result<()> =
+        c.bulk_import_many_fast_fts(|_| panic!("unsafe schema must be rejected before loading"));
+    assert_eq!(outcome.unwrap_err().code, "schema_integrity");
+    assert_eq!(index_definitions(&c), before);
+    fts_integrity(&c);
 }
