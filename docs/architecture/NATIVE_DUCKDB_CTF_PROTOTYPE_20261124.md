@@ -56,6 +56,14 @@ semantics, cancellation and connection reuse. Copy candidates and tabular export
 continue to use the immutable source and bounded streaming operations independently
 of the selected search executor.
 
+The complete local release-mode workspace run with `atlas-service/duckdb-query`
+and `atlas-desktop-egui/qa-duckdb` passed **377 tests**, with three manual benchmarks
+ignored. Workspace/all-target release-mode Clippy with warnings denied and the
+format check passed. Toolchain: rustc/cargo **1.100.0**, native DuckDB **1.4.1**.
+Earlier default-feature workspace validation passed 370 tests before the final
+candidate-order and export-cancellation regressions were added. The hosted
+feature workflow remains separate evidence; local success is not a CI claim.
+
 The ignored release-mode `direct_ctf_first_search_and_query_latency` benchmark
 accepts `CTF_BENCH_EXECUTOR`. A private working copy and optional read-only SQLite
 reference stay outside the repository. The benchmark reports only aggregate
