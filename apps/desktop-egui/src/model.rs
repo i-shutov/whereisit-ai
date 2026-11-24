@@ -99,6 +99,10 @@ impl Entry {
     pub fn is_directory(&self) -> bool {
         self.kind == "directory"
     }
+
+    pub fn is_container(&self) -> bool {
+        matches!(self.kind.as_str(), "directory" | "archive")
+    }
 }
 
 #[derive(Clone, Debug, Default)]

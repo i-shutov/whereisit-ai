@@ -1648,11 +1648,7 @@ pub(super) mod tests {
         );
         let mut deep = Vec::with_capacity(MAX_ANCESTOR_DEPTH + 1);
         for index in 0..=MAX_ANCESTOR_DEPTH {
-            deep.push(entry(
-                "deep",
-                index.checked_sub(1),
-                EntryKind::Directory,
-            ));
+            deep.push(entry("deep", index.checked_sub(1), EntryKind::Directory));
         }
         assert_eq!(
             ancestor_items(1, 1, &deep, deep.len() as i64)

@@ -113,3 +113,32 @@ children, with the same expanded ancestor tree and breadcrumb. The upper map
 action was corrected after this check exposed that it used only search scope.
 Generated tests also cover an ancestor beyond 250 siblings and distinguish
 known folder IDs from legacy path-only search targets.
+
+## Native integration checkpoint (in progress)
+
+The first isolated Windows release build compiled. Actual native interaction on
+60 generated disks verified disk rows in the central overview, single-click
+root browsing, Unicode folder entry, immediate children, synchronized expanded
+ancestors, structural Up and Back restoring a selected child. A duplicate-name
+search result on disk 30 revealed that exact file and its breadcrumb without
+opening the same-named file on disk 1. Source editing was not exercised.
+
+This intermediate GUI pass exposed missing Enter activation and a tree viewport
+that stayed on an older expanded disk after revealing a result on another disk.
+These must be fixed and checked on the final candidate; the intermediate build
+is not complete acceptance. UI automation's element coordinates also proved
+unreliable after maximizing; screenshot-relative input was used for verification.
+
+CI caught eager unsigned subtraction in the generated deep-parent test fixture;
+the fixture now uses checked subtraction. All 69 default-feature service unit
+tests passed locally in debug mode, including depth rejection. Formatting is
+included in the next native checkpoint. No source-catalog hash changed.
+
+After fixing the findings, the isolated Windows release-mode desktop suite
+passed all 103 tests. Coverage includes initial overview without any query,
+disk-root browsing, branch-query clear, stale ancestor replies, late ancestors,
+focused file pages and Back/Up, selected-container Enter without file execution,
+map scope/category preservation, imported catalog browsing before edit/export,
+and the existing narrow-window Path regression. `cargo fmt --all -- --check`
+and `git diff --check` passed. Final native GUI verification remains pending
+until the rebuilt executable is exercised.

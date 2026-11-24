@@ -24,6 +24,7 @@ pub fn scan_request(db: &str, root: &str, label: &str, job_id: &str) -> Value {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Route {
+    Catalog,
     Search {
         query: String,
         volume_id: Option<i64>,
@@ -46,6 +47,7 @@ pub enum Route {
 impl Route {
     pub fn request(&self, db: &str, offset: u64, limit: u64) -> Value {
         match self {
+            Self::Catalog => json!({"op":"catalog_overview","db":db}),
             Self::Search { query, volume_id } => json!({
                 "op":"search_fast", "db":db, "query":query,
                 "volume_id":volume_id, "offset":offset, "limit":limit
@@ -97,6 +99,7 @@ impl Route {
     /// adapter pins these same scope fields to its immutable source generation.
     pub fn export_request(&self, db: &str, path: &str, kind: ExportKind) -> Option<Value> {
         match self {
+            Self::Catalog => None,
             Self::Search { query, volume_id } => Some(json!({
                 "op":kind.operation(), "db":db, "path":path, "mode":"search",
                 "query":query, "volume_id":volume_id, "overwrite":false
@@ -258,6 +261,21 @@ pub enum Purpose {
         linked_generation: Option<String>,
     },
     AnalyticsCancel,
+    TreeChildren {
+        db: String,
+        catalog_generation: u64,
+        linked_generation: Option<String>,
+        volume_id: i64,
+        parent_id: Option<i64>,
+        offset: u64,
+    },
+    TreeAncestors {
+        db: String,
+        catalog_generation: u64,
+        linked_generation: Option<String>,
+        volume_id: i64,
+        entry_id: i64,
+    },
     LocalAnalyzer {
         job_id: String,
         generation: u64,
