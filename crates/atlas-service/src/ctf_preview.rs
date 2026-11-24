@@ -1650,12 +1650,12 @@ pub(super) mod tests {
         for index in 0..=MAX_ANCESTOR_DEPTH {
             deep.push(entry(
                 "deep",
-                (index > 0).then_some(index - 1),
+                index.checked_sub(1),
                 EntryKind::Directory,
             ));
         }
         assert_eq!(
-            ancestor_items(1, 1, &deep, (deep.len() as i64))
+            ancestor_items(1, 1, &deep, deep.len() as i64)
                 .unwrap_err()
                 .code,
             "ctf_tree"
