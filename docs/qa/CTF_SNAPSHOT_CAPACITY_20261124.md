@@ -17,8 +17,10 @@ entry-slot capacity from 62,914,560 to 44,400,000 bytes. Complete serialized CTF
 bytes before and after compaction were identical, and roundtrip record counts
 were preserved.
 
-An isolated parse-only experiment read the full frozen working copy, dropped the
-raw input buffer and compared aggregate capacities and process counters. There
+An isolated local parse-only experiment read a frozen working copy derived from
+the owner's private catalog, dropped the raw input buffer and compared aggregate
+capacities and process counters. Only aggregate measurements are published; the
+catalog, per-disk/row data and raw evidence remain local and are not CI inputs. There
 were 44 disks and 3,046,133 records; `size_of::<CtfEntry>()` was 120 bytes.
 
 | Counter | Before | After `shrink_to_fit()` |
