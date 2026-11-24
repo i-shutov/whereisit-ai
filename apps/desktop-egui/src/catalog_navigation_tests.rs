@@ -60,12 +60,14 @@ fn tree_directory(id: i64, parent_id: Option<i64>, name: String) -> Entry {
 
 fn render_tree_once(app: &mut DesktopApp, ctx: &egui::Context, time: f64) -> (f32, f32) {
     let mut result = None;
-    let mut input = egui::RawInput::default();
-    input.screen_rect = Some(egui::Rect::from_min_size(
-        egui::Pos2::ZERO,
-        egui::vec2(640.0, 360.0),
-    ));
-    input.time = Some(time);
+    let input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(640.0, 360.0),
+        )),
+        time: Some(time),
+        ..Default::default()
+    };
     let mut output = ctx.run_pass(input, |ctx| {
         egui::Area::new(egui::Id::unique("late-ancestor-tree-area")).show(ctx, |ui| {
             let scroll = egui::ScrollArea::vertical()

@@ -7650,3 +7650,7 @@ fn appearance_round_trip_saves_only_language_and_theme() {
 
 #[path = "catalog_overview.rs"]
 mod catalog_overview;
+
+#[cfg(test)]
+#[path = "catalog_double_click_tests.rs"]
+mod catalog_double_click_tests;

@@ -159,3 +159,17 @@ selected child restoration, and a file inspector retaining disk and recorded
 path. Original, frozen copy and navigation copy byte hashes still match the
 private baseline. No filenames, paths or screenshots from that catalog are
 included here. Final cold-tree scroll retest remains pending on the rebuilt fix.
+
+The actual results-table synthetic egui input test confirms one click selects a
+folder and two timed pointer press/release pairs open it. All 105 isolated
+desktop tests passed; strict all-target desktop Clippy also passed after fixing
+the test input initializer. The Windows automation double-click abstraction
+did not establish physical double-click acceptance, so it is not claimed here.
+
+Final cold-tree GUI retest is BLOCKED by the interactive desktop environment:
+Windows `GetCursorPos` returns access denied, although session 2 is Active and
+the new synthetic window's accessibility text remains readable. Capture is
+stale from the preceding full-copy window. Fresh window selection and explicit
+activation did not recover input. The owner must return the RDP session to an
+unlocked ordinary desktop before input is retried. This is not a product PASS
+or a proven application defect. No Windows security settings were changed.
