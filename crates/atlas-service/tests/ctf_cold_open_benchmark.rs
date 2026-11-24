@@ -337,3 +337,75 @@ fn direct_ctf_first_search_and_query_latency() {
         true
     );
 }
+
+#[test]
+#[ignore = "manual full-catalog direct analytics benchmark and SQLite parity, release mode only"]
+fn direct_ctf_analytics_latency_and_parity() {
+    let _guard = BENCHMARK_LOCK.lock().unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let source = benchmark_source(temp.path());
+    let digest_before = source_digest(&source);
+    let samples: usize = std::env::var("CTF_BENCH_SAMPLES")
+        .unwrap_or_else(|_| "5".into())
+        .parse()
+        .unwrap();
+    assert!((1..=100).contains(&samples));
+    let reference = std::env::var_os("CTF_BENCH_SQLITE")
+        .map(|path| atlas_core::Catalog::open_readonly(std::path::PathBuf::from(path)).unwrap());
+    let opened = invoke(json!({"op":"ctf_preview_open","path":source}));
+    assert_eq!(opened["ok"], true, "direct open failed (details omitted)");
+    let generation = opened["data"]["generation"].clone();
+    let volumes = invoke(json!({"op":"ctf_preview_volumes","path":source,"generation":generation}));
+    let largest_volume = volumes["data"]["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .max_by_key(|volume| volume["entry_count"].as_u64().unwrap_or(0))
+        .map(|volume| volume["id"].clone())
+        .unwrap();
+    for (label, group, volume, highlight) in [
+        ("global_tree", "volumes", Value::Null, ""),
+        ("global_extensions", "extensions", Value::Null, "ext:mkv"),
+        ("global_categories", "categories", Value::Null, ""),
+        ("largest_volume_tree", "volumes", largest_volume, ""),
+    ] {
+        let request = json!({"op":"ctf_preview_analytics","path":source,"generation":generation,
+            "group_by":group,"volume_id":volume,"highlight_query":highlight,
+            "max_depth":4,"max_nodes":128});
+        let expected = reference.as_ref().map(|catalog| {
+            let typed = serde_json::from_value(request.clone()).unwrap();
+            serde_json::to_value(catalog.analytics(&typed, || false).unwrap()).unwrap()
+        });
+        let mut timings = Vec::with_capacity(samples);
+        for _ in 0..samples {
+            let start = Instant::now();
+            let actual = invoke(request.clone());
+            timings.push(start.elapsed().as_secs_f64() * 1000.0);
+            assert_eq!(actual["ok"], true, "direct analytics failed: {label}");
+            if let Some(expected) = &expected {
+                assert!(
+                    &actual["data"]["result"] == expected,
+                    "SQLite analytics parity failed: {label} (values intentionally omitted)"
+                );
+            }
+        }
+        timings.sort_by(f64::total_cmp);
+        let rank = |quantile: f64| {
+            timings[((timings.len() as f64 * quantile).ceil() as usize).saturating_sub(1)]
+        };
+        eprintln!(
+            "analytics_class={label} samples={samples} p50_ms={:.3} p95_ms={:.3}",
+            rank(0.5),
+            rank(0.95)
+        );
+    }
+    report_process_memory();
+    assert!(
+        source_digest(&source) == digest_before,
+        "source bytes changed"
+    );
+    assert_eq!(
+        invoke(json!({"op":"ctf_preview_close","path":source,"generation":generation}))["ok"],
+        true
+    );
+}

@@ -209,6 +209,162 @@ fn ctf_open_and_search_use_direct_read_only_preview_without_sync() {
 }
 
 #[test]
+fn linked_ctf_analytics_uses_pinned_preview_and_rejects_stale_generation() {
+    let ctx = egui::Context::default();
+    let mut app = DesktopApp::with_context(&ctx, None);
+    let source_path = "C:/synthetic/source.ctf".to_owned();
+    let generation = "a".repeat(64);
+    let source_sha256 = "b".repeat(64);
+    app.db = Some(source_path.clone());
+    app.linked_ctf = Some(
+        LinkedCtf::parse_preview(
+            source_path.clone(),
+            String::new(),
+            &json!({"state":"browsable","generation":generation,
+                "source_sha256":source_sha256,"original_ctf_read_only":true,
+                "native_annotation_writes_allowed":false}),
+        )
+        .unwrap(),
+    );
+    app.analytics_volume = Some(4);
+    app.analytics_folder = Some(19);
+    app.analytics_group = "extensions".into();
+    app.analytics_highlight = "ext:mkv".into();
+
+    let observed = Arc::new(Mutex::new(None::<Value>));
+    let observed_worker = observed.clone();
+    let response_generation = generation.clone();
+    app.bus.set_handler(move |request| {
+        *observed_worker.lock().unwrap() = Some(request.clone());
+        json!({"ok":true,"data":{"generation":response_generation,
+            "source_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "read_only":true,"result":{"root":{"id":"volume-root"},
+                "totals":{"files":1},"breadcrumbs":[]}}})
+    });
+    app.request_analytics(&ctx, false);
+    let reply = next_reply(&app);
+    app.apply_reply(reply, &ctx);
+
+    let request = observed.lock().unwrap().clone().unwrap();
+    assert_eq!(request["op"], "ctf_preview_analytics");
+    assert_eq!(request["path"], source_path);
+    assert_eq!(request["generation"], generation);
+    assert_eq!(request["volume_id"], 4);
+    assert_eq!(request["folder_entry_id"], 19);
+    assert_eq!(request["group_by"], "extensions");
+    assert_eq!(request["highlight_query"], "ext:mkv");
+    assert!(request.get("db").is_none());
+    assert_eq!(
+        app.analytics_data.as_ref().unwrap()["root"]["id"],
+        "volume-root"
+    );
+
+    let preserved = app.analytics_data.clone().unwrap();
+    app.bus.set_handler(move |_| {
+        json!({"ok":true,"data":{"generation":"c".repeat(64),
+            "source_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "read_only":true,"result":{"root":{"id":"stale"},
+                "totals":{"files":1},"breadcrumbs":[]}}})
+    });
+    app.request_analytics(&ctx, false);
+    // Model a newer same-generation reply winning before an older envelope arrives.
+    app.analytics_data = Some(preserved.clone());
+    let stale_reply = next_reply(&app);
+    app.apply_reply(stale_reply, &ctx);
+    assert_eq!(
+        app.analytics_data.unwrap()["root"]["id"],
+        preserved["root"]["id"]
+    );
+    assert!(app.analytics_error.is_some());
+}
+
+#[test]
+fn legacy_linked_ctf_analytics_stays_blocked_without_preview_pinning() {
+    let ctx = egui::Context::default();
+    let mut app = DesktopApp::with_context(&ctx, None);
+    app.db = Some("C:/synthetic/legacy-source.ctf".into());
+    app.linked_ctf = Some(
+        LinkedCtf::parse_sync(
+            "C:/synthetic/legacy-source.ctf".into(),
+            "C:/synthetic/cache".into(),
+            &json!({"state":"ready","generation":"a".repeat(64),
+                "source_sha256":"b".repeat(64),"original_ctf_read_only":true,
+                "native_annotation_writes_allowed":false}),
+        )
+        .unwrap(),
+    );
+
+    app.request_analytics(&ctx, false);
+    app.request_analytics(&ctx, true);
+    assert!(app.analytics_loaded);
+    assert!(app.slices_loaded);
+    assert!(app.analytics_error.is_some());
+    assert!(app.slices_error.is_some());
+    assert!(app.analytics_job_id.is_none());
+    assert!(app.slices_job_id.is_none());
+}
+
+#[test]
+fn pending_sql_analytics_cancels_sql_registry_after_ctf_link_is_current() {
+    let ctx = egui::Context::default();
+    let mut app = DesktopApp::with_context(&ctx, None);
+    let job_id = format!("analytics-origin-test-{}", std::process::id());
+    atlas_service::prepare_analytics_job(&job_id).unwrap();
+    app.analytics_job_id = Some(job_id.clone());
+    app.analytics_preview_job = false;
+    app.linked_ctf = Some(
+        LinkedCtf::parse_preview(
+            "C:/synthetic/source.ctf".into(),
+            String::new(),
+            &json!({"state":"browsable","generation":"a".repeat(64),
+                "source_sha256":"b".repeat(64),"original_ctf_read_only":true,
+                "native_annotation_writes_allowed":false}),
+        )
+        .unwrap(),
+    );
+    let (sent, received) = std::sync::mpsc::channel();
+    app.bus.set_handler(move |request| {
+        sent.send(request.clone()).unwrap();
+        json!({"ok":true,"data":{"cancelled":true}})
+    });
+
+    app.cancel_analytics(&ctx, false, true);
+    let reply = next_reply(&app);
+    let request = received.recv().unwrap();
+    assert_eq!(request["op"], "analytics_cancel");
+    assert_eq!(request["job_id"], job_id);
+    app.apply_reply(reply, &ctx);
+    atlas_service::cancel_analytics_job(&job_id).unwrap();
+}
+
+#[test]
+fn pending_ctf_analytics_cancels_preview_registry_after_link_is_cleared() {
+    let ctx = egui::Context::default();
+    let mut app = DesktopApp::with_context(&ctx, None);
+    let job_id = format!("ctf-analytics-origin-test-{}", std::process::id());
+    let prepared = atlas_service::prepare_ctf_preview_analytics_job(
+        &json!({"op":"ctf_preview_analytics","job_id":job_id,
+            "path":"synthetic-does-not-open.ctf","generation":"synthetic"})
+        .to_string(),
+    )
+    .unwrap();
+    app.analytics_job_id = Some(job_id.clone());
+    app.analytics_preview_job = true;
+    // Simulate a pending cancellation that arrives after the catalog scope changed.
+    app.linked_ctf = None;
+
+    app.cancel_analytics(&ctx, false, true);
+    atlas_service::cancel_ctf_preview_analytics_job(&job_id).unwrap();
+    drop(prepared);
+    assert_eq!(
+        atlas_service::cancel_ctf_preview_analytics_job(&job_id)
+            .unwrap_err()
+            .code,
+        "not_found"
+    );
+}
+
+#[test]
 fn linked_ctf_browse_import_edit_and_export_through_the_service() {
     let _preview_lock = CTF_PREVIEW_TEST_LOCK
         .lock()

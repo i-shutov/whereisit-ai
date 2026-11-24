@@ -102,6 +102,19 @@ impl LinkedCtf {
                     "ctf_preview_children_focused",
                     &["volume_id", "parent_id", "entry_id", "limit"],
                 ),
+                "analytics" => (
+                    "ctf_preview_analytics",
+                    &[
+                        "job_id",
+                        "volume_id",
+                        "folder_entry_id",
+                        "group_by",
+                        "highlight_query",
+                        "category_id",
+                        "max_depth",
+                        "max_nodes",
+                    ],
+                ),
                 "copy_candidates" => (
                     "ctf_preview_copy_candidates",
                     &[
@@ -159,7 +172,7 @@ impl LinkedCtf {
                     return Err(
                         "This operation requires importing the CTF into a native SQLite catalog"
                             .to_owned(),
-                    )
+                    );
                 }
             };
             out.insert("op".to_owned(), json!(mapped_op));
@@ -460,6 +473,22 @@ mod tests {
         assert_eq!(search["offset"], 50);
         assert_eq!(search["limit"], 25);
         assert_eq!(search["job_id"], "search-1");
+        let analytics = preview
+            .rewrite(json!({"op":"analytics","db":"ignored.sqlite",
+                "job_id":"analytics-1","volume_id":4,"folder_entry_id":19,
+                "group_by":"extensions","highlight_query":"ext:mkv",
+                "category_id":7,"max_depth":4,"max_nodes":128}))
+            .unwrap();
+        assert_eq!(analytics["op"], "ctf_preview_analytics");
+        assert_eq!(analytics["path"], "source.ctf");
+        assert_eq!(analytics["generation"], preview_generation);
+        assert_eq!(analytics["job_id"], "analytics-1");
+        assert_eq!(analytics["group_by"], "extensions");
+        assert_eq!(analytics["highlight_query"], "ext:mkv");
+        assert_eq!(analytics["category_id"], 7);
+        assert_eq!(analytics["max_depth"], 4);
+        assert_eq!(analytics["max_nodes"], 128);
+        assert!(analytics.get("db").is_none());
         for (op, format, output) in [
             ("export_csv", "csv", "C:/fixtures/results.csv"),
             ("export_json", "json", "C:/fixtures/results.json"),

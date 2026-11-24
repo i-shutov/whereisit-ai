@@ -30,7 +30,7 @@ pub(super) struct Snapshot {
     pub(super) parsed: Arc<CtfCatalog>,
     volumes: Vec<Volume>,
     pub(super) id_bases: Vec<i64>,
-    children: Vec<HashMap<Option<i64>, Vec<usize>>>,
+    pub(super) children: Vec<HashMap<Option<i64>, Vec<usize>>>,
     name_order: OnceLock<Vec<RowRef>>,
     #[cfg(feature = "duckdb-query")]
     pub(super) duckdb: Mutex<Option<crate::ctf_duckdb::Engine>>,
@@ -98,6 +98,9 @@ static GENERATION_COUNTER: AtomicU64 = AtomicU64::new(1);
 fn current() -> &'static Mutex<Option<Arc<Snapshot>>> {
     CURRENT.get_or_init(|| Mutex::new(None))
 }
+
+#[cfg(test)]
+pub(super) static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 fn failure(code: &'static str, message: &'static str) -> Error {
     Error::new(code, message)
@@ -424,7 +427,7 @@ impl MetadataQueryContext for DirectContext<'_> {
     }
 }
 
-fn relative_path(disk: &ctf_format::CtfDisk, index: usize) -> String {
+pub(super) fn relative_path(disk: &ctf_format::CtfDisk, index: usize) -> String {
     let mut components = Vec::new();
     let mut cursor = Some(index);
     while let Some(current) = cursor {
@@ -451,6 +454,22 @@ fn matches_row(
     if volume_id.is_some_and(|filter| filter != actual_volume_id) {
         return Ok(false);
     }
+    Ok(matches_metadata(
+        snapshot,
+        volume_index,
+        entry_index,
+        query,
+        needs_extension,
+    ))
+}
+
+pub(super) fn matches_metadata(
+    snapshot: &Snapshot,
+    volume_index: usize,
+    entry_index: usize,
+    query: &MetadataQuery,
+    needs_extension: bool,
+) -> bool {
     let disk = &snapshot.parsed.disks[volume_index];
     let entry = &disk.entries[entry_index];
     let kind = match entry.kind {
@@ -482,7 +501,7 @@ fn matches_row(
         description: &entry.description,
         tags: "",
     };
-    Ok(query.matches(&record, &context))
+    query.matches(&record, &context)
 }
 
 fn name_order(snapshot: &Snapshot) -> &[RowRef] {
@@ -1210,11 +1229,9 @@ pub(crate) fn parsed_for_import(path: &Path, sha256: &str) -> Option<Arc<CtfCata
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use ctf_format::{write_ctf, CtfCatalog, CtfDisk, CtfEntry};
-    use std::sync::Mutex;
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn entry(name: &str, parent: Option<usize>, kind: EntryKind) -> CtfEntry {
         CtfEntry {

@@ -144,3 +144,10 @@ conversion behind the Open command again or declare the cold-open defect closed
 on search-only coverage.
 
 Keep `stable_ready=false`. Published 1.1.0 artifacts remain immutable.
+
+Follow-up on 24 November: a separate development change now implements direct
+Rust aggregates and native volume-map/slices routing. Complete-response parity,
+latency and actual GUI cancellation/context evidence are recorded in
+[the direct analytics checkpoint](../qa/DIRECT_CTF_ANALYTICS_20261124.md).
+That follow-up does not establish DuckDB search GUI cancellation or installed
+hotfix acceptance; the earlier checkpoint above remains historical evidence.
