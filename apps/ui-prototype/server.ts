@@ -2473,6 +2473,24 @@ async function startServer() {
   });
 
   // 6. Main Search / Browse / 4-Mode Video Duplicates / Copy Candidates Endpoint
+  app.post('/api/catalog/ancestors', (req: Request, res: Response) => {
+    const volumeId = Number(req.body?.volumeId);
+    let parentId = req.body?.parentId === null ? null : Number(req.body?.parentId);
+    if (!Number.isInteger(volumeId) || (parentId !== null && !Number.isInteger(parentId))) {
+      return res.status(400).json({ error: 'Invalid folder scope' });
+    }
+    const ancestors: { id: number; name: string }[] = [];
+    const visited = new Set<number>();
+    while (parentId !== null && !visited.has(parentId)) {
+      visited.add(parentId);
+      const folder = rawEntries.find((entry) => entry.id === parentId && entry.volumeId === volumeId && entry.kind === 'directory');
+      if (!folder) return res.status(404).json({ error: 'Folder not found' });
+      ancestors.push({ id: folder.id, name: folder.name });
+      parentId = folder.parentId;
+    }
+    return res.json({ ancestors: ancestors.reverse() });
+  });
+
   app.post('/api/catalog/query', async (req: Request, res: Response) => {
     const started = performance.now();
     const {

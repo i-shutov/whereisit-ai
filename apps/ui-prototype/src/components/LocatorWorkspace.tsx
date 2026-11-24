@@ -40,7 +40,9 @@ import {
   formatUnixDate,
 } from '../utils/format';
 import { useI18n } from '../i18n';
+import { CatalogNavigationTree } from './CatalogNavigationTree';
 import { buildSearchJumpDefaults } from '../utils/searchJump';
+import { breadcrumbPath, destinationForEmptyQuery } from '../utils/catalogNavigation';
 
 interface NavigationSnapshot {
   mode: 'search' | 'browse' | 'duplicates' | 'copy_candidates';
@@ -54,6 +56,8 @@ interface NavigationSnapshot {
   candidateVolumeId: number | null;
   selectedEntryId: number | null;
   offset: number;
+  crumbs: { id: number; name: string }[];
+  catalogOverview: boolean;
 }
 
 export interface SearchPresetJump {
@@ -137,10 +141,12 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
   const [activeTypeChip, setActiveTypeChip] = useState('');
   const [activeSizeChip, setActiveSizeChip] = useState('');
   const [mode, setMode] = useState<'search' | 'browse' | 'duplicates' | 'copy_candidates'>('search');
+  const [catalogOverview, setCatalogOverview] = useState(true);
   const [duplicateMode, setDuplicateMode] = useState<DuplicateCriterion>('video_rips');
   const [showDupExplainer, setShowDupExplainer] = useState(false);
   const [scopedVolumeId, setScopedVolumeId] = useState<number | null>(null);
   const [browseParentId, setBrowseParentId] = useState<number | null>(null);
+  const [browseCrumbs, setBrowseCrumbs] = useState<{ id: number; name: string }[]>([]);
   const [folderPrefix, setFolderPrefix] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [copySourceEntryId, setCopySourceEntryId] = useState<number | null>(null);
@@ -181,6 +187,7 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
   const debounceTimerRef = useRef<number | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const latestRequestIdRef = useRef<string | null>(null);
+  const ancestorsRequestRef = useRef(0);
   const handledPresetNonceRef = useRef<number | null | undefined>(undefined);
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
   const keyboardHandlerRef = useRef<((event: KeyboardEvent) => void) | null>(null);
@@ -296,18 +303,23 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
     if (handledPresetNonceRef.current === nonce) return;
     handledPresetNonceRef.current = nonce;
     if (!presetJump) {
-      void runCatalogQuery({});
+      setCatalogOverview(true);
       return;
     }
     const jump = buildSearchJumpDefaults(presetJump);
+    const emptyGlobalJump = jump.mode === 'search' && !jump.query.trim() && jump.volumeId === null && !jump.folderPrefix;
+    const emptyDiskJump = jump.mode === 'search' && !jump.query.trim() && jump.volumeId !== null && !jump.folderPrefix;
+    const jumpMode = emptyDiskJump ? 'browse' : jump.mode;
     setQueryInput(jump.query);
     setActiveTypeChip('');
     setActiveSizeChip('');
     setAppliedQuery(jump.query);
-    setMode(jump.mode);
+    setMode(jumpMode);
+    setCatalogOverview(emptyGlobalJump);
     setDuplicateMode(jump.duplicateMode);
     setScopedVolumeId(jump.volumeId);
     setBrowseParentId(jump.parentId);
+    setBrowseCrumbs([]);
     setFolderPrefix(jump.folderPrefix);
     setSelectedCategory(jump.category);
     setCopySourceEntryId(jump.sourceEntryId);
@@ -318,8 +330,12 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
     setSelectedEntryId(null);
     setSelectedRegisterDiskId(jump.volumeId ?? 1);
 
+    if (emptyGlobalJump) {
+      setPageData(null);
+      return;
+    }
     void runCatalogQuery({
-      nextMode: jump.mode,
+      nextMode: jumpMode,
       nextDuplicateMode: jump.duplicateMode,
       nextQuery: jump.query,
       nextVolumeId: jump.volumeId,
@@ -471,17 +487,7 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
         } else if (e.key === 'Enter' && selectedEntry) {
           e.preventDefault();
           if (selectedEntry.kind === 'directory') {
-            pushHistory();
-            setMode('browse');
-            setScopedVolumeId(selectedEntry.volumeId);
-            setBrowseParentId(selectedEntry.id);
-            setOffset(0);
-            void runCatalogQuery({
-              nextMode: 'browse',
-              nextVolumeId: selectedEntry.volumeId,
-              nextParentId: selectedEntry.id,
-              nextOffset: 0,
-            });
+            handleOpenFolder(selectedEntry);
           } else if (selectedEntry.duplicateCount > 1) {
             handleOpenCopyCandidates(selectedEntry);
           }
@@ -498,7 +504,7 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [isActive]);
 
-  const pushHistory = () => {
+  const pushHistory = (restoreEntryId: number | null = selectedEntryId) => {
     setNavStack((prev) => [
       ...prev.slice(-15),
       {
@@ -511,8 +517,10 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
         category: selectedCategory,
         sourceEntryId: copySourceEntryId,
         candidateVolumeId,
-        selectedEntryId,
+        selectedEntryId: restoreEntryId,
         offset,
+        crumbs: browseCrumbs,
+        catalogOverview,
       },
     ]);
   };
@@ -520,28 +528,29 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
   const handleQueryInputChange = (val: string) => {
     setQueryInput(val);
     if (debounceTimerRef.current) window.clearTimeout(debounceTimerRef.current);
-
-    debounceTimerRef.current = window.setTimeout(() => {
-      const composed = composeEffectiveQuery(val, activeTypeChip, activeSizeChip);
-      const nextM = mode === 'duplicates' ? 'duplicates' : 'search';
-      setMode(nextM);
-      setCopySourceEntryId(null);
-      setAppliedQuery(composed);
-      setOffset(0);
-      void runCatalogQuery({
-        nextMode: nextM,
-        nextQuery: composed,
-        nextSourceEntryId: null,
-        nextOffset: 0,
-      });
-    }, 240);
   };
 
   const handleSearchSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
     if (debounceTimerRef.current) window.clearTimeout(debounceTimerRef.current);
     const composed = composeEffectiveQuery(queryInput, activeTypeChip, activeSizeChip);
+    if (!composed.trim()) {
+      setAppliedQuery('');
+      setCopySourceEntryId(null);
+      setOffset(0);
+      const destination = destinationForEmptyQuery(scopedVolumeId, browseParentId);
+      if (destination.view === 'browse') {
+        setCatalogOverview(false);
+        setMode('browse');
+        void runCatalogQuery({ nextMode: 'browse', nextVolumeId: destination.volumeId, nextParentId: destination.parentId, nextQuery: '', nextOffset: 0 });
+      } else {
+        setCatalogOverview(true);
+        setPageData(null);
+      }
+      return;
+    }
     const nextM = mode === 'duplicates' ? 'duplicates' : 'search';
+    setCatalogOverview(false);
     setMode(nextM);
     setCopySourceEntryId(null);
     setAppliedQuery(composed);
@@ -559,6 +568,7 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
     setActiveSizeChip(nextSize);
     const composed = composeEffectiveQuery(queryInput, nextType, nextSize);
     const nextM = mode === 'duplicates' ? 'duplicates' : 'search';
+    setCatalogOverview(false);
     setMode(nextM);
     setCopySourceEntryId(null);
     setAppliedQuery(composed);
@@ -572,15 +582,32 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
   };
 
   const handleSelectScopeDisk = (targetVolId: number | null) => {
+    ancestorsRequestRef.current++;
+    pushHistory();
     setScopedVolumeId(targetVolId);
+    setCatalogOverview(targetVolId === null);
     if (targetVolId !== null) setSelectedRegisterDiskId(targetVolId);
     setFolderPrefix(null);
-    if (mode === 'copy_candidates' || mode === 'browse') setMode('search');
+    setBrowseParentId(null);
+    setBrowseCrumbs([]);
+    setSelectedCategory(null);
+    if (targetVolId === null) setRegisterMode('all');
+    setAppliedQuery('');
+    setQueryInput('');
+    if (targetVolId !== null) setMode('browse');
+    else setMode('search');
     setCopySourceEntryId(null);
     setOffset(0);
+    if (targetVolId === null) {
+      setPageData(null);
+      setSelectedEntryId(null);
+      return;
+    }
     void runCatalogQuery({
-      nextMode: mode === 'duplicates' ? 'duplicates' : 'search',
+      nextMode: targetVolId !== null ? 'browse' : 'search',
       nextVolumeId: targetVolId,
+      nextParentId: null,
+      nextQuery: '',
       nextFolderPrefix: null,
       nextSourceEntryId: null,
       nextOffset: 0,
@@ -605,6 +632,7 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
   const handleBrowseParentFolder = (entry: CatalogEntry) => {
     pushHistory();
     setMode('browse');
+    setCatalogOverview(false);
     setScopedVolumeId(entry.volumeId);
     setBrowseParentId(entry.parentId);
     setFolderPrefix(null);
@@ -619,22 +647,84 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
       nextOffset: 0,
       restoreEntryId: entry.id,
     });
+    const request = ++ancestorsRequestRef.current;
+    void fetch('/api/catalog/ancestors', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ volumeId: entry.volumeId, parentId: entry.parentId }),
+    }).then((response) => response.json()).then((data) => {
+      if (request === ancestorsRequestRef.current) setBrowseCrumbs(Array.isArray(data.ancestors) ? data.ancestors : []);
+    });
+  };
+
+  const handleUp = () => {
+    if (scopedVolumeId === null || browseParentId === null || browseCrumbs.length === 0) return;
+    ancestorsRequestRef.current++;
+    pushHistory();
+    const nextCrumbs = browseCrumbs.slice(0, -1);
+    const nextParentId = nextCrumbs.length ? nextCrumbs[nextCrumbs.length - 1].id : null;
+    setBrowseCrumbs(nextCrumbs);
+    setBrowseParentId(nextParentId);
+    setMode('browse');
+    setCatalogOverview(false);
+    setOffset(0);
+    void runCatalogQuery({ nextMode: 'browse', nextVolumeId: scopedVolumeId, nextParentId, nextFolderPrefix: null, nextQuery: '', nextOffset: 0 });
+  };
+
+  const handleOpenBreadcrumb = (crumbIndex: number) => {
+    if (scopedVolumeId === null) return;
+    ancestorsRequestRef.current++;
+    pushHistory();
+    const target = breadcrumbPath(browseCrumbs, crumbIndex);
+    const nextCrumbs = target.crumbs;
+    setBrowseCrumbs(nextCrumbs);
+    setBrowseParentId(target.parentId);
+    setMode('browse');
+    setCatalogOverview(false);
+    setFolderPrefix(null);
+    setOffset(0);
+    void runCatalogQuery({ nextMode: 'browse', nextVolumeId: scopedVolumeId, nextParentId: target.parentId, nextFolderPrefix: null, nextQuery: '', nextOffset: 0 });
+  };
+
+  const handleOpenFolder = (folder: CatalogEntry) => {
+    pushHistory(folder.id);
+    setCatalogOverview(false);
+    setMode('browse');
+    setScopedVolumeId(folder.volumeId);
+    setBrowseParentId(folder.id);
+    setFolderPrefix(null);
+    setCopySourceEntryId(null);
+    setOffset(0);
+    const request = ++ancestorsRequestRef.current;
+    void fetch('/api/catalog/ancestors', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ volumeId: folder.volumeId, parentId: folder.id }),
+    }).then((response) => response.json()).then((data) => { if (request === ancestorsRequestRef.current) setBrowseCrumbs(Array.isArray(data.ancestors) ? data.ancestors : []); });
+    void runCatalogQuery({ nextMode: 'browse', nextVolumeId: folder.volumeId, nextParentId: folder.id, nextFolderPrefix: null, nextQuery: '', nextSourceEntryId: null, nextOffset: 0 });
   };
 
   const handleBack = () => {
     const prev = navStack[navStack.length - 1];
     if (!prev) return;
+    ancestorsRequestRef.current++;
     setNavStack((s) => s.slice(0, -1));
     setMode(prev.mode);
+    setCatalogOverview(prev.catalogOverview);
     setDuplicateMode(prev.duplicateMode);
     setAppliedQuery(prev.query);
     setScopedVolumeId(prev.volumeId);
     setBrowseParentId(prev.parentId);
+    setBrowseCrumbs(prev.crumbs);
     setFolderPrefix(prev.folderPrefix);
     setSelectedCategory(prev.category);
     setCopySourceEntryId(prev.sourceEntryId);
     setCandidateVolumeId(prev.candidateVolumeId);
     setOffset(prev.offset);
+    if (prev.catalogOverview) {
+      setPageData(null);
+      setSelectedEntryId(null);
+      return;
+    }
     void runCatalogQuery({
       nextMode: prev.mode,
       nextDuplicateMode: prev.duplicateMode,
@@ -1079,7 +1169,16 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
         </div>
 
         {/* Active Scope Breadcrumb Strip */}
-        {hasActiveScopeOrFilters && (
+        <div className="flex flex-wrap items-center gap-1.5 text-[11px] pt-1 border-t border-slate-200/70 dark:border-slate-800/70 text-slate-600 dark:text-slate-400">
+          <button type="button" onClick={() => handleSelectScopeDisk(null)} className="text-blue-600 dark:text-blue-400 hover:underline cursor-pointer">{t('Каталог', 'Catalog')}</button>
+          {scopedVolumeId !== null && <>
+            <span>›</span>
+                <button type="button" onClick={() => handleOpenBreadcrumb(-1)} className="text-blue-600 dark:text-blue-400 hover:underline cursor-pointer">#{scopedVolumeId} {volumeMap.get(scopedVolumeId)?.label}</button>
+            {browseCrumbs.map((crumb, index) => <React.Fragment key={crumb.id}><span>›</span><button type="button" onClick={() => handleOpenBreadcrumb(index)} className={`hover:underline cursor-pointer ${index === browseCrumbs.length - 1 ? 'font-semibold text-slate-900 dark:text-white' : 'text-blue-600 dark:text-blue-400'}`}>{crumb.name}</button></React.Fragment>)}
+            <button type="button" disabled={browseParentId === null || browseCrumbs.length === 0} onClick={handleUp} className="ml-auto px-2 py-0.5 rounded border border-slate-300 dark:border-slate-700 disabled:opacity-40 cursor-pointer">↑ {t('Вверх', 'Up')}</button>
+          </>}
+        </div>
+        {hasActiveScopeOrFilters && mode !== 'browse' && (
           <div className="flex flex-wrap items-center gap-2 text-[11px] pt-1 border-t border-slate-200/70 dark:border-slate-800/70 text-slate-600 dark:text-slate-400">
             <span className="font-medium text-slate-700 dark:text-slate-300">{t('Охват:', 'Scope:')}</span>
             {scopedVolumeId !== null && (
@@ -1123,22 +1222,15 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
                 setActiveSizeChip('');
                 setScopedVolumeId(null);
                 setBrowseParentId(null);
+                setBrowseCrumbs([]);
                 setFolderPrefix(null);
                 setSelectedCategory(null);
                 setCopySourceEntryId(null);
                 setMode('search');
                 setAppliedQuery('');
                 setOffset(0);
-                void runCatalogQuery({
-                  nextMode: 'search',
-                  nextQuery: '',
-                  nextVolumeId: null,
-                  nextParentId: null,
-                  nextFolderPrefix: null,
-                  nextCategory: null,
-                  nextSourceEntryId: null,
-                  nextOffset: 0,
-                });
+                setCatalogOverview(true);
+                setPageData(null);
               }}
               className="ml-auto text-slate-500 hover:text-slate-900 dark:hover:text-white underline cursor-pointer"
             >
@@ -1228,146 +1320,17 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
               </span>
             </button>
 
-            {/* Dense 60-Disk Scrollable List with Inline F2 Rename + Properties + Rescan */}
-            <div className="flex-1 overflow-y-auto divide-y divide-slate-200/50 dark:divide-slate-800/50">
-              {displayedVolumes.map((vol) => {
-                const isScoped = scopedVolumeId === vol.id;
-                const isSelected = !isScoped && activeDisk?.id === vol.id;
-                const isRenaming = renamingDiskId === vol.id;
-                const pageHits = pageData?.currentPageDiskCounts[vol.id] ?? 0;
-                const usedPct =
-                  vol.capacityBytes > 0 ? Math.min(100, Math.round((vol.usedBytes / vol.capacityBytes) * 100)) : 0;
-
-                return (
-                  <div
-                    key={vol.id}
-                    title={`#${vol.id} [${vol.diskCode}] ${vol.label}${vol.note ? `\n${vol.note}` : ''}\n${t('Клик — показать файлы диска · Двойной клик или F2 — переименовать', 'Click to filter disk · Double-click or F2 to rename')}`}
-                    onClick={() => {
-                      if (!isRenaming) handleSelectScopeDisk(vol.id);
-                    }}
-                    className={`px-2 py-1 text-xs transition-colors cursor-pointer group ${
-                      isScoped
-                        ? 'bg-blue-600/15 dark:bg-blue-500/25 text-slate-950 dark:text-white'
-                        : isSelected
-                          ? 'bg-slate-100 dark:bg-slate-800/70 text-slate-900 dark:text-white'
-                          : 'hover:bg-slate-100/80 dark:hover:bg-slate-900/60 text-slate-700 dark:text-slate-300'
-                    }`}
-                  >
-                    {isRenaming ? (
-                      <div
-                        className="flex items-center gap-1 py-0.5"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <span className="font-mono text-[11px] font-semibold shrink-0">#{vol.id}</span>
-                        <input
-                          ref={renameInputRef}
-                          type="text"
-                          disabled={savingRename}
-                          value={renameDraft}
-                          onChange={(e) => setRenameDraft(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              void commitInlineRename(vol.id);
-                            } else if (e.key === 'Escape') {
-                              e.preventDefault();
-                              setRenamingDiskId(null);
-                            }
-                          }}
-                          className="flex-1 min-w-0 px-1.5 py-0.5 text-[11px] rounded border border-blue-500 bg-white dark:bg-slate-950 text-slate-900 dark:text-white focus:outline-none"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => void commitInlineRename(vol.id)}
-                          title={t('Сохранить (Enter)', 'Save (Enter)')}
-                          className="p-0.5 rounded bg-blue-600 text-white cursor-pointer"
-                        >
-                          <Check className="w-3 h-3" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setRenamingDiskId(null)}
-                          title={t('Отмена (Esc)', 'Cancel (Esc)')}
-                          className="p-0.5 rounded text-slate-500 hover:text-slate-900 dark:hover:text-white cursor-pointer"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-between gap-1">
-                        <div
-                          className="flex items-center gap-1 min-w-0 flex-1"
-                          onDoubleClick={(e) => {
-                            e.stopPropagation();
-                            startInlineRename(vol);
-                          }}
-                        >
-                          <HardDrive
-                            className={`w-3 h-3 shrink-0 ${
-                              isScoped ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'
-                            }`}
-                          />
-                          <span className="font-mono text-[11px] font-semibold tabular-nums shrink-0">
-                            #{vol.id}
-                          </span>
-                          <span className="truncate font-medium text-[11px]">{vol.label}</span>
-                        </div>
-
-                        {/* Normal state shows compact TB on right; hover/active swaps in fast action icons */}
-                        <div className="flex items-center gap-0.5 shrink-0 font-mono text-[11px] tabular-nums">
-                          {pageHits > 0 && scopedVolumeId === null && (
-                            <span className="text-[10px] text-blue-600 dark:text-blue-400 mr-0.5 group-hover:hidden">
-                              {pageHits}×
-                            </span>
-                          )}
-                          <span className="text-slate-500 dark:text-slate-400 group-hover:hidden">
-                            {formatBytes(vol.indexedBytes)}
-                          </span>
-
-                          <div
-                            className="hidden group-hover:inline-flex items-center gap-0.5"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <button
-                              type="button"
-                              title={t('Быстро переименовать (F2)', 'Fast rename (F2)')}
-                              onClick={() => startInlineRename(vol)}
-                              className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 cursor-pointer"
-                            >
-                              <Pencil className="w-3 h-3" />
-                            </button>
-                            <button
-                              type="button"
-                              title={t('Свойства диска (Alt+Enter)', 'Disk Properties (Alt+Enter)')}
-                              onClick={() => onOpenDiskProperties(vol.id)}
-                              className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 cursor-pointer"
-                            >
-                              <Settings className="w-3 h-3" />
-                            </button>
-                            <button
-                              type="button"
-                              title={t('Пересканировать диск…', 'Rescan disk…')}
-                              onClick={() => onOpenScanModal(vol.id)}
-                              className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-800 text-blue-600 dark:text-blue-400 cursor-pointer"
-                            >
-                              <RefreshCw className="w-3 h-3" />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="mt-0.5 h-[2px] w-full rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
-                      <div
-                        className={`h-full rounded-full ${
-                          isScoped ? 'bg-blue-600 dark:bg-blue-400' : 'bg-blue-600/70 dark:bg-blue-500/70'
-                        }`}
-                        style={{ width: `${Math.max(4, usedPct)}%` }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="flex-1 min-h-0 overflow-y-auto">
+              <CatalogNavigationTree
+                key={snapshot.pinnedGenerationSha}
+                volumes={displayedVolumes}
+                activeVolumeId={scopedVolumeId}
+                activeParentId={browseParentId}
+                activeCrumbIds={browseCrumbs.map((crumb) => crumb.id)}
+                browseActive={mode === 'browse'}
+                onOpenVolume={(volume) => handleSelectScopeDisk(volume.id)}
+                onOpenFolder={handleOpenFolder}
+              />
             </div>
 
             {/* Collapsible Categories */}
@@ -1441,6 +1404,21 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
           )}
 
           <div className="flex-1 overflow-auto">
+            {catalogOverview ? (
+              <table className="w-full text-left border-collapse text-xs">
+                <thead className="sticky top-0 z-10 bg-slate-100 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400">
+                  <tr><th className="py-2 px-3 font-medium">{t('Диск каталога', 'Catalog disk')}</th><th className="py-2 px-3 font-medium">{t('Записей', 'Entries')}</th><th className="py-2 px-3 font-medium">{t('Индексировано', 'Indexed')}</th><th className="py-2 px-3 font-medium">{t('Корень', 'Recorded root')}</th></tr>
+                </thead>
+                <tbody>{displayedVolumes.map((volume) => (
+                  <tr key={volume.id} onClick={() => handleSelectScopeDisk(volume.id)} className="border-b border-slate-100 dark:border-slate-900 hover:bg-blue-50 dark:hover:bg-slate-900/70 cursor-pointer">
+                    <td className="px-3 py-2"><span className="font-mono font-semibold">#{volume.id}</span><span className="ml-2 font-medium">{volume.label}</span><span className="ml-2 text-slate-500">{volume.diskCode}</span></td>
+                    <td className="px-3 py-2 font-mono tabular-nums">{volume.entryCount.toLocaleString()}</td>
+                    <td className="px-3 py-2 font-mono tabular-nums">{formatBytes(volume.indexedBytes)}</td>
+                    <td className="px-3 py-2 text-slate-500 truncate max-w-[320px]" title={volume.recordedRoot}>{volume.recordedRoot}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            ) : (
             <table className="w-full text-left border-collapse text-xs">
               <thead className="sticky top-0 z-10 bg-slate-100 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 select-none">
                 <tr>
@@ -1604,17 +1582,7 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
                           }}
                           onDoubleClick={() => {
                             if (row.kind === 'directory') {
-                              pushHistory();
-                              setMode('browse');
-                              setScopedVolumeId(row.volumeId);
-                              setBrowseParentId(row.id);
-                              setOffset(0);
-                              void runCatalogQuery({
-                                nextMode: 'browse',
-                                nextVolumeId: row.volumeId,
-                                nextParentId: row.id,
-                                nextOffset: 0,
-                              });
+                              handleOpenFolder(row);
                             } else if (row.duplicateCount > 1) {
                               handleOpenCopyCandidates(row);
                             }
@@ -1729,10 +1697,11 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
                 )}
               </tbody>
             </table>
+            )}
           </div>
 
           {/* Docked Disk & File Inspector Bar (with direct Rename, Properties & Rescan actions!) */}
-          {activeDisk && (
+          {activeDisk && !catalogOverview && (
             <div className="border-t border-slate-200 dark:border-slate-800 bg-slate-50/95 dark:bg-slate-900/95 px-3 py-2">
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-2.5 items-center">
                 {/* Active Disk Summary + Direct Management Buttons */}

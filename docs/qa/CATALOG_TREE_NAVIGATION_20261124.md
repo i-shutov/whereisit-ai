@@ -85,3 +85,23 @@ The Windows release-mode service suite with the optional DuckDB feature passed
 73 tests. New generated cases cover SQLite/direct/pinned response parity,
 Unicode/nested archives, invalid ancestry and source preservation. Native UI
 integration and exact candidate CI remain separate checks.
+
+## PR58 prototype checkpoint
+
+The existing prototype composition now opens to 60 generated disk rows and a
+single expandable rail. No initial all-file query is issued. The tree fills the
+rail, overview counters are labeled as entries, and the overview does not invent
+a selected disk inspector. Search is submitted explicitly; clearing it returns
+to the remembered browsing scope.
+
+Actual browser interaction verified catalog overview, single-click disk root,
+independent tree expansion/collapse, nested folder navigation from tree and
+table, synchronized ancestry, file context, structural Up and Back restoring
+the child-folder selection. A global query with duplicate filenames on different
+generated disks revealed the chosen result on the correct disk, with the full
+ancestor chain and file highlighted. Disk-scoped search followed by an empty
+query returned to that disk's direct root children.
+
+TypeScript lint, 16 prototype runtime utility tests and the Vite production build
+passed. Vite reports its existing `__dirname`/future-loader warning. The prototype
+contains simulated metadata only; it is not a native or installed-product test.
