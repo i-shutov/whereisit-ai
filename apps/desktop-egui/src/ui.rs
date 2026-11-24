@@ -912,6 +912,11 @@ impl DesktopApp {
         self.slices_db = None;
         self.analytics_data = None;
         self.slices_data = None;
+        self.analytics_volume = None;
+        self.analytics_folder = None;
+        self.analytics_category_id = None;
+        self.slices_volume = None;
+        self.slices_category = None;
         self.analytics_loaded = false;
         self.slices_loaded = false;
         self.physical.close_if_scope_changed(None);
@@ -5192,6 +5197,26 @@ mod shortcut_tests {
         );
         assert_eq!(app.analytics_data.as_ref().unwrap()["root"]["id"], "kept");
         assert_eq!(app.analytics_job_id.as_deref(), Some("new-job"));
+    }
+
+    #[test]
+    fn catalog_clear_resets_numeric_analytics_scopes_for_map_and_slices() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.db = Some("old-catalog.sqlite".into());
+        app.analytics_volume = Some(7);
+        app.analytics_folder = Some(91);
+        app.analytics_category_id = Some(12);
+        app.slices_volume = Some(7);
+        app.slices_category = Some(12);
+
+        app.clear_catalog();
+
+        assert!(app.analytics_volume.is_none());
+        assert!(app.analytics_folder.is_none());
+        assert!(app.analytics_category_id.is_none());
+        assert!(app.slices_volume.is_none());
+        assert!(app.slices_category.is_none());
     }
 
     #[test]

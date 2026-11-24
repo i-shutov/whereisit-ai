@@ -25,7 +25,7 @@ Cancellation retains the job's originating backend across catalog switches.
 ## Tests and full-catalog measurements
 
 The core analytics suite passed 3 tests, service unit tests passed 70, and desktop
-unit/workflow tests passed 93 on the final GUI-cancellation source. Coverage includes complete synthetic JSON equality
+unit/workflow tests passed 94 on the final catalog-scope source. Coverage includes complete synthetic JSON equality
 with imported SQLite for scopes/groups/highlights/truncation, empty-volume
 handling, source preservation, pre-dispatch cancellation, slot ownership and
 stale native replies. Workspace/all-target release-mode Clippy with warnings
@@ -33,9 +33,14 @@ denied passed. Rust and Cargo 1.100.0; the optional search feature links DuckDB
 1.4.1. Formatting passed.
 
 After adding workspace-aware Escape cancellation, both Escape regression tests
-and the complete 93-test desktop suite passed, including the new direct-CTF case.
+and the desktop suite passed, including the new direct-CTF case.
 Formatting and workspace/all-target release Clippy were repeated successfully
 after that change.
+
+A final scope review found that catalog switches retained numeric map/slices
+volume, folder and category selections. Those selections now reset with the
+catalog, preventing IDs from the previous source selecting unrelated records.
+The new regression and complete 94-test desktop suite passed.
 
 A sequential release-mode benchmark used a full working CTF copy with 44 volumes
 and 3,046,133 records. Each case compared the complete response with a read-only
