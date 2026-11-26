@@ -1,5 +1,11 @@
 # Catalog navigation: owner correction and observed WhereIsIt workflow
 
+**26 November checkpoint:** native navigation acceptance on `aa8b37d` PASS.
+The final cold-tree reveal and native double-click were observed through actual
+Windows input. All 17 exact-head CI checks succeeded. Historical blocked and
+intermediate results below are retained; this does not close the installed
+cold-open hotfix acceptance or set `stable_ready=true`.
+
 24 November 2026. This is an explicit owner UX correction, supplementing PR58.
 The owner rejected making an isolated global filename list the primary catalog
 view and does not want a mandatory global name sort. Preserve the PR58
@@ -181,3 +187,34 @@ reply. The workflow harness now drains pending tree replies as well. Up is
 disabled until the current structural parent is confirmed. All 105 isolated
 Windows desktop tests and strict all-target Clippy passed after this change;
 CI must be evaluated again on the new head. No macOS product GUI PASS is implied.
+
+## Final navigation retest — 26 November 2026
+
+The prepared isolated executable's SHA-256 matched its private build manifest
+for `aa8b37d2a12aa131cc8e46621928e02f1b5bd853`. Windows input and current capture
+were available again in the approved Administrator RDP session.
+
+With a fresh process and no loaded tree branches, actual GUI interaction opened
+the 60-disk/18,886-record generated catalog, explicitly searched `late-parent`,
+selected the result on disk 30 and opened its containing folder. The exact file
+was selected, the disk/root/folder breadcrumb was correct, and the pinned
+`zz-late-folder` ancestor stayed visible after 250 sibling rows arrived. An
+additional settled observation confirmed its position remained stable and the
+More folders continuation remained available. No preceding sibling page was
+misrepresented as complete.
+
+Structural Up returned to the correct parent. A real pointer double-click on
+the first child folder entered its empty contents and synchronized the selected
+tree node and full breadcrumb. This supersedes the earlier inconclusive native
+double-click automation result. No cataloged file was executed.
+
+All 17 GitHub check runs on that exact head are completed/success, including
+Windows, macOS Intel/ARM compile/tests, Linux tests/Clippy, installed-upgrade,
+native DuckDB, prototype and offline-kit checks. Review comments, inline threads
+and review submissions were empty when checked. These automated platform
+results are not physical macOS/Linux product acceptance.
+
+The former desktop BLOCKED condition and final navigation-retest gap are closed.
+The remaining open product acceptance concerns are P1-CTF-COLD-OPEN and the exact
+hotfix candidate's full-operation, cancellation, offline installer and installed
+upgrade checks. Published artifacts and `stable_ready=false` remain unchanged.
