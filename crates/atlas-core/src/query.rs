@@ -158,6 +158,11 @@ pub struct MetadataContainsMatcher<'a> {
 }
 
 impl MetadataContainsMatcher<'_> {
+    /// Normalized needle shared by equivalent substring terms in this query.
+    pub fn normalized_needle(&self) -> &str {
+        self.needle
+    }
+
     /// Match text using the same lowercase and Unicode rules as query evaluation.
     pub fn matches(&self, text: &str) -> bool {
         lower_contains(text, self.needle, self.target, self.failure)

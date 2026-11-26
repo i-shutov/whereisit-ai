@@ -1,5 +1,7 @@
 //! Read-only, in-memory CTF preview used before the disposable SQLite index is ready.
 //! The source CTF remains authoritative and is never written by this module.
+mod path_cache;
+
 use crate::{ctf_sidecar, optional_id, text, unsigned};
 use atlas_core::query::{
     MetadataCategoryPredicate, MetadataContainsMatcher, MetadataQuery, MetadataQueryContext,
@@ -7,9 +9,10 @@ use atlas_core::query::{
 };
 use atlas_core::{Entry, Error, FastPage, Page, Result, Volume};
 use ctf_format::{CtfCatalog, EntryKind, Limits};
+use path_cache::AncestorCache;
 use serde_json::{json, Value};
 use std::{
-    cell::OnceCell as LocalOnceCell,
+    cell::{OnceCell as LocalOnceCell, RefCell},
     cmp::Ordering as CmpOrdering,
     collections::{BinaryHeap, HashMap, HashSet},
     fs,
@@ -535,12 +538,28 @@ fn ancestor_items(
 
 struct DirectContext<'a> {
     disk: &'a ctf_format::CtfDisk,
+    volume_index: usize,
     entry_index: usize,
     id_base: i64,
     relative_path: LocalOnceCell<String>,
+    ancestor_cache: Option<&'a RefCell<AncestorCache>>,
 }
 
 impl DirectContext<'_> {
+    fn ancestors_contain(&self, matcher: &MetadataContainsMatcher<'_>) -> bool {
+        let parent = self.disk.entries[self.entry_index].parent;
+        if let Some(cache) = self.ancestor_cache {
+            if let Some(result) =
+                cache
+                    .borrow_mut()
+                    .ancestors_contain(self.volume_index, self.disk, parent, matcher)
+            {
+                return result;
+            }
+        }
+        self.components_contain(matcher, parent)
+    }
+
     fn components_contain(
         &self,
         matcher: &MetadataContainsMatcher<'_>,
@@ -570,7 +589,8 @@ impl MetadataQueryContext for DirectContext<'_> {
         // An ASCII term without '/' cannot span path components. Check the
         // recorded names directly, retaining the core's exact Unicode matcher,
         // and avoid allocating a joined path for each rejected catalog record.
-        self.components_contain(matcher, Some(self.entry_index))
+        matcher.matches(&self.disk.entries[self.entry_index].name)
+            || self.ancestors_contain(matcher)
     }
 
     fn relative_path_contains_after_name_miss(
@@ -582,7 +602,7 @@ impl MetadataQueryContext for DirectContext<'_> {
         }
         // The evaluator already disproved this term against the basename.
         // ASCII terms without '/' cannot span the path component separator.
-        self.components_contain(matcher, self.disk.entries[self.entry_index].parent)
+        self.ancestors_contain(matcher)
     }
 
     fn is_branch_descendant(&self, anchor_id: i64) -> bool {
@@ -623,6 +643,18 @@ fn matches_row(
     volume_id: Option<i64>,
     job: &crate::ctf_job::Job,
 ) -> Result<bool> {
+    matches_row_with_cache(snapshot, row, query, needs_extension, volume_id, job, None)
+}
+
+fn matches_row_with_cache(
+    snapshot: &Snapshot,
+    row: RowRef,
+    query: &MetadataQuery,
+    needs_extension: bool,
+    volume_id: Option<i64>,
+    job: &crate::ctf_job::Job,
+    ancestor_cache: Option<&RefCell<AncestorCache>>,
+) -> Result<bool> {
     job.entry()?;
     let volume_index = row.volume_index as usize;
     let entry_index = row.entry_index as usize;
@@ -630,12 +662,13 @@ fn matches_row(
     if volume_id.is_some_and(|filter| filter != actual_volume_id) {
         return Ok(false);
     }
-    Ok(matches_metadata(
+    Ok(matches_metadata_with_cache(
         snapshot,
         volume_index,
         entry_index,
         query,
         needs_extension,
+        ancestor_cache,
     ))
 }
 
@@ -645,6 +678,24 @@ pub(super) fn matches_metadata(
     entry_index: usize,
     query: &MetadataQuery,
     needs_extension: bool,
+) -> bool {
+    matches_metadata_with_cache(
+        snapshot,
+        volume_index,
+        entry_index,
+        query,
+        needs_extension,
+        None,
+    )
+}
+
+fn matches_metadata_with_cache(
+    snapshot: &Snapshot,
+    volume_index: usize,
+    entry_index: usize,
+    query: &MetadataQuery,
+    needs_extension: bool,
+    ancestor_cache: Option<&RefCell<AncestorCache>>,
 ) -> bool {
     let disk = &snapshot.parsed.disks[volume_index];
     let entry = &disk.entries[entry_index];
@@ -664,9 +715,11 @@ pub(super) fn matches_metadata(
     let id = snapshot.id_bases[volume_index] + entry_index as i64;
     let context = DirectContext {
         disk,
+        volume_index,
         entry_index,
         id_base: snapshot.id_bases[volume_index],
         relative_path: LocalOnceCell::new(),
+        ancestor_cache,
     };
     let record = MetadataRecord {
         id,
@@ -1295,6 +1348,7 @@ fn search_with_job(v: &Value, job: crate::ctf_job::Job) -> Result<Value> {
     let mut page_rows = Vec::with_capacity(limit as usize + usize::from(!full_count));
     const MAX_PHYSICAL_HEAP_OFFSET: u64 = 100_000;
     if catalog_order {
+        let ancestor_cache = RefCell::new(AncestorCache::default());
         'disks: for (volume_index, disk) in snapshot.parsed.disks.iter().enumerate() {
             if volume_id.is_some_and(|filter| filter != volume_index as i64 + 1) {
                 continue;
@@ -1304,7 +1358,15 @@ fn search_with_job(v: &Value, job: crate::ctf_job::Job) -> Result<Value> {
                     volume_index: volume_index as u32,
                     entry_index: entry_index as u32,
                 };
-                if !matches_row(&snapshot, row, &query, needs_extension, volume_id, &job)? {
+                if !matches_row_with_cache(
+                    &snapshot,
+                    row,
+                    &query,
+                    needs_extension,
+                    volume_id,
+                    &job,
+                    Some(&ancestor_cache),
+                )? {
                     continue;
                 }
                 let ordinal = total;
@@ -1541,9 +1603,11 @@ pub(super) mod tests {
         ] {
             let context = DirectContext {
                 disk: &disk,
+                volume_index: 0,
                 entry_index: 2,
                 id_base: 1,
                 relative_path: LocalOnceCell::new(),
+                ancestor_cache: None,
             };
             let query = MetadataQuery::compile_metadata(query_text).unwrap();
             assert_eq!(query.matches(&record, &context), expected, "{query_text}");
@@ -1558,6 +1622,91 @@ pub(super) mod tests {
                 "{query_text}"
             );
         }
+    }
+
+    #[test]
+    fn cached_catalog_search_matches_uncached_metadata_across_volume_and_term_boundaries() {
+        let _serial = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cached-ancestors.ctf");
+        let mut entries = vec![
+            entry("RootKİ", None, EntryKind::Directory),
+            entry("Media", Some(0), EntryKind::Archive),
+        ];
+        entries.extend(
+            (0..1300).map(|i| entry(&format!("clip-{i:04}.mkv"), Some(1), EntryKind::File)),
+        );
+        let mut other = entries.clone();
+        other[0].name = "Other".into();
+        fs::write(
+            &path,
+            write_ctf(&CtfCatalog {
+                name: "Synthetic ancestor cache".into(),
+                disks: vec![
+                    CtfDisk {
+                        name: "A".into(),
+                        entries,
+                        opaque_header: vec![],
+                    },
+                    CtfDisk {
+                        name: "B".into(),
+                        entries: other,
+                        opaque_header: vec![],
+                    },
+                ],
+                opaque_trailer: vec![],
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let opened = open(&json!({"path":path})).unwrap();
+        let generation = opened["generation"].as_str().unwrap();
+        let snapshot = selected(&req(&path, generation), None).unwrap();
+        for text in [
+            "root",
+            "k",
+            "i",
+            "path:missing",
+            "path:media",
+            "path:root/media",
+            "path:K",
+            "NOT path:missing",
+            "path:root OR path:other",
+            "media AND NOT name:absent",
+        ] {
+            let query = MetadataQuery::compile_metadata(text).unwrap();
+            let mut expected = Vec::new();
+            for (volume, disk) in snapshot.parsed.disks.iter().enumerate() {
+                for index in 0..disk.entries.len() {
+                    if matches_metadata(&snapshot, volume, index, &query, false) {
+                        expected.push(snapshot.id_bases[volume] + index as i64);
+                    }
+                }
+            }
+            let actual = search(&json!({"path":path,"generation":generation,
+                "query":text,"order":"catalog","full_count":true,"offset":1100,"limit":250}))
+            .unwrap();
+            let ids: Vec<_> = actual["result"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|item| item["id"].as_i64().unwrap())
+                .collect();
+            assert_eq!(actual["result"]["total"], expected.len(), "{text}");
+            assert_eq!(
+                ids,
+                expected
+                    .into_iter()
+                    .skip(1100)
+                    .take(250)
+                    .collect::<Vec<_>>(),
+                "{text}"
+            );
+        }
+        drop(snapshot);
+        close(&req(&path, generation)).unwrap();
     }
 
     #[test]
