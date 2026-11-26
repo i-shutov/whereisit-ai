@@ -155,6 +155,7 @@ export interface SunburstNode {
   volumeId: number | null;
   folderPath: string | null;
   entryId: number | null;
+  folderEntryId?: number | null;
   shelfTag?: string;
   physicalStatus?: PhysicalStatus;
   duplicateCount?: number;

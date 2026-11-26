@@ -98,6 +98,7 @@ impl LinkedCtf {
                     "ctf_preview_children",
                     &["volume_id", "parent_id", "offset", "limit"],
                 ),
+                "entry_ancestors" => ("ctf_preview_ancestors", &["volume_id", "entry_id"]),
                 "children_focused" => (
                     "ctf_preview_children_focused",
                     &["volume_id", "parent_id", "entry_id", "limit"],
@@ -198,6 +199,7 @@ impl LinkedCtf {
                 "ctf_children_focused_pinned",
                 &["volume_id", "parent_id", "entry_id", "limit"],
             ),
+            "entry_ancestors" => ("ctf_ancestors_pinned", &["volume_id", "entry_id"]),
             "copy_candidates" => (
                 "ctf_copy_candidates_pinned",
                 &[
@@ -360,6 +362,16 @@ mod tests {
         assert!(rewritten.get("db").is_none());
         assert_eq!(rewritten["query"], "ext:mp3 AND name:песня");
         assert_eq!(rewritten["offset"], 250);
+        let ancestors = linked
+            .rewrite(json!({"op":"entry_ancestors","db":"ignored.sqlite",
+                "volume_id":7,"entry_id":42}))
+            .unwrap();
+        assert_eq!(ancestors["op"], "ctf_ancestors_pinned");
+        assert_eq!(ancestors["path"], linked.path);
+        assert_eq!(ancestors["cache_root"], linked.cache_root);
+        assert_eq!(ancestors["generation"], linked.generation);
+        assert_eq!(ancestors["volume_id"], 7);
+        assert_eq!(ancestors["entry_id"], 42);
         let copies = linked
             .rewrite(json!({"op":"copy_candidates","entry_id":17,
                 "other_disks_only":true,"offset":30,"limit":10}))
@@ -442,6 +454,14 @@ mod tests {
         assert_eq!(children["op"], "ctf_preview_children");
         assert_eq!(children["parent_id"], 4);
         assert_eq!(children["limit"], 25);
+        let ancestors = preview
+            .rewrite(json!({"op":"entry_ancestors","volume_id":2,"entry_id":19}))
+            .unwrap();
+        assert_eq!(ancestors["op"], "ctf_preview_ancestors");
+        assert_eq!(ancestors["path"], "source.ctf");
+        assert_eq!(ancestors["generation"], preview_generation);
+        assert_eq!(ancestors["volume_id"], 2);
+        assert_eq!(ancestors["entry_id"], 19);
         let focused = preview
             .rewrite(json!({"op":"children_focused","volume_id":2,"parent_id":4,"entry_id":19,"limit":250}))
             .unwrap();

@@ -50,7 +50,13 @@ fn app(ctx: &egui::Context, dir: &Path) -> DesktopApp {
 }
 
 fn settle(app: &mut DesktopApp, ctx: &egui::Context) {
-    while app.active_request.is_some() {
+    while app.active_request.is_some()
+        || app.tree_ancestors_request_id.is_some()
+        || app
+            .tree_children
+            .values()
+            .any(|page| page.loading_request.is_some())
+    {
         let reply = next_reply(app);
         app.apply_reply(reply, ctx);
     }
@@ -159,24 +165,31 @@ fn ctf_open_and_search_use_direct_read_only_preview_without_sync() {
         &ctx,
     ));
     settle(&mut app, &ctx);
-    assert!(
-        app.error.is_none(),
-        "open and initial page: {:?}",
-        app.error
-    );
+    assert!(app.error.is_none(), "open and volumes: {:?}", app.error);
     assert!(app.linked_ctf.as_ref().is_some_and(|link| link.preview));
-    assert_eq!(
-        app.route,
-        Route::Search {
-            query: String::new(),
-            volume_id: None
-        }
-    );
-    assert_eq!(app.page.items[0].name, "film.mkv");
+    assert_eq!(app.route, Route::Catalog);
+    assert!(app.page.items.is_empty());
+    assert!(!operations
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|request| request["op"] == "ctf_preview_search"
+            || request["op"] == "ctf_preview_children"));
     assert!(
         app.ctf_job_id.is_none(),
         "opening does not start indexing or a long job"
     );
+
+    app.browse_volume_root(4, &ctx);
+    settle(&mut app, &ctx);
+    assert_eq!(
+        app.route,
+        Route::Folder {
+            volume_id: 4,
+            parent_id: None
+        }
+    );
+    assert_eq!(app.page.items[0].name, "film.mkv");
 
     let query = "ext:mkv AND name:film".to_owned();
     app.route = Route::Search {
@@ -365,6 +378,168 @@ fn pending_ctf_analytics_cancels_preview_registry_after_link_is_cleared() {
 }
 
 #[test]
+fn focused_file_reveal_keeps_duplicate_disk_scope_and_late_ancestor_visible() {
+    let ctx = egui::Context::default();
+    let mut app = DesktopApp::with_context(&ctx, None);
+    let path = "C:/synthetic/navigation.ctf".to_owned();
+    let generation = "a".repeat(64);
+    let source_sha256 = "b".repeat(64);
+    app.db = Some(path.clone());
+    app.linked_ctf = Some(
+        LinkedCtf::parse_preview(
+            path,
+            String::new(),
+            &json!({"state":"browsable","generation":generation,
+                "source_sha256":source_sha256,"original_ctf_read_only":true,
+                "native_annotation_writes_allowed":false}),
+        )
+        .unwrap(),
+    );
+    app.integrity = CatalogIntegrity::LinkedReadOnly;
+    app.volumes = vec![
+        Volume {
+            id: 1,
+            label: "Disk 1".into(),
+            root_path: String::new(),
+            entry_count: 400,
+            total_bytes: 0,
+        },
+        Volume {
+            id: 30,
+            label: "Disk 30".into(),
+            root_path: String::new(),
+            entry_count: 400,
+            total_bytes: 0,
+        },
+    ];
+    app.route = Route::Search {
+        query: "name:same-name.mkv".into(),
+        volume_id: None,
+    };
+
+    let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+    app.bus.set_handler({
+        let requests = requests.clone();
+        move |request| {
+            requests.lock().unwrap().push(request.clone());
+            let result = match request["op"].as_str().unwrap_or("") {
+                "ctf_preview_children_focused" => json!({
+                    "items":[{"id":9766,"volume_id":30,"parent_id":9464,"name":"same-name.mkv",
+                        "relative_path":"zz-late-folder/same-name.mkv","kind":"file","size":8,
+                        "modified_unix":null,"description":"","tags":""}],
+                    "total":600,"offset":250,"limit":250
+                }),
+                "ctf_preview_ancestors" => json!({
+                    "volume_id":30,
+                    "items":[
+                        {"id":9000,"parent_id":null,"name":"Movies","kind":"directory"},
+                        {"id":9464,"parent_id":9000,"name":"zz-late-folder","kind":"directory"}
+                    ]
+                }),
+                "ctf_preview_children" => {
+                    if request["parent_id"].is_null() {
+                        let items = (1000..1250).map(|id| json!({
+                            "id":id,"volume_id":30,"parent_id":null,"name":format!("folder-{id}"),
+                            "relative_path":format!("folder-{id}"),"kind":"directory","size":0,
+                            "modified_unix":null,"description":"","tags":""
+                        })).collect::<Vec<_>>();
+                        json!({"items":items,"total":321,"offset":0,"limit":250,"has_more":true})
+                    } else {
+                        json!({"items":[],"total":0,"offset":0,"limit":250,"has_more":false})
+                    }
+                }
+                "ctf_preview_close" => json!({"closed":true}),
+                other => panic!("unexpected navigation request: {other}: {request}"),
+            };
+            json!({"ok":true,"data":{"generation":request["generation"],
+                "source_sha256":"b".repeat(64),"read_only":true,"result":result}})
+        }
+    });
+
+    let selected = Entry::parse(&json!({
+        "id":9766,"volume_id":30,"parent_id":9464,"name":"same-name.mkv",
+        "relative_path":"zz-late-folder/same-name.mkv","kind":"file","size":8
+    }))
+    .unwrap();
+    app.navigate_containing_folder(&selected, &ctx);
+
+    // The ancestor reply schedules three lazy tree pages. Keep the known
+    // ancestor visible even though it falls beyond the first 250 siblings.
+    while app.active_request.is_some() {
+        let reply = next_reply(&app);
+        app.apply_reply(reply, &ctx);
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let done = app
+            .tree_children
+            .values()
+            .all(|page| page.loading_request.is_none())
+            && app.tree_ancestors_request_id.is_none()
+            && requests.lock().unwrap().len() >= 5;
+        if done {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Navigation tree workers did not settle"
+        );
+        if let Some(reply) = app.bus.poll() {
+            app.apply_reply(reply, &ctx);
+        } else {
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    assert_eq!(
+        app.route,
+        Route::Folder {
+            volume_id: 30,
+            parent_id: Some(9464)
+        }
+    );
+    assert_eq!(app.selected.as_ref().map(|entry| entry.id), Some(9766));
+    assert_eq!(app.page.offset, 250);
+    assert!(app.page.has_more);
+    assert_eq!(app.folder_crumbs.last().map(|crumb| crumb.id), Some(9464));
+    assert!(app.tree_path_nodes[&(30, None)]
+        .iter()
+        .any(|node| node.id == 9000));
+    assert!(app.tree_path_nodes[&(30, Some(9000))]
+        .iter()
+        .any(|node| node.id == 9464));
+    assert!(
+        !app.tree_path_nodes.contains_key(&(1, None)),
+        "same names on another disk must not share tree state"
+    );
+    assert!(app.tree_children[&(30, None)].has_more);
+    assert_eq!(app.tree_children[&(30, None)].items.len(), 250);
+
+    let old_catalog_generation = app.catalog_generation;
+    app.clear_catalog();
+    app.apply_tree_reply(
+        crate::bridge::Reply {
+            id: 999_999,
+            purpose: Purpose::TreeChildren {
+                db: "C:/synthetic/navigation.ctf".into(),
+                catalog_generation: old_catalog_generation,
+                linked_generation: Some(generation),
+                volume_id: 30,
+                parent_id: None,
+                offset: 0,
+            },
+            response: json!({"ok":true,"data":{
+                "generation":"a".repeat(64),"source_sha256":"b".repeat(64),"read_only":true,
+                "result":{"items":[],"total":0,"offset":0,"limit":250,"has_more":false}
+            }}),
+        },
+        &ctx,
+    );
+    assert_eq!(app.route, Route::Catalog);
+    assert!(app.tree_children.is_empty());
+}
+
+#[test]
 fn linked_ctf_browse_import_edit_and_export_through_the_service() {
     let _preview_lock = CTF_PREVIEW_TEST_LOCK
         .lock()
@@ -377,6 +552,12 @@ fn linked_ctf_browse_import_edit_and_export_through_the_service() {
     let ctx = egui::Context::default();
     let mut app = app(&ctx, temp.path());
     link(&mut app, &ctx, &source);
+
+    // Opening a linked catalog starts on its disk register. Browsing is an
+    // explicit disk selection; it does not issue a global empty search.
+    assert_eq!(app.route, Route::Catalog);
+    app.browse_volume_root(app.volumes[0].id, &ctx);
+    settle(&mut app, &ctx);
 
     let folder = app
         .page
@@ -391,6 +572,19 @@ fn linked_ctf_browse_import_edit_and_export_through_the_service() {
     assert_eq!(file.relative_path, "Кино/Фильм.mkv");
     assert_eq!(file.description, "Original");
     assert_eq!(file.parent_id, Some(folder.id));
+
+    app.browse_up(&ctx);
+    settle(&mut app, &ctx);
+    assert_eq!(
+        app.route,
+        Route::Folder {
+            volume_id: folder.volume_id,
+            parent_id: folder.parent_id,
+        }
+    );
+    assert!(app.page.items.iter().any(|row| row.id == folder.id));
+    app.navigate_folder(&folder, &ctx);
+    settle(&mut app, &ctx);
 
     app.go_back(&ctx);
     settle(&mut app, &ctx);
@@ -421,6 +615,18 @@ fn linked_ctf_browse_import_edit_and_export_through_the_service() {
     settle(&mut app, &ctx);
     assert_eq!(app.db.as_deref(), working.to_str(), "{:?}", app.error);
     assert!(app.linked_ctf.is_none());
+    assert_eq!(app.route, Route::Catalog);
+    app.browse_volume_root(app.volumes[0].id, &ctx);
+    settle(&mut app, &ctx);
+    let imported_folder = app
+        .page
+        .items
+        .iter()
+        .find(|row| row.name == "Кино" && row.is_container())
+        .unwrap()
+        .clone();
+    app.navigate_folder(&imported_folder, &ctx);
+    settle(&mut app, &ctx);
     let row = app
         .page
         .items
@@ -504,12 +710,17 @@ fn changed_linked_source_refuses_import_and_hides_stale_rows() {
     let ctx = egui::Context::default();
     let mut app = app(&ctx, temp.path());
     link(&mut app, &ctx, &source);
+    assert_eq!(app.route, Route::Catalog);
+    assert!(app.page.items.is_empty());
+
+    app.query_input = "ext:mkv".into();
+    app.navigate_search(&ctx);
+    settle(&mut app, &ctx);
     assert!(app
         .page
         .items
         .iter()
         .any(|row| row.description == "Original"));
-
     app.query_input = "ext:mkv AND (".into();
     app.navigate_search(&ctx);
     settle(&mut app, &ctx);
@@ -563,6 +774,9 @@ fn direct_ctf_copy_candidates_and_exports_keep_scope_and_never_clobber() {
     let ctx = egui::Context::default();
     let mut app = app(&ctx, temp.path());
     link(&mut app, &ctx, &source);
+    app.query_input = "ext:mkv".into();
+    app.navigate_search(&ctx);
+    settle(&mut app, &ctx);
     let original = app
         .page
         .items

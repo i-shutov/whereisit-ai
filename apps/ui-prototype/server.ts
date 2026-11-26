@@ -134,6 +134,7 @@ interface SunburstNode {
   volumeId: number | null;
   folderPath: string | null;
   entryId: number | null;
+  folderEntryId?: number | null;
   shelfTag?: string;
   physicalStatus?: PhysicalStatus;
   duplicateCount?: number;
@@ -1506,10 +1507,14 @@ function buildVolumeFolderTree(
     if (!baseFolderPath) return true;
     return e.relativePath.startsWith(prefix);
   });
+  const folderIds = new Map(
+    rawEntries.filter((e) => e.volumeId === volumeId && e.kind === 'directory').map((entry) => [entry.relativePath, entry.id])
+  );
 
   interface MutableDir {
     name: string;
     fullPath: string;
+    folderEntryId: number | null;
     size: number;
     matchedBytes: number;
     itemCount: number;
@@ -1520,6 +1525,7 @@ function buildVolumeFolderTree(
   const rootDir: MutableDir = {
     name: rootLabel,
     fullPath: baseFolderPath ?? '',
+    folderEntryId: baseFolderPath ? folderIds.get(baseFolderPath) ?? null : null,
     size: 0,
     matchedBytes: 0,
     itemCount: 0,
@@ -1546,6 +1552,7 @@ function buildVolumeFolderTree(
         sub = {
           name: seg,
           fullPath: builtPath,
+          folderEntryId: folderIds.get(builtPath) ?? null,
           size: 0,
           matchedBytes: 0,
           itemCount: 0,
@@ -1583,6 +1590,7 @@ function buildVolumeFolderTree(
           volumeId,
           folderPath: dir.fullPath || null,
           entryId: file.id,
+          folderEntryId: dir.folderEntryId,
           duplicateCount: file.size >= MB ? (metadataCandidateVolumeCounts.get(metadataCandidateKey(file.name, file.size)) ?? 1) : 1,
           colorIndex: color % 8,
         });
@@ -1599,7 +1607,7 @@ function buildVolumeFolderTree(
       kind: depth === 0 ? 'root' : 'directory',
       volumeId,
       folderPath: dir.fullPath || null,
-      entryId: null,
+      entryId: dir.folderEntryId,
       colorIndex: inheritedColor % 8,
       children: children.length > 0 ? children : undefined,
     };
@@ -2473,6 +2481,24 @@ async function startServer() {
   });
 
   // 6. Main Search / Browse / 4-Mode Video Duplicates / Copy Candidates Endpoint
+  app.post('/api/catalog/ancestors', (req: Request, res: Response) => {
+    const volumeId = Number(req.body?.volumeId);
+    let parentId = req.body?.parentId === null ? null : Number(req.body?.parentId);
+    if (!Number.isInteger(volumeId) || (parentId !== null && !Number.isInteger(parentId))) {
+      return res.status(400).json({ error: 'Invalid folder scope' });
+    }
+    const ancestors: { id: number; name: string }[] = [];
+    const visited = new Set<number>();
+    while (parentId !== null && !visited.has(parentId)) {
+      visited.add(parentId);
+      const folder = rawEntries.find((entry) => entry.id === parentId && entry.volumeId === volumeId && entry.kind === 'directory');
+      if (!folder) return res.status(404).json({ error: 'Folder not found' });
+      ancestors.push({ id: folder.id, name: folder.name });
+      parentId = folder.parentId;
+    }
+    return res.json({ ancestors: ancestors.reverse() });
+  });
+
   app.post('/api/catalog/query', async (req: Request, res: Response) => {
     const started = performance.now();
     const {

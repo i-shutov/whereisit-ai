@@ -170,6 +170,7 @@ fn dispatch(input: &str) -> Result<Value> {
         "ctf_preview_volumes" => ctf_preview::volumes(&v)?,
         "ctf_preview_children" => ctf_preview::children(&v)?,
         "ctf_preview_children_focused" => ctf_preview::children_focused(&v)?,
+        "ctf_preview_ancestors" => ctf_preview::ancestors(&v)?,
         "ctf_preview_search" => ctf_preview::search(&v)?,
         "ctf_preview_copy_candidates" => ctf_preview::copy_candidates(&v)?,
         "ctf_preview_export" => ctf_preview::export(&v)?,
@@ -184,6 +185,7 @@ fn dispatch(input: &str) -> Result<Value> {
         "ctf_children_focused_pinned" => {
             ctf_mirror::read_pinned(&v, |db| focused_children::page(db, &v))?
         }
+        "ctf_ancestors_pinned" => ctf_mirror::ancestors_pinned(&v)?,
         "ctf_export_pinned" => ctf_export::export(&v)?,
         "ctf_annotations_list_pinned" => ctf_annotations::list(&v)?,
         "ctf_annotations_preview_pinned" => ctf_annotations::preview(&v)?,
@@ -207,6 +209,9 @@ fn dispatch(input: &str) -> Result<Value> {
         "duplicates" => duplicates::duplicates(&Catalog::open(text(&v, "db")?)?, &v)?,
         "copy_candidates" => copy_candidates::page(&Catalog::open(text(&v, "db")?)?, &v)?,
         "children_focused" => focused_children::page(&Catalog::open(text(&v, "db")?)?, &v)?,
+        "entry_ancestors" => {
+            focused_children::ancestors(&Catalog::open_readonly(text(&v, "db")?)?, &v)?
+        }
         "disk_preferences_list" => disk_preferences::list(&v)?,
         "disk_preferences_get" => disk_preferences::get(&v)?,
         "disk_preferences_set" => disk_preferences::set(&v)?,

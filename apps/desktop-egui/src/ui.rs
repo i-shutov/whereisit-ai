@@ -24,7 +24,34 @@ const SEARCH_INPUT_ID: &str = "global_search_input";
 const DISK_NAME_INPUT_ID: &str = "disk_local_name_input";
 const LANGUAGE_SETTING: &str = "whereisit.language.v1";
 const THEME_SETTING: &str = "whereisit.theme.v1";
-type HistoryEntry = (Route, u64, Option<Entry>, Option<i64>, f32);
+type FolderKey = (i64, Option<i64>);
+type HistoryEntry = (
+    Route,
+    u64,
+    Option<Entry>,
+    Option<i64>,
+    f32,
+    Vec<BrowseCrumb>,
+    String,
+);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BrowseCrumb {
+    id: i64,
+    parent_id: Option<i64>,
+    name: String,
+    kind: String,
+}
+
+#[derive(Clone, Debug, Default)]
+struct TreeChildren {
+    items: Vec<Entry>,
+    next_offset: u64,
+    has_more: bool,
+    loading_request: Option<u64>,
+    loading_offset: Option<u64>,
+    error: Option<String>,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Language {
@@ -315,6 +342,14 @@ pub struct DesktopApp {
     results_scroll: f32,
     restore_scroll: Option<f32>,
     selected_volume: Option<i64>,
+    folder_crumbs: Vec<BrowseCrumb>,
+    catalog_generation: u64,
+    tree_children: HashMap<FolderKey, TreeChildren>,
+    tree_expanded: HashSet<FolderKey>,
+    tree_path_nodes: HashMap<FolderKey, Vec<BrowseCrumb>>,
+    tree_reveal_target: Option<FolderKey>,
+    tree_ancestors_request_id: Option<u64>,
+    tree_ancestors_target: Option<(i64, i64)>,
     disk_filter: String,
     register_order: RegisterOrder,
     disks_filter: String,
@@ -455,10 +490,7 @@ impl DesktopApp {
             shelf: ShelfSnapshot::default(),
             shelf_editor: String::new(),
             legacy_shelf_editable: false,
-            route: Route::Search {
-                query: String::new(),
-                volume_id: None,
-            },
+            route: Route::Catalog,
             history: Vec::new(),
             page: Page::default(),
             offset: 0,
@@ -468,6 +500,14 @@ impl DesktopApp {
             results_scroll: 0.0,
             restore_scroll: None,
             selected_volume: None,
+            folder_crumbs: Vec::new(),
+            catalog_generation: 0,
+            tree_children: HashMap::new(),
+            tree_expanded: HashSet::new(),
+            tree_path_nodes: HashMap::new(),
+            tree_reveal_target: None,
+            tree_ancestors_request_id: None,
+            tree_ancestors_target: None,
             disk_filter: String::new(),
             register_order: RegisterOrder::Id,
             disks_filter: String::new(),
@@ -906,6 +946,14 @@ impl DesktopApp {
         self.slices_preview_job = false;
         self.analytics_generation = self.analytics_generation.wrapping_add(1);
         self.slices_generation = self.slices_generation.wrapping_add(1);
+        self.catalog_generation = self.catalog_generation.wrapping_add(1);
+        self.tree_ancestors_request_id = None;
+        self.tree_ancestors_target = None;
+        self.tree_children.clear();
+        self.tree_expanded.clear();
+        self.tree_path_nodes.clear();
+        self.tree_reveal_target = None;
+        self.folder_crumbs.clear();
         self.analytics_request_id = None;
         self.slices_request_id = None;
         self.analytics_db = None;
@@ -944,10 +992,7 @@ impl DesktopApp {
         self.disks_selected_volume = None;
         self.disks_scroll = 0.0;
         self.query_input.clear();
-        self.route = Route::Search {
-            query: String::new(),
-            volume_id: None,
-        };
+        self.route = Route::Catalog;
         self.history.clear();
         self.page = Page::default();
         self.offset = 0;
@@ -1324,12 +1369,584 @@ impl DesktopApp {
     }
 
     fn load_page(&mut self, ctx: &egui::Context) {
+        if matches!(&self.route, Route::Catalog) {
+            self.page = Page::default();
+            self.offset = 0;
+            self.selected = None;
+            return;
+        }
         if let Some(db) = self.db.clone() {
             let route = self.route.clone();
             let request = route.request(&db, self.offset, PAGE_LIMIT);
             self.status = StatusText::new("Поиск по каталогу…", "Searching catalog…");
             self.queue(Purpose::Page { route }, request, ctx);
         }
+    }
+
+    fn request_tree_children(&mut self, key: FolderKey, offset: u64, ctx: &egui::Context) {
+        let Some(db) = self.db.clone() else {
+            return;
+        };
+        let page = self.tree_children.entry(key).or_default();
+        if page.loading_request.is_some() || (offset > 0 && page.next_offset != offset) {
+            return;
+        }
+        let mut request = json!({"op":"children","db":db,"volume_id":key.0,
+            "parent_id":key.1,"offset":offset,"limit":PAGE_LIMIT});
+        let linked_generation = self.linked_ctf.as_ref().map(|link| link.generation.clone());
+        if let Some(link) = &self.linked_ctf {
+            match link.rewrite(request) {
+                Ok(mapped) => request = mapped,
+                Err(error) => {
+                    self.tree_children.entry(key).or_default().error = Some(error);
+                    return;
+                }
+            }
+        }
+        let request_id = self.bus.send(
+            Purpose::TreeChildren {
+                db,
+                catalog_generation: self.catalog_generation,
+                linked_generation,
+                volume_id: key.0,
+                parent_id: key.1,
+                offset,
+            },
+            request,
+            ctx,
+        );
+        let page = self.tree_children.entry(key).or_default();
+        page.loading_request = Some(request_id);
+        page.loading_offset = Some(offset);
+        page.error = None;
+    }
+
+    fn request_tree_ancestors(&mut self, volume_id: i64, entry_id: i64, ctx: &egui::Context) {
+        let Some(db) = self.db.clone() else {
+            return;
+        };
+        let mut request = json!({"op":"entry_ancestors","db":db,
+            "volume_id":volume_id,"entry_id":entry_id});
+        let linked_generation = self.linked_ctf.as_ref().map(|link| link.generation.clone());
+        if let Some(link) = &self.linked_ctf {
+            match link.rewrite(request) {
+                Ok(mapped) => request = mapped,
+                Err(error) => {
+                    self.error = Some(error);
+                    return;
+                }
+            }
+        }
+        let request_id = self.bus.send(
+            Purpose::TreeAncestors {
+                db,
+                catalog_generation: self.catalog_generation,
+                linked_generation,
+                volume_id,
+                entry_id,
+            },
+            request,
+            ctx,
+        );
+        self.tree_ancestors_request_id = Some(request_id);
+        self.tree_ancestors_target = Some((volume_id, entry_id));
+    }
+
+    fn push_history(&mut self) {
+        self.history.push((
+            self.route.clone(),
+            self.offset,
+            self.selected.clone(),
+            self.selected_volume,
+            self.results_scroll,
+            self.folder_crumbs.clone(),
+            self.query_input.clone(),
+        ));
+    }
+
+    fn toggle_tree_node(&mut self, key: FolderKey, ctx: &egui::Context) {
+        if !self.tree_expanded.remove(&key) {
+            self.tree_expanded.insert(key);
+            let should_load = self
+                .tree_children
+                .get(&key)
+                .is_none_or(|page| page.items.is_empty() && page.next_offset == 0);
+            if should_load {
+                self.request_tree_children(key, 0, ctx);
+            }
+        }
+    }
+
+    fn draw_tree_children(
+        &mut self,
+        ui: &mut egui::Ui,
+        key: FolderKey,
+        depth: usize,
+        ctx: &egui::Context,
+    ) {
+        if depth > 255 {
+            ui.label(self.t(
+                "Достигнута максимальная глубина папок.",
+                "Maximum folder depth reached.",
+            ));
+            return;
+        }
+        let mut rows = self
+            .tree_children
+            .get(&key)
+            .map(|page| page.items.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(Entry::is_container)
+            .map(|entry| BrowseCrumb {
+                id: entry.id,
+                parent_id: entry.parent_id,
+                name: entry.name,
+                kind: entry.kind,
+            })
+            .collect::<Vec<_>>();
+        if let Some(path_nodes) = self.tree_path_nodes.get(&key) {
+            for crumb in path_nodes {
+                if !rows.iter().any(|entry| entry.id == crumb.id) {
+                    rows.push(crumb.clone());
+                }
+            }
+        }
+        for crumb in rows {
+            let child_key = (key.0, Some(crumb.id));
+            let expanded = self.tree_expanded.contains(&child_key);
+            ui.horizontal(|ui| {
+                ui.add_space((depth.min(18) * 14) as f32);
+                if ui.small_button(if expanded { "▾" } else { "▸" }).clicked() {
+                    self.toggle_tree_node(child_key, ctx);
+                }
+                let response = ui
+                    .selectable_label(
+                        matches!(&self.route, Route::Folder { volume_id, parent_id: Some(id) }
+                            if *volume_id == key.0 && *id == crumb.id),
+                        &crumb.name,
+                    )
+                    .on_hover_text(&crumb.name);
+                if self.tree_reveal_target == Some(child_key) {
+                    response.scroll_to_me(Some(egui::Align::Center));
+                    // Ancestors are pinned before lazy sibling pages arrive.
+                    // Those pages can insert rows above this node on a later
+                    // frame, so retain the reveal until the layout settles.
+                    if self
+                        .tree_children
+                        .values()
+                        .all(|page| page.loading_request.is_none())
+                    {
+                        self.tree_reveal_target = None;
+                    }
+                }
+                if response.clicked() {
+                    self.navigate_tree_folder(key.0, crumb.id, ctx);
+                }
+            });
+            if expanded {
+                self.draw_tree_children(ui, child_key, depth.saturating_add(1), ctx);
+            }
+        }
+        if let Some(page) = self.tree_children.get(&key).cloned() {
+            if page.loading_request.is_some() {
+                ui.horizontal(|ui| {
+                    ui.add_space((depth.saturating_add(1).min(18) * 14) as f32);
+                    ui.spinner();
+                    ui.small(self.t("Загрузка папок…", "Loading folders…"));
+                });
+            } else if page.has_more
+                && ui
+                    .small_button(self.t("Ещё папки…", "More folders…"))
+                    .clicked()
+            {
+                self.request_tree_children(key, page.next_offset, ctx);
+            } else if let Some(error) = page.error {
+                ui.colored_label(Color32::from_rgb(224, 96, 88), error);
+            }
+        }
+    }
+
+    fn navigate_tree_folder(&mut self, volume_id: i64, entry_id: i64, ctx: &egui::Context) {
+        if self.active_request.is_some()
+            || entry_id <= 0
+            || !self.volumes.iter().any(|volume| volume.id == volume_id)
+        {
+            return;
+        }
+        self.push_history();
+        self.selected_volume = Some(volume_id);
+        self.query_input.clear();
+        self.folder_crumbs.clear();
+        self.route = Route::Folder {
+            volume_id,
+            parent_id: Some(entry_id),
+        };
+        self.offset = 0;
+        self.page = Page::default();
+        self.selected = None;
+        self.restore_selection = None;
+        self.reveal_selected = false;
+        self.request_tree_ancestors(volume_id, entry_id, ctx);
+        self.load_page(ctx);
+    }
+
+    fn browse_up(&mut self, ctx: &egui::Context) {
+        if self.active_request.is_some() {
+            return;
+        }
+        let Route::Folder {
+            volume_id,
+            parent_id: Some(current_id),
+        } = &self.route
+        else {
+            return;
+        };
+        let volume_id = *volume_id;
+        let current_id = *current_id;
+        if !self
+            .folder_crumbs
+            .last()
+            .is_some_and(|crumb| crumb.id == current_id)
+        {
+            self.request_tree_ancestors(volume_id, current_id, ctx);
+            return;
+        }
+        self.push_history();
+        let current = self.folder_crumbs.pop();
+        self.route = Route::Folder {
+            volume_id,
+            parent_id: current.and_then(|crumb| crumb.parent_id),
+        };
+        self.offset = 0;
+        self.selected = None;
+        self.load_page(ctx);
+    }
+
+    fn navigate_breadcrumb(&mut self, volume_id: i64, index: Option<usize>, ctx: &egui::Context) {
+        if self.active_request.is_some() {
+            return;
+        }
+        self.push_history();
+        self.selected_volume = Some(volume_id);
+        self.query_input.clear();
+        if let Some(index) = index {
+            if let Some(crumb) = self.folder_crumbs.get(index).cloned() {
+                self.folder_crumbs.truncate(index + 1);
+                self.route = Route::Folder {
+                    volume_id,
+                    parent_id: Some(crumb.id),
+                };
+            } else {
+                return;
+            }
+        } else {
+            self.folder_crumbs.clear();
+            self.route = Route::Folder {
+                volume_id,
+                parent_id: None,
+            };
+        }
+        self.offset = 0;
+        self.page = Page::default();
+        self.selected = None;
+        self.restore_selection = None;
+        self.reveal_selected = false;
+        self.load_page(ctx);
+    }
+
+    fn apply_tree_reply(&mut self, reply: crate::bridge::Reply, ctx: &egui::Context) {
+        let (db, catalog_generation, linked_generation) = match &reply.purpose {
+            Purpose::TreeChildren {
+                db,
+                catalog_generation,
+                linked_generation,
+                ..
+            }
+            | Purpose::TreeAncestors {
+                db,
+                catalog_generation,
+                linked_generation,
+                ..
+            } => (db.clone(), *catalog_generation, linked_generation.clone()),
+            _ => return,
+        };
+        let link = linked_generation.as_ref().and_then(|_| {
+            self.linked_ctf.clone().filter(|link| {
+                link.path == db && Some(&link.generation) == linked_generation.as_ref()
+            })
+        });
+        let scope_current = self.catalog_generation == catalog_generation
+            && self.db.as_deref() == Some(db.as_str())
+            && (linked_generation.is_none() || link.is_some());
+        if !scope_current {
+            return;
+        }
+        let request_current = match &reply.purpose {
+            Purpose::TreeChildren {
+                volume_id,
+                parent_id,
+                offset,
+                ..
+            } => self
+                .tree_children
+                .get(&(*volume_id, *parent_id))
+                .is_some_and(|page| {
+                    page.loading_request == Some(reply.id) && page.loading_offset == Some(*offset)
+                }),
+            Purpose::TreeAncestors {
+                volume_id,
+                entry_id,
+                ..
+            } => {
+                let route_target_matches = match &self.route {
+                    Route::Folder {
+                        volume_id: current_volume,
+                        parent_id: Some(current_entry),
+                    } => *current_volume == *volume_id && *current_entry == *entry_id,
+                    Route::BranchSearch {
+                        volume_id: current_volume,
+                        parent_id,
+                        ..
+                    } => *current_volume == *volume_id && *parent_id == *entry_id,
+                    _ => false,
+                };
+                self.tree_ancestors_request_id == Some(reply.id)
+                    && self.tree_ancestors_target == Some((*volume_id, *entry_id))
+                    && route_target_matches
+            }
+            _ => false,
+        };
+        if !request_current {
+            return;
+        }
+
+        if reply.response["ok"] != true {
+            let code = reply
+                .response
+                .pointer("/error/code")
+                .and_then(Value::as_str);
+            let message = reply
+                .response
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .unwrap_or("Folder navigation request failed")
+                .to_owned();
+            match &reply.purpose {
+                Purpose::TreeChildren {
+                    volume_id,
+                    parent_id,
+                    offset,
+                    ..
+                } => {
+                    let page = self
+                        .tree_children
+                        .entry((*volume_id, *parent_id))
+                        .or_default();
+                    if page.loading_request == Some(reply.id)
+                        && page.loading_offset == Some(*offset)
+                    {
+                        page.loading_request = None;
+                        page.loading_offset = None;
+                        page.error = Some(message.clone());
+                    } else {
+                        return;
+                    }
+                }
+                Purpose::TreeAncestors { .. } => {
+                    if self.tree_ancestors_request_id != Some(reply.id) {
+                        return;
+                    }
+                    self.tree_ancestors_request_id = None;
+                    self.tree_ancestors_target = None;
+                    self.error = Some(message.clone());
+                }
+                _ => return,
+            }
+            if matches!(
+                code,
+                Some(
+                    "source_changed"
+                        | "cache_changed"
+                        | "cache_corrupt"
+                        | "cache_stale"
+                        | "not_pinned"
+                )
+            ) {
+                self.clear_catalog();
+                self.error = Some(message);
+            }
+            ctx.request_repaint();
+            return;
+        }
+        let data = if linked_generation.is_some() {
+            match link
+                .as_ref()
+                .and_then(|link| link.unwrap_reply(&reply.response).ok())
+            {
+                Some(normalized) => normalized["data"].clone(),
+                None => {
+                    match &reply.purpose {
+                        Purpose::TreeChildren {
+                            volume_id,
+                            parent_id,
+                            ..
+                        } => {
+                            let page = self
+                                .tree_children
+                                .entry((*volume_id, *parent_id))
+                                .or_default();
+                            page.loading_request = None;
+                            page.loading_offset = None;
+                            page.error = Some("Folder response has stale source identity".into());
+                        }
+                        Purpose::TreeAncestors { .. } => {
+                            self.tree_ancestors_request_id = None;
+                            self.tree_ancestors_target = None;
+                            self.error = Some("Ancestor response has stale source identity".into());
+                        }
+                        _ => {}
+                    }
+                    ctx.request_repaint();
+                    return;
+                }
+            }
+        } else {
+            reply.response["data"].clone()
+        };
+
+        match reply.purpose {
+            Purpose::TreeChildren {
+                volume_id,
+                parent_id,
+                offset,
+                ..
+            } => {
+                let key = (volume_id, parent_id);
+                let page_state = self.tree_children.entry(key).or_default();
+                if page_state.loading_request != Some(reply.id)
+                    || page_state.loading_offset != Some(offset)
+                    || (offset > 0 && page_state.next_offset != offset)
+                {
+                    return;
+                }
+                match Page::parse(&data) {
+                    Ok(page) => {
+                        let next_offset = page.offset.saturating_add(page.items.len() as u64);
+                        if offset == 0 {
+                            page_state.items = page.items;
+                        } else {
+                            page_state.items.extend(page.items);
+                        }
+                        // The server offset counts files as well as folders.
+                        page_state.next_offset = next_offset;
+                        page_state.has_more = page.has_more;
+                        page_state.loading_request = None;
+                        page_state.loading_offset = None;
+                        page_state.error = None;
+                    }
+                    Err(error) => {
+                        page_state.loading_request = None;
+                        page_state.loading_offset = None;
+                        page_state.error = Some(error);
+                    }
+                }
+            }
+            Purpose::TreeAncestors {
+                volume_id,
+                entry_id,
+                ..
+            } => {
+                let target_current = match &self.route {
+                    Route::Folder {
+                        volume_id: current_volume,
+                        parent_id: Some(current_entry),
+                    } => *current_volume == volume_id && *current_entry == entry_id,
+                    Route::BranchSearch {
+                        volume_id: current_volume,
+                        parent_id,
+                        ..
+                    } => *current_volume == volume_id && *parent_id == entry_id,
+                    _ => false,
+                };
+                if self.tree_ancestors_request_id != Some(reply.id)
+                    || self.tree_ancestors_target != Some((volume_id, entry_id))
+                    || !target_current
+                {
+                    return;
+                }
+                self.tree_ancestors_request_id = None;
+                self.tree_ancestors_target = None;
+                let parsed = data
+                    .get("items")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| "Ancestors response is missing items[]".to_owned())
+                    .and_then(|items| {
+                        items
+                            .iter()
+                            .map(|item| {
+                                Ok(BrowseCrumb {
+                                    id: item["id"]
+                                        .as_i64()
+                                        .filter(|id| *id > 0)
+                                        .ok_or_else(|| "Invalid ancestor id".to_owned())?,
+                                    parent_id: item["parent_id"].as_i64(),
+                                    name: item["name"]
+                                        .as_str()
+                                        .ok_or_else(|| "Invalid ancestor name".to_owned())?
+                                        .to_owned(),
+                                    kind: item["kind"]
+                                        .as_str()
+                                        .ok_or_else(|| "Invalid ancestor kind".to_owned())?
+                                        .to_owned(),
+                                })
+                            })
+                            .collect::<Result<Vec<_>, String>>()
+                    });
+                match parsed {
+                    Ok(crumbs)
+                        if data["volume_id"].as_i64() == Some(volume_id)
+                            && crumbs.last().is_some_and(|crumb| crumb.id == entry_id)
+                            && crumbs
+                                .windows(2)
+                                .all(|pair| pair[1].parent_id == Some(pair[0].id)) =>
+                    {
+                        self.folder_crumbs = crumbs.clone();
+                        self.tree_reveal_target = Some((volume_id, Some(entry_id)));
+                        let mut parent_id = None;
+                        let mut load_keys = vec![(volume_id, None)];
+                        self.tree_expanded.insert((volume_id, None));
+                        for crumb in crumbs {
+                            let key = (volume_id, parent_id);
+                            let nodes = self.tree_path_nodes.entry(key).or_default();
+                            if !nodes.iter().any(|node| node.id == crumb.id) {
+                                nodes.push(crumb.clone());
+                            }
+                            let child_key = (volume_id, Some(crumb.id));
+                            self.tree_expanded.insert(child_key);
+                            load_keys.push(child_key);
+                            parent_id = Some(crumb.id);
+                        }
+                        for key in load_keys {
+                            if self
+                                .tree_children
+                                .get(&key)
+                                .is_none_or(|page| page.next_offset == 0 && page.items.is_empty())
+                            {
+                                self.request_tree_children(key, 0, ctx);
+                            }
+                        }
+                    }
+                    Ok(_) => {
+                        self.error =
+                            Some("Ancestor response did not match the selected folder".into())
+                    }
+                    Err(error) => self.error = Some(error),
+                }
+            }
+            _ => {}
+        }
+        ctx.request_repaint();
     }
 
     fn load_categories(&mut self, ctx: &egui::Context) {
@@ -1463,13 +2080,8 @@ impl DesktopApp {
         {
             return;
         }
-        self.history.push((
-            self.route.clone(),
-            self.offset,
-            self.selected.clone(),
-            self.selected_volume,
-            self.results_scroll,
-        ));
+        self.push_history();
+        self.folder_crumbs.clear();
         self.query_input = category.search_query();
         self.route = Route::Search {
             query: self.query_input.clone(),
@@ -1489,52 +2101,147 @@ impl DesktopApp {
         if self.active_request.is_some() {
             return;
         }
-        self.history.clear();
+        let query = self.query_input.trim().to_owned();
+        let previous = self.route.clone();
+        if query.is_empty() {
+            match previous {
+                Route::Folder { .. } => {}
+                Route::BranchSearch {
+                    volume_id,
+                    parent_id,
+                    ..
+                } => {
+                    self.route = Route::Folder {
+                        volume_id,
+                        parent_id: Some(parent_id),
+                    };
+                }
+                Route::Catalog => {
+                    self.selected_volume = None;
+                }
+                Route::Search {
+                    volume_id: None, ..
+                } => {
+                    self.route = Route::Catalog;
+                    self.selected_volume = None;
+                    self.folder_crumbs.clear();
+                }
+                Route::Search {
+                    volume_id: Some(volume_id),
+                    ..
+                } => {
+                    self.selected_volume = Some(volume_id);
+                    self.route = Route::Folder {
+                        volume_id,
+                        parent_id: None,
+                    };
+                    self.folder_crumbs.clear();
+                }
+                _ => {
+                    self.route = Route::Catalog;
+                    self.selected_volume = None;
+                    self.folder_crumbs.clear();
+                }
+            }
+        } else {
+            self.route = match previous {
+                Route::Folder {
+                    volume_id,
+                    parent_id: Some(parent_id),
+                } => Route::BranchSearch {
+                    volume_id,
+                    parent_id,
+                    query: query.clone(),
+                    exact_category_id: None,
+                },
+                Route::BranchSearch {
+                    volume_id,
+                    parent_id,
+                    exact_category_id,
+                    ..
+                } => Route::BranchSearch {
+                    volume_id,
+                    parent_id,
+                    query: query.clone(),
+                    exact_category_id,
+                },
+                Route::Folder {
+                    volume_id,
+                    parent_id: None,
+                } => Route::Search {
+                    query: query.clone(),
+                    volume_id: Some(volume_id),
+                },
+                _ => Route::Search {
+                    query: query.clone(),
+                    volume_id: self.selected_volume,
+                },
+            };
+        }
         self.restore_selection = None;
         self.reveal_selected = false;
         self.offset = 0;
         self.selected = None;
-        self.route = Route::Search {
-            query: self.query_input.trim().to_owned(),
-            volume_id: self.selected_volume,
-        };
+        self.page = Page::default();
         self.load_page(ctx);
     }
 
     fn submit_search(&mut self, ctx: &egui::Context) {
-        if let Route::BranchSearch {
-            volume_id,
-            parent_id,
-            exact_category_id,
-            ..
-        } = self.route.clone()
-        {
-            if self.active_request.is_some() || self.dialog_open() {
-                return;
-            }
-            self.offset = 0;
-            self.page = Page::default();
-            self.selected = None;
-            self.restore_selection = None;
-            self.reveal_selected = false;
-            self.route = Route::BranchSearch {
-                volume_id,
-                parent_id,
-                query: self.query_input.trim().to_owned(),
-                exact_category_id,
-            };
-            self.load_page(ctx);
-        } else {
-            self.navigate_search(ctx);
+        if self.dialog_open() {
+            return;
         }
+        self.navigate_search(ctx);
     }
 
     fn navigate_disk(&mut self, volume_id: Option<i64>, ctx: &egui::Context) {
         if self.active_request.is_some() {
             return;
         }
-        self.selected_volume = volume_id;
-        self.navigate_search(ctx);
+        if let Some(volume_id) = volume_id {
+            self.browse_volume_root(volume_id, ctx);
+            return;
+        }
+        self.selected_volume = None;
+        let query = self.query_input.trim().to_owned();
+        self.folder_crumbs.clear();
+        self.offset = 0;
+        self.page = Page::default();
+        self.selected = None;
+        self.restore_selection = None;
+        if query.is_empty() {
+            self.route = Route::Catalog;
+        } else {
+            self.route = Route::Search {
+                query,
+                volume_id: None,
+            };
+        }
+        self.load_page(ctx);
+    }
+
+    fn browse_volume_root(&mut self, volume_id: i64, ctx: &egui::Context) {
+        if self.active_request.is_some()
+            || !self.volumes.iter().any(|volume| volume.id == volume_id)
+        {
+            return;
+        }
+        self.push_history();
+        self.query_input.clear();
+        self.selected_volume = Some(volume_id);
+        self.folder_crumbs.clear();
+        self.query_input.clear();
+        self.offset = 0;
+        self.page = Page::default();
+        self.selected = None;
+        self.restore_selection = None;
+        self.reveal_selected = false;
+        self.results_scroll = 0.0;
+        self.restore_scroll = Some(0.0);
+        self.route = Route::Folder {
+            volume_id,
+            parent_id: None,
+        };
+        self.load_page(ctx);
     }
 
     fn jump_to_search_on_disk(&mut self, volume_id: i64, ctx: &egui::Context) {
@@ -1546,37 +2253,29 @@ impl DesktopApp {
         }
         self.switch_workspace(WorkspaceTab::Search);
         self.workspace_tab_focus_request = false;
-        self.selected_volume = Some(volume_id);
-        // PR58's explicit disk action starts a fresh scoped search. Merely
-        // selecting the Search tab above retains its previous context instead.
-        self.query_input.clear();
-        self.results_scroll = 0.0;
-        self.restore_scroll = Some(0.0);
-        ctx.memory_mut(|memory| memory.request_focus(egui::Id::unique(SEARCH_INPUT_ID)));
-        self.navigate_disk(Some(volume_id), ctx);
+        self.browse_volume_root(volume_id, ctx);
     }
 
     fn navigate_folder(&mut self, entry: &Entry, ctx: &egui::Context) {
         if self.active_request.is_some() {
             return;
         }
-        if !entry.is_directory() {
+        if !entry.is_container() {
             return;
         }
-        self.history.push((
-            self.route.clone(),
-            self.offset,
-            self.selected.clone(),
-            self.selected_volume,
-            self.results_scroll,
-        ));
+        self.push_history();
         self.restore_selection = None;
+        self.query_input.clear();
         self.offset = 0;
         self.selected = None;
         self.route = Route::Folder {
             volume_id: entry.volume_id,
             parent_id: Some(entry.id),
         };
+        self.selected_volume = Some(entry.volume_id);
+        self.query_input.clear();
+        self.folder_crumbs.clear();
+        self.request_tree_ancestors(entry.volume_id, entry.id, ctx);
         self.load_page(ctx);
     }
 
@@ -1585,16 +2284,10 @@ impl DesktopApp {
             return;
         }
         if let Some(entry) = self.selected.clone() {
-            if entry.is_directory() {
+            if entry.is_container() {
                 return;
             }
-            self.history.push((
-                self.route.clone(),
-                self.offset,
-                self.selected.clone(),
-                self.selected_volume,
-                self.results_scroll,
-            ));
+            self.push_history();
             self.restore_selection = None;
             self.offset = 0;
             self.selected = None;
@@ -1607,32 +2300,39 @@ impl DesktopApp {
         if self.active_request.is_some() {
             return;
         }
-        if let Some((route, offset, selection, selected_volume, scroll)) = self.history.pop() {
+        if let Some((
+            route,
+            offset,
+            selection,
+            selected_volume,
+            scroll,
+            folder_crumbs,
+            query_input,
+        )) = self.history.pop()
+        {
             self.reveal_selected = false;
             self.restore_scroll = Some(scroll);
             if let Route::Search { query, .. } | Route::BranchSearch { query, .. } = &route {
                 self.query_input = query.clone();
+            } else {
+                self.query_input = query_input;
             }
             self.route = route;
             self.offset = offset;
             self.selected = None;
             self.restore_selection = selection;
             self.selected_volume = selected_volume;
+            self.folder_crumbs = folder_crumbs;
             self.load_page(ctx);
         }
     }
 
     fn navigate_containing_folder(&mut self, entry: &Entry, ctx: &egui::Context) {
-        if self.active_request.is_some() || entry.is_directory() {
+        if self.active_request.is_some() || entry.is_container() {
             return;
         }
-        self.history.push((
-            self.route.clone(),
-            self.offset,
-            self.selected.clone(),
-            self.selected_volume,
-            self.results_scroll,
-        ));
+        self.push_history();
+        self.query_input.clear();
         self.route = Route::Folder {
             volume_id: entry.volume_id,
             parent_id: entry.parent_id,
@@ -1642,6 +2342,15 @@ impl DesktopApp {
         self.selected = None;
         self.restore_selection = Some(entry.clone());
         self.reveal_selected = true;
+        self.folder_crumbs.clear();
+        if let Some(parent_id) = entry.parent_id {
+            self.tree_expanded.insert((entry.volume_id, None));
+            self.request_tree_ancestors(entry.volume_id, parent_id, ctx);
+        } else {
+            self.folder_crumbs.clear();
+            self.tree_expanded.insert((entry.volume_id, None));
+            self.request_tree_children((entry.volume_id, None), 0, ctx);
+        }
         if let Some(db) = self.db.clone() {
             self.queue(
                 Purpose::Page {
@@ -1657,6 +2366,13 @@ impl DesktopApp {
     }
 
     fn apply_reply(&mut self, mut reply: crate::bridge::Reply, ctx: &egui::Context) {
+        if matches!(
+            &reply.purpose,
+            Purpose::TreeChildren { .. } | Purpose::TreeAncestors { .. }
+        ) {
+            self.apply_tree_reply(reply, ctx);
+            return;
+        }
         let linked_operation_job_id = match &reply.purpose {
             Purpose::LinkedRead { job_id, .. } => job_id.clone(),
             _ => None,
@@ -2138,6 +2854,8 @@ impl DesktopApp {
             | Purpose::CtfProgress { .. }
             | Purpose::CtfCancel { .. }
             | Purpose::Analytics { .. }
+            | Purpose::TreeChildren { .. }
+            | Purpose::TreeAncestors { .. }
             | Purpose::AnalyticsCancel
             | Purpose::LocalAnalyzer { .. } => unreachable!("Handled above"),
             Purpose::Open { path } | Purpose::Create { path } => {
@@ -2174,14 +2892,11 @@ impl DesktopApp {
                 Ok(volumes) => {
                     self.volumes = volumes;
                     if self.linked_ctf.as_ref().is_some_and(|link| link.preview) {
-                        self.route = Route::Search {
-                            query: String::new(),
-                            volume_id: None,
-                        };
+                        self.route = Route::Catalog;
                         self.query_input.clear();
                         self.offset = 0;
                         self.status = StatusText::new("Каталог CTF открыт", "CTF catalog opened");
-                        self.load_page(ctx);
+                        self.page = Page::default();
                     } else {
                         self.status = StatusText::new("Каталог открыт", "Catalog opened");
                         self.load_disk_preferences(ctx);
@@ -3124,17 +3839,31 @@ impl DesktopApp {
         self.restore_scroll = None;
         self.results_scroll = 0.0;
         self.route = match (volume, folder) {
+            (Some(volume_id), Some(parent_id)) if scoped_query.trim().is_empty() => Route::Folder {
+                volume_id,
+                parent_id: Some(parent_id),
+            },
             (Some(volume_id), Some(parent_id)) => Route::BranchSearch {
                 volume_id,
                 parent_id,
                 query: query.trim().to_owned(),
                 exact_category_id: exact_category,
             },
+            (Some(volume_id), None) if scoped_query.trim().is_empty() => Route::Folder {
+                volume_id,
+                parent_id: None,
+            },
+            (None, None) if scoped_query.trim().is_empty() => Route::Catalog,
             (_, _) => Route::Search {
                 query: scoped_query,
                 volume_id: volume,
             },
         };
+        self.folder_crumbs.clear();
+        if let (Some(volume_id), Some(parent_id)) = (volume, folder) {
+            self.tree_expanded.insert((volume_id, None));
+            self.request_tree_ancestors(volume_id, parent_id, ctx);
+        }
         self.switch_workspace(WorkspaceTab::Search);
         self.load_page(ctx);
     }
@@ -3159,6 +3888,7 @@ impl DesktopApp {
         self.restore_scroll = None;
         self.results_scroll = 0.0;
         self.route = Route::Copies { entry_id };
+        self.folder_crumbs.clear();
         self.switch_workspace(WorkspaceTab::Search);
         self.load_page(ctx);
     }
@@ -3974,6 +4704,44 @@ impl DesktopApp {
                 if back.clicked() {
                     self.go_back(ctx);
                 }
+                let can_go_up = match &self.route {
+                    Route::Folder {
+                        parent_id: Some(id),
+                        ..
+                    } => self
+                        .folder_crumbs
+                        .last()
+                        .is_some_and(|crumb| crumb.id == *id),
+                    _ => false,
+                };
+                if ui
+                    .add_enabled(
+                        can_go_up && self.active_request.is_none(),
+                        egui::Button::new(self.t("↑ Вверх", "↑ Up")),
+                    )
+                    .clicked()
+                {
+                    self.browse_up(ctx);
+                }
+                if ui
+                    .add_enabled(
+                        self.db.is_some()
+                            && self.active_request.is_none()
+                            && !matches!(&self.route, Route::Catalog),
+                        egui::Button::new(self.t("Обзор", "Overview")),
+                    )
+                    .clicked()
+                {
+                    self.push_history();
+                    self.route = Route::Catalog;
+                    self.folder_crumbs.clear();
+                    self.query_input.clear();
+                    self.selected_volume = None;
+                    self.offset = 0;
+                    self.page = Page::default();
+                    self.selected = None;
+                    self.load_page(ctx);
+                }
                 let scope = self
                     .selected_volume
                     .and_then(|id| self.volumes.iter().find(|v| v.id == id))
@@ -4005,8 +4773,7 @@ impl DesktopApp {
                     .add_enabled(self.db.is_some(), egui::Button::new(self.t("Все", "All")))
                     .clicked()
                 {
-                    self.selected_volume = None;
-                    self.navigate_search(ctx);
+                    self.navigate_disk(None, ctx);
                 }
             });
             ui.add_space(3.0);
@@ -4085,6 +4852,8 @@ impl DesktopApp {
                     .show(ui, |ui| {
                         for volume in &visible {
                             let selected = self.selected_volume == Some(volume.id);
+                            let root_key = (volume.id, None);
+                            let root_expanded = self.tree_expanded.contains(&root_key);
                             ui.horizontal(|ui| {
                                 let sticker = self.shelf.label(volume.id);
                                 let title = if sticker.is_empty() {
@@ -4102,6 +4871,12 @@ impl DesktopApp {
                                         }
                                     )
                                 };
+                                if ui
+                                    .small_button(if root_expanded { "▾" } else { "▸" })
+                                    .clicked()
+                                {
+                                    self.toggle_tree_node(root_key, ctx);
+                                }
                                 let label_width = (ui.available_width() - 88.0).max(24.0);
                                 let label = ui
                                     .add_sized(
@@ -4116,23 +4891,7 @@ impl DesktopApp {
                                         bytes_compact(volume.total_bytes)
                                     ));
                                 if label.clicked() {
-                                    self.navigate_disk(Some(volume.id), ctx);
-                                }
-                                if label.double_clicked() && self.active_request.is_none() {
-                                    self.history.push((
-                                        self.route.clone(),
-                                        self.offset,
-                                        self.selected.clone(),
-                                        self.selected_volume,
-                                        self.results_scroll,
-                                    ));
-                                    self.restore_selection = None;
-                                    self.route = Route::Folder {
-                                        volume_id: volume.id,
-                                        parent_id: None,
-                                    };
-                                    self.offset = 0;
-                                    self.load_page(ctx);
+                                    self.browse_volume_root(volume.id, ctx);
                                 }
                                 ui.label(
                                     RichText::new(bytes_compact(volume.total_bytes))
@@ -4157,6 +4916,9 @@ impl DesktopApp {
                                     self.shelf_editor = self.shelf.label(volume.id).to_owned();
                                 }
                             });
+                            if root_expanded {
+                                self.draw_tree_children(ui, root_key, 1, ctx);
+                            }
                         }
                     });
             });
@@ -4227,13 +4989,13 @@ impl DesktopApp {
                     }
                     ui.horizontal(|ui| {
                         if ui.add_enabled(self.active_request.is_none(),egui::Button::new(self.t("Описание…","Description…")).small()).clicked(){self.description_input=selected.description.clone();self.description_entry_id=Some(selected.id);}
-                        let copies = ui.add_enabled(!selected.is_directory(),
+                        let copies = ui.add_enabled(!selected.is_container(),
                             egui::Button::new(self.t("Кандидаты на других дисках", "Copies on other disks")));
                         if copies.clicked() { self.navigate_copies(ctx); }
-                        if !selected.is_directory() && ui.button(self.t("Открыть папку файла", "Open containing folder")).clicked() {
+                        if !selected.is_container() && ui.button(self.t("Открыть папку файла", "Open containing folder")).clicked() {
                             self.navigate_containing_folder(&selected, ctx);
                         }
-                        if selected.is_directory() && ui.button(self.t("Открыть папку", "Open folder")).clicked() {
+                        if selected.is_container() && ui.button(self.t("Открыть папку", "Open folder")).clicked() {
                             self.navigate_folder(&selected, ctx);
                         }
                         if ui.small_button(self.t("Копировать путь", "Copy path")).clicked() {
@@ -4279,8 +5041,40 @@ impl DesktopApp {
                 });
                 return;
             }
+            if matches!(&self.route, Route::Catalog) {
+                self.catalog_overview_table(ui, ctx);
+                return;
+            }
+            if let Route::Folder { volume_id, .. } | Route::BranchSearch { volume_id, .. } =
+                &self.route
+            {
+                let volume_id = *volume_id;
+                let disk_label = self
+                    .volumes
+                    .iter()
+                    .find(|volume| volume.id == volume_id)
+                    .map(|volume| format!("#{} · {}", volume.id, self.display_name(volume)))
+                    .unwrap_or_else(|| format!("#{}", volume_id));
+                let mut clicked = None;
+                ui.horizontal_wrapped(|ui| {
+                    if ui.link(&disk_label).clicked() {
+                        clicked = Some(None);
+                    }
+                    let crumbs = self.folder_crumbs.clone();
+                    for (index, crumb) in crumbs.iter().enumerate() {
+                        ui.label("›");
+                        if ui.link(&crumb.name).clicked() {
+                            clicked = Some(Some(index));
+                        }
+                    }
+                });
+                if let Some(index) = clicked {
+                    self.navigate_breadcrumb(volume_id, index, ctx);
+                }
+            }
             ui.horizontal(|ui| {
                 let result_heading = match &self.route {
+                    Route::Catalog => self.t("Обзор каталога", "Catalog overview").to_owned(),
                     Route::Search { .. } => {
                         self.t("Результаты поиска", "Search results").to_owned()
                     }
@@ -4397,7 +5191,7 @@ impl DesktopApp {
                                     ui.label(format!("#{}", entry.volume_id));
                                 });
                                 row.col(|ui| {
-                                    let name = if entry.is_directory() {
+                                    let name = if entry.is_container() {
                                         format!("▸ {}", entry.name)
                                     } else {
                                         entry.name.clone()
@@ -4414,7 +5208,7 @@ impl DesktopApp {
                                     if result.clicked() {
                                         chosen = Some(entry.clone());
                                     }
-                                    if result.double_clicked() && entry.is_directory() {
+                                    if result.double_clicked() && entry.is_container() {
                                         open_folder = Some(entry.clone());
                                     }
                                 });
@@ -4422,7 +5216,7 @@ impl DesktopApp {
                                     ui.label(bytes_compact(entry.size));
                                 });
                                 row.col(|ui| {
-                                    let kind = if entry.is_directory() {
+                                    let kind = if entry.is_container() {
                                         "Folder"
                                     } else if ["mkv", "mp4", "avi", "m2ts", "mov", "webm"]
                                         .iter()
@@ -5014,7 +5808,7 @@ impl DesktopApp {
         }
         // Use modifiers attached to the key event: the user can release Ctrl
         // before the next frame, leaving the frame's final modifiers empty.
-        let (search, properties, all, back, cancel_scan) = ctx.input(|i| {
+        let (search, properties, all, back, cancel_scan, activate_folder) = ctx.input(|i| {
             let has = |key, modifier: fn(egui::Modifiers) -> bool| {
                 i.events.iter().any(|event| {
                     matches!(event,
@@ -5028,6 +5822,9 @@ impl DesktopApp {
                 has(egui::Key::L, |m| m.command),
                 has(egui::Key::ArrowLeft, |m| m.alt),
                 has(egui::Key::Escape, |m| {
+                    !m.alt && !m.ctrl && !m.shift && !m.command
+                }),
+                has(egui::Key::Enter, |m| {
                     !m.alt && !m.ctrl && !m.shift && !m.command
                 }),
             )
@@ -5052,6 +5849,15 @@ impl DesktopApp {
         }
         if back && self.workspace_tab == WorkspaceTab::Search {
             self.go_back(ctx);
+        }
+        if activate_folder
+            && self.workspace_tab == WorkspaceTab::Search
+            && !ctx.egui_wants_keyboard_input()
+            && self.active_request.is_none()
+        {
+            if let Some(entry) = self.selected.clone().filter(Entry::is_container) {
+                self.navigate_folder(&entry, ctx);
+            }
         }
         if cancel_scan {
             let canceled_workspace_analytics = match self.workspace_tab {
@@ -5167,6 +5973,10 @@ impl eframe::App for DesktopApp {
 #[cfg(test)]
 #[path = "ctf_workflow_tests.rs"]
 mod ctf_workflow_tests;
+
+#[cfg(test)]
+#[path = "catalog_navigation_tests.rs"]
+mod catalog_navigation_tests;
 
 #[cfg(test)]
 mod shortcut_tests {
@@ -5428,7 +6238,11 @@ mod shortcut_tests {
             app.apply_reply(reply, &ctx);
         }
         let followups: Vec<_> = observed.try_iter().collect();
-        assert!(followups.iter().any(|op| op == "search_fast"));
+        assert!(followups
+            .iter()
+            .all(|op| op != "search_fast" && op != "children"));
+        assert_eq!(app.route, Route::Catalog);
+        assert!(app.page.items.is_empty());
         assert!(followups.iter().all(|op| op != "validate_catalog"));
         assert_eq!(app.integrity, CatalogIntegrity::Unchecked);
         assert!(app.error.is_none(), "{:?}", app.error);
@@ -5551,6 +6365,10 @@ mod shortcut_tests {
         let mut app = DesktopApp::with_context(&ctx, None);
         app.db = Some("synthetic.sqlite".into());
         app.lang = Language::English;
+        app.route = Route::Search {
+            query: "synthetic".into(),
+            volume_id: None,
+        };
         app.page.items.push(
             Entry::parse(&json!({
                 "id": 1, "volume_id": 1, "kind": "file", "size": 1,
@@ -5713,7 +6531,8 @@ mod shortcut_tests {
             let mut app = DesktopApp::with_context(&ctx, None);
             app.route = route.clone();
             app.offset = PAGE_LIMIT;
-            app.history.push((route.clone(), 0, None, None, 0.0));
+            app.history
+                .push((route.clone(), 0, None, None, 0.0, Vec::new(), String::new()));
             app.show_categories_dialog = true;
             app.selected = Some(entry.clone());
             app.page.items = vec![entry.clone()];
@@ -5861,8 +6680,15 @@ mod shortcut_tests {
             volume_id: 2,
             parent_id: None,
         };
-        app.history
-            .push((category_route.clone(), 250, None, None, 0.0));
+        app.history.push((
+            category_route.clone(),
+            250,
+            None,
+            None,
+            0.0,
+            Vec::new(),
+            String::new(),
+        ));
         app.go_back(&ctx);
         assert_eq!(app.offset, 250);
         assert!(!app.category_result_refresh_pending);
@@ -6366,8 +7192,15 @@ mod shortcut_tests {
             volume_id: Some(60),
         };
         app.route = Route::Copies { entry_id: 9 };
-        app.history
-            .push((original.clone(), 250, None, Some(60), 0.0));
+        app.history.push((
+            original.clone(),
+            250,
+            None,
+            Some(60),
+            0.0,
+            Vec::new(),
+            String::new(),
+        ));
         let alt = egui::Modifiers {
             alt: true,
             ..Default::default()
@@ -6451,6 +7284,66 @@ mod shortcut_tests {
     }
 
     #[test]
+    fn enter_opens_selected_container_but_never_a_file() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.db = Some("synthetic.sqlite".into());
+        selected_volume(&mut app);
+        let folder = Entry {
+            id: 70,
+            volume_id: 60,
+            parent_id: None,
+            name: "Movies".into(),
+            relative_path: "Movies".into(),
+            kind: "directory".into(),
+            size: 0,
+            modified_unix: None,
+            description: String::new(),
+            tags: String::new(),
+        };
+        app.selected = Some(folder.clone());
+        app.bus.set_handler(
+            |_| json!({"ok":true,"data":{"items":[],"offset":0,"limit":250,"has_more":false}}),
+        );
+
+        let mut output = ctx.run_pass(key_input(egui::Key::Enter, egui::Modifiers::NONE), |ctx| {
+            app.handle_shortcuts(ctx)
+        });
+        output.textures_delta.clear();
+        assert_eq!(
+            app.route,
+            Route::Folder {
+                volume_id: 60,
+                parent_id: Some(70)
+            }
+        );
+        assert!(app.active_request.is_some());
+
+        app.active_request = None;
+        let file = Entry {
+            kind: "file".into(),
+            id: 71,
+            name: "movie.mkv".into(),
+            relative_path: "Movies/movie.mkv".into(),
+            parent_id: Some(70),
+            ..folder
+        };
+        app.selected = Some(file);
+        let mut output = ctx.run_pass(key_input(egui::Key::Enter, egui::Modifiers::NONE), |ctx| {
+            app.handle_shortcuts(ctx)
+        });
+        output.textures_delta.clear();
+        assert_eq!(
+            app.route,
+            Route::Folder {
+                volume_id: 60,
+                parent_id: Some(70)
+            }
+        );
+        assert!(app.active_request.is_none());
+    }
+
+    #[test]
     fn f2_opens_selected_disk_properties_and_respects_modal_dialogs() {
         let ctx = egui::Context::default();
         let mut app = DesktopApp::with_context(&ctx, None);
@@ -6522,6 +7415,8 @@ mod shortcut_tests {
             None,
             Some(5),
             64.0,
+            Vec::new(),
+            "ext:mkv".into(),
         ));
 
         assert!(app.switch_workspace(WorkspaceTab::UsbDisks));
@@ -6603,7 +7498,7 @@ mod shortcut_tests {
     }
 
     #[test]
-    fn disk_workspace_search_action_starts_fresh_scope_like_pr58() {
+    fn disk_workspace_action_browses_root_without_empty_global_search() {
         let ctx = egui::Context::default();
         let mut app = DesktopApp::with_context(&ctx, None);
         app.db = Some("synthetic.sqlite".into());
@@ -6623,8 +7518,15 @@ mod shortcut_tests {
         };
         app.query_input = "ext:mkv AND name:фильм".into();
         app.results_scroll = 120.0;
-        app.history
-            .push((app.route.clone(), 250, None, Some(5), 120.0));
+        app.history.push((
+            app.route.clone(),
+            250,
+            None,
+            Some(5),
+            120.0,
+            Vec::new(),
+            String::new(),
+        ));
         let (sent, received) = std::sync::mpsc::channel();
         app.bus.set_handler(move |request| {
             sent.send(request.clone()).unwrap();
@@ -6638,12 +7540,22 @@ mod shortcut_tests {
         assert_eq!(app.workspace_tab, WorkspaceTab::Search);
         assert!(app.query_input.is_empty());
         assert_eq!(app.selected_volume, Some(5));
-        assert_eq!(request["op"], "search_fast");
-        assert_eq!(request["query"], "");
+        assert_eq!(request["op"], "children");
         assert_eq!(request["volume_id"], 5);
+        assert!(request["parent_id"].is_null());
         assert_eq!(app.disks_filter, "#5");
         assert_eq!(app.disks_selected_volume, Some(5));
-        assert!(app.history.is_empty());
+        assert_eq!(app.history.len(), 2);
+        let previous = app.history.last().unwrap();
+        assert_eq!(
+            previous.0,
+            Route::Search {
+                query: "ext:mkv AND name:фильм".into(),
+                volume_id: None
+            }
+        );
+        assert_eq!(previous.3, None);
+        assert_eq!(previous.4, 120.0);
         assert_eq!(app.results_scroll, 0.0);
         assert_eq!(app.restore_scroll, Some(0.0));
     }
@@ -6738,3 +7650,10 @@ fn appearance_round_trip_saves_only_language_and_theme() {
     assert!(matches!(restarted.lang, Language::Russian));
     assert!(restarted.dark);
 }
+
+#[path = "catalog_overview.rs"]
+mod catalog_overview;
+
+#[cfg(test)]
+#[path = "catalog_double_click_tests.rs"]
+mod catalog_double_click_tests;

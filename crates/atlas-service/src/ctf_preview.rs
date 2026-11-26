@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use std::{
     cell::OnceCell as LocalOnceCell,
     cmp::Ordering as CmpOrdering,
-    collections::{BinaryHeap, HashMap},
+    collections::{BinaryHeap, HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::{
@@ -20,6 +20,7 @@ use std::{
 };
 
 const MAX_SOURCE_BYTES: u64 = 2_000_000_000;
+const MAX_ANCESTOR_DEPTH: usize = 4096;
 
 pub(super) struct Snapshot {
     path: PathBuf,
@@ -400,6 +401,89 @@ pub fn children_focused(v: &Value) -> Result<Value> {
     let result = serde_json::to_value(page)
         .map_err(|_| failure("internal", "Cannot encode focused CTF directory page"))?;
     checked_result(&snapshot, result, None)
+}
+
+pub fn ancestors(v: &Value) -> Result<Value> {
+    let volume_id = optional_id(v, "volume_id")?
+        .ok_or_else(|| failure("invalid_request", "Select a volume"))?;
+    let entry_id =
+        optional_id(v, "entry_id")?.ok_or_else(|| failure("invalid_request", "Select an entry"))?;
+    let snapshot = selected(v, None)?;
+    let volume_index =
+        usize::try_from(volume_id - 1).map_err(|_| failure("not_found", "CTF volume not found"))?;
+    let disk = snapshot
+        .parsed
+        .disks
+        .get(volume_index)
+        .ok_or_else(|| failure("not_found", "CTF volume not found"))?;
+    let result = ancestor_items(
+        volume_id,
+        snapshot.id_bases[volume_index],
+        &disk.entries,
+        entry_id,
+    )?;
+    checked_result(&snapshot, result, None)
+}
+
+fn ancestor_items(
+    volume_id: i64,
+    id_base: i64,
+    entries: &[ctf_format::CtfEntry],
+    entry_id: i64,
+) -> Result<Value> {
+    let first = usize::try_from(
+        entry_id
+            .checked_sub(id_base)
+            .ok_or_else(|| failure("not_found", "Entry not found in requested volume"))?,
+    )
+    .map_err(|_| failure("not_found", "Entry not found in requested volume"))?;
+    if first >= entries.len() {
+        return Err(failure("not_found", "Entry not found in requested volume"));
+    }
+    let mut current = Some(first);
+    let mut seen = HashSet::new();
+    let mut items = Vec::new();
+    while let Some(index) = current {
+        if items.len() >= MAX_ANCESTOR_DEPTH || !seen.insert(index) {
+            return Err(failure("ctf_tree", "Entry ancestry is cyclic or too deep"));
+        }
+        let entry = entries
+            .get(index)
+            .ok_or_else(|| failure("ctf_tree", "Entry ancestry references a missing parent"))?;
+        let id = id_base
+            .checked_add(index as i64)
+            .ok_or_else(|| failure("ctf_limit", "CTF entry ID overflow"))?;
+        let parent_id = entry
+            .parent
+            .map(|parent| {
+                if parent >= index
+                    || !matches!(
+                        entries.get(parent).map(|parent| parent.kind),
+                        Some(EntryKind::Directory | EntryKind::Archive)
+                    )
+                {
+                    return Err(failure("ctf_tree", "Entry ancestry parent is invalid"));
+                }
+                id_base
+                    .checked_add(parent as i64)
+                    .ok_or_else(|| failure("ctf_limit", "CTF parent ID overflow"))
+            })
+            .transpose()?;
+        let kind = match entry.kind {
+            EntryKind::File => "file",
+            EntryKind::Directory => "directory",
+            EntryKind::Archive => "archive",
+        };
+        items.push(json!({
+            "id":id,
+            "parent_id":parent_id,
+            "name":entry.name,
+            "kind":kind
+        }));
+        current = entry.parent;
+    }
+    items.reverse();
+    Ok(json!({"volume_id":volume_id,"items":items}))
 }
 
 struct DirectContext<'a> {
@@ -1471,6 +1555,108 @@ pub(super) mod tests {
             "parent_id":3,"entry_id":3,"limit":1
         }));
         assert_eq!(invalid_focus.unwrap_err().code, "not_found");
+    }
+
+    #[test]
+    fn preview_ancestors_match_database_and_pinned_mirror_root_to_self() {
+        let _serial = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ancestors.ctf");
+        let mut nested = entry("nested", Some(1), EntryKind::Directory);
+        nested.size = 0;
+        let file = entry("film.mkv", Some(2), EntryKind::File);
+        let source = CtfCatalog {
+            name: "synthetic ancestor fixture".into(),
+            opaque_trailer: vec![37, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, b'G', 0],
+            disks: vec![
+                CtfDisk {
+                    name: "first".into(),
+                    opaque_header: vec![],
+                    entries: vec![
+                        entry("root", None, EntryKind::Directory),
+                        entry("inside.zip", Some(0), EntryKind::Archive),
+                        nested,
+                        file,
+                    ],
+                },
+                CtfDisk {
+                    name: "second".into(),
+                    opaque_header: vec![],
+                    entries: vec![entry("other", None, EntryKind::Directory)],
+                },
+            ],
+        };
+        let bytes = write_ctf(&source).unwrap();
+        fs::write(&path, &bytes).unwrap();
+        let before = fs::read(&path).unwrap();
+        let opened = open(&json!({"path":path})).unwrap();
+        let generation = opened["generation"].as_str().unwrap();
+        let request = json!({"path":path,"generation":generation,"volume_id":1,"entry_id":4});
+        let preview = ancestors(&request).unwrap();
+        let expected = json!({"volume_id":1,"items":[
+            {"id":1,"parent_id":null,"name":"root","kind":"directory"},
+            {"id":2,"parent_id":1,"name":"inside.zip","kind":"archive"},
+            {"id":3,"parent_id":2,"name":"nested","kind":"directory"},
+            {"id":4,"parent_id":3,"name":"film.mkv","kind":"file"}
+        ]});
+        assert_eq!(preview["result"], expected);
+
+        let database = dir.path().join("ancestors.sqlite");
+        let mut catalog = atlas_core::Catalog::open(&database).unwrap();
+        crate::legacy::import(&mut catalog, &json!({"path":path})).unwrap();
+        assert_eq!(
+            crate::focused_children::ancestors(&catalog, &json!({"volume_id":1,"entry_id":4}))
+                .unwrap(),
+            expected
+        );
+        drop(catalog);
+        let dispatched = crate::dispatch_json(
+            &json!({"op":"entry_ancestors","db":database,"volume_id":1,"entry_id":4}).to_string(),
+        );
+        let dispatched: Value = serde_json::from_str(&dispatched).unwrap();
+        assert_eq!(dispatched["ok"], true);
+        assert_eq!(dispatched["data"], expected);
+        assert_eq!(
+            ancestors(&json!({"path":path,"generation":generation,"volume_id":2,"entry_id":4}))
+                .unwrap_err()
+                .code,
+            "not_found"
+        );
+        assert_eq!(
+            ancestors(&json!({"path":path,"generation":generation,"volume_id":1,"entry_id":999}))
+                .unwrap_err()
+                .code,
+            "not_found"
+        );
+
+        let cache_root = dir.path().join("pinned-cache");
+        let pinned =
+            crate::ctf_mirror::sync(&json!({"path":path,"cache_root":cache_root})).unwrap();
+        let pinned_result = crate::ctf_mirror::ancestors_pinned(&json!({
+            "path":path,"cache_root":cache_root,"generation":pinned["generation"],
+            "volume_id":1,"entry_id":4
+        }))
+        .unwrap();
+        assert_eq!(pinned_result["result"], expected);
+
+        let malformed = vec![entry("self-cycle", Some(0), EntryKind::Directory)];
+        assert_eq!(
+            ancestor_items(1, 1, &malformed, 1).unwrap_err().code,
+            "ctf_tree"
+        );
+        let mut deep = Vec::with_capacity(MAX_ANCESTOR_DEPTH + 1);
+        for index in 0..=MAX_ANCESTOR_DEPTH {
+            deep.push(entry("deep", index.checked_sub(1), EntryKind::Directory));
+        }
+        assert_eq!(
+            ancestor_items(1, 1, &deep, deep.len() as i64)
+                .unwrap_err()
+                .code,
+            "ctf_tree"
+        );
+        assert_eq!(fs::read(&path).unwrap(), before);
     }
 
     #[test]
