@@ -75,8 +75,15 @@ impl Job {
     }
 
     pub(crate) fn entry(&self) -> Result<()> {
+        self.entries(1)
+    }
+
+    /// Publish a bounded batch of processed rows without contending on the
+    /// progress counter for every parallel matcher invocation. Workers retain
+    /// per-row cancellation checks and flush their final successful batch.
+    pub(crate) fn entries(&self, count: u64) -> Result<()> {
         self.check()?;
-        self.state.entries.fetch_add(1, Ordering::Relaxed);
+        self.state.entries.fetch_add(count, Ordering::Relaxed);
         Ok(())
     }
 
@@ -180,6 +187,8 @@ mod tests {
         job.phase("importing").unwrap();
         job.entry().unwrap();
         assert_eq!(progress(&args).unwrap()["entries"], 1);
+        job.entries(256).unwrap();
+        assert_eq!(progress(&args).unwrap()["entries"], 257);
         assert_eq!(progress(&args).unwrap()["phase"], "importing");
         assert_eq!(Job::start(&args).err().unwrap().code, "job_exists");
         cancel(&args).unwrap();

@@ -1,5 +1,6 @@
 //! Read-only, in-memory CTF preview used before the disposable SQLite index is ready.
 //! The source CTF remains authoritative and is never written by this module.
+mod catalog_search;
 mod path_cache;
 
 use crate::{ctf_sidecar, optional_id, text, unsigned};
@@ -1348,37 +1349,18 @@ fn search_with_job(v: &Value, job: crate::ctf_job::Job) -> Result<Value> {
     let mut page_rows = Vec::with_capacity(limit as usize + usize::from(!full_count));
     const MAX_PHYSICAL_HEAP_OFFSET: u64 = 100_000;
     if catalog_order {
-        let ancestor_cache = RefCell::new(AncestorCache::default());
-        'disks: for (volume_index, disk) in snapshot.parsed.disks.iter().enumerate() {
-            if volume_id.is_some_and(|filter| filter != volume_index as i64 + 1) {
-                continue;
-            }
-            for entry_index in 0..disk.entries.len() {
-                let row = RowRef {
-                    volume_index: volume_index as u32,
-                    entry_index: entry_index as u32,
-                };
-                if !matches_row_with_cache(
-                    &snapshot,
-                    row,
-                    &query,
-                    needs_extension,
-                    volume_id,
-                    &job,
-                    Some(&ancestor_cache),
-                )? {
-                    continue;
-                }
-                let ordinal = total;
-                total = total.saturating_add(1);
-                if ordinal >= effective_offset && ordinal < page_end {
-                    page_rows.push(row);
-                }
-                if !full_count && total > page_end {
-                    break 'disks;
-                }
-            }
-        }
+        (total, page_rows) = catalog_search::run(
+            &snapshot,
+            &query,
+            needs_extension,
+            volume_id,
+            &job,
+            catalog_search::SearchOptions {
+                offset: effective_offset,
+                limit,
+                full_count,
+            },
+        )?;
     } else if full_count && effective_offset <= MAX_PHYSICAL_HEAP_OFFSET {
         // Full counts need every row, but paging still requires only the first
         // offset+limit rows in name order. Scan source-order metadata (cache
@@ -1698,12 +1680,81 @@ pub(super) mod tests {
             assert_eq!(
                 ids,
                 expected
-                    .into_iter()
+                    .iter()
+                    .copied()
                     .skip(1100)
                     .take(250)
                     .collect::<Vec<_>>(),
                 "{text}"
             );
+            for workers in [1, 2, 4] {
+                for full_count in [false, true] {
+                    let job = crate::ctf_job::Job::default();
+                    let progress = job.entry_counter();
+                    let (count, rows) = catalog_search::run_with_settings(
+                        &snapshot,
+                        &query,
+                        false,
+                        None,
+                        &job,
+                        catalog_search::SearchOptions {
+                            offset: 1100,
+                            limit: 250,
+                            full_count,
+                        },
+                        catalog_search::Settings {
+                            warmup_rows: 3,
+                            chunk_rows: 257,
+                            workers,
+                        },
+                    )
+                    .unwrap();
+                    let ids: Vec<_> = rows
+                        .iter()
+                        .map(|row| {
+                            snapshot.id_bases[row.volume_index as usize] + row.entry_index as i64
+                        })
+                        .collect();
+                    assert_eq!(
+                        ids,
+                        expected
+                            .iter()
+                            .copied()
+                            .skip(1100)
+                            .take(250)
+                            .collect::<Vec<_>>(),
+                        "{text}, workers={workers}, count={full_count}"
+                    );
+                    if full_count {
+                        assert_eq!(count, expected.len() as u64);
+                        assert_eq!(progress(), 2604);
+                    } else {
+                        assert_eq!(count > 1350, expected.len() > 1350);
+                    }
+                }
+            }
+        }
+        let query = MetadataQuery::compile_metadata("path:media").unwrap();
+        for (volume, expected_total) in [(2, 1301), (99, 0)] {
+            let (count, _) = catalog_search::run_with_settings(
+                &snapshot,
+                &query,
+                false,
+                Some(volume),
+                &crate::ctf_job::Job::default(),
+                catalog_search::SearchOptions {
+                    offset: u64::MAX,
+                    limit: 250,
+                    full_count: true,
+                },
+                catalog_search::Settings {
+                    warmup_rows: 3,
+                    chunk_rows: 257,
+                    workers: 4,
+                },
+            )
+            .unwrap();
+            assert_eq!(count, expected_total);
         }
         drop(snapshot);
         close(&req(&path, generation)).unwrap();
