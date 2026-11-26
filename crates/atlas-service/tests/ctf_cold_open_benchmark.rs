@@ -266,11 +266,12 @@ fn direct_ctf_first_search_and_query_latency() {
         );
     }
     eprintln!(
-        "open_ms={open_ms} open_through_first_search_ms={} entries={} volumes={} executor={}",
+        "open_ms={open_ms} open_through_first_search_ms={} entries={} volumes={} executor={} source_verification={}",
         start.elapsed().as_millis(),
         opened["data"]["entries"],
         opened["data"]["volumes"],
-        first["data"]["query_executor"]
+        first["data"]["query_executor"],
+        opened["data"]["source_verification"]
     );
     let queries = [
         ("empty", "", false),

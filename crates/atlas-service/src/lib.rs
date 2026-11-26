@@ -16,6 +16,8 @@ mod ctf_preview;
 mod ctf_preview_analytics;
 #[path = "../ctf_sidecar/mod.rs"]
 mod ctf_sidecar;
+#[cfg(windows)]
+mod ctf_source_pin;
 mod dates;
 mod disk_preferences;
 mod duplicates;

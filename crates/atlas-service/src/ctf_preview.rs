@@ -28,6 +28,7 @@ pub(super) struct Snapshot {
     generation: String,
     source_sha256: String,
     source_bytes: u64,
+    source_binding: SourceBinding,
     pub(super) parsed: Arc<CtfCatalog>,
     volumes: Vec<Volume>,
     pub(super) id_bases: Vec<i64>,
@@ -35,6 +36,22 @@ pub(super) struct Snapshot {
     name_order: OnceLock<Vec<RowRef>>,
     #[cfg(feature = "duckdb-query")]
     pub(super) duckdb: Mutex<Option<crate::ctf_duckdb::Engine>>,
+}
+
+enum SourceBinding {
+    Rehashed,
+    #[cfg(windows)]
+    ReadPin(crate::ctf_source_pin::SourcePin),
+}
+
+impl SourceBinding {
+    fn mode(&self) -> &'static str {
+        match self {
+            Self::Rehashed => "full_sha256",
+            #[cfg(windows)]
+            Self::ReadPin(_) => "windows_read_pin",
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -217,6 +234,7 @@ fn build_snapshot(
         generation,
         source_sha256,
         source_bytes,
+        source_binding: SourceBinding::Rehashed,
         parsed,
         volumes,
         id_bases,
@@ -236,7 +254,22 @@ fn compact_entry_capacity(parsed: &mut CtfCatalog) {
 pub fn open(v: &Value) -> Result<Value> {
     let open_path = PathBuf::from(text(v, "path")?);
     let source = canonical_source(v)?;
-    let captured = ctf_sidecar::capture(&source, MAX_SOURCE_BYTES).map_err(|_| io_failure())?;
+    // A successful Windows pin captures from the exact write/delete-protected
+    // handle. Busy/unsupported sources retain the portable full-digest path.
+    #[cfg(windows)]
+    let (source_binding, captured) = match crate::ctf_source_pin::capture(&source, MAX_SOURCE_BYTES)
+    {
+        Ok((pin, captured)) => (SourceBinding::ReadPin(pin), captured),
+        Err(_) => (
+            SourceBinding::Rehashed,
+            ctf_sidecar::capture(&source, MAX_SOURCE_BYTES).map_err(|_| io_failure())?,
+        ),
+    };
+    #[cfg(not(windows))]
+    let (source_binding, captured) = (
+        SourceBinding::Rehashed,
+        ctf_sidecar::capture(&source, MAX_SOURCE_BYTES).map_err(|_| io_failure())?,
+    );
     let identity = captured.identity.clone();
     let mut parsed = ctf_format::parse_ctf(captured.bytes(), &Limits::default()).map_err(|e| {
         Error::new(
@@ -249,21 +282,19 @@ pub fn open(v: &Value) -> Result<Value> {
     let parsed = Arc::new(parsed);
     let serial = GENERATION_COUNTER.fetch_add(1, Ordering::Relaxed);
     let generation = ctf_sidecar::sha256(format!("{}:{serial}", identity.sha256).as_bytes());
-    let snapshot = Arc::new(build_snapshot(
+    let mut snapshot = build_snapshot(
         source.clone(),
         open_path,
         parsed,
         generation,
         identity.sha256.clone(),
         identity.size_bytes,
-    )?);
-    // Catch edits during parse and compact snapshot construction before publishing.
-    if ctf_sidecar::identity(&source, MAX_SOURCE_BYTES).map_err(|_| io_failure())? != identity {
-        return Err(failure(
-            "source_changed",
-            "CTF changed while opening preview",
-        ));
-    }
+    )?;
+    snapshot.source_binding = source_binding;
+    // Recheck path identity after parsing. A pinned source must never silently
+    // fall back if its binding later fails; only capture can select the fallback.
+    verify_source(&snapshot, None)?;
+    let snapshot = Arc::new(snapshot);
     let entries = snapshot
         .parsed
         .disks
@@ -277,6 +308,7 @@ pub fn open(v: &Value) -> Result<Value> {
     Ok(json!({
         "state":"browsable", "generation":snapshot.generation,
         "source_sha256":snapshot.source_sha256, "source_bytes":snapshot.source_bytes,
+        "source_verification":snapshot.source_binding.mode(),
         "entries":entries, "volumes":volume_count,
         "original_ctf_read_only":true, "native_annotation_writes_allowed":false,
         "derived_database_disposable":true
@@ -293,20 +325,41 @@ pub(super) fn selected(v: &Value, job: Option<&crate::ctf_job::Job>) -> Result<A
         .filter(|s| s.generation == generation && s.path == requested_path)
         .cloned()
         .ok_or_else(|| failure("stale_generation", "Open this CTF again before browsing"))?;
+    verify_source(&found, job)?;
+    Ok(found)
+}
+
+fn verify_source(snapshot: &Snapshot, job: Option<&crate::ctf_job::Job>) -> Result<()> {
+    if let Some(job) = job {
+        job.check()?;
+    }
+    #[cfg(windows)]
+    if let SourceBinding::ReadPin(pin) = &snapshot.source_binding {
+        pin.verify(&snapshot.path).map_err(|_| {
+            failure(
+                "source_changed",
+                "CTF source binding changed; reopen it to browse",
+            )
+        })?;
+        if let Some(job) = job {
+            job.check()?;
+        }
+        return Ok(());
+    }
     let current_identity = if let Some(job) = job {
-        job.identity(&found.path, MAX_SOURCE_BYTES)?
+        job.identity(&snapshot.path, MAX_SOURCE_BYTES)?
     } else {
-        ctf_sidecar::identity(&found.path, MAX_SOURCE_BYTES).map_err(|_| io_failure())?
+        ctf_sidecar::identity(&snapshot.path, MAX_SOURCE_BYTES).map_err(|_| io_failure())?
     };
-    if current_identity.sha256 != found.source_sha256
-        || current_identity.size_bytes != found.source_bytes
+    if current_identity.sha256 != snapshot.source_sha256
+        || current_identity.size_bytes != snapshot.source_bytes
     {
         return Err(failure(
             "source_changed",
             "CTF source changed; reopen it to browse",
         ));
     }
-    Ok(found)
+    Ok(())
 }
 
 pub(super) fn checked_result(
@@ -314,24 +367,17 @@ pub(super) fn checked_result(
     result: Value,
     job: Option<&crate::ctf_job::Job>,
 ) -> Result<Value> {
-    let after = if let Some(job) = job {
-        job.identity(&snapshot.path, MAX_SOURCE_BYTES)?
-    } else {
-        ctf_sidecar::identity(&snapshot.path, MAX_SOURCE_BYTES).map_err(|_| io_failure())?
-    };
+    verify_source(snapshot, job)?;
     if let Some(job) = job {
         job.check()?;
-    }
-    if after.sha256 != snapshot.source_sha256 || after.size_bytes != snapshot.source_bytes {
-        return Err(failure(
-            "source_changed",
-            "CTF source changed during preview read",
-        ));
     }
     Ok(
         json!({"generation":snapshot.generation,"source_sha256":snapshot.source_sha256,
         "read_only":true,"original_ctf_read_only":true,"annotations_supported":false,
-        "source_sha_checked":true,"verification_mode":"direct_ctf_preview","result":result}),
+        "source_sha_checked":matches!(snapshot.source_binding, SourceBinding::Rehashed),
+        "source_integrity_verified":true,"verification_mode":"direct_ctf_preview",
+        "source_verification":snapshot.source_binding.mode(),
+        "source_rehashed":matches!(snapshot.source_binding, SourceBinding::Rehashed),"result":result}),
     )
 }
 
@@ -1476,6 +1522,10 @@ pub(super) mod tests {
         let b = dir.path().join("b.ctf");
         write_fixture(&a, "a");
         write_fixture(&b, "b");
+        // Exercise the portable digest fallback even on Windows: an external
+        // writer prevents acquiring a deny-write pin before either open.
+        #[cfg(windows)]
+        let _external_writer = fs::OpenOptions::new().write(true).open(&b).unwrap();
         let one = open(&json!({"path":a})).unwrap();
         let old = one["generation"].as_str().unwrap().to_owned();
         let two = open(&json!({"path":b})).unwrap();
@@ -1933,6 +1983,8 @@ pub(super) mod tests {
         .unwrap();
         fs::write(&path, bytes).unwrap();
         let source_before = fs::read(&path).unwrap();
+        #[cfg(windows)]
+        let _external_writer = fs::OpenOptions::new().write(true).open(&path).unwrap();
         let opened = open(&json!({"path":path})).unwrap();
         let generation = opened["generation"].as_str().unwrap();
         let mut catalog = atlas_core::Catalog::open(dir.path().join("candidate.sqlite")).unwrap();
@@ -2029,6 +2081,103 @@ pub(super) mod tests {
             "output":dir.path().join("changed.csv"),"format":"csv","mode":"all"}));
         assert_eq!(changed_result.unwrap_err().code, "source_changed");
         assert!(!dir.path().join("changed.csv").exists());
+    }
+
+    #[test]
+    fn source_binding_checks_pages_search_and_exports_without_repeated_pin_hashes() {
+        let _serial = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("binding.ctf");
+        write_fixture(&path, "binding 東京");
+        let opened = open(&json!({"path":path})).unwrap();
+        let generation = opened["generation"].as_str().unwrap();
+        let before = ctf_sidecar::identity_reads_for_test();
+        let volume_page = volumes(&req(&path, generation)).unwrap();
+        let folder_page =
+            children(&json!({"path":path,"generation":generation,"volume_id":1})).unwrap();
+        let results =
+            search(&json!({"path":path,"generation":generation,"query":"name:z.txt"})).unwrap();
+        let exported = export(&json!({"path":path,"generation":generation,"output":dir.path().join("result.csv"),"format":"csv","mode":"all"})).unwrap();
+        for reply in [&volume_page, &folder_page, &results, &exported] {
+            assert_eq!(reply["source_verification"], opened["source_verification"]);
+            assert_eq!(reply["source_sha256"], opened["source_sha256"]);
+        }
+        #[cfg(windows)]
+        {
+            assert_eq!(opened["source_verification"], "windows_read_pin");
+            assert_eq!(ctf_sidecar::identity_reads_for_test(), before);
+            assert_eq!(results["source_rehashed"], false);
+            assert_eq!(results["source_sha_checked"], false);
+            assert_eq!(results["source_integrity_verified"], true);
+            assert!(fs::OpenOptions::new().write(true).open(&path).is_err());
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(opened["source_verification"], "full_sha256");
+            assert!(ctf_sidecar::identity_reads_for_test() >= before + 8);
+            assert_eq!(results["source_rehashed"], true);
+        }
+        assert_eq!(close(&req(&path, generation)).unwrap()["closed"], true);
+        fs::OpenOptions::new().write(true).open(&path).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn busy_source_fallback_rejects_same_size_change_with_restored_mtime() {
+        let _serial = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("busy.ctf");
+        write_fixture(&path, "before");
+        let mut writer = fs::OpenOptions::new().write(true).open(&path).unwrap();
+        let original = fs::read(&path).unwrap();
+        let original_time = writer.metadata().unwrap().modified().unwrap();
+        let opened = open(&json!({"path":path})).unwrap();
+        assert_eq!(opened["source_verification"], "full_sha256");
+        let generation = opened["generation"].as_str().unwrap();
+        let reads = ctf_sidecar::identity_reads_for_test();
+        assert!(volumes(&req(&path, generation)).is_ok());
+        assert_eq!(ctf_sidecar::identity_reads_for_test(), reads + 2);
+        let mut changed = original.clone();
+        let last = changed.len() - 1;
+        changed[last] ^= 1;
+        use std::io::{Seek, SeekFrom, Write};
+        writer.seek(SeekFrom::Start(0)).unwrap();
+        writer.write_all(&changed).unwrap();
+        writer
+            .set_times(fs::FileTimes::new().set_modified(original_time))
+            .unwrap();
+        assert_eq!(
+            writer.metadata().unwrap().modified().unwrap(),
+            original_time
+        );
+        assert_eq!(
+            volumes(&req(&path, generation)).unwrap_err().code,
+            "source_changed"
+        );
+        assert_eq!(close(&req(&path, generation)).unwrap()["closed"], true);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn snapshot_pin_outlives_close_until_inflight_reader_drops() {
+        let _serial = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("inflight.ctf");
+        write_fixture(&path, "inflight");
+        let opened = open(&json!({"path":path})).unwrap();
+        let request = req(&path, opened["generation"].as_str().unwrap());
+        let reader = selected(&request, None).unwrap();
+        close(&request).unwrap();
+        assert!(fs::OpenOptions::new().write(true).open(&path).is_err());
+        checked_result(&reader, json!({"complete":true}), None).unwrap();
+        drop(reader);
+        fs::OpenOptions::new().write(true).open(&path).unwrap();
     }
 
     #[test]
