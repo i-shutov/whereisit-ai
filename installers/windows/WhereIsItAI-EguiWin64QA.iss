@@ -1,6 +1,6 @@
 ; Native Rust/egui Win64 QA — separate unsigned installer, for prerelease testing.
 #ifndef AppVersion
-  #define AppVersion "1.1.0"
+  #define AppVersion "1.1.1"
 #endif
 #ifndef BuildDir
   #define BuildDir "../../target/release"
@@ -12,7 +12,7 @@
 AppId={{C147B6E6-D2DA-4F11-8FC4-87BAE1F07967}
 AppName=WhereIsIt AI egui Win64 QA
 AppVersion={#AppVersion}
-VersionInfoVersion=1.1.0.0
+VersionInfoVersion=1.1.1.0
 AppVerName=WhereIsIt AI egui Win64 QA {#AppVersion} (unsigned test build)
 AppPublisher=WhereIsIt AI contributors
 DefaultDirName={localappdata}\Programs\WhereIsIt AI egui Win64 QA

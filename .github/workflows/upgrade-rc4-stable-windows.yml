@@ -13,6 +13,7 @@ concurrency:
 env:
   RC4_SHA: 751fa5454c813e60b61800b517685ccab7e9776a
   V100_SHA: 938fece2d74793c2eda7a1b84082ab5db3f8a092
+  V110_SHA: 7f684f47aab42fb211dfa0af1085ace311ef9f8d
   TARGET_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 jobs:
   installed-upgrade:
@@ -35,6 +36,7 @@ jobs:
             '1.0.0' { $sourceSha = $env:RC4_SHA; $sourceVersion = '1.0.0-rc.4' }
             '1.1.0-rc.1' { $sourceSha = $env:V100_SHA; $sourceVersion = '1.0.0' }
             '1.1.0' { $sourceSha = $env:V100_SHA; $sourceVersion = '1.0.0' }
+            '1.1.1' { $sourceSha = $env:V110_SHA; $sourceVersion = '1.1.0' }
             default { throw "Unsupported upgrade target version: $targetVersion" }
           }
           "source_sha=$sourceSha" >> $env:GITHUB_OUTPUT
