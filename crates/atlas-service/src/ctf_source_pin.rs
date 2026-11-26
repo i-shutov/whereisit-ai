@@ -8,7 +8,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Read};
 use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::AsRawHandle;
-use std::path::Path;
+use std::path::{Component, Path, Prefix};
 
 const FILE_SHARE_READ: u32 = 0x0000_0001;
 const MAX_SOURCE_BYTES: u64 = 2_000_000_000;
@@ -28,6 +28,23 @@ extern "system" {
         information: *mut std::ffi::c_void,
         buffer_size: u32,
     ) -> i32;
+    fn GetDriveTypeW(root_path_name: *const u16) -> u32;
+    fn GetFinalPathNameByHandleW(
+        file: *mut std::ffi::c_void,
+        file_path: *mut u16,
+        buffer_length: u32,
+        volume_name_flags: u32,
+    ) -> u32;
+    fn GetVolumeInformationByHandleW(
+        file: *mut std::ffi::c_void,
+        volume_name_buffer: *mut u16,
+        volume_name_size: u32,
+        volume_serial_number: *mut u32,
+        maximum_component_length: *mut u32,
+        file_system_flags: *mut u32,
+        file_system_name_buffer: *mut u16,
+        file_system_name_size: u32,
+    ) -> i32;
 }
 
 pub(super) struct SourcePin {
@@ -40,6 +57,7 @@ pub(super) fn capture(path: &Path, max_bytes: u64) -> io::Result<(SourcePin, Sna
     if max_bytes > MAX_SOURCE_BYTES {
         return Err(invalid("Byte limit exceeds the supported source limit"));
     }
+    validate_local_path_syntax(path)?;
 
     // Omitting FILE_SHARE_WRITE and FILE_SHARE_DELETE prevents mutation or
     // replacement while this handle remains open. FILE_SHARE_READ preserves
@@ -48,6 +66,7 @@ pub(super) fn capture(path: &Path, max_bytes: u64) -> io::Result<(SourcePin, Sna
         .read(true)
         .share_mode(FILE_SHARE_READ)
         .open(path)?;
+    ensure_supported_filesystem(&file)?;
     let before = file.metadata()?;
     if !before.is_file() || before.len() > max_bytes {
         return Err(invalid("Not a regular file or size limit exceeded"));
@@ -91,6 +110,107 @@ pub(super) fn capture(path: &Path, max_bytes: u64) -> io::Result<(SourcePin, Sna
         },
         snapshot,
     ))
+}
+
+fn validate_local_path_syntax(path: &Path) -> io::Result<()> {
+    if !path.is_absolute() {
+        return Err(invalid("Source path must be absolute"));
+    }
+    let prefix = match path.components().next() {
+        Some(Component::Prefix(prefix)) => prefix,
+        _ => return Err(invalid("Source path must have a local disk prefix")),
+    };
+    match prefix.kind() {
+        Prefix::Disk(_) | Prefix::VerbatimDisk(_) => Ok(()),
+        _ => Err(invalid("Network and device source paths are unsupported")),
+    }
+}
+
+fn ensure_supported_filesystem(file: &File) -> io::Result<()> {
+    let root = volume_guid_root(file)?;
+    let mut root_wide: Vec<u16> = root.encode_utf16().collect();
+    root_wide.push(0);
+    // The GUID root comes from the opened handle, so mapped drive aliases,
+    // junctions, and mount points are judged by the volume actually opened.
+    // SAFETY: root_wide is a live, NUL-terminated volume root.
+    if unsafe { GetDriveTypeW(root_wide.as_ptr()) } != 3 {
+        // DRIVE_FIXED
+        return Err(invalid("Source must reside on a fixed local drive"));
+    }
+
+    let mut filesystem = [0u16; 261];
+    // SAFETY: null optional output buffers are permitted; filesystem is a
+    // writable 261-WCHAR buffer, and the handle remains valid for the call.
+    let ok = unsafe {
+        GetVolumeInformationByHandleW(
+            file.as_raw_handle().cast(),
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            filesystem.as_mut_ptr(),
+            filesystem.len() as u32,
+        )
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let end = filesystem
+        .iter()
+        .position(|&unit| unit == 0)
+        .unwrap_or(filesystem.len());
+    let name = String::from_utf16_lossy(&filesystem[..end]);
+    if !name.eq_ignore_ascii_case("NTFS") && !name.eq_ignore_ascii_case("ReFS") {
+        return Err(invalid(
+            "Source filesystem is unsupported for write pinning",
+        ));
+    }
+    Ok(())
+}
+
+fn volume_guid_root(file: &File) -> io::Result<String> {
+    let mut path = vec![0u16; 32_768];
+    // SAFETY: the buffer is writable, its capacity is passed, and the handle
+    // stays alive during the synchronous call. VOLUME_NAME_GUID requests the
+    // final path rooted at the opened volume's GUID.
+    let length = unsafe {
+        GetFinalPathNameByHandleW(
+            file.as_raw_handle().cast(),
+            path.as_mut_ptr(),
+            path.len() as u32,
+            0x1,
+        )
+    } as usize;
+    if length == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if length >= path.len() {
+        return Err(invalid("Final source path exceeds the supported limit"));
+    }
+    let path = String::from_utf16(&path[..length])
+        .map_err(|_| invalid("Filesystem returned an invalid final path"))?;
+    let prefix = r"\\?\Volume{";
+    if !path.starts_with(prefix) {
+        return Err(invalid("Filesystem did not provide a local volume GUID"));
+    }
+    let closing = path[prefix.len()..]
+        .find("}\\")
+        .map(|offset| prefix.len() + offset + 2)
+        .ok_or_else(|| invalid("Filesystem returned an invalid volume GUID path"))?;
+    let guid = &path[prefix.len()..closing - 2];
+    let guid_valid = guid.len() == 36
+        && guid.bytes().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        });
+    if !guid_valid {
+        return Err(invalid("Filesystem returned an invalid volume GUID"));
+    }
+    Ok(path[..closing].to_owned())
 }
 
 impl SourcePin {
@@ -412,6 +532,36 @@ mod tests {
             .open(&path)
             .is_err());
         pin.verify(&path).unwrap();
+    }
+
+    #[test]
+    fn rejects_unc_device_and_relative_paths_before_opening() {
+        for path in [
+            Path::new(r"\\server\share\source.ctf"),
+            Path::new(r"\\.\C:\source.ctf"),
+            Path::new(r"C:relative.ctf"),
+            Path::new("relative.ctf"),
+        ] {
+            let error = capture(path, 100)
+                .err()
+                .expect("unexpected path acceptance");
+            assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+            assert_eq!(
+                error.raw_os_error(),
+                None,
+                "must reject before filesystem I/O"
+            );
+        }
+    }
+
+    #[test]
+    fn canonical_local_temp_file_is_eligible() {
+        let (_dir, path) = fixture();
+        let canonical = fs::canonicalize(path).unwrap();
+        validate_local_path_syntax(&canonical).unwrap();
+        let (pin, snapshot) = capture(&canonical, 100).unwrap();
+        assert_eq!(snapshot.bytes(), b"fixture bytes");
+        pin.verify(&canonical).unwrap();
     }
 
     #[cfg(windows)]

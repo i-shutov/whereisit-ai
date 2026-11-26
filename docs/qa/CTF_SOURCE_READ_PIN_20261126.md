@@ -5,7 +5,7 @@ Status: source-pin implementation and service benchmark validated; installed hot
 ## Integrity and scope
 
 Direct CTF preview previously streamed the entire source for SHA-256 before and
-after every folder page, search, analytic result and export. On Windows the new
+after every folder page, search, analytic result and export. On eligible Windows sources the new
 path opens a read-only handle with only read sharing, captures and hashes bytes
 from that same file object once, and keeps the handle in the snapshot. Other
 readers remain allowed; write/delete sharing is denied while the snapshot or an
@@ -18,8 +18,16 @@ binding before and after reading, and publication checks it again after parsing.
 The implementation uses `GetFileInformationByHandleEx(FileIdInfo)` rather than
 the truncated Windows identity in the existing same-file dependency.
 
-If pin acquisition or the full identity API is unavailable, including an existing
-writer, opening retains the previous capture and full per-request SHA checks.
+The fast path is limited to local sources on volumes reported as fixed NTFS or
+ReFS. UNC/device/relative syntax is rejected by the pin helper before opening;
+the actual held handle must expose a volume GUID, fixed-drive classification and
+supported filesystem. This checks the opened volume rather than trusting an
+input drive letter or junction. Ineligible sources retain the full-hash path;
+this does not remove catalog-reading support for other storage.
+
+If pin acquisition or any eligibility/identity API is unavailable, including an
+existing writer, opening retains the previous capture and full per-request SHA
+checks.
 Once a pin is established, a failed binding check returns `source_changed`;
 it never silently switches to weaker verification. Other platforms retain the
 full-hash path. Mirror, native editing and their publication checks are unchanged.
@@ -37,7 +45,7 @@ source until it is closed. No source writes are introduced.
 
 ## Synthetic regression evidence
 
-Windows default-feature service tests: **166 passed**, four manual benchmarks
+Windows default-feature service tests: **168 passed**, four manual benchmarks
 ignored. The isolated release desktop suite passed all **105 tests**. Strict
 all-target service Clippy and formatting passed. Coverage includes:
 
@@ -54,6 +62,10 @@ all-target service Clippy and formatting passed. Coverage includes:
 - Existing query/SQLite parity, exports, cancellation and stale-generation tests.
 
 ## Measurements and GUI
+
+The following table records the bounded-buffer checkpoint `caec14f`, before the
+subsequent eligibility hardening. Exact later-head measurements are recorded in
+PR #98 rather than inferred from these numbers.
 
 The default Rust executor was measured on the same protected full working copy
 (44 volumes, 3,046,133 records), 30 requests per class, 300 repeated requests.
@@ -112,4 +124,7 @@ Microsoft documents write-mapping conflicts when write sharing is omitted in
 Full-width handle identity follows
 [FILE_ID_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_info).
 The synthetic tests verify the relevant sharing behavior on the actual host;
-these references do not substitute for platform acceptance.
+these references do not substitute for platform acceptance. Local-volume
+eligibility also uses the documented
+[volume GUID result](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlew)
+and [drive classification](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getdrivetypew).
