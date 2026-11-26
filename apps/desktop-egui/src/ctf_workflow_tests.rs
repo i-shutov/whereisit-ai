@@ -707,6 +707,14 @@ fn changed_linked_source_refuses_import_and_hides_stale_rows() {
     assert_eq!(modified.len(), original.len());
     assert_ne!(modified, original);
 
+    // Keep an external writer open before linking so Windows cannot acquire
+    // the source pin and must use the full-content hash fallback.
+    #[cfg(windows)]
+    let _external_writer = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&source)
+        .unwrap();
+
     let ctx = egui::Context::default();
     let mut app = app(&ctx, temp.path());
     link(&mut app, &ctx, &source);
