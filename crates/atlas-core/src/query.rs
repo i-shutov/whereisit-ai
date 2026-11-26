@@ -135,6 +135,15 @@ pub trait MetadataQueryContext {
     fn relative_path_contains(&self, matcher: &MetadataContainsMatcher<'_>) -> bool {
         matcher.matches(self.relative_path())
     }
+    /// Match a path substring after an unqualified text query missed the
+    /// row's name, description, and tags. Structured contexts may override
+    /// this to scan path components without materializing the full path.
+    fn relative_path_contains_after_name_miss(
+        &self,
+        matcher: &MetadataContainsMatcher<'_>,
+    ) -> bool {
+        self.relative_path_contains(matcher)
+    }
     fn is_branch_descendant(&self, anchor_id: i64) -> bool;
     fn category_matches(&self, predicate: &MetadataCategoryPredicate) -> bool;
 }
@@ -369,7 +378,7 @@ fn eval<C: MetadataQueryContext>(expr: &Expr, row: &MetadataRecord<'_>, ctx: &C)
                 lower_contains(row.name, needle, target, failure)
                     || lower_contains(row.description, needle, target, failure)
                     || lower_contains(row.tags, needle, target, failure)
-                    || ctx.relative_path_contains(&MetadataContainsMatcher {
+                    || ctx.relative_path_contains_after_name_miss(&MetadataContainsMatcher {
                         needle,
                         target,
                         failure,
@@ -431,7 +440,11 @@ fn lower_contains_parts(parts: &[&str], needle: &str, target: &[char], failure: 
     if target.is_empty() {
         return true;
     }
-    if !needle.contains('\n') && needle.is_ascii() && parts.iter().all(|part| part.is_ascii()) {
+    let needle_is_ascii = needle.is_ascii();
+    if !needle_is_ascii && parts.iter().all(|part| part.is_ascii()) {
+        return false;
+    }
+    if !needle.contains('\n') && needle_is_ascii && parts.iter().all(|part| part.is_ascii()) {
         let pattern = needle.as_bytes();
         return parts.iter().any(|part| {
             part.as_bytes()
@@ -1130,6 +1143,125 @@ mod tests {
         }
         fn category_matches(&self, _: &MetadataCategoryPredicate) -> bool {
             false
+        }
+    }
+
+    struct HookContext<'a> {
+        path: &'a str,
+        ordinary_calls: std::cell::Cell<usize>,
+        after_miss_calls: std::cell::Cell<usize>,
+    }
+    impl MetadataQueryContext for HookContext<'_> {
+        fn relative_path(&self) -> &str {
+            self.path
+        }
+        fn relative_path_contains(&self, matcher: &MetadataContainsMatcher<'_>) -> bool {
+            self.ordinary_calls.set(self.ordinary_calls.get() + 1);
+            matcher.matches(self.path)
+        }
+        fn relative_path_contains_after_name_miss(
+            &self,
+            matcher: &MetadataContainsMatcher<'_>,
+        ) -> bool {
+            self.after_miss_calls.set(self.after_miss_calls.get() + 1);
+            matcher.matches(self.path)
+        }
+        fn is_branch_descendant(&self, _: i64) -> bool {
+            false
+        }
+        fn category_matches(&self, _: &MetadataCategoryPredicate) -> bool {
+            false
+        }
+    }
+
+    fn hook_context(path: &str) -> HookContext<'_> {
+        HookContext {
+            path,
+            ordinary_calls: std::cell::Cell::new(0),
+            after_miss_calls: std::cell::Cell::new(0),
+        }
+    }
+
+    #[test]
+    fn text_path_hook_runs_only_after_leaf_misses_and_keeps_newline_and_path_dispatch() {
+        let row = MetadataRecord {
+            id: 1,
+            name: "needle.bin",
+            kind: "file",
+            size: 0,
+            extension: "bin",
+            description: "",
+            tags: "",
+        };
+        let ctx = hook_context("Folder/needle.bin");
+        assert!(MetadataQuery::compile_metadata("needle")
+            .unwrap()
+            .matches(&row, &ctx));
+        assert_eq!(
+            ctx.after_miss_calls.get(),
+            0,
+            "name hit short-circuits path lookup"
+        );
+
+        let miss_row = MetadataRecord {
+            name: "other.bin",
+            ..row
+        };
+        assert!(MetadataQuery::compile_metadata("needle")
+            .unwrap()
+            .matches(&miss_row, &ctx));
+        assert_eq!(ctx.after_miss_calls.get(), 1);
+        assert_eq!(ctx.ordinary_calls.get(), 0);
+
+        // Slash-containing text retains full-path substring behavior.
+        assert!(MetadataQuery::compile_metadata("Folder/needle")
+            .unwrap()
+            .matches(&miss_row, &ctx));
+        assert_eq!(ctx.after_miss_calls.get(), 2);
+
+        // Newline-bearing text uses the joined fields path and does not use either hook.
+        assert!(
+            MetadataQuery::compile_metadata("text:\"other.bin\nFolder\"")
+                .unwrap()
+                .matches(&miss_row, &ctx)
+        );
+        assert_eq!(ctx.after_miss_calls.get(), 2);
+        assert_eq!(ctx.ordinary_calls.get(), 0);
+
+        assert!(MetadataQuery::compile_metadata("path:needle")
+            .unwrap()
+            .matches(&miss_row, &ctx));
+        assert_eq!(ctx.ordinary_calls.get(), 1, "Path keeps the original hook");
+    }
+
+    #[test]
+    fn lower_contains_parts_fast_rejection_and_unicode_matcher_parity() {
+        let ascii_query = MetadataQuery::compile_metadata("text:résumé").unwrap();
+        let Expr::Contains(_, needle, target, failure) = &ascii_query.expr else {
+            panic!("contains expected")
+        };
+        assert!(!lower_contains_parts(
+            &["plain ASCII", "more ASCII"],
+            needle,
+            target,
+            failure
+        ));
+
+        for (query, haystack) in [("ος", "ΟΣ"), ("i̇", "İ"), ("k", "K")] {
+            let compiled = MetadataQuery::compile_metadata(&format!("path:{query}")).unwrap();
+            let Expr::Contains(_, needle, target, failure) = &compiled.expr else {
+                panic!("contains expected")
+            };
+            let matcher = MetadataContainsMatcher {
+                needle,
+                target,
+                failure,
+            };
+            assert_eq!(
+                matcher.matches(haystack),
+                haystack.to_lowercase().contains(needle),
+                "{query:?} in {haystack:?}"
+            );
         }
     }
 

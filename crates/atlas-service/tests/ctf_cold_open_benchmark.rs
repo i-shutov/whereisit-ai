@@ -78,6 +78,53 @@ fn invoke(request: Value) -> Value {
     serde_json::from_str(&atlas_service::dispatch_json(&request.to_string())).unwrap()
 }
 
+const SEARCH_CLASSES: [&str; 10] = [
+    "empty",
+    "extension",
+    "default_text",
+    "boolean",
+    "unicode",
+    "absent_name",
+    "absent_default_text",
+    "absent_path",
+    "absent_description",
+    "size_count",
+];
+
+fn selected_classes(value: Option<&str>) -> Result<Vec<&'static str>, String> {
+    let Some(value) = value else {
+        return Ok(SEARCH_CLASSES.to_vec());
+    };
+    let mut selected = Vec::new();
+    for raw in value.split(',') {
+        let label = raw.trim();
+        if label.is_empty() {
+            return Err("CTF_BENCH_CLASSES contains an empty label".into());
+        }
+        let Some(&known) = SEARCH_CLASSES.iter().find(|&&known| known == label) else {
+            return Err(format!("unknown CTF_BENCH_CLASSES label: {label}"));
+        };
+        if selected.contains(&known) {
+            return Err(format!("duplicate CTF_BENCH_CLASSES label: {known}"));
+        }
+        selected.push(known);
+    }
+    Ok(selected)
+}
+
+#[test]
+fn benchmark_class_selection_validation() {
+    assert_eq!(selected_classes(None).unwrap(), SEARCH_CLASSES);
+    assert_eq!(
+        selected_classes(Some("unicode, size_count")).unwrap(),
+        ["unicode", "size_count"]
+    );
+    assert!(selected_classes(Some("")).is_err());
+    assert!(selected_classes(Some("empty,,unicode")).is_err());
+    assert!(selected_classes(Some("empty, unknown")).is_err());
+    assert!(selected_classes(Some("empty,empty")).is_err());
+}
+
 fn benchmark_source(temp: &std::path::Path) -> std::path::PathBuf {
     if let Some(path) = std::env::var_os("CTF_BENCH_COPY") {
         std::path::PathBuf::from(path)
@@ -257,6 +304,8 @@ fn direct_ctf_first_search_and_query_latency() {
         .parse()
         .unwrap();
     assert!((1..=100).contains(&samples));
+    let classes = selected_classes(std::env::var("CTF_BENCH_CLASSES").ok().as_deref())
+        .unwrap_or_else(|error| panic!("{error}"));
     let reference = std::env::var_os("CTF_BENCH_SQLITE")
         .map(|path| atlas_core::Catalog::open_readonly(std::path::PathBuf::from(path)).unwrap());
     assert!(
@@ -308,6 +357,9 @@ fn direct_ctf_first_search_and_query_latency() {
         ("size_count", "ext:mkv AND size:>1MiB", true),
     ];
     for (label, query, full_count) in queries {
+        if !classes.contains(&label) {
+            continue;
+        }
         let expected = reference.as_ref().map(|reference| {
             if full_count {
                 serde_json::to_value(reference.search(query, None, 0, 250).unwrap()).unwrap()
@@ -335,8 +387,9 @@ fn direct_ctf_first_search_and_query_latency() {
         let nearest_rank = |quantile: f64| {
             timings[((timings.len() as f64 * quantile).ceil() as usize).saturating_sub(1)]
         };
+        let max_ms = timings.iter().copied().max_by(f64::total_cmp).unwrap();
         eprintln!(
-            "class={label} samples={samples} p50_ms={:.3} p95_ms={:.3}",
+            "class={label} samples={samples} p50_ms={:.3} p95_ms={:.3} max_ms={max_ms:.3}",
             nearest_rank(0.5),
             nearest_rank(0.95)
         );

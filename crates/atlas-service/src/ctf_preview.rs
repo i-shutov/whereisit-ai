@@ -540,6 +540,23 @@ struct DirectContext<'a> {
     relative_path: LocalOnceCell<String>,
 }
 
+impl DirectContext<'_> {
+    fn components_contain(
+        &self,
+        matcher: &MetadataContainsMatcher<'_>,
+        mut cursor: Option<usize>,
+    ) -> bool {
+        while let Some(index) = cursor {
+            let entry = &self.disk.entries[index];
+            if matcher.matches(&entry.name) {
+                return true;
+            }
+            cursor = entry.parent;
+        }
+        false
+    }
+}
+
 impl MetadataQueryContext for DirectContext<'_> {
     fn relative_path(&self) -> &str {
         self.relative_path
@@ -553,15 +570,19 @@ impl MetadataQueryContext for DirectContext<'_> {
         // An ASCII term without '/' cannot span path components. Check the
         // recorded names directly, retaining the core's exact Unicode matcher,
         // and avoid allocating a joined path for each rejected catalog record.
-        let mut cursor = Some(self.entry_index);
-        while let Some(index) = cursor {
-            let entry = &self.disk.entries[index];
-            if matcher.matches(&entry.name) {
-                return true;
-            }
-            cursor = entry.parent;
+        self.components_contain(matcher, Some(self.entry_index))
+    }
+
+    fn relative_path_contains_after_name_miss(
+        &self,
+        matcher: &MetadataContainsMatcher<'_>,
+    ) -> bool {
+        if !matcher.is_ascii_component_needle() {
+            return self.relative_path_contains(matcher);
         }
-        false
+        // The evaluator already disproved this term against the basename.
+        // ASCII terms without '/' cannot span the path component separator.
+        self.components_contain(matcher, self.disk.entries[self.entry_index].parent)
     }
 
     fn is_branch_descendant(&self, anchor_id: i64) -> bool {
@@ -1504,14 +1525,19 @@ pub(super) mod tests {
         let joined = relative_path(&disk, 2);
         for (query_text, expected, joined_needed) in [
             ("path:k", true, false),
+            ("k", true, false),
             ("path:i", true, false),
+            ("i", true, false),
             ("path:missing", false, false),
             ("missing", false, false),
             ("path:root", true, false),
+            ("root", true, false),
             ("data", true, false),
             ("path:Σ/data", true, true),
+            ("Σ/data", true, true),
             ("path:ς", false, true),
             ("path:missing/data", false, true),
+            ("missing/data", false, true),
         ] {
             let context = DirectContext {
                 disk: &disk,
