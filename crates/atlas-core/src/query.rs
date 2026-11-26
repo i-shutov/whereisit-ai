@@ -86,7 +86,7 @@ enum Expr {
     And(Box<Expr>, Box<Expr>),
     Or(Box<Expr>, Box<Expr>),
     Not(Box<Expr>),
-    Contains(Field, String, Vec<char>, Vec<usize>),
+    Contains(Field, String, Vec<char>, Vec<usize>, Option<u8>),
     Glob(Field, String, Vec<char>),
     Extension(String),
     Size(&'static str, i64),
@@ -155,6 +155,7 @@ pub struct MetadataContainsMatcher<'a> {
     needle: &'a str,
     target: &'a [char],
     failure: &'a [usize],
+    required_ascii_anchor: Option<u8>,
 }
 
 impl MetadataContainsMatcher<'_> {
@@ -165,7 +166,13 @@ impl MetadataContainsMatcher<'_> {
 
     /// Match text using the same lowercase and Unicode rules as query evaluation.
     pub fn matches(&self, text: &str) -> bool {
-        lower_contains(text, self.needle, self.target, self.failure)
+        lower_contains(
+            text,
+            self.needle,
+            self.target,
+            self.failure,
+            self.required_ascii_anchor,
+        )
     }
 
     /// True when matching can be performed independently on slash-separated
@@ -260,7 +267,7 @@ fn emit_duckdb(expr: &Expr, args: &mut Vec<Value>, requires_glob_udf: &mut bool)
             emit_duckdb(b, args, requires_glob_udf)
         ),
         Expr::Not(inner) => format!("(NOT {})", emit_duckdb(inner, args, requires_glob_udf)),
-        Expr::Contains(field, value, _, _) => {
+        Expr::Contains(field, value, _, _, _) => {
             args.push(Value::Text(value.clone()));
             format!("strpos({}, ?) > 0", duckdb_field(*field))
         }
@@ -307,7 +314,7 @@ fn duckdb_field(field: Field) -> &'static str {
 
 fn needs_path(expr: &Expr) -> bool {
     match expr {
-        Expr::Contains(Field::Path | Field::Text, _, _, _)
+        Expr::Contains(Field::Path | Field::Text, _, _, _, _)
         | Expr::Glob(Field::Path | Field::Text, _, _) => true,
         Expr::And(a, b) | Expr::Or(a, b) => needs_path(a) || needs_path(b),
         Expr::Not(a) => needs_path(a),
@@ -347,7 +354,10 @@ fn contains_expr(field: Field, value: String) -> Expr {
         }
         failure[i] = matched;
     }
-    Expr::Contains(field, value, target, failure)
+    let required_ascii_anchor = value
+        .bytes()
+        .find(|byte| byte.is_ascii() && !byte.is_ascii_alphabetic() && *byte != b'\n');
+    Expr::Contains(field, value, target, failure, required_ascii_anchor)
 }
 
 fn glob_expr(field: Field, value: String) -> Expr {
@@ -376,17 +386,24 @@ fn eval<C: MetadataQueryContext>(expr: &Expr, row: &MetadataRecord<'_>, ctx: &C)
         ) if row.kind != "file" => false,
         Expr::Category(p) => ctx.category_matches(p),
         Expr::Branch(id) => ctx.is_branch_descendant(*id),
-        Expr::Contains(field, needle, target, failure) => match field {
+        Expr::Contains(field, needle, target, failure, required_ascii_anchor) => match field {
             Field::Text if !target.contains(&'\n') => {
                 // A term without a separator cannot straddle search_text fields.
                 // Check the already available strings first, then request the path.
-                lower_contains(row.name, needle, target, failure)
-                    || lower_contains(row.description, needle, target, failure)
-                    || lower_contains(row.tags, needle, target, failure)
+                lower_contains(row.name, needle, target, failure, *required_ascii_anchor)
+                    || lower_contains(
+                        row.description,
+                        needle,
+                        target,
+                        failure,
+                        *required_ascii_anchor,
+                    )
+                    || lower_contains(row.tags, needle, target, failure, *required_ascii_anchor)
                     || ctx.relative_path_contains_after_name_miss(&MetadataContainsMatcher {
                         needle,
                         target,
                         failure,
+                        required_ascii_anchor: *required_ascii_anchor,
                     })
             }
             Field::Text => lower_contains_parts(
@@ -394,15 +411,25 @@ fn eval<C: MetadataQueryContext>(expr: &Expr, row: &MetadataRecord<'_>, ctx: &C)
                 needle,
                 target,
                 failure,
+                *required_ascii_anchor,
             ),
-            Field::Name => lower_contains(row.name, needle, target, failure),
+            Field::Name => {
+                lower_contains(row.name, needle, target, failure, *required_ascii_anchor)
+            }
             Field::Path => ctx.relative_path_contains(&MetadataContainsMatcher {
                 needle,
                 target,
                 failure,
+                required_ascii_anchor: *required_ascii_anchor,
             }),
-            Field::Description => lower_contains(row.description, needle, target, failure),
-            Field::Tag => lower_contains(row.tags, needle, target, failure),
+            Field::Description => lower_contains(
+                row.description,
+                needle,
+                target,
+                failure,
+                *required_ascii_anchor,
+            ),
+            Field::Tag => lower_contains(row.tags, needle, target, failure, *required_ascii_anchor),
         },
         Expr::Glob(field, _pattern_text, pattern) => {
             let val = match field {
@@ -437,13 +464,30 @@ fn lower_eq(value: &str, lowered: &str) -> bool {
     }
 }
 
-fn lower_contains(value: &str, needle: &str, target: &[char], failure: &[usize]) -> bool {
-    lower_contains_parts(&[value], needle, target, failure)
+fn lower_contains(
+    value: &str,
+    needle: &str,
+    target: &[char],
+    failure: &[usize],
+    required_ascii_anchor: Option<u8>,
+) -> bool {
+    lower_contains_parts(&[value], needle, target, failure, required_ascii_anchor)
 }
 
-fn lower_contains_parts(parts: &[&str], needle: &str, target: &[char], failure: &[usize]) -> bool {
+fn lower_contains_parts(
+    parts: &[&str],
+    needle: &str,
+    target: &[char],
+    failure: &[usize],
+    required_ascii_anchor: Option<u8>,
+) -> bool {
     if target.is_empty() {
         return true;
+    }
+    if required_ascii_anchor
+        .is_some_and(|anchor| !parts.iter().any(|part| part.as_bytes().contains(&anchor)))
+    {
+        return false;
     }
     let needle_is_ascii = needle.is_ascii();
     if !needle_is_ascii && parts.iter().all(|part| part.is_ascii()) {
@@ -1242,31 +1286,114 @@ mod tests {
     #[test]
     fn lower_contains_parts_fast_rejection_and_unicode_matcher_parity() {
         let ascii_query = MetadataQuery::compile_metadata("text:résumé").unwrap();
-        let Expr::Contains(_, needle, target, failure) = &ascii_query.expr else {
+        let Expr::Contains(_, needle, target, failure, anchor) = &ascii_query.expr else {
             panic!("contains expected")
         };
         assert!(!lower_contains_parts(
             &["plain ASCII", "more ASCII"],
             needle,
             target,
-            failure
+            failure,
+            *anchor,
         ));
 
         for (query, haystack) in [("ος", "ΟΣ"), ("i̇", "İ"), ("k", "K")] {
             let compiled = MetadataQuery::compile_metadata(&format!("path:{query}")).unwrap();
-            let Expr::Contains(_, needle, target, failure) = &compiled.expr else {
+            let Expr::Contains(_, needle, target, failure, anchor) = &compiled.expr else {
                 panic!("contains expected")
             };
             let matcher = MetadataContainsMatcher {
                 needle,
                 target,
                 failure,
+                required_ascii_anchor: *anchor,
             };
             assert_eq!(
                 matcher.matches(haystack),
                 haystack.to_lowercase().contains(needle),
                 "{query:?} in {haystack:?}"
             );
+        }
+    }
+
+    #[test]
+    fn unicode_contains_ascii_anchor_preserves_newline_punctuation_and_digits() {
+        let query = MetadataQuery::compile_metadata("text:\"café,\n東京\"").unwrap();
+        let Expr::Contains(_, needle, target, failure, anchor) = &query.expr else {
+            panic!("contains expected")
+        };
+        assert_eq!(*anchor, Some(b','));
+        assert!(lower_contains_parts(
+            &["café,", "東京"],
+            needle,
+            target,
+            failure,
+            *anchor
+        ));
+        assert!(!lower_contains_parts(
+            &["café", "東京"],
+            needle,
+            target,
+            failure,
+            *anchor
+        ));
+
+        for (query, good, bad, expected_anchor) in [
+            ("path:東京!", "prefix東京!suffix", "東京?", b'!'),
+            ("path:東京7", "prefix東京7suffix", "東京", b'7'),
+        ] {
+            let query = MetadataQuery::compile_metadata(query).unwrap();
+            let Expr::Contains(_, needle, target, failure, anchor) = &query.expr else {
+                panic!("contains expected")
+            };
+            assert_eq!(*anchor, Some(expected_anchor));
+            let matcher = MetadataContainsMatcher {
+                needle,
+                target,
+                failure,
+                required_ascii_anchor: *anchor,
+            };
+            assert!(matcher.matches(good));
+            assert!(!matcher.matches(bad));
+        }
+
+        let query = MetadataQuery::compile_metadata("path:é9").unwrap();
+        let Expr::Contains(_, needle, target, failure, anchor) = &query.expr else {
+            panic!("contains expected")
+        };
+        let matcher = MetadataContainsMatcher {
+            needle,
+            target,
+            failure,
+            required_ascii_anchor: *anchor,
+        };
+        assert!(!matcher.matches("éléphant"));
+        assert!(matcher.matches("pré9fix"));
+    }
+
+    #[test]
+    fn unicode_lowercase_never_introduces_ascii_nonletter_anchor() {
+        for scalar in 0..=0x10ffff {
+            let Some(ch) = char::from_u32(scalar) else {
+                continue;
+            };
+            for lowered in ch.to_lowercase() {
+                let byte = lowered as u32;
+                if lowered.is_ascii() && !(byte as u8).is_ascii_alphabetic() && byte != b'\n' as u32
+                {
+                    assert_eq!(scalar, byte, "U+{scalar:04X} lowercased to {lowered:?}");
+                }
+            }
+        }
+        // Rust's whole-string lowercase applies contextual final sigma, which
+        // also stays Greek and cannot synthesize an ASCII anchor.
+        for value in ["Σ", "ΟΣ", "ΟΣ.", "AΣA"] {
+            assert!(value.to_lowercase().bytes().all(|byte| {
+                !byte.is_ascii()
+                    || byte.is_ascii_alphabetic()
+                    || byte == b'\n'
+                    || value.as_bytes().contains(&byte)
+            }));
         }
     }
 
@@ -1304,13 +1431,14 @@ mod tests {
     #[test]
     fn contains_matcher_preserves_unicode_semantics_and_component_eligibility() {
         let query = MetadataQuery::compile_metadata("path:ος").unwrap();
-        let Expr::Contains(_, needle, target, failure) = &query.expr else {
+        let Expr::Contains(_, needle, target, failure, anchor) = &query.expr else {
             panic!("expected contains expression");
         };
         let matcher = MetadataContainsMatcher {
             needle,
             target,
             failure,
+            required_ascii_anchor: *anchor,
         };
         assert!(!matcher.is_ascii_component_needle());
         // The dot is case-ignorable and the following T keeps uppercase Σ
@@ -1318,24 +1446,26 @@ mod tests {
         assert!(matcher.matches("Unicode/ΟΣ"));
 
         let query = MetadataQuery::compile_metadata("path:disk").unwrap();
-        let Expr::Contains(_, needle, target, failure) = &query.expr else {
+        let Expr::Contains(_, needle, target, failure, anchor) = &query.expr else {
             panic!("expected contains expression");
         };
         assert!(MetadataContainsMatcher {
             needle,
             target,
             failure,
+            required_ascii_anchor: *anchor,
         }
         .is_ascii_component_needle());
 
         let query = MetadataQuery::compile_metadata("path:folder/name").unwrap();
-        let Expr::Contains(_, needle, target, failure) = &query.expr else {
+        let Expr::Contains(_, needle, target, failure, anchor) = &query.expr else {
             panic!("expected contains expression");
         };
         assert!(!MetadataContainsMatcher {
             needle,
             target,
             failure,
+            required_ascii_anchor: *anchor,
         }
         .is_ascii_component_needle());
     }
