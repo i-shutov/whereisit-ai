@@ -1,6 +1,6 @@
 {
   "format": "whereisit-release-acceptance-v1",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "channel": "stable",
   "stable_ready": false,
   "post_release_defects": [
@@ -9,7 +9,12 @@
       "status": "OPEN",
       "reported_on": "2026-11-24",
       "summary": "Analytics highlight predicates for description, tags and full text query columns absent from entries_core and fail instead of returning matched counters.",
-      "report": "docs/qa/ANALYTICS_HIGHLIGHT_DEFECT_20261124.md"
+      "report": "docs/qa/ANALYTICS_HIGHLIGHT_DEFECT_20261124.md",
+      "affected_release": "1.1.0",
+      "candidate_fix_prs": [
+        95
+      ],
+      "candidate_validation": "Code/QA binary passed; keep OPEN until exact1.1.1 installed acceptance"
     },
     {
       "id": "P1-CTF-COLD-OPEN",
@@ -17,7 +22,17 @@
       "reported_on": "2026-11-24",
       "summary": "First opening of a large CTF waits for complete import and indexing; owner reports over 15 minutes on Windows 10.",
       "acceptance_gap": "Warm derived-SQLite search measurements do not validate first CTF open latency.",
-      "report": "docs/qa/CTF_COLD_OPEN_DEFECT_20261124.md"
+      "report": "docs/qa/CTF_COLD_OPEN_DEFECT_20261124.md",
+      "affected_release": "1.1.0",
+      "candidate_fix_prs": [
+        94,
+        96,
+        97,
+        98,
+        99,
+        100
+      ],
+      "candidate_validation": "Code/QA binary passed; keep OPEN until exact1.1.1 installed acceptance"
     }
   ],
   "candidate_publication_approved": false,
@@ -30,14 +45,14 @@
     "windows"
   ],
   "previous_stable": {
-    "version": "1.0.0",
-    "tag": "v1.0.0",
-    "source_commit": "938fece2d74793c2eda7a1b84082ab5db3f8a092",
-    "acceptance": "release/history/v1.0.0.json",
+    "version": "1.1.0",
+    "tag": "v1.1.0",
+    "source_commit": "7f684f47aab42fb211dfa0af1085ace311ef9f8d",
+    "acceptance": "release/history/v1.1.0.json",
     "immutable_published_assets": true
   },
   "release_scope": {
-    "target_version": "1.1.0",
+    "target_version": "1.1.1",
     "ship_platforms": [
       "windows-x64"
     ],
@@ -52,72 +67,69 @@
     "runtime": "Rust/egui; no web runtime"
   },
   "integrated_feature_prs": [
-    87,
-    88,
-    89
+    94,
+    95,
+    96,
+    97,
+    98,
+    99,
+    100
   ],
   "candidate_features": [
-    "PR58 tabs and retained workspace state",
-    "Read-only archive slices and bounded sunburst",
-    "Explicit metadata-only local analyzer and new review CSV"
+    "Direct read-only CTF metadata snapshot without mandatory SQLite import/index construction",
+    "Disk/tree/file navigation and source-order first pages",
+    "Windows protected source pin with portable full-verification fallback",
+    "Bounded parallel metadata matching and query-local ancestor cache",
+    "Direct CTF analytics and corrected description/tag highlights"
   ],
   "build_time_acceptance": {
-    "installed_rc_1_0_to_1_1": "PASS; PR90 exact main b5e3667; independent installed Windows GUI",
-    "full_catalog_and_ctf_1_1": "PASS; exact installed main 9ab97f1662dcc0f5a6490a8d7f721892d6578a38",
-    "installed_stable_windows_gui": "PASS; exact main artifact 14825485729; actual published-1.0 upgrade and restart",
+    "accepted_code_checkpoint": "PASS; PR100 aa25e26, code24d7e77; exact CI15/15 and real Win11 QA-binary GUI",
+    "integration_main": "a248a6d4fa75bec511e54a82a38016973894baca; tree identical to accepted PR100",
+    "exact_1_1_1_installer_gui": "NOT_RUN",
+    "installed_1_1_0_to_1_1_1_upgrade": "NOT_RUN",
+    "original_vendor_candidate_compatibility": "NOT_RUN",
     "original_ctf_write_allowed": false,
-    "windows10": "OWNER_CONFIRMED_HISTORICAL; exact 1.1 not tested",
+    "windows10": "OWNER_CONFIRMED_HISTORICAL; new1.1.1 artifact not tested",
     "macos_linux": "COMPILE_TESTS_ONLY; product releases deferred"
   },
-  "known_open_gates": [],
+  "known_open_gates": [
+    "Exact1.1.1 native CI and installer provenance",
+    "Exact1.1.1 installed Windows GUI and restart",
+    "Published1.1.0 to1.1.1 upgrade/uninstall preserving external SQLite and user state",
+    "Candidate CTF export/original-WhereIsIt compatibility and source-readonly checks"
+  ],
   "signing": {
     "windows": "unsigned; owner-approved Windows release scope",
     "macos": "deferred platform release"
   },
   "physical_acceptance": {
-    "date_utc": "2026-11-23",
-    "platform": "Windows 11 Pro x64 10.0.22631; Administrator interactive RDP",
-    "tested_source_commit": "9ab97f1662dcc0f5a6490a8d7f721892d6578a38",
-    "native_ci_run_id": 45187054366,
-    "product_artifact_id": 14825485729,
-    "installer_sha256": "3733bc6ef67fdbcd0cd1b4cac478a0de0d9ea880738f64a7634212eecf5ff3ff",
-    "installed_gui_sha256": "81d6c44ab668849cf20620b8d234df9becb1bd67375526eb66e93aad31dbaa9e",
-    "installed_cli_sha256": "a3a048ab67a97665fb200d2e0c30f0cd1f389093518730202e4e2a8a864bdb25",
-    "upgrade_published_1_0_to_1_1": "PASS",
-    "restart": "PASS",
-    "external_sqlite_files_unchanged": 3,
-    "full_catalog_gui_bounded_map_cancel_retry_context": "PASS",
-    "supported_ctf_original_vendor_both_directions": "PASS",
-    "original_whereisit_file_version": "2014.0.0.220",
-    "full_catalog_volumes": 44,
-    "full_catalog_entries": 3046133,
-    "all_vendor_roundtrip_entry_rows_compared": 3046133,
-    "vendor_roundtrip_fields_compared": 10,
-    "vendor_roundtrip_description_changes": 1,
-    "csv_parquet_all_rows_15_fields": "PASS; independent DuckDB 1.4.1",
-    "export_no_clobber_ctf_csv_parquet": "PASS",
-    "source_original_unchanged": true,
-    "remaining_p0": 0,
-    "remaining_p1": 0,
-    "public_report": "docs/qa/WINDOWS_1_1_STABLE_ACCEPTANCE_20261123.md",
-    "all_semantic_volume_metadata_preserved": true,
-    "vendor_roundtrip_identity": "Entry/parent paths resolved; import-local row IDs and import timestamps excluded"
+    "status": "NOT_RUN",
+    "target_version": "1.1.1",
+    "previous_release_evidence": "release/history/v1.1.0.json",
+    "qa_code_checkpoint_report": "docs/qa/CTF_TEXT_SCAN_20261126.md"
   },
   "measured_performance": {
+    "tested_code_commit": "24d7e772edbb4830fe5117aaed853a76016372fd",
     "catalog_entries": 3046133,
-    "search_classes": 6,
-    "samples_per_class": 30,
-    "search_max_p95_ms": 58.38,
-    "search_peak_working_set_bytes": 9433088,
-    "analytics_samples": 7,
-    "analytics_max_nodes": 128,
-    "analytics_max_depth": 4,
-    "analytics_p50_ms": 38312.898,
-    "analytics_p95_nearest_rank_ms": 49456.722,
-    "analytics_peak_working_set_bytes": 29749248,
+    "volumes": 44,
+    "search_classes": 10,
+    "series": 2,
+    "samples_per_class_per_series": 30,
+    "search_max_p95_ms": 122.112,
+    "search_largest_observed_ms": 126.938,
+    "open_through_first_search_ms": [
+      1273,
+      1217
+    ],
+    "search_peak_working_set_bytes": 904663040,
+    "peak_commit_bytes": 1133379584,
+    "after_close_private_bytes": [
+      9404416,
+      10088448
+    ],
     "cache": "OS uncontrolled; repeated warm workload, not cold-cache",
-    "source_sqlite_unchanged": true,
-    "analytics_limitation": "Full aggregation remains a cancellable background operation; 38-49 second observations are not search latency."
+    "scope": "Optimized Rust service on Win11, four logical CPUs; not installed1.1.1 acceptance or arbitrary-query guarantee",
+    "report": "docs/qa/CTF_TEXT_SCAN_20261126.md"
   },
   "publication_verification": {
     "manual_final_action": true,
@@ -131,5 +143,10 @@
       "windows"
     ],
     "unshipped_platform_jobs_are_not_windows_publication_gates": true
-  }
+  },
+  "inherited_feature_prs": [
+    87,
+    88,
+    89
+  ]
 }

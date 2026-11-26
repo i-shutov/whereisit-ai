@@ -15,6 +15,7 @@ $pair = switch ($targetVersion) {
     '1.0.0' { @{ source = '1.0.0-rc.4'; sha = '751fa5454c813e60b61800b517685ccab7e9776a' } }
     '1.1.0-rc.1' { @{ source = '1.0.0'; sha = '938fece2d74793c2eda7a1b84082ab5db3f8a092' } }
     '1.1.0' { @{ source = '1.0.0'; sha = '938fece2d74793c2eda7a1b84082ab5db3f8a092' } }
+    '1.1.1' { @{ source = '1.1.0'; sha = '7f684f47aab42fb211dfa0af1085ace311ef9f8d' } }
     default { throw "Unsupported target release: $targetVersion" }
 }
 if ($sourceVersion -ne $pair.source -or $sourceSha -ne $pair.sha) { throw 'Wrong exact predecessor source.' }
@@ -26,6 +27,7 @@ $installed = Join-Path $work 'Installed'
 $cli = Join-Path $installed 'whereisit-ai-cli.exe'
 $gui = Join-Path $installed 'whereisit-ai-egui.exe'
 $db = Join-Path $work 'external.sqlite'
+$sidecar = Join-Path $work 'generated-user-sidecar.sqlite'
 $fixture = Join-Path $work 'fixture'
 $snapshot = Join-Path $work 'baseline.json'
 $probe = Join-Path $PSScriptRoot 'upgrade_catalog_probe.py'
@@ -56,11 +58,15 @@ function Remove-Product {
     if ((Test-Path -LiteralPath $gui) -or (Test-Path -LiteralPath $cli)) { throw 'Product executables survived uninstall.' }
 }
 function Run-Probe([string]$Phase) {
-    & python $probe $Phase --cli $cli --db $db --fixture-root $fixture --snapshot $snapshot --source-release $sourceVersion --target-release $targetVersion
+    $probeArgs = @($Phase, '--cli', $cli, '--db', $db, '--fixture-root', $fixture,
+        '--snapshot', $snapshot, '--source-release', $sourceVersion, '--target-release', $targetVersion)
+    if ($targetVersion -eq '1.1.1') { $probeArgs += @('--user-store', $sidecar) }
+    & python $probe @probeArgs
     if ($LASTEXITCODE -ne 0) { throw "Synthetic catalog probe failed during $Phase." }
 }
 function Verify-External([string]$CatalogSha, [string]$CtfSha) {
-    if ((File-Sha $db) -ne $CatalogSha -or (File-Sha $placeholder) -ne $CtfSha) {
+    if ((File-Sha $db) -ne $CatalogSha -or (File-Sha $placeholder) -ne $CtfSha -or
+        (File-Sha $sidecar) -ne $script:sidecarSha) {
         throw 'Installer lifecycle changed generated external data.'
     }
 }
@@ -71,6 +77,13 @@ Install-Product $old $SourceRoot $sourceVersion
 Run-Probe prepare
 $beforeUpgrade = File-Sha $db
 $ctfSha = File-Sha $placeholder
+# Older pairs use a generated marker file. The hotfix pair asks the 1.1.0 CLI
+# to create the actual application-owned preferences SQLite store via its API.
+if ($targetVersion -ne '1.1.1') {
+    & python -c "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('CREATE TABLE sidecar_fixture (value TEXT NOT NULL)'); c.execute('INSERT INTO sidecar_fixture VALUES (?)', ('synthetic user sidecar',)); c.commit(); c.close()" $sidecar
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $sidecar -PathType Leaf)) { throw 'Could not create synthetic external user sidecar.' }
+}
+$sidecarSha = File-Sha $sidecar
 Install-Product $new $targetRoot $targetVersion
 Verify-External $beforeUpgrade $ctfSha
 Run-Probe verify
@@ -96,6 +109,8 @@ New-Item -Path $out -ItemType Directory -Force | Out-Null
     source_package_sha256 = $oldSha
     target_package_sha256 = $newSha
     external_data_preserved = $true
+    external_sidecar_sha256 = $sidecarSha
+    external_sidecar_preserved = (File-Sha $sidecar) -eq $sidecarSha
     catalog_search_and_category_parity = $true
     rollback_reinstall_and_validation = $true
     synthetic_only = $true

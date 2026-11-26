@@ -1,0 +1,118 @@
+{
+  "format": "whereisit-release-acceptance-v1",
+  "version": "1.1.0",
+  "channel": "stable",
+  "stable_ready": true,
+  "candidate_publication_approved": false,
+  "publication_is_manual_after_QA": true,
+  "personal_catalogs_in_release": false,
+  "synthetic_data_is_not_real_data_acceptance": true,
+  "manual_acceptance_is_distinct_from_CI": true,
+  "publication_requires_successful_jobs": [
+    "test",
+    "windows"
+  ],
+  "previous_stable": {
+    "version": "1.0.0",
+    "tag": "v1.0.0",
+    "source_commit": "938fece2d74793c2eda7a1b84082ab5db3f8a092",
+    "acceptance": "release/history/v1.0.0.json",
+    "immutable_published_assets": true
+  },
+  "release_scope": {
+    "target_version": "1.1.0",
+    "ship_platforms": [
+      "windows-x64"
+    ],
+    "deferred_product_platforms": [
+      "macos-arm64",
+      "macos-x86_64",
+      "linux"
+    ],
+    "unsigned_windows_stable_approved": true,
+    "usb_binding_enabled": false,
+    "deferred_features": [],
+    "runtime": "Rust/egui; no web runtime"
+  },
+  "integrated_feature_prs": [
+    87,
+    88,
+    89
+  ],
+  "candidate_features": [
+    "PR58 tabs and retained workspace state",
+    "Read-only archive slices and bounded sunburst",
+    "Explicit metadata-only local analyzer and new review CSV"
+  ],
+  "build_time_acceptance": {
+    "installed_rc_1_0_to_1_1": "PASS; PR90 exact main b5e3667; independent installed Windows GUI",
+    "full_catalog_and_ctf_1_1": "PASS; exact installed main 9ab97f1662dcc0f5a6490a8d7f721892d6578a38",
+    "installed_stable_windows_gui": "PASS; exact main artifact 14825485729; actual published-1.0 upgrade and restart",
+    "original_ctf_write_allowed": false,
+    "windows10": "OWNER_CONFIRMED_HISTORICAL; exact 1.1 not tested",
+    "macos_linux": "COMPILE_TESTS_ONLY; product releases deferred"
+  },
+  "known_open_gates": [],
+  "signing": {
+    "windows": "unsigned; owner-approved Windows release scope",
+    "macos": "deferred platform release"
+  },
+  "physical_acceptance": {
+    "date_utc": "2026-11-23",
+    "platform": "Windows 11 Pro x64 10.0.22631; Administrator interactive RDP",
+    "tested_source_commit": "9ab97f1662dcc0f5a6490a8d7f721892d6578a38",
+    "native_ci_run_id": 45187054366,
+    "product_artifact_id": 14825485729,
+    "installer_sha256": "3733bc6ef67fdbcd0cd1b4cac478a0de0d9ea880738f64a7634212eecf5ff3ff",
+    "installed_gui_sha256": "81d6c44ab668849cf20620b8d234df9becb1bd67375526eb66e93aad31dbaa9e",
+    "installed_cli_sha256": "a3a048ab67a97665fb200d2e0c30f0cd1f389093518730202e4e2a8a864bdb25",
+    "upgrade_published_1_0_to_1_1": "PASS",
+    "restart": "PASS",
+    "external_sqlite_files_unchanged": 3,
+    "full_catalog_gui_bounded_map_cancel_retry_context": "PASS",
+    "supported_ctf_original_vendor_both_directions": "PASS",
+    "original_whereisit_file_version": "2014.0.0.220",
+    "full_catalog_volumes": 44,
+    "full_catalog_entries": 3046133,
+    "all_vendor_roundtrip_entry_rows_compared": 3046133,
+    "vendor_roundtrip_fields_compared": 10,
+    "vendor_roundtrip_description_changes": 1,
+    "csv_parquet_all_rows_15_fields": "PASS; independent DuckDB 1.4.1",
+    "export_no_clobber_ctf_csv_parquet": "PASS",
+    "source_original_unchanged": true,
+    "remaining_p0": 0,
+    "remaining_p1": 0,
+    "public_report": "docs/qa/WINDOWS_1_1_STABLE_ACCEPTANCE_20261123.md",
+    "all_semantic_volume_metadata_preserved": true,
+    "vendor_roundtrip_identity": "Entry/parent paths resolved; import-local row IDs and import timestamps excluded"
+  },
+  "measured_performance": {
+    "catalog_entries": 3046133,
+    "search_classes": 6,
+    "samples_per_class": 30,
+    "search_max_p95_ms": 58.38,
+    "search_peak_working_set_bytes": 9433088,
+    "analytics_samples": 7,
+    "analytics_max_nodes": 128,
+    "analytics_max_depth": 4,
+    "analytics_p50_ms": 38312.898,
+    "analytics_p95_nearest_rank_ms": 49456.722,
+    "analytics_peak_working_set_bytes": 29749248,
+    "cache": "OS uncontrolled; repeated warm workload, not cold-cache",
+    "source_sqlite_unchanged": true,
+    "analytics_limitation": "Full aggregation remains a cancellable background operation; 38-49 second observations are not search latency."
+  },
+  "publication_verification": {
+    "manual_final_action": true,
+    "require_rebuilt_readiness_artifact_provenance_and_checksum": true,
+    "require_final_installer_gui_before_publication": true,
+    "later_builds_not_certified_retroactively": true,
+    "preserve_previous_release_and_tag": true,
+    "require_current_main_successful_required_ci_jobs": true,
+    "required_completed_unique_jobs": [
+      "test",
+      "windows"
+    ],
+    "unshipped_platform_jobs_are_not_windows_publication_gates": true
+  }
+}
