@@ -13,7 +13,7 @@ use std::{
 static BENCHMARK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(windows)]
-fn report_process_memory() {
+fn report_process_memory_phase(phase: &str) {
     #[repr(C)]
     struct ProcessMemoryCounters {
         cb: u32,
@@ -26,6 +26,7 @@ fn report_process_memory() {
         quota_non_paged_pool_usage: usize,
         pagefile_usage: usize,
         peak_pagefile_usage: usize,
+        private_usage: usize,
     }
     #[link(name = "kernel32")]
     extern "system" {
@@ -44,15 +45,20 @@ fn report_process_memory() {
         counters.cb = size;
         if K32GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, size) != 0 {
             eprintln!(
-                "process_peak_working_set_bytes={} process_working_set_bytes={}",
-                counters.peak_working_set_size, counters.working_set_size
+                "memory_phase={phase} process_peak_working_set_bytes={} process_working_set_bytes={} process_private_bytes={} process_peak_commit_bytes={}",
+                counters.peak_working_set_size, counters.working_set_size,
+                counters.private_usage, counters.peak_pagefile_usage
             );
         }
     }
 }
 
 #[cfg(not(windows))]
-fn report_process_memory() {}
+fn report_process_memory_phase(_phase: &str) {}
+
+fn report_process_memory() {
+    report_process_memory_phase("end");
+}
 
 fn source_digest(path: &std::path::Path) -> Vec<u8> {
     let mut source = std::fs::File::open(path).unwrap();
@@ -244,6 +250,8 @@ fn direct_ctf_first_search_and_query_latency() {
     let source = benchmark_source(temp.path());
     let digest_before = source_digest(&source);
     let executor = std::env::var("CTF_BENCH_EXECUTOR").ok();
+    let order = std::env::var("CTF_BENCH_ORDER").ok();
+    assert!(matches!(order.as_deref(), None | Some("catalog" | "name")));
     let samples: usize = std::env::var("CTF_BENCH_SAMPLES")
         .unwrap_or_else(|_| "5".into())
         .parse()
@@ -251,13 +259,18 @@ fn direct_ctf_first_search_and_query_latency() {
     assert!((1..=100).contains(&samples));
     let reference = std::env::var_os("CTF_BENCH_SQLITE")
         .map(|path| atlas_core::Catalog::open_readonly(std::path::PathBuf::from(path)).unwrap());
+    assert!(
+        order.as_deref() != Some("catalog") || reference.is_none(),
+        "Catalog-order pages require traversal parity, not name-sorted SQLite pages"
+    );
     let start = Instant::now();
     let opened = invoke(json!({"op":"ctf_preview_open", "path":source}));
     assert_eq!(opened["ok"], true, "direct open failed (details omitted)");
     let open_ms = start.elapsed().as_millis();
     let generation = opened["data"]["generation"].clone();
+    report_process_memory_phase("open");
     let first = invoke(json!({"op":"ctf_preview_search", "path":source,
-        "generation":generation,"query":"mkv","limit":250,"executor":executor}));
+        "generation":generation,"query":"mkv","limit":250,"executor":executor,"order":order}));
     assert_eq!(first["ok"], true, "first direct search failed");
     if let Some(executor) = &executor {
         assert_eq!(
@@ -266,13 +279,14 @@ fn direct_ctf_first_search_and_query_latency() {
         );
     }
     eprintln!(
-        "open_ms={open_ms} open_through_first_search_ms={} entries={} volumes={} executor={} source_verification={}",
+        "open_ms={open_ms} open_through_first_search_ms={} entries={} volumes={} executor={} source_verification={} search_order={}",
         start.elapsed().as_millis(),
         opened["data"]["entries"],
         opened["data"]["volumes"],
         first["data"]["query_executor"],
-        opened["data"]["source_verification"]
+        opened["data"]["source_verification"], first["data"]["search_order"]
     );
+    report_process_memory_phase("first_search");
     let queries = [
         ("empty", "", false),
         ("extension", "ext:mkv", false),
@@ -306,7 +320,7 @@ fn direct_ctf_first_search_and_query_latency() {
             let request_start = Instant::now();
             let response = invoke(
                 json!({"op":"ctf_preview_search","path":source,"generation":generation,
-                "query":query,"limit":250,"offset":0,"full_count":full_count,"executor":executor}),
+                "query":query,"limit":250,"offset":0,"full_count":full_count,"executor":executor,"order":order}),
             );
             timings.push(request_start.elapsed().as_secs_f64() * 1000.0);
             assert_eq!(response["ok"], true, "direct query failed: {label}");
@@ -337,6 +351,7 @@ fn direct_ctf_first_search_and_query_latency() {
         invoke(json!({"op":"ctf_preview_close","path":source,"generation":generation}))["ok"],
         true
     );
+    report_process_memory_phase("closed");
 }
 
 #[test]

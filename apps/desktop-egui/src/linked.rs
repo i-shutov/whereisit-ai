@@ -178,6 +178,9 @@ impl LinkedCtf {
             };
             out.insert("op".to_owned(), json!(mapped_op));
             copy_fields(&request, &mut out, fields);
+            if op == "search_fast" {
+                out.insert("order".to_owned(), json!("catalog"));
+            }
             return Ok(Value::Object(out));
         }
         let mut out = Map::new();
@@ -486,6 +489,7 @@ mod tests {
                 "volume_id":4,"offset":50,"limit":25,"job_id":"search-1"}))
             .unwrap();
         assert_eq!(search["op"], "ctf_preview_search");
+        assert_eq!(search["order"], "catalog");
         assert_eq!(search["path"], "source.ctf");
         assert_eq!(search["generation"], preview_generation);
         assert_eq!(search["query"], "ext:mkv AND name:фильм");

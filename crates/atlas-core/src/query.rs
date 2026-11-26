@@ -129,8 +129,36 @@ pub struct MetadataRecord<'a> {
 /// Catalog-specific data resolved only when a query needs it.
 pub trait MetadataQueryContext {
     fn relative_path(&self) -> &str;
+    /// Match a path substring without requiring callers to materialize the full path.
+    /// Contexts with a structured path representation can override this; the
+    /// default preserves the existing Unicode-aware evaluator behavior.
+    fn relative_path_contains(&self, matcher: &MetadataContainsMatcher<'_>) -> bool {
+        matcher.matches(self.relative_path())
+    }
     fn is_branch_descendant(&self, anchor_id: i64) -> bool;
     fn category_matches(&self, predicate: &MetadataCategoryPredicate) -> bool;
+}
+
+/// Reusable substring matcher passed to metadata contexts for path matching.
+/// It keeps the compiled query's Unicode lowercase semantics while allowing
+/// structured contexts to scan path components without joining them first.
+pub struct MetadataContainsMatcher<'a> {
+    needle: &'a str,
+    target: &'a [char],
+    failure: &'a [usize],
+}
+
+impl MetadataContainsMatcher<'_> {
+    /// Match text using the same lowercase and Unicode rules as query evaluation.
+    pub fn matches(&self, text: &str) -> bool {
+        lower_contains(text, self.needle, self.target, self.failure)
+    }
+
+    /// True when matching can be performed independently on slash-separated
+    /// components, with ASCII case folding.
+    pub fn is_ascii_component_needle(&self) -> bool {
+        self.needle.is_ascii() && !self.needle.contains('/')
+    }
 }
 
 /// Parsed Atlas query that can be evaluated against borrowed in-memory metadata.
@@ -341,7 +369,11 @@ fn eval<C: MetadataQueryContext>(expr: &Expr, row: &MetadataRecord<'_>, ctx: &C)
                 lower_contains(row.name, needle, target, failure)
                     || lower_contains(row.description, needle, target, failure)
                     || lower_contains(row.tags, needle, target, failure)
-                    || lower_contains(ctx.relative_path(), needle, target, failure)
+                    || ctx.relative_path_contains(&MetadataContainsMatcher {
+                        needle,
+                        target,
+                        failure,
+                    })
             }
             Field::Text => lower_contains_parts(
                 &[row.name, ctx.relative_path(), row.description, row.tags],
@@ -350,7 +382,11 @@ fn eval<C: MetadataQueryContext>(expr: &Expr, row: &MetadataRecord<'_>, ctx: &C)
                 failure,
             ),
             Field::Name => lower_contains(row.name, needle, target, failure),
-            Field::Path => lower_contains(ctx.relative_path(), needle, target, failure),
+            Field::Path => ctx.relative_path_contains(&MetadataContainsMatcher {
+                needle,
+                target,
+                failure,
+            }),
             Field::Description => lower_contains(row.description, needle, target, failure),
             Field::Tag => lower_contains(row.tags, needle, target, failure),
         },
@@ -1078,6 +1114,93 @@ mod tests {
         fn category_matches(&self, predicate: &MetadataCategoryPredicate) -> bool {
             matches!(predicate, MetadataCategoryPredicate::PrimaryId(0)) && self.0.kind == "file"
         }
+    }
+
+    struct ComponentPathContext<'a>(&'a [&'a str]);
+    impl MetadataQueryContext for ComponentPathContext<'_> {
+        fn relative_path(&self) -> &str {
+            panic!("component path match should not materialize the path")
+        }
+        fn relative_path_contains(&self, matcher: &MetadataContainsMatcher<'_>) -> bool {
+            assert!(matcher.is_ascii_component_needle());
+            self.0.iter().any(|component| matcher.matches(component))
+        }
+        fn is_branch_descendant(&self, _: i64) -> bool {
+            false
+        }
+        fn category_matches(&self, _: &MetadataCategoryPredicate) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn path_contains_context_hook_avoids_materializing_ascii_component_paths() {
+        let components = ["Root", "Media", "Feature.MKV"];
+        let context = ComponentPathContext(&components);
+        let record = MetadataRecord {
+            id: 1,
+            name: "unrelated.bin",
+            kind: "file",
+            size: 0,
+            extension: "bin",
+            description: "",
+            tags: "",
+        };
+        for query in ["path:feature", "feature"] {
+            assert!(MetadataQuery::compile_metadata(query)
+                .unwrap()
+                .matches(&record, &context));
+        }
+        assert!(!MetadataQuery::compile_metadata("path:absent")
+            .unwrap()
+            .matches(&record, &context));
+
+        let matching_name = MetadataRecord {
+            name: "Feature.MKV",
+            ..record
+        };
+        assert!(MetadataQuery::compile_metadata("feature")
+            .unwrap()
+            .matches(&matching_name, &context));
+    }
+
+    #[test]
+    fn contains_matcher_preserves_unicode_semantics_and_component_eligibility() {
+        let query = MetadataQuery::compile_metadata("path:ος").unwrap();
+        let Expr::Contains(_, needle, target, failure) = &query.expr else {
+            panic!("expected contains expression");
+        };
+        let matcher = MetadataContainsMatcher {
+            needle,
+            target,
+            failure,
+        };
+        assert!(!matcher.is_ascii_component_needle());
+        // The dot is case-ignorable and the following T keeps uppercase Σ
+        // non-final, so use a component ending at Σ for the final-sigma case.
+        assert!(matcher.matches("Unicode/ΟΣ"));
+
+        let query = MetadataQuery::compile_metadata("path:disk").unwrap();
+        let Expr::Contains(_, needle, target, failure) = &query.expr else {
+            panic!("expected contains expression");
+        };
+        assert!(MetadataContainsMatcher {
+            needle,
+            target,
+            failure,
+        }
+        .is_ascii_component_needle());
+
+        let query = MetadataQuery::compile_metadata("path:folder/name").unwrap();
+        let Expr::Contains(_, needle, target, failure) = &query.expr else {
+            panic!("expected contains expression");
+        };
+        assert!(!MetadataContainsMatcher {
+            needle,
+            target,
+            failure,
+        }
+        .is_ascii_component_needle());
     }
 
     fn metadata_record(entry: &crate::Entry) -> MetadataRecord<'_> {
