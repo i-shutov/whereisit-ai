@@ -95,12 +95,24 @@ fn bounded_bytes(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
+#[cfg(test)]
+thread_local! {
+    static IDENTITY_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn identity_reads_for_test() -> usize {
+    IDENTITY_READS.with(std::cell::Cell::get)
+}
+
 fn stream_identity(
     path: &Path,
     limit: u64,
     mut checkpoint: impl FnMut() -> io::Result<()>,
 ) -> io::Result<SourceIdentity> {
     let mut file = File::open(path)?;
+    #[cfg(test)]
+    IDENTITY_READS.with(|reads| reads.set(reads.get() + 1));
     if !file.metadata()?.is_file() {
         return Err(invalid("Source is not a regular file"));
     }
