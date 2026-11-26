@@ -429,7 +429,9 @@ impl Catalog {
     /// indexed inside the same transaction. On any error, both the new records
     /// and the trigger changes roll back. Nonempty/v1/v2 catalogs use the
     /// existing per-row trigger path instead. Callbacks must not update
-    /// already-inserted core rows until the import finishes.
+    /// already-inserted core rows until the import finishes. On fresh v3,
+    /// secondary entry indexes are also rebuilt after the callback; callbacks
+    /// must not depend on those indexes being available while loading rows.
     pub fn bulk_import_many_fast_fts<F, T>(&mut self, write: F) -> Result<T>
     where
         F: FnOnce(&mut ImportSession<'_>) -> Result<T>,
@@ -447,6 +449,7 @@ impl Catalog {
         } else {
             self.conn.transaction()?
         };
+        let mut saved_indexes = Vec::new();
         let saved_fts_triggers: Option<Vec<String>> = if fast_fts {
             let schema: i64 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
             if schema == 3 {
@@ -478,6 +481,34 @@ impl Catalog {
                         ));
                     }
                     tx.execute_batch("DROP TRIGGER core_ai; DROP TRIGGER payload_ai;")?;
+                    // Maintaining six random-access B-trees per row makes a
+                    // multi-million-entry cold CTF open dominated by page churn.
+                    // These are non-unique secondary indexes only; PK/FK checks
+                    // remain enabled. Restore the actual definitions in this
+                    // same transaction before exposing any imported rows.
+                    for name in [
+                        "entries_parent",
+                        "entries_ext",
+                        "entries_size",
+                        "entries_kind_size",
+                        "entries_name_sort",
+                        "entries_name_size",
+                    ] {
+                        let sql: String = tx.query_row(
+                            "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='entries_core' AND name=?1",
+                            [name], |r| r.get(0),
+                        )?;
+                        // Refuse to suspend a uniqueness constraint if an
+                        // independently modified schema reused a known name.
+                        if !sql.to_ascii_uppercase().starts_with("CREATE INDEX ") {
+                            return Err(Error::new(
+                                "schema_integrity",
+                                "Expected a non-unique bulk index",
+                            ));
+                        }
+                        tx.execute_batch(&format!("DROP INDEX {name}"))?;
+                        saved_indexes.push(sql);
+                    }
                     Some(definitions.into_iter().map(|(_, sql)| sql).collect())
                 } else {
                     None
@@ -503,6 +534,9 @@ impl Catalog {
             }
             output
         };
+        for sql in saved_indexes {
+            tx.execute_batch(&sql)?;
+        }
         if let Some(saved) = saved_fts_triggers {
             // In a single atomic transaction: FTS rebuilt from the live view,
             // then the insert triggers are restored. Failed rebuild/restore

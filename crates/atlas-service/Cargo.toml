@@ -17,6 +17,13 @@ same-file = "=1.0.6"
 tempfile = "3"
 chrono = { version = "=0.4.45", default-features = false, features = ["clock"] }
 unicode-normalization = "=0.1.25"
+duckdb = { version = "=1.4.1", optional = true, features = ["vtab-arrow", "vscalar"] }
+
+[features]
+# Experimental native executor. The normal product remains dependency-free of
+# DuckDB until exact-artifact/offline packaging acceptance passes.
+duckdb-query = ["dep:duckdb"]
+duckdb-bundled = ["duckdb-query", "duckdb/bundled"]
 
 [dev-dependencies]
 

@@ -1,0 +1,87 @@
+name: Native DuckDB prototype (hosted Windows)
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-duckdb-prototype-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-duckdb-prototype:
+    name: Synthetic native DuckDB feature checks
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: native-duckdb-${{ runner.os }}-${{ runner.arch }}-1.100-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            rust-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install pinned Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal --component rustfmt,clippy
+          rustc +1.100.0 --version
+
+      - name: Download and verify official DuckDB 1.4.1 Windows library
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path $env:RUNNER_TEMP 'libduckdb-windows-amd64-1.4.1.zip'
+          $url = 'https://github.com/duckdb/duckdb/releases/download/v1.4.1/libduckdb-windows-amd64.zip'
+          $expected = '704877e85b556640b0f20a0f07a1c1f404320210b245f51b6da0087a1c92bb76'
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -cne $expected) {
+            throw "DuckDB 1.4.1 archive SHA-256 mismatch: expected $expected, got $actual"
+          }
+          Write-Host "Verified official DuckDB archive SHA-256: $actual"
+
+          $extractRoot = Join-Path $env:RUNNER_TEMP 'duckdb-1.4.1'
+          Expand-Archive -LiteralPath $archive -DestinationPath $extractRoot -Force
+          $dll = Get-ChildItem -LiteralPath $extractRoot -Filter 'duckdb.dll' -File -Recurse | Select-Object -First 1
+          if ($null -eq $dll) { throw 'Verified archive did not contain duckdb.dll' }
+          $libraryDir = $dll.Directory.FullName
+          if (-not (Test-Path -LiteralPath (Join-Path $libraryDir 'duckdb.lib') -PathType Leaf)) {
+            throw 'Verified archive did not contain duckdb.lib beside duckdb.dll'
+          }
+
+          # Make native linking and DLL loading available to this step and later steps.
+          $env:DUCKDB_LIB_DIR = $libraryDir
+          $env:PATH = "$libraryDir;$env:PATH"
+          "DUCKDB_LIB_DIR=$libraryDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $libraryDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Test atlas-service with native DuckDB
+        shell: pwsh
+        run: cargo +1.100.0 test --locked -p atlas-service --features duckdb-query
+
+      - name: Test targeted desktop CTF workflows with DuckDB feature
+        shell: pwsh
+        run: cargo +1.100.0 test --locked -p atlas-desktop-egui --features qa-duckdb ctf_workflow_tests -- --nocapture
+
+      - name: Check targeted desktop DuckDB feature
+        shell: pwsh
+        run: cargo +1.100.0 check --locked -p atlas-desktop-egui --features qa-duckdb
+
+      - name: Clippy native DuckDB feature targets
+        shell: pwsh
+        run: |
+          cargo +1.100.0 clippy --locked -p atlas-service --features duckdb-query --all-targets -- -D warnings
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo +1.100.0 clippy --locked -p atlas-desktop-egui --features qa-duckdb --all-targets -- -D warnings

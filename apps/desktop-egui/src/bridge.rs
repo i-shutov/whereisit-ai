@@ -171,10 +171,13 @@ pub enum Purpose {
     CheckCatalogIntegrity {
         path: String,
     },
-    LinkCtf {
+    // Retained for the complete-sync regression harness.
+    #[allow(dead_code)]
+    CtfPreviewOpen {
         path: String,
         cache_root: String,
     },
+    CtfPreviewClose,
     ImportCtf {
         output: String,
     },
@@ -188,6 +191,7 @@ pub enum Purpose {
     LinkedRead {
         inner: Box<Purpose>,
         generation: String,
+        job_id: Option<String>,
     },
     CtfProgress {
         job_id: String,

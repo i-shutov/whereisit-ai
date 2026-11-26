@@ -538,12 +538,38 @@ impl DesktopApp {
             self.error = Some("Previous catalog operation is still running.".to_owned());
             return;
         }
+        let mut request = request;
+        let preview_long_job = if self.linked_ctf.as_ref().is_some_and(|link| {
+            link.preview
+                && matches!(
+                    request["op"].as_str(),
+                    Some(
+                        "search_fast"
+                            | "copy_candidates"
+                            | "export_csv"
+                            | "export_json"
+                            | "export_parquet"
+                    )
+                )
+        }) {
+            let job_id = self.begin_ctf_job();
+            self.ctf_phase = match request["op"].as_str() {
+                Some("copy_candidates") => "preview_copies".to_owned(),
+                Some("export_csv" | "export_json" | "export_parquet") => {
+                    "preview_export".to_owned()
+                }
+                _ => "preview_search".to_owned(),
+            };
+            request["job_id"] = json!(job_id);
+            Some(job_id)
+        } else {
+            None
+        };
         let (purpose, request) = if let Some(link) = &self.linked_ctf {
             if matches!(
                 &purpose,
                 Purpose::Open { .. }
                     | Purpose::Create { .. }
-                    | Purpose::LinkCtf { .. }
                     | Purpose::ImportCtf { .. }
                     | Purpose::ExportCtf { .. }
                     | Purpose::ShelfLabels { .. }
@@ -554,6 +580,9 @@ impl DesktopApp {
                 let mapped = match link.rewrite(request) {
                     Ok(mapped) => mapped,
                     Err(error) => {
+                        if preview_long_job.is_some() {
+                            self.ctf_job_id = None;
+                        }
                         self.error = Some(error);
                         return;
                     }
@@ -562,6 +591,7 @@ impl DesktopApp {
                     Purpose::LinkedRead {
                         inner: Box::new(purpose),
                         generation: link.generation.clone(),
+                        job_id: preview_long_job,
                     },
                     mapped,
                 )
@@ -666,37 +696,33 @@ impl DesktopApp {
             "validating" | "verifying_cache" => self.t("Проверка результата", "Checking result"),
             "reading_catalog" => self.t("Чтение каталога", "Reading catalog"),
             "encoding" => self.t("Подготовка CTF", "Preparing CTF"),
+            "preview_search" => self.t("Поиск в CTF", "Searching CTF"),
+            "preview_copies" => self.t("Поиск кандидатов", "Finding copy candidates"),
+            "preview_copy_candidates" => self.t("Поиск кандидатов", "Finding copy candidates"),
+            "preview_export" => self.t("Экспорт CTF", "Exporting CTF metadata"),
             "writing" | "publishing" => self.t("Сохранение результата", "Saving result"),
             _ => self.t("Подготовка", "Preparing"),
         }
     }
 
     fn start_link_ctf(&mut self, path: String, ctx: &egui::Context) {
-        let Some(store) = user_store() else {
-            self.error = Some(
-                self.t(
-                    "Не найден локальный каталог кэша.",
-                    "Local cache directory unavailable.",
-                )
-                .into(),
-            );
-            return;
-        };
-        let Some(parent) = store.parent() else {
-            return;
-        };
-        let cache_root = parent.join("ctf-cache").to_string_lossy().into_owned();
-        let job = self.begin_ctf_job();
+        // Direct reads have no writable-cache prerequisite. Keep the optional
+        // locator only for the retained legacy adapter; opening creates no DB.
+        let cache_root = user_store()
+            .and_then(|store| store.parent().map(|parent| parent.join("ctf-cache")))
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default();
         self.show_catalog_dialog = false;
-        self.status = StatusText::new("Подготовка связанного CTF…", "Preparing linked CTF…");
-        self.queue(
-            Purpose::LinkCtf {
+        self.status = StatusText::new("Открытие каталога CTF…", "Opening CTF catalog…");
+        self.error = None;
+        self.active_request = Some(self.bus.send(
+            Purpose::CtfPreviewOpen {
                 path: path.clone(),
-                cache_root: cache_root.clone(),
+                cache_root,
             },
-            json!({"op":"ctf_sync","path":path,"cache_root":cache_root,"job_id":job}),
+            json!({"op":"ctf_preview_open","path":path}),
             ctx,
-        );
+        ));
     }
 
     fn start_ctf_transfer(&mut self, ctx: &egui::Context) {
@@ -848,6 +874,18 @@ impl DesktopApp {
     }
 
     fn clear_catalog(&mut self) {
+        self.ctf_job_id = None;
+        self.ctf_progress_request = None;
+        self.ctf_cancel_request = None;
+        self.ctf_job_registered = false;
+        self.ctf_cancel_requested = false;
+        if let Some(link) = self.linked_ctf.as_ref().filter(|link| link.preview) {
+            let _ = self.bus.send(
+                Purpose::CtfPreviewClose,
+                json!({"op":"ctf_preview_close","path":link.path,"generation":link.generation}),
+                &egui::Context::default(),
+            );
+        }
         for job_id in [self.analytics_job_id.take(), self.slices_job_id.take()]
             .into_iter()
             .flatten()
@@ -1602,6 +1640,10 @@ impl DesktopApp {
     }
 
     fn apply_reply(&mut self, mut reply: crate::bridge::Reply, ctx: &egui::Context) {
+        let linked_operation_job_id = match &reply.purpose {
+            Purpose::LinkedRead { job_id, .. } => job_id.clone(),
+            _ => None,
+        };
         if self
             .local_analyzer
             .apply_reply(&mut reply, &mut self.bus, ctx, self.db.as_deref())
@@ -1728,7 +1770,13 @@ impl DesktopApp {
             }
             return;
         }
-        if let Purpose::LinkedRead { inner, generation } = &reply.purpose {
+        if matches!(&reply.purpose, Purpose::CtfPreviewClose) {
+            return;
+        }
+        if let Purpose::LinkedRead {
+            inner, generation, ..
+        } = &reply.purpose
+        {
             if self.active_request != Some(reply.id) {
                 return;
             }
@@ -1825,9 +1873,19 @@ impl DesktopApp {
             return;
         }
         self.active_request = None;
+        if linked_operation_job_id
+            .as_ref()
+            .is_some_and(|job_id| self.ctf_job_id.as_ref() == Some(job_id))
+        {
+            self.ctf_job_id = None;
+            self.ctf_progress_request = None;
+            self.ctf_cancel_request = None;
+            self.ctf_job_registered = false;
+            self.ctf_cancel_requested = false;
+        }
         let ctf_finished = matches!(
             &reply.purpose,
-            Purpose::LinkCtf { .. } | Purpose::ImportCtf { .. } | Purpose::ExportCtf { .. }
+            Purpose::ImportCtf { .. } | Purpose::ExportCtf { .. }
         );
         if ctf_finished {
             self.ctf_job_id = None;
@@ -1913,6 +1971,24 @@ impl DesktopApp {
                 .and_then(Value::as_str)
                 .unwrap_or("Unknown service error");
             let error_message = message.to_owned();
+            if linked_operation_job_id.is_some() && code == Some("cancelled") {
+                self.selected = None;
+                self.page = Page::default();
+                self.status = match &reply.purpose {
+                    Purpose::Export { .. } => {
+                        StatusText::new("Экспорт CTF отменён", "CTF export cancelled")
+                    }
+                    Purpose::Page {
+                        route: Route::Copies { .. },
+                    } => StatusText::new(
+                        "Поиск кандидатов отменён",
+                        "Copy-candidate search cancelled",
+                    ),
+                    _ => StatusText::new("Поиск в CTF отменён", "CTF search cancelled"),
+                };
+                self.error = None;
+                return;
+            }
             self.status = StatusText::new("Операция отклонена", "Operation refused");
             if matches!(&reply.purpose, Purpose::Categories) {
                 self.categories.clear();
@@ -1961,25 +2037,30 @@ impl DesktopApp {
         let data = &reply.response["data"];
         let opening_existing = matches!(&reply.purpose, Purpose::Open { .. });
         match reply.purpose {
-            Purpose::LinkCtf { path, cache_root } => {
-                match LinkedCtf::parse_sync(path, cache_root, data) {
+            Purpose::CtfPreviewOpen { path, cache_root } => {
+                match LinkedCtf::parse_preview(path.clone(), cache_root.clone(), data) {
                     Ok(link) => {
                         self.clear_catalog();
-                        self.db = Some(link.path.clone());
+                        let source_sha256 = link.source_sha256.clone();
+                        self.db = Some(path.clone());
+                        self.path_input = path.clone();
+                        self.integrity = CatalogIntegrity::LinkedReadOnly;
                         self.shelf_context =
-                            ShelfContext::from_sqlite(&link.path).ok().map(|mut scope| {
-                                scope.catalog_key = format!("ctf:{}", link.source_sha256);
+                            ShelfContext::from_sqlite(&path).ok().map(|mut scope| {
+                                scope.catalog_key = format!("ctf:{source_sha256}");
                                 if let Some(store) = user_store() {
                                     scope.user_store = store.to_string_lossy().into_owned();
                                 }
                                 scope
                             });
-                        self.path_input = link.path.clone();
-                        self.integrity = CatalogIntegrity::LinkedReadOnly;
                         self.linked_ctf = Some(link);
+                        self.status = StatusText::new("Каталог CTF открыт", "CTF catalog opened");
                         self.load_volumes(ctx);
                     }
-                    Err(error) => self.error = Some(error),
+                    Err(error) => {
+                        self.ctf_job_id = None;
+                        self.error = Some(error);
+                    }
                 }
             }
             Purpose::ImportCtf { output } => {
@@ -2007,6 +2088,7 @@ impl DesktopApp {
                     self.load_page(ctx);
                 }
             }
+            Purpose::CtfPreviewClose => unreachable!("Preview close is handled above"),
             Purpose::LinkedRead { .. }
             | Purpose::CtfProgress { .. }
             | Purpose::CtfCancel { .. }
@@ -2046,8 +2128,19 @@ impl DesktopApp {
             Purpose::Volumes => match parse_volumes(data) {
                 Ok(volumes) => {
                     self.volumes = volumes;
-                    self.status = StatusText::new("Каталог открыт", "Catalog opened");
-                    self.load_disk_preferences(ctx);
+                    if self.linked_ctf.as_ref().is_some_and(|link| link.preview) {
+                        self.route = Route::Search {
+                            query: String::new(),
+                            volume_id: None,
+                        };
+                        self.query_input.clear();
+                        self.offset = 0;
+                        self.status = StatusText::new("Каталог CTF открыт", "CTF catalog opened");
+                        self.load_page(ctx);
+                    } else {
+                        self.status = StatusText::new("Каталог открыт", "Catalog opened");
+                        self.load_disk_preferences(ctx);
+                    }
                 }
                 Err(e) => self.error = Some(e),
             },
@@ -5163,6 +5256,7 @@ mod shortcut_tests {
             cache_root: "cache".into(),
             generation: "a".repeat(64),
             source_sha256: "b".repeat(64),
+            preview: false,
         });
         app.confirm_rescan = true;
         app.start_rescan(7, &ctx);

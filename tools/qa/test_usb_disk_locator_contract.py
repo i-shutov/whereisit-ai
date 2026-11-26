@@ -1061,10 +1061,9 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn('if !ready { resultTableFocused = false }', MAC)
 
     def test_ux16_video_preset_is_core_query_in_two_native_clients(self):
-        parser = (ROOT / "crates/atlas-core/src/query.rs").read_text(encoding="utf-8")
         catalog = (ROOT / "crates/atlas-core/tests/catalog.rs").read_text(encoding="utf-8")
-        self.assertIn('"type" if v == "video" => Ok(VIDEO_EXTENSION_SQL.into())', parser)
-        self.assertIn('"type" => Err(Error::new(', parser)
+        # Parser/SQL semantics are exercised by the Rust integration test below.
+        # This contract checks client wiring, not the parser's internal syntax.
         self.assertIn('video_extension_search_across_disconnected_disks_is_metadata_only', catalog)
         self.assertIn('fn toggle_video_query(', WIN)
         self.assertIn('VIDEO_FILTER => {', WIN)
@@ -1076,10 +1075,8 @@ class DiskLocatorWiringTests(unittest.TestCase):
         self.assertIn('model.videoFilterActive ? "All formats" : "Video files"', MAC)
 
     def test_ux17_literal_same_filename_across_disks_any_size_with_back(self):
-        query = (ROOT / "crates/atlas-core/src/query.rs").read_text(encoding="utf-8")
         tests = (ROOT / "crates/atlas-core/tests/catalog.rs").read_text(encoding="utf-8")
-        self.assertIn('"name_exact" => {', query)
-        self.assertIn('Ok("name_norm = ?".into())', query)
+        # The Rust test checks literal-name behavior across disks and sizes.
         self.assertIn('literal_filename_lookup_spans_disks_and_ignores_size_without_hash_claims', tests)
         self.assertIn('fn exact_name_query(name: &str) -> Option<String>', WIN)
         self.assertIn('fn search_same_filename(', WIN)

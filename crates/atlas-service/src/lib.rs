@@ -5,11 +5,14 @@ mod analytics;
 mod copy_candidates;
 mod ctf_annotation_backup;
 mod ctf_annotations;
+#[cfg(feature = "duckdb-query")]
+mod ctf_duckdb;
 mod ctf_duplicate_export;
 mod ctf_duplicates;
 mod ctf_export;
 mod ctf_job;
 mod ctf_mirror;
+mod ctf_preview;
 #[path = "../ctf_sidecar/mod.rs"]
 mod ctf_sidecar;
 mod dates;
@@ -116,6 +119,14 @@ fn dispatch(input: &str) -> Result<Value> {
         "local_analyzer_close" => local_analyzer::close(&v)?,
         "local_analyzer_clear_baseline" => local_analyzer::clear_baseline(&v)?,
         "ctf_sync" => ctf_mirror::sync(&v)?,
+        "ctf_preview_open" => ctf_preview::open(&v)?,
+        "ctf_preview_volumes" => ctf_preview::volumes(&v)?,
+        "ctf_preview_children" => ctf_preview::children(&v)?,
+        "ctf_preview_children_focused" => ctf_preview::children_focused(&v)?,
+        "ctf_preview_search" => ctf_preview::search(&v)?,
+        "ctf_preview_copy_candidates" => ctf_preview::copy_candidates(&v)?,
+        "ctf_preview_export" => ctf_preview::export(&v)?,
+        "ctf_preview_close" => ctf_preview::close(&v)?,
         "ctf_progress" => ctf_job::progress(&v)?,
         "ctf_cancel" => ctf_job::cancel(&v)?,
         "ctf_search" => ctf_mirror::search(&v)?,

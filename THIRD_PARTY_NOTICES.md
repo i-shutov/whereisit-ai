@@ -8,7 +8,7 @@
 При отсутствии отдельного файла в архиве остаётся выражение лицензии
 из его манифеста. Наличие файла не заменяет юридического анализа.
 
-SHA-256 Cargo.lock: `e369943498ad90051322ae91aaaa638ce655b7c2dc25bb7bcdab30c63de95872`.
+SHA-256 Cargo.lock: `6d6d6ff5e62d79f7c74a213cd77e2925310c7604617031c5c1fc3d46334d5a45`.
 
 ## Встроенный SQLite
 
@@ -36,6 +36,7 @@ rusqlite 0.43.0 + libsqlite3-sys 0.40.0
 | accesskit_winit | 0.34.2 | `Apache-2.0` | Отдельный файл в архиве отсутствует |
 | adler2 | 2.0.1 | `0BSD OR MIT OR Apache-2.0` | [LICENSE-0BSD](licenses/adler2-2.0.1/LICENSE-0BSD), [LICENSE-APACHE](licenses/adler2-2.0.1/LICENSE-APACHE), [LICENSE-MIT](licenses/adler2-2.0.1/LICENSE-MIT) |
 | ahash | 0.8.12 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/ahash-0.8.12/LICENSE-APACHE), [LICENSE-MIT](licenses/ahash-0.8.12/LICENSE-MIT) |
+| aho-corasick | 1.1.5 | `Unlicense OR MIT` | [COPYING](licenses/aho-corasick-1.1.5/COPYING), [LICENSE-MIT](licenses/aho-corasick-1.1.5/LICENSE-MIT), [UNLICENSE](licenses/aho-corasick-1.1.5/UNLICENSE) |
 | allocator-api2 | 0.2.21 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/allocator-api2-0.2.21/LICENSE-APACHE), [LICENSE-MIT](licenses/allocator-api2-0.2.21/LICENSE-MIT) |
 | android-activity | 0.6.1 | `MIT OR Apache-2.0` | [LICENSE](licenses/android-activity-0.6.1/LICENSE), [LICENSE-APACHE](licenses/android-activity-0.6.1/LICENSE-APACHE), [LICENSE-MIT](licenses/android-activity-0.6.1/LICENSE-MIT) |
 | android-properties | 0.2.2 | `MIT` | [LICENSE](licenses/android-properties-0.2.2/LICENSE) |
@@ -43,6 +44,17 @@ rusqlite 0.43.0 + libsqlite3-sys 0.40.0
 | arboard | 3.7.0 | `MIT OR Apache-2.0` | [LICENSE-APACHE.txt](licenses/arboard-3.7.0/LICENSE-APACHE.txt), [LICENSE-MIT.txt](licenses/arboard-3.7.0/LICENSE-MIT.txt) |
 | arrayref | 0.3.9 | `BSD-2-Clause` | [LICENSE](licenses/arrayref-0.3.9/LICENSE) |
 | arrayvec | 0.7.8 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/arrayvec-0.7.8/LICENSE-APACHE), [LICENSE-MIT](licenses/arrayvec-0.7.8/LICENSE-MIT) |
+| arrow | 56.2.1 | `Apache-2.0` | [LICENSE.txt](licenses/arrow-56.2.1/LICENSE.txt), [NOTICE.txt](licenses/arrow-56.2.1/NOTICE.txt) |
+| arrow-arith | 56.2.1 | `Apache-2.0` | [LICENSE.txt](licenses/arrow-arith-56.2.1/LICENSE.txt), [NOTICE.txt](licenses/arrow-arith-56.2.1/NOTICE.txt) |
+| arrow-array | 56.2.1 | `Apache-2.0` | [LICENSE.txt](licenses/arrow-array-56.2.1/LICENSE.txt), [NOTICE.txt](licenses/arrow-array-56.2.1/NOTICE.txt) |
+| arrow-buffer | 56.2.1 | `Apache-2.0` | [LICENSE.txt](licenses/arrow-buffer-56.2.1/LICENSE.txt), [NOTICE.txt](licenses/arrow-buffer-56.2.1/NOTICE.txt) |
+| arrow-cast | 56.2.1 | `Apache-2.0` | [LICENSE.txt](licenses/arrow-cast-56.2.1/LICENSE.txt), [NOTICE.txt](licenses/arrow-cast-56.2.1/NOTICE.txt) |
+| arrow-data | 56.2.1 | `Apache-2.0` | [LICENSE.txt](licenses/arrow-data-56.2.1/LICENSE.txt), [NOTICE.txt](licenses/arrow-data-56.2.1/NOTICE.txt) |
+| arrow-ord | 56.2.1 | `Apache-2.0` | [LICENSE.txt](licenses/arrow-ord-56.2.1/LICENSE.txt), [NOTICE.txt](licenses/arrow-ord-56.2.1/NOTICE.txt) |
+| arrow-row | 56.2.1 | `Apache-2.0` | [LICENSE.txt](licenses/arrow-row-56.2.1/LICENSE.txt), [NOTICE.txt](licenses/arrow-row-56.2.1/NOTICE.txt) |
+| arrow-schema | 56.2.1 | `Apache-2.0` | [LICENSE.txt](licenses/arrow-schema-56.2.1/LICENSE.txt), [NOTICE.txt](licenses/arrow-schema-56.2.1/NOTICE.txt) |
+| arrow-select | 56.2.1 | `Apache-2.0` | [LICENSE.txt](licenses/arrow-select-56.2.1/LICENSE.txt), [NOTICE.txt](licenses/arrow-select-56.2.1/NOTICE.txt) |
+| arrow-string | 56.2.1 | `Apache-2.0` | [LICENSE.txt](licenses/arrow-string-56.2.1/LICENSE.txt), [NOTICE.txt](licenses/arrow-string-56.2.1/NOTICE.txt) |
 | as-raw-xcb-connection | 1.0.1 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/as-raw-xcb-connection-1.0.1/LICENSE-APACHE), [LICENSE-MIT](licenses/as-raw-xcb-connection-1.0.1/LICENSE-MIT) |
 | ash | 0.38.0+1.3.281 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/ash-0.38.0+1.3.281/LICENSE-APACHE), [LICENSE-MIT](licenses/ash-0.38.0+1.3.281/LICENSE-MIT) |
 | async-broadcast | 0.7.2 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/async-broadcast-0.7.2/LICENSE-APACHE), [LICENSE-MIT](licenses/async-broadcast-0.7.2/LICENSE-MIT) |
@@ -55,11 +67,13 @@ rusqlite 0.43.0 + libsqlite3-sys 0.40.0
 | async-signal | 0.2.14 | `Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/async-signal-0.2.14/LICENSE-APACHE), [LICENSE-MIT](licenses/async-signal-0.2.14/LICENSE-MIT) |
 | async-task | 4.7.1 | `Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/async-task-4.7.1/LICENSE-APACHE), [LICENSE-MIT](licenses/async-task-4.7.1/LICENSE-MIT) |
 | async-trait | 0.1.92 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/async-trait-0.1.92/LICENSE-APACHE), [LICENSE-MIT](licenses/async-trait-0.1.92/LICENSE-MIT) |
+| atoi | 2.0.0 | `MIT` | [LICENSE](licenses/atoi-2.0.0/LICENSE) |
 | atomic-waker | 1.1.2 | `Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/atomic-waker-1.1.2/LICENSE-APACHE), [LICENSE-MIT](licenses/atomic-waker-1.1.2/LICENSE-MIT), [LICENSE-THIRD-PARTY](licenses/atomic-waker-1.1.2/LICENSE-THIRD-PARTY) |
 | atspi | 0.29.0 | `Apache-2.0 OR MIT` | [LICENSE-APACHE2.txt](licenses/atspi-0.29.0/LICENSE-APACHE2.txt), [LICENSE-MIT.txt](licenses/atspi-0.29.0/LICENSE-MIT.txt) |
 | atspi-common | 0.13.0 | `Apache-2.0 OR MIT` | [LICENSE-APACHE2.txt](licenses/atspi-common-0.13.0/LICENSE-APACHE2.txt), [LICENSE-MIT.txt](licenses/atspi-common-0.13.0/LICENSE-MIT.txt) |
 | atspi-proxies | 0.13.0 | `Apache-2.0 OR MIT` | [LICENSE-APACHE2.txt](licenses/atspi-proxies-0.13.0/LICENSE-APACHE2.txt), [LICENSE-MIT.txt](licenses/atspi-proxies-0.13.0/LICENSE-MIT.txt) |
 | autocfg | 1.5.1 | `Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/autocfg-1.5.1/LICENSE-APACHE), [LICENSE-MIT](licenses/autocfg-1.5.1/LICENSE-MIT) |
+| base64 | 0.22.1 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/base64-0.22.1/LICENSE-APACHE), [LICENSE-MIT](licenses/base64-0.22.1/LICENSE-MIT) |
 | bit-set | 0.10.0 | `Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/bit-set-0.10.0/LICENSE-APACHE), [LICENSE-MIT](licenses/bit-set-0.10.0/LICENSE-MIT) |
 | bit-vec | 0.9.1 | `Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/bit-vec-0.9.1/LICENSE-APACHE), [LICENSE-MIT](licenses/bit-vec-0.9.1/LICENSE-MIT) |
 | bitflags | 1.3.2 | `MIT/Apache-2.0` | [LICENSE-APACHE](licenses/bitflags-1.3.2/LICENSE-APACHE), [LICENSE-MIT](licenses/bitflags-1.3.2/LICENSE-MIT) |
@@ -68,6 +82,8 @@ rusqlite 0.43.0 + libsqlite3-sys 0.40.0
 | block2 | 0.5.1 | `MIT` | Отдельный файл в архиве отсутствует |
 | block2 | 0.6.2 | `MIT` | Отдельный файл в архиве отсутствует |
 | blocking | 1.7.0 | `Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/blocking-1.7.0/LICENSE-APACHE), [LICENSE-MIT](licenses/blocking-1.7.0/LICENSE-MIT) |
+| borsh | 1.8.1 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/borsh-1.8.1/LICENSE-APACHE), [LICENSE-MIT](licenses/borsh-1.8.1/LICENSE-MIT) |
+| borsh-derive | 1.8.1 | `Apache-2.0` | [LICENSE-APACHE](licenses/borsh-derive-1.8.1/LICENSE-APACHE), [LICENSE-MIT](licenses/borsh-derive-1.8.1/LICENSE-MIT) |
 | bumpalo | 3.20.4 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/bumpalo-3.20.4/LICENSE-APACHE), [LICENSE-MIT](licenses/bumpalo-3.20.4/LICENSE-MIT) |
 | bytemuck | 1.25.2 | `Zlib OR Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/bytemuck-1.25.2/LICENSE-APACHE), [LICENSE-MIT](licenses/bytemuck-1.25.2/LICENSE-MIT), [LICENSE-ZLIB](licenses/bytemuck-1.25.2/LICENSE-ZLIB) |
 | bytemuck_derive | 1.12.1 | `Zlib OR Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/bytemuck_derive-1.12.1/LICENSE-APACHE), [LICENSE-MIT](licenses/bytemuck_derive-1.12.1/LICENSE-MIT), [LICENSE-ZLIB](licenses/bytemuck_derive-1.12.1/LICENSE-ZLIB) |
@@ -77,6 +93,7 @@ rusqlite 0.43.0 + libsqlite3-sys 0.40.0
 | calloop | 0.14.5 | `MIT` | [LICENSE.txt](licenses/calloop-0.14.5/LICENSE.txt) |
 | calloop-wayland-source | 0.3.0 | `MIT` | [LICENSE.txt](licenses/calloop-wayland-source-0.3.0/LICENSE.txt) |
 | calloop-wayland-source | 0.4.1 | `MIT` | [LICENSE.txt](licenses/calloop-wayland-source-0.4.1/LICENSE.txt) |
+| cast | 0.3.0 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/cast-0.3.0/LICENSE-APACHE), [LICENSE-MIT](licenses/cast-0.3.0/LICENSE-MIT) |
 | cc | 1.11.2 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/cc-1.11.2/LICENSE-APACHE), [LICENSE-MIT](licenses/cc-1.11.2/LICENSE-MIT) |
 | cfg-if | 1.0.5 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/cfg-if-1.0.5/LICENSE-APACHE), [LICENSE-MIT](licenses/cfg-if-1.0.5/LICENSE-MIT) |
 | cfg_aliases | 0.2.2 | `MIT` | [LICENSE](licenses/cfg_aliases-0.2.2/LICENSE), [NOTICES.md](licenses/cfg_aliases-0.2.2/NOTICES.md) |
@@ -86,6 +103,7 @@ rusqlite 0.43.0 + libsqlite3-sys 0.40.0
 | codespan-reporting | 0.13.1 | `Apache-2.0` | [LICENSE](licenses/codespan-reporting-0.13.1/LICENSE) |
 | color | 0.3.3 | `Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/color-0.3.3/LICENSE-APACHE), [LICENSE-MIT](licenses/color-0.3.3/LICENSE-MIT) |
 | combine | 4.6.9 | `MIT` | [LICENSE](licenses/combine-4.6.9/LICENSE) |
+| comfy-table | 7.1.2 | `MIT` | [LICENSE](licenses/comfy-table-7.1.2/LICENSE) |
 | concurrent-queue | 2.5.0 | `Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/concurrent-queue-2.5.0/LICENSE-APACHE), [LICENSE-MIT](licenses/concurrent-queue-2.5.0/LICENSE-MIT) |
 | const-oid | 0.10.3 | `Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/const-oid-0.10.3/LICENSE-APACHE), [LICENSE-MIT](licenses/const-oid-0.10.3/LICENSE-MIT) |
 | const-random | 0.1.18 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/const-random-0.1.18/LICENSE-APACHE), [LICENSE-MIT](licenses/const-random-0.1.18/LICENSE-MIT) |
@@ -110,6 +128,7 @@ rusqlite 0.43.0 + libsqlite3-sys 0.40.0
 | document-features | 0.2.12 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/document-features-0.2.12/LICENSE-APACHE), [LICENSE-MIT](licenses/document-features-0.2.12/LICENSE-MIT) |
 | downcast-rs | 1.2.1 | `MIT/Apache-2.0` | [LICENSE-APACHE](licenses/downcast-rs-1.2.1/LICENSE-APACHE), [LICENSE-MIT](licenses/downcast-rs-1.2.1/LICENSE-MIT) |
 | dpi | 0.1.2 | `Apache-2.0 AND MIT` | [LICENSE](licenses/dpi-0.1.2/LICENSE), [LICENSE-LIBM-MIT](licenses/dpi-0.1.2/LICENSE-LIBM-MIT) |
+| duckdb | 1.4.1 | `MIT` | Отдельный файл в архиве отсутствует |
 | ecolor | 0.37.0 | `MIT OR Apache-2.0` | Отдельный файл в архиве отсутствует |
 | eframe | 0.37.0 | `MIT OR Apache-2.0` | Отдельный файл в архиве отсутствует |
 | egui | 0.37.0 | `MIT OR Apache-2.0` | Отдельный файл в архиве отсутствует |
@@ -140,6 +159,7 @@ rusqlite 0.43.0 + libsqlite3-sys 0.40.0
 | fax | 0.2.7 | `MIT` | [LICENSE](licenses/fax-0.2.7/LICENSE) |
 | fdeflate | 0.3.7 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/fdeflate-0.3.7/LICENSE-APACHE), [LICENSE-MIT](licenses/fdeflate-0.3.7/LICENSE-MIT) |
 | fearless_simd | 0.4.1 | `Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/fearless_simd-0.4.1/LICENSE-APACHE), [LICENSE-MIT](licenses/fearless_simd-0.4.1/LICENSE-MIT) |
+| filetime | 0.2.30 | `MIT/Apache-2.0` | [LICENSE-APACHE](licenses/filetime-0.2.30/LICENSE-APACHE), [LICENSE-MIT](licenses/filetime-0.2.30/LICENSE-MIT) |
 | find-msvc-tools | 0.1.15 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/find-msvc-tools-0.1.15/LICENSE-APACHE), [LICENSE-MIT](licenses/find-msvc-tools-0.1.15/LICENSE-MIT) |
 | fixedbitset | 0.5.9 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/fixedbitset-0.5.9/LICENSE-APACHE), [LICENSE-MIT](licenses/fixedbitset-0.5.9/LICENSE-MIT) |
 | flate2 | 1.1.11 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/flate2-1.1.11/LICENSE-APACHE), [LICENSE-MIT](licenses/flate2-1.1.11/LICENSE-MIT) |
@@ -176,7 +196,9 @@ rusqlite 0.43.0 + libsqlite3-sys 0.40.0
 | hashbrown | 0.15.5 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/hashbrown-0.15.5/LICENSE-APACHE), [LICENSE-MIT](licenses/hashbrown-0.15.5/LICENSE-MIT) |
 | hashbrown | 0.16.1 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/hashbrown-0.16.1/LICENSE-APACHE), [LICENSE-MIT](licenses/hashbrown-0.16.1/LICENSE-MIT) |
 | hashbrown | 0.17.1 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/hashbrown-0.17.1/LICENSE-APACHE), [LICENSE-MIT](licenses/hashbrown-0.17.1/LICENSE-MIT) |
+| hashlink | 0.10.0 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/hashlink-0.10.0/LICENSE-APACHE), [LICENSE-MIT](licenses/hashlink-0.10.0/LICENSE-MIT) |
 | hashlink | 0.12.2 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/hashlink-0.12.2/LICENSE-APACHE), [LICENSE-MIT](licenses/hashlink-0.12.2/LICENSE-MIT) |
+| heck | 0.5.0 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/heck-0.5.0/LICENSE-APACHE), [LICENSE-MIT](licenses/heck-0.5.0/LICENSE-MIT) |
 | hermit-abi | 0.5.3 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/hermit-abi-0.5.3/LICENSE-APACHE), [LICENSE-MIT](licenses/hermit-abi-0.5.3/LICENSE-MIT) |
 | hex | 0.4.3 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/hex-0.4.3/LICENSE-APACHE), [LICENSE-MIT](licenses/hex-0.4.3/LICENSE-MIT) |
 | hybrid-array | 0.4.15 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/hybrid-array-0.4.15/LICENSE-APACHE), [LICENSE-MIT](licenses/hybrid-array-0.4.15/LICENSE-MIT) |
@@ -205,7 +227,14 @@ rusqlite 0.43.0 + libsqlite3-sys 0.40.0
 | khronos-egl | 6.0.0 | `MIT/Apache-2.0` | [LICENSE-APACHE](licenses/khronos-egl-6.0.0/LICENSE-APACHE), [LICENSE-MIT](licenses/khronos-egl-6.0.0/LICENSE-MIT) |
 | khronos_api | 3.1.0 | `Apache-2.0` | Отдельный файл в архиве отсутствует |
 | kurbo | 0.13.1 | `Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/kurbo-0.13.1/LICENSE-APACHE), [LICENSE-MIT](licenses/kurbo-0.13.1/LICENSE-MIT) |
+| lexical-core | 1.0.6 | `MIT/Apache-2.0` | [LICENSE-APACHE](licenses/lexical-core-1.0.6/LICENSE-APACHE), [LICENSE-MIT](licenses/lexical-core-1.0.6/LICENSE-MIT), [LICENSE.md](licenses/lexical-core-1.0.6/LICENSE.md) |
+| lexical-parse-float | 1.0.6 | `MIT/Apache-2.0` | [LICENSE-APACHE](licenses/lexical-parse-float-1.0.6/LICENSE-APACHE), [LICENSE-MIT](licenses/lexical-parse-float-1.0.6/LICENSE-MIT), [LICENSE.md](licenses/lexical-parse-float-1.0.6/LICENSE.md) |
+| lexical-parse-integer | 1.0.6 | `MIT/Apache-2.0` | [LICENSE-APACHE](licenses/lexical-parse-integer-1.0.6/LICENSE-APACHE), [LICENSE-MIT](licenses/lexical-parse-integer-1.0.6/LICENSE-MIT), [LICENSE.md](licenses/lexical-parse-integer-1.0.6/LICENSE.md) |
+| lexical-util | 1.0.7 | `MIT/Apache-2.0` | [LICENSE-APACHE](licenses/lexical-util-1.0.7/LICENSE-APACHE), [LICENSE-MIT](licenses/lexical-util-1.0.7/LICENSE-MIT) |
+| lexical-write-float | 1.0.6 | `MIT/Apache-2.0` | [LICENSE-APACHE](licenses/lexical-write-float-1.0.6/LICENSE-APACHE), [LICENSE-MIT](licenses/lexical-write-float-1.0.6/LICENSE-MIT), [LICENSE.md](licenses/lexical-write-float-1.0.6/LICENSE.md) |
+| lexical-write-integer | 1.0.6 | `MIT/Apache-2.0` | [LICENSE-APACHE](licenses/lexical-write-integer-1.0.6/LICENSE-APACHE), [LICENSE-MIT](licenses/lexical-write-integer-1.0.6/LICENSE-MIT), [LICENSE.md](licenses/lexical-write-integer-1.0.6/LICENSE.md) |
 | libc | 0.2.191 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/libc-0.2.191/LICENSE-APACHE), [LICENSE-MIT](licenses/libc-0.2.191/LICENSE-MIT) |
+| libduckdb-sys | 1.4.1 | `MIT` | [LICENSE](licenses/libduckdb-sys-1.4.1/LICENSE) |
 | libloading | 0.8.9 | `ISC` | [LICENSE](licenses/libloading-0.8.9/LICENSE) |
 | libm | 0.2.16 | `MIT` | [LICENSE.txt](licenses/libm-0.2.16/LICENSE.txt) |
 | libredox | 0.1.25 | `MIT` | [LICENSE](licenses/libredox-0.1.25/LICENSE) |
@@ -230,8 +259,13 @@ rusqlite 0.43.0 + libsqlite3-sys 0.40.0
 | ndk-sys | 0.6.0+11769913 | `MIT OR Apache-2.0` | Отдельный файл в архиве отсутствует |
 | nohash-hasher | 0.2.0 | `Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/nohash-hasher-0.2.0/LICENSE-APACHE), [LICENSE-MIT](licenses/nohash-hasher-0.2.0/LICENSE-MIT) |
 | nom | 8.0.0 | `MIT` | [LICENSE](licenses/nom-8.0.0/LICENSE) |
+| num | 0.4.3 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/num-0.4.3/LICENSE-APACHE), [LICENSE-MIT](licenses/num-0.4.3/LICENSE-MIT) |
+| num-bigint | 0.4.8 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/num-bigint-0.4.8/LICENSE-APACHE), [LICENSE-MIT](licenses/num-bigint-0.4.8/LICENSE-MIT) |
 | num-bigint | 0.5.1 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/num-bigint-0.5.1/LICENSE-APACHE), [LICENSE-MIT](licenses/num-bigint-0.5.1/LICENSE-MIT) |
+| num-complex | 0.4.6 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/num-complex-0.4.6/LICENSE-APACHE), [LICENSE-MIT](licenses/num-complex-0.4.6/LICENSE-MIT) |
 | num-integer | 0.1.47 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/num-integer-0.1.47/LICENSE-APACHE), [LICENSE-MIT](licenses/num-integer-0.1.47/LICENSE-MIT) |
+| num-iter | 0.1.46 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/num-iter-0.1.46/LICENSE-APACHE), [LICENSE-MIT](licenses/num-iter-0.1.46/LICENSE-MIT) |
+| num-rational | 0.4.2 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/num-rational-0.4.2/LICENSE-APACHE), [LICENSE-MIT](licenses/num-rational-0.4.2/LICENSE-MIT) |
 | num-traits | 0.2.19 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/num-traits-0.2.19/LICENSE-APACHE), [LICENSE-MIT](licenses/num-traits-0.2.19/LICENSE-MIT) |
 | num_enum | 0.7.6 | `BSD-3-Clause OR MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/num_enum-0.7.6/LICENSE-APACHE), [LICENSE-BSD](licenses/num_enum-0.7.6/LICENSE-BSD), [LICENSE-MIT](licenses/num_enum-0.7.6/LICENSE-MIT) |
 | num_enum_derive | 0.7.6 | `BSD-3-Clause OR MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/num_enum_derive-0.7.6/LICENSE-APACHE), [LICENSE-BSD](licenses/num_enum_derive-0.7.6/LICENSE-BSD), [LICENSE-MIT](licenses/num_enum_derive-0.7.6/LICENSE-MIT) |
@@ -294,6 +328,7 @@ rusqlite 0.43.0 + libsqlite3-sys 0.40.0
 | portable-atomic | 1.15.0 | `Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/portable-atomic-1.15.0/LICENSE-APACHE), [LICENSE-MIT](licenses/portable-atomic-1.15.0/LICENSE-MIT) |
 | portable-atomic-util | 0.2.8 | `Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/portable-atomic-util-0.2.8/LICENSE-APACHE), [LICENSE-MIT](licenses/portable-atomic-util-0.2.8/LICENSE-MIT) |
 | potential_utf | 0.1.6 | `Unicode-3.0` | [LICENSE](licenses/potential_utf-0.1.6/LICENSE) |
+| ppv-lite86 | 0.2.21 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/ppv-lite86-0.2.21/LICENSE-APACHE), [LICENSE-MIT](licenses/ppv-lite86-0.2.21/LICENSE-MIT) |
 | presser | 0.3.1 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/presser-0.3.1/LICENSE-APACHE), [LICENSE-MIT](licenses/presser-0.3.1/LICENSE-MIT) |
 | proc-macro-crate | 3.5.0 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/proc-macro-crate-3.5.0/LICENSE-APACHE), [LICENSE-MIT](licenses/proc-macro-crate-3.5.0/LICENSE-MIT) |
 | proc-macro2 | 1.0.107 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/proc-macro2-1.0.107/LICENSE-APACHE), [LICENSE-MIT](licenses/proc-macro2-1.0.107/LICENSE-MIT) |
@@ -304,6 +339,12 @@ rusqlite 0.43.0 + libsqlite3-sys 0.40.0
 | quote | 1.0.47 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/quote-1.0.47/LICENSE-APACHE), [LICENSE-MIT](licenses/quote-1.0.47/LICENSE-MIT) |
 | r-efi | 5.3.0 | `MIT OR Apache-2.0 OR LGPL-2.1-or-later` | Отдельный файл в архиве отсутствует |
 | r-efi | 6.0.0 | `MIT OR Apache-2.0 OR LGPL-2.1-or-later` | Отдельный файл в архиве отсутствует |
+| rand | 0.8.8 | `MIT OR Apache-2.0` | [COPYRIGHT](licenses/rand-0.8.8/COPYRIGHT), [LICENSE-APACHE](licenses/rand-0.8.8/LICENSE-APACHE), [LICENSE-MIT](licenses/rand-0.8.8/LICENSE-MIT) |
+| rand | 0.9.5 | `MIT OR Apache-2.0` | [COPYRIGHT](licenses/rand-0.9.5/COPYRIGHT), [LICENSE-APACHE](licenses/rand-0.9.5/LICENSE-APACHE), [LICENSE-MIT](licenses/rand-0.9.5/LICENSE-MIT) |
+| rand_chacha | 0.3.1 | `MIT OR Apache-2.0` | [COPYRIGHT](licenses/rand_chacha-0.3.1/COPYRIGHT), [LICENSE-APACHE](licenses/rand_chacha-0.3.1/LICENSE-APACHE), [LICENSE-MIT](licenses/rand_chacha-0.3.1/LICENSE-MIT) |
+| rand_chacha | 0.9.0 | `MIT OR Apache-2.0` | [COPYRIGHT](licenses/rand_chacha-0.9.0/COPYRIGHT), [LICENSE-APACHE](licenses/rand_chacha-0.9.0/LICENSE-APACHE), [LICENSE-MIT](licenses/rand_chacha-0.9.0/LICENSE-MIT) |
+| rand_core | 0.6.4 | `MIT OR Apache-2.0` | [COPYRIGHT](licenses/rand_core-0.6.4/COPYRIGHT), [LICENSE-APACHE](licenses/rand_core-0.6.4/LICENSE-APACHE), [LICENSE-MIT](licenses/rand_core-0.6.4/LICENSE-MIT) |
+| rand_core | 0.9.5 | `MIT OR Apache-2.0` | [COPYRIGHT](licenses/rand_core-0.9.5/COPYRIGHT), [LICENSE-APACHE](licenses/rand_core-0.9.5/LICENSE-APACHE), [LICENSE-MIT](licenses/rand_core-0.9.5/LICENSE-MIT) |
 | range-alloc | 0.1.5 | `MIT OR Apache-2.0` | [LICENSE.APACHE](licenses/range-alloc-0.1.5/LICENSE.APACHE), [LICENSE.MIT](licenses/range-alloc-0.1.5/LICENSE.MIT) |
 | raw-window-handle | 0.6.2 | `MIT OR Apache-2.0 OR Zlib` | [LICENSE-APACHE.md](licenses/raw-window-handle-0.6.2/LICENSE-APACHE.md), [LICENSE-MIT.md](licenses/raw-window-handle-0.6.2/LICENSE-MIT.md), [LICENSE-ZLIB.md](licenses/raw-window-handle-0.6.2/LICENSE-ZLIB.md) |
 | raw-window-metal | 1.1.0 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/raw-window-metal-1.1.0/LICENSE-APACHE), [LICENSE-MIT](licenses/raw-window-metal-1.1.0/LICENSE-MIT) |
@@ -311,11 +352,15 @@ rusqlite 0.43.0 + libsqlite3-sys 0.40.0
 | redox_syscall | 0.4.1 | `MIT` | [LICENSE](licenses/redox_syscall-0.4.1/LICENSE) |
 | redox_syscall | 0.5.18 | `MIT` | [LICENSE](licenses/redox_syscall-0.5.18/LICENSE) |
 | redox_syscall | 0.9.5 | `MIT` | [LICENSE](licenses/redox_syscall-0.9.5/LICENSE) |
+| regex | 1.13.2 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/regex-1.13.2/LICENSE-APACHE), [LICENSE-MIT](licenses/regex-1.13.2/LICENSE-MIT) |
+| regex-automata | 0.4.19 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/regex-automata-0.4.19/LICENSE-APACHE), [LICENSE-MIT](licenses/regex-automata-0.4.19/LICENSE-MIT) |
+| regex-syntax | 0.8.12 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/regex-syntax-0.8.12/LICENSE-APACHE), [LICENSE-MIT](licenses/regex-syntax-0.8.12/LICENSE-MIT) |
 | renderdoc-sys | 1.1.0 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/renderdoc-sys-1.1.0/LICENSE-APACHE), [LICENSE-MIT](licenses/renderdoc-sys-1.1.0/LICENSE-MIT) |
 | ron | 0.12.3 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/ron-0.12.3/LICENSE-APACHE), [LICENSE-MIT](licenses/ron-0.12.3/LICENSE-MIT) |
 | roxmltree | 0.21.2 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/roxmltree-0.21.2/LICENSE-APACHE), [LICENSE-MIT](licenses/roxmltree-0.21.2/LICENSE-MIT) |
 | rsqlite-vfs | 0.2.0 | `MIT` | Отдельный файл в архиве отсутствует |
 | rusqlite | 0.43.0 | `MIT` | [LICENSE](licenses/rusqlite-0.43.0/LICENSE) |
+| rust_decimal | 1.43.0 | `MIT` | [LICENSE](licenses/rust_decimal-1.43.0/LICENSE) |
 | rustc-hash | 1.1.0 | `Apache-2.0/MIT` | [LICENSE-APACHE](licenses/rustc-hash-1.1.0/LICENSE-APACHE), [LICENSE-MIT](licenses/rustc-hash-1.1.0/LICENSE-MIT) |
 | rustc-hash | 2.1.3 | `Apache-2.0 OR MIT` | [LICENSE-APACHE](licenses/rustc-hash-2.1.3/LICENSE-APACHE), [LICENSE-MIT](licenses/rustc-hash-2.1.3/LICENSE-MIT) |
 | rustc_version | 0.4.1 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/rustc_version-0.4.1/LICENSE-APACHE), [LICENSE-MIT](licenses/rustc_version-0.4.1/LICENSE-MIT) |
@@ -357,10 +402,15 @@ rusqlite 0.43.0 + libsqlite3-sys 0.40.0
 | stable_deref_trait | 1.2.1 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/stable_deref_trait-1.2.1/LICENSE-APACHE), [LICENSE-MIT](licenses/stable_deref_trait-1.2.1/LICENSE-MIT) |
 | static_assertions | 1.1.0 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/static_assertions-1.1.0/LICENSE-APACHE), [LICENSE-MIT](licenses/static_assertions-1.1.0/LICENSE-MIT) |
 | strict-num | 0.1.1 | `MIT` | [LICENSE](licenses/strict-num-0.1.1/LICENSE) |
+| strum | 0.26.3 | `MIT` | [LICENSE](licenses/strum-0.26.3/LICENSE) |
+| strum | 0.27.2 | `MIT` | [LICENSE](licenses/strum-0.27.2/LICENSE) |
+| strum_macros | 0.26.4 | `MIT` | [LICENSE](licenses/strum_macros-0.26.4/LICENSE) |
+| strum_macros | 0.27.2 | `MIT` | [LICENSE](licenses/strum_macros-0.27.2/LICENSE) |
 | syn | 2.0.119 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/syn-2.0.119/LICENSE-APACHE), [LICENSE-MIT](licenses/syn-2.0.119/LICENSE-MIT) |
 | syn | 3.0.10 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/syn-3.0.10/LICENSE-APACHE), [LICENSE-MIT](licenses/syn-3.0.10/LICENSE-MIT) |
 | synstructure | 0.14.0 | `MIT` | [LICENSE](licenses/synstructure-0.14.0/LICENSE) |
 | sys-locale | 0.3.2 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/sys-locale-0.3.2/LICENSE-APACHE), [LICENSE-MIT](licenses/sys-locale-0.3.2/LICENSE-MIT) |
+| tar | 0.4.46 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/tar-0.4.46/LICENSE-APACHE), [LICENSE-MIT](licenses/tar-0.4.46/LICENSE-MIT) |
 | tempfile | 3.27.0 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/tempfile-3.27.0/LICENSE-APACHE), [LICENSE-MIT](licenses/tempfile-3.27.0/LICENSE-MIT) |
 | termcolor | 1.4.1 | `Unlicense OR MIT` | [COPYING](licenses/termcolor-1.4.1/COPYING), [LICENSE-MIT](licenses/termcolor-1.4.1/LICENSE-MIT), [UNLICENSE](licenses/termcolor-1.4.1/UNLICENSE) |
 | thiserror | 1.0.69 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/thiserror-1.0.69/LICENSE-APACHE), [LICENSE-MIT](licenses/thiserror-1.0.69/LICENSE-MIT) |
@@ -466,6 +516,7 @@ rusqlite 0.43.0 + libsqlite3-sys 0.40.0
 | x11-dl | 2.21.0 | `MIT` | [LICENSE-MIT](licenses/x11-dl-2.21.0/LICENSE-MIT) |
 | x11rb | 0.13.2 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/x11rb-0.13.2/LICENSE-APACHE), [LICENSE-MIT](licenses/x11rb-0.13.2/LICENSE-MIT) |
 | x11rb-protocol | 0.13.2 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/x11rb-protocol-0.13.2/LICENSE-APACHE), [LICENSE-MIT](licenses/x11rb-protocol-0.13.2/LICENSE-MIT) |
+| xattr | 1.7.0 | `MIT OR Apache-2.0` | [LICENSE-APACHE](licenses/xattr-1.7.0/LICENSE-APACHE), [LICENSE-MIT](licenses/xattr-1.7.0/LICENSE-MIT) |
 | xcursor | 0.3.11 | `MIT` | [LICENSE](licenses/xcursor-0.3.11/LICENSE) |
 | xkbcommon-dl | 0.4.2 | `MIT` | [LICENSE](licenses/xkbcommon-dl-0.4.2/LICENSE) |
 | xkeysym | 0.2.1 | `MIT OR Apache-2.0 OR Zlib` | [LICENSE-APACHE](licenses/xkeysym-0.2.1/LICENSE-APACHE), [LICENSE-MIT](licenses/xkeysym-0.2.1/LICENSE-MIT), [LICENSE-ZLIB](licenses/xkeysym-0.2.1/LICENSE-ZLIB) |

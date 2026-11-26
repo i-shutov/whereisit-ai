@@ -139,7 +139,7 @@ pub(crate) fn publish(tmp: tempfile::NamedTempFile, target: &Path, overwrite: bo
 }
 
 #[derive(Clone)]
-struct ExportRow {
+pub(crate) struct ExportRow {
     integers: [Option<i64>; 5],
     text: [String; 9],
     modified_local: Option<String>,
@@ -187,6 +187,100 @@ impl ExportRow {
             self.modified_local.clone().unwrap_or_default(),
         ]
     }
+
+    pub(crate) fn from_parts(
+        integers: [Option<i64>; 5],
+        text: [String; 9],
+        modified_local: Option<String>,
+    ) -> Self {
+        Self {
+            integers,
+            text,
+            modified_local,
+        }
+    }
+
+    fn json(&self) -> Value {
+        json!({
+            "id":self.integers[0].unwrap(),
+            "volume_id":self.integers[1].unwrap(),
+            "parent_id":self.integers[2],
+            "name":self.text[0].as_str(),
+            "relative_path":self.text[1].as_str(),
+            "kind":self.text[2].as_str(),
+            "size":self.integers[3].unwrap(),
+            "modified_unix":self.integers[4],
+            "description":self.text[3].as_str(),
+            "tags":self.text[4].as_str(),
+            "volume_label":self.text[5].as_str(),
+            "categories":self.text[6].as_str(),
+            "duplicate_count":self.text[7].parse::<i64>().unwrap_or(0),
+            "duplicate_group":self.text[8].as_str(),
+            "modified_local":self.modified_local.as_deref(),
+        })
+    }
+}
+
+/// Shared streaming writer for SQLite-backed and direct-preview exports.
+/// Rows are bounded by the caller; Parquet buffers only one row group.
+pub(crate) fn write_rows(
+    file: &mut File,
+    format: &str,
+    bom: bool,
+    rows: impl Iterator<Item = Result<ExportRow>>,
+) -> Result<u64> {
+    let mut count = 0u64;
+    if format == "export_parquet" {
+        let props = Arc::new(
+            WriterProperties::builder()
+                .set_compression(Compression::SNAPPY)
+                .set_created_by("WhereIsIt AI 0.1".into())
+                .build(),
+        );
+        let schema = Arc::new(parse_message_type(SCHEMA).map_err(export_error)?);
+        let mut writer = SerializedFileWriter::new(file, schema, props).map_err(export_error)?;
+        let mut batch = Vec::with_capacity(8192);
+        for row in rows {
+            batch.push(row?);
+            count += 1;
+            if batch.len() == 8192 {
+                write_group(&mut writer, &batch)?;
+                batch.clear();
+            }
+        }
+        if !batch.is_empty() {
+            write_group(&mut writer, &batch)?;
+        }
+        writer.close().map_err(export_error)?;
+    } else if format == "export_json" {
+        let mut writer = std::io::BufWriter::new(file);
+        writer.write_all(b"{\"schema\":\"atlas-export-v1\",\"entries\":[")?;
+        for row in rows {
+            if count > 0 {
+                writer.write_all(b",")?;
+            }
+            serde_json::to_writer(&mut writer, &row?.json()).map_err(export_error)?;
+            count += 1;
+        }
+        writer.write_all(b"]}")?;
+        writer.flush()?;
+    } else if format == "export_csv" {
+        if bom {
+            file.write_all(b"\xEF\xBB\xBF")?;
+        }
+        let mut writer = csv::WriterBuilder::new()
+            .has_headers(false)
+            .from_writer(file);
+        writer.write_record(HEADERS).map_err(export_error)?;
+        for row in rows {
+            writer.write_record(row?.csv()).map_err(export_error)?;
+            count += 1;
+        }
+        writer.flush()?;
+    } else {
+        return Err(Error::new("export", "Unsupported export format"));
+    }
+    Ok(count)
 }
 
 pub(crate) fn export(c: &Catalog, v: &Value, format: &str) -> Result<Value> {
@@ -280,64 +374,16 @@ fn export_impl(
     );
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query(rusqlite::params_from_iter(s.args.iter()))?;
-    let mut count = 0u64;
-    if format == "export_parquet" {
-        let props = Arc::new(
-            WriterProperties::builder()
-                .set_compression(Compression::SNAPPY)
-                .set_created_by("WhereIsIt AI 0.1".into())
-                .build(),
-        );
-        let schema = Arc::new(parse_message_type(SCHEMA).map_err(export_error)?);
-        let mut writer =
-            SerializedFileWriter::new(tmp.as_file_mut(), schema, props).map_err(export_error)?;
-        let mut batch = Vec::with_capacity(8192);
-        while let Some(r) = rows.next()? {
-            batch.push(ExportRow::read(r)?);
-            count += 1;
-            if batch.len() == 8192 {
-                write_group(&mut writer, &batch)?;
-                batch.clear();
-            }
-        }
-        if !batch.is_empty() {
-            write_group(&mut writer, &batch)?;
-        }
-        writer.close().map_err(export_error)?;
-    } else if format == "export_json" {
-        let mut writer = std::io::BufWriter::new(tmp.as_file_mut());
-        writer.write_all(b"{\"schema\":\"atlas-export-v1\",\"entries\":[")?;
-        while let Some(r) = rows.next()? {
-            if count > 0 {
-                writer.write_all(b",")?;
-            }
-            let mut item = serde_json::to_value(atlas_core::entry_row(r)?).map_err(export_error)?;
-            item["volume_label"] = json!(r.get::<_, String>(10)?);
-            item["categories"] = json!(r.get::<_, String>(11)?);
-            item["duplicate_count"] = json!(r.get::<_, i64>(12)?);
-            item["duplicate_group"] = json!(r.get::<_, String>(13)?);
-            item["modified_local"] = json!(r.get::<_, Option<String>>(14)?);
-            serde_json::to_writer(&mut writer, &item).map_err(export_error)?;
-            count += 1;
-        }
-        writer.write_all(b"]}")?;
-        writer.flush()?;
-    } else {
-        if v.get("bom").and_then(Value::as_bool).unwrap_or(false) {
-            tmp.write_all(b"\xEF\xBB\xBF")?;
-        }
-        let mut writer = csv::WriterBuilder::new()
-            .has_headers(false)
-            .from_writer(tmp.as_file_mut());
-        writer.write_record(HEADERS).map_err(export_error)?;
-        while let Some(r) = rows.next()? {
-            writer
-                .write_record(ExportRow::read(r)?.csv())
-                .map_err(export_error)?;
-            count += 1;
-        }
-        writer.flush()?;
-    }
+    let count = write_rows(
+        tmp.as_file_mut(),
+        format,
+        v.get("bom").and_then(Value::as_bool).unwrap_or(false),
+        std::iter::from_fn(|| match rows.next() {
+            Ok(Some(row)) => Some(ExportRow::read(row).map_err(Error::from)),
+            Ok(None) => None,
+            Err(error) => Some(Err(Error::from(error))),
+        }),
+    )?;
     drop(rows);
     drop(stmt);
     drop(snapshot);
@@ -441,6 +487,46 @@ fn write_group(writer: &mut SerializedFileWriter<&mut File>, rows: &[ExportRow])
     }
     group.close().map_err(export_error)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod preview_writer_tests {
+    use super::*;
+
+    #[test]
+    fn cancelled_stream_stops_after_partial_rows_without_publishing() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("never-published.json");
+        let mut stage = tempfile::Builder::new().tempfile_in(dir.path()).unwrap();
+        let row = ExportRow::from_parts(
+            [Some(1), Some(1), None, Some(17), None],
+            [
+                "one.txt".into(),
+                "one.txt".into(),
+                "file".into(),
+                String::new(),
+                String::new(),
+                "disk".into(),
+                String::new(),
+                "0".into(),
+                String::new(),
+            ],
+            None,
+        );
+        let rows = std::iter::once(Ok(row)).chain(std::iter::once(Err(Error::new(
+            "cancelled",
+            "cancelled during row stream",
+        ))));
+        assert_eq!(
+            write_rows(stage.as_file_mut(), "export_json", false, rows)
+                .unwrap_err()
+                .code,
+            "cancelled"
+        );
+        drop(stage);
+        assert!(!target.exists());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
 }
 
 #[cfg(test)]

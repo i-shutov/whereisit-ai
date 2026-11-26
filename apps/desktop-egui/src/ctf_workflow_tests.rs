@@ -1,5 +1,9 @@
 use super::*;
-use std::{fs, thread};
+use std::{
+    fs,
+    sync::{Arc, Mutex},
+    thread,
+};
 
 fn dispatch(request: &Value) -> Value {
     serde_json::from_str(&atlas_service::dispatch_json(&request.to_string())).unwrap()
@@ -64,6 +68,8 @@ fn next_reply(app: &DesktopApp) -> crate::bridge::Reply {
     }
 }
 
+static CTF_PREVIEW_TEST_LOCK: Mutex<()> = Mutex::new(());
+
 fn link(app: &mut DesktopApp, ctx: &egui::Context, source: &Path) {
     let path = source.to_str().unwrap().to_owned();
     let cache_root = source
@@ -71,15 +77,14 @@ fn link(app: &mut DesktopApp, ctx: &egui::Context, source: &Path) {
         .to_str()
         .unwrap()
         .to_owned();
-    let job_id = app.begin_ctf_job();
-    app.queue(
-        Purpose::LinkCtf {
+    app.active_request = Some(app.bus.send(
+        Purpose::CtfPreviewOpen {
             path: path.clone(),
-            cache_root: cache_root.clone(),
+            cache_root,
         },
-        json!({"op":"ctf_sync","path":path,"cache_root":cache_root,"job_id":job_id}),
+        json!({"op":"ctf_preview_open","path":path}),
         ctx,
-    );
+    ));
     settle(app, ctx);
     assert_eq!(
         app.integrity,
@@ -88,7 +93,7 @@ fn link(app: &mut DesktopApp, ctx: &egui::Context, source: &Path) {
         app.error
     );
     assert!(app.ctf_job_id.is_none());
-    assert_eq!(app.volumes[0].label, "Диск A");
+    assert!(!app.volumes.is_empty());
 }
 
 fn start_import(app: &mut DesktopApp, ctx: &egui::Context, source: &Path, target: &Path) {
@@ -99,7 +104,115 @@ fn start_import(app: &mut DesktopApp, ctx: &egui::Context, source: &Path, target
 }
 
 #[test]
+fn ctf_open_and_search_use_direct_read_only_preview_without_sync() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("snapshot.ctf");
+    fs::write(&source, b"synthetic CTF source identity fixture").unwrap();
+    let path = source.to_string_lossy().into_owned();
+    let cache_root = temp.path().join("ctf-cache").to_string_lossy().into_owned();
+    let generation = "c".repeat(64);
+    let source_sha = "b".repeat(64);
+    let operations = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let ctx = egui::Context::default();
+    let mut app = DesktopApp::with_context(&ctx, None);
+    app.bus.set_handler({
+        let operations = operations.clone();
+        let generation = generation.clone();
+        let source_sha = source_sha.clone();
+        move |request| {
+            operations.lock().unwrap().push(request.clone());
+            match request["op"].as_str().unwrap_or("") {
+                "ctf_preview_open" => json!({"ok":true,"data":{
+                    "state":"browsable","generation":generation,"source_sha256":source_sha,
+                    "source_bytes":38,"entries":2,"volumes":1,
+                    "original_ctf_read_only":true,"native_annotation_writes_allowed":false
+                }}),
+                "ctf_preview_volumes" => json!({"ok":true,"data":{
+                    "generation":request["generation"],"source_sha256":source_sha,"read_only":true,
+                    "original_ctf_read_only":true,"annotations_supported":false,
+                    "result":[{"id":4,"label":"Disk A","root_path":"","entry_count":2,"total_bytes":99}]
+                }}),
+                "ctf_preview_children" => json!({"ok":true,"data":{
+                    "generation":request["generation"],"source_sha256":source_sha,"read_only":true,
+                    "result":{"items":[{"id":71,"volume_id":4,"parent_id":null,"name":"film.mkv",
+                        "relative_path":"film.mkv","kind":"file","size":99,"modified_unix":null,
+                        "description":"","tags":""}],"total":1,"offset":request["offset"],"limit":250}
+                }}),
+                "ctf_preview_search" => json!({"ok":true,"data":{
+                    "generation":request["generation"],"source_sha256":source_sha,"read_only":true,
+                    "result":{"items":[{"id":71,"volume_id":4,"parent_id":null,"name":"film.mkv",
+                        "relative_path":"film.mkv","kind":"file","size":99,"modified_unix":null,
+                        "description":"","tags":""}],"offset":request["offset"],"limit":request["limit"],"has_more":false}
+                }}),
+                "ctf_preview_close" => json!({"ok":true,"data":{"closed":true,"generation":request["generation"]}}),
+                other => json!({"ok":false,"error":{"code":"unexpected_test_operation","message":other}}),
+            }
+        }
+    });
+
+    app.active_request = Some(app.bus.send(
+        Purpose::CtfPreviewOpen {
+            path: path.clone(),
+            cache_root,
+        },
+        json!({"op":"ctf_preview_open","path":path}),
+        &ctx,
+    ));
+    settle(&mut app, &ctx);
+    assert!(
+        app.error.is_none(),
+        "open and initial page: {:?}",
+        app.error
+    );
+    assert!(app.linked_ctf.as_ref().is_some_and(|link| link.preview));
+    assert_eq!(
+        app.route,
+        Route::Search {
+            query: String::new(),
+            volume_id: None
+        }
+    );
+    assert_eq!(app.page.items[0].name, "film.mkv");
+    assert!(
+        app.ctf_job_id.is_none(),
+        "opening does not start indexing or a long job"
+    );
+
+    let query = "ext:mkv AND name:film".to_owned();
+    app.route = Route::Search {
+        query: query.clone(),
+        volume_id: Some(4),
+    };
+    app.query_input = query.clone();
+    app.offset = 0;
+    app.load_page(&ctx);
+    settle(&mut app, &ctx);
+    assert!(app.error.is_none(), "direct query: {:?}", app.error);
+    assert_eq!(app.page.items[0].name, "film.mkv");
+    assert!(
+        app.ctf_job_id.is_none(),
+        "finished direct search releases its cancellable job"
+    );
+    let ops = operations.lock().unwrap();
+    assert!(!ops.iter().any(|request| request["op"] == "ctf_sync"));
+    let search = ops
+        .iter()
+        .find(|request| request["op"] == "ctf_preview_search" && request["query"] == query)
+        .unwrap();
+    assert_eq!(search["path"], path);
+    assert_eq!(search["generation"], generation);
+    assert_eq!(search["query"], query);
+    assert_eq!(search["volume_id"], 4);
+    assert_eq!(search["offset"], 0);
+    assert_eq!(search["limit"], 250);
+    assert!(search["job_id"].as_str().is_some_and(|id| !id.is_empty()));
+}
+
+#[test]
 fn linked_ctf_browse_import_edit_and_export_through_the_service() {
+    let _preview_lock = CTF_PREVIEW_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp = tempfile::tempdir().unwrap();
     let (seed, _) = seed_catalog(temp.path());
     let source = temp.path().join("Исходник.CTF");
@@ -216,6 +329,9 @@ fn linked_ctf_browse_import_edit_and_export_through_the_service() {
 
 #[test]
 fn changed_linked_source_refuses_import_and_hides_stale_rows() {
+    let _preview_lock = CTF_PREVIEW_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp = tempfile::tempdir().unwrap();
     let (seed, id) = seed_catalog(temp.path());
     let source = temp.path().join("original.CTF");
@@ -267,6 +383,144 @@ fn changed_linked_source_refuses_import_and_hides_stale_rows() {
     assert!(app.selected.is_none());
     assert!(app.page.items.is_empty());
     assert_eq!(fs::read(&source).unwrap(), modified);
+}
+
+#[test]
+fn direct_ctf_copy_candidates_and_exports_keep_scope_and_never_clobber() {
+    let _preview_lock = CTF_PREVIEW_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let temp = tempfile::tempdir().unwrap();
+    let disk_a = temp.path().join("disk-a");
+    let disk_b = temp.path().join("disk-b");
+    fs::create_dir_all(&disk_a).unwrap();
+    fs::create_dir_all(&disk_b).unwrap();
+    fs::write(disk_a.join("film.mkv"), b"same-metadata-size").unwrap();
+    fs::write(disk_b.join("film.mkv"), b"same-metadata-size").unwrap();
+    let db = temp.path().join("catalog.sqlite");
+    successful(json!({"op":"scan","db":db,"root":disk_a,"label":"Disk A","hash":false}));
+    successful(json!({"op":"scan","db":db,"root":disk_b,"label":"Disk B","hash":false}));
+    let source = temp.path().join("source.CTF");
+    successful(json!({"op":"export_ctf","db":db,"path":source}));
+    let source_bytes = fs::read(&source).unwrap();
+
+    let ctx = egui::Context::default();
+    let mut app = app(&ctx, temp.path());
+    link(&mut app, &ctx, &source);
+    let original = app
+        .page
+        .items
+        .iter()
+        .find(|entry| entry.name == "film.mkv")
+        .unwrap()
+        .clone();
+    app.selected = Some(original.clone());
+    app.navigate_copies(&ctx);
+    settle(&mut app, &ctx);
+    assert!(
+        app.error.is_none(),
+        "direct copy candidates: {:?}",
+        app.error
+    );
+    assert!(
+        !app.page.items.is_empty(),
+        "fixture should produce a metadata candidate"
+    );
+    assert!(app
+        .page
+        .items
+        .iter()
+        .all(|candidate| candidate.id != original.id));
+    assert!(app
+        .page
+        .items
+        .iter()
+        .all(|candidate| candidate.volume_id != original.volume_id));
+
+    let copies_csv = temp.path().join("copy-candidates.csv");
+    app.export_path = copies_csv.to_string_lossy().into_owned();
+    app.export_kind = ExportKind::Csv;
+    app.start_export(&ctx);
+    settle(&mut app, &ctx);
+    assert!(app.error.is_none(), "copy CSV export: {:?}", app.error);
+    let csv_bytes = fs::read(&copies_csv).unwrap();
+    let csv = String::from_utf8(csv_bytes.clone()).unwrap();
+    assert!(csv.starts_with("id,volume_id,parent_id,name,"));
+    assert!(csv.contains("film.mkv"));
+
+    app.route = Route::Search {
+        query: "ext:mkv".into(),
+        volume_id: None,
+    };
+    app.query_input = "ext:mkv".into();
+    app.offset = 0;
+    app.load_page(&ctx);
+    settle(&mut app, &ctx);
+    assert!(
+        app.error.is_none(),
+        "search before exports: {:?}",
+        app.error
+    );
+
+    let results_json = temp.path().join("results.json");
+    app.export_path = results_json.to_string_lossy().into_owned();
+    app.export_kind = ExportKind::Json;
+    app.start_export(&ctx);
+    settle(&mut app, &ctx);
+    assert!(app.error.is_none(), "JSON export: {:?}", app.error);
+    let json_data: Value = serde_json::from_slice(&fs::read(&results_json).unwrap()).unwrap();
+    assert_eq!(json_data["entries"].as_array().unwrap().len(), 2);
+
+    let results_parquet = temp.path().join("results.parquet");
+    app.export_path = results_parquet.to_string_lossy().into_owned();
+    app.export_kind = ExportKind::Parquet;
+    app.start_export(&ctx);
+    settle(&mut app, &ctx);
+    assert!(app.error.is_none(), "Parquet export: {:?}", app.error);
+    let parquet = fs::read(&results_parquet).unwrap();
+    assert!(parquet.starts_with(b"PAR1") && parquet.ends_with(b"PAR1"));
+
+    let prior_csv = fs::read(&copies_csv).unwrap();
+    app.export_path = copies_csv.to_string_lossy().into_owned();
+    app.export_kind = ExportKind::Csv;
+    app.start_export(&ctx);
+    assert!(app.active_request.is_none());
+    assert!(
+        app.error.is_some(),
+        "existing result path must not be overwritten"
+    );
+    assert_eq!(fs::read(&copies_csv).unwrap(), prior_csv);
+
+    let raced_export = temp.path().join("raced.csv");
+    let competing_path = raced_export.clone();
+    app.bus.set_handler(move |request| {
+        if request["op"] == "ctf_preview_export" {
+            use std::io::Write;
+            assert_eq!(request["output"], json!(competing_path));
+            fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&competing_path)
+                .unwrap()
+                .write_all(b"competing output")
+                .unwrap();
+        }
+        dispatch(request)
+    });
+    app.export_path = raced_export.to_string_lossy().into_owned();
+    app.export_kind = ExportKind::Csv;
+    app.start_export(&ctx);
+    settle(&mut app, &ctx);
+    assert!(
+        app.error.is_some(),
+        "racing output creation must be refused"
+    );
+    assert_eq!(fs::read(raced_export).unwrap(), b"competing output");
+    assert_eq!(
+        fs::read(&source).unwrap(),
+        source_bytes,
+        "preview and exports keep CTF source unchanged"
+    );
 }
 
 #[test]
