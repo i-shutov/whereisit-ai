@@ -1,5 +1,10 @@
 # Windows 1.1.1 installed candidate — 26 November 2026
 
+**Historical candidate checkpoint.** Later reverse-CTF acceptance and release
+readiness are recorded in [the stable readiness report](WINDOWS_1_1_1_STABLE_ACCEPTANCE_20261126.md).
+The pending gates below describe this earlier checkpoint; they are not a
+replacement for the later exact-artifact publication checks.
+
 **Overall candidate gate: PARTIAL.** The local installed upgrade and the exact GitHub Actions unsigned Windows x64 installer passed the GUI checks recorded below. The exercised original-WhereIsIt path establishes forward compatibility for the tested modified export of a full catalog copy only. It does not establish release readiness or universal CTF compatibility. Keep `release/ACCEPTANCE.json` at `stable_ready=false`.
 
 ## Candidate identity and scope

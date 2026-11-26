@@ -29,6 +29,51 @@ SCOPE = {
 
 
 class EguiStablePackagingContract(unittest.TestCase):
+    def test_stable_publication_branch_guards_execute_workflow_bash(self):
+        workflow = (ROOT / ".github/workflows/publish-windows-stable.yml").read_text(encoding="utf-8")
+        bash = shutil.which("bash")
+        if not bash and os.name == "nt":
+            git_bash = Path("C:/Program Files/Git/bin/bash.exe")
+            if git_bash.is_file():
+                bash = str(git_bash)
+        if not bash:
+            self.skipTest("bash is required to execute the stable workflow guards")
+
+        regex_guard = next(line.strip() for line in workflow.splitlines()
+                           if '[[ "$PUBLICATION_EVENT_REF" =~' in line)
+        version_step = workflow.split("      - name: Resolve stable version and refuse existing release or tag", 1)[1]
+        version_step = version_step.split("      - name: Download the validated Windows product artifact", 1)[0]
+        version_lines = version_step.splitlines()
+        start = next(i for i, line in enumerate(version_lines)
+                     if 'version="$(tr -d' in line)
+        end = next(i for i in range(start, len(version_lines))
+                   if '[[ "$GITHUB_REF" == "refs/heads/$PUBLICATION_EVENT_REF" ]]' in version_lines[i])
+        self.assertEqual(version_lines[end + 1].strip(), "fi")
+        version_guard = textwrap.dedent("\n".join(version_lines[start:end + 2]))
+        script = "\n".join(("set -euo pipefail", regex_guard,
+                             '[[ "$GITHUB_REF" == "refs/heads/$PUBLICATION_EVENT_REF" ]]',
+                             '[[ "$GITHUB_SHA" == "$SOURCE_SHA" ]]', version_guard, ""))
+
+        def run(ref: str, github_ref: str | None = None) -> subprocess.CompletedProcess[str]:
+            env = {**os.environ, "GITHUB_EVENT_NAME": "create", "GITHUB_REF": github_ref or f"refs/heads/{ref}",
+                   "PUBLICATION_EVENT_REF": ref, "GITHUB_SHA": SHA, "SOURCE_SHA": SHA}
+            with tempfile.TemporaryDirectory() as temp:
+                (Path(temp) / "VERSION").write_text("1.1.1\n", encoding="utf-8")
+                return subprocess.run([bash, "-c", script], cwd=temp, env=env,
+                                      capture_output=True, text=True)
+
+        for ref in ("release/windows-1.1-publish", "release/windows-1.1.1-publish"):
+            with self.subTest(ref=ref):
+                result = run(ref)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        for ref in ("release/windows-1.1.2-publish", "release/windows-1.2-publish",
+                    "release/windows-1.1.1.0-publish", "release/windows-1.1.1-publish-extra"):
+            with self.subTest(ref=ref):
+                self.assertNotEqual(run(ref).returncode, 0, ref)
+        with self.subTest(ref="corrupted GitHub ref"):
+            self.assertNotEqual(run("release/windows-1.1.1-publish", "refs/heads/release/windows-1.1-publish").returncode, 0)
+
     def test_stable_selects_only_windows_setup_and_three_provenance_assets(self):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)
@@ -321,9 +366,12 @@ class EguiStablePackagingContract(unittest.TestCase):
         self.assertIn("  create:", stable)
         self.assertIn("github.event_name == 'create'", stable)
         self.assertIn("github.event.ref_type == 'branch'", stable)
-        self.assertIn("release/windows-([0-9]+)", stable)
+        self.assertIn(r"release/windows-([0-9]+)\.([0-9]+)(\.([0-9]+))?-publish", stable)
         self.assertIn("github.ref == 'refs/heads/main'", stable)
-        self.assertIn("release/windows-${version%.*}-publish", stable)
+        self.assertIn('expected_major_minor_branch="release/windows-${version%.*}-publish"', stable)
+        self.assertIn('expected_full_version_branch="release/windows-$version-publish"', stable)
+        self.assertIn('"$PUBLICATION_EVENT_REF" == "$expected_major_minor_branch" ||', stable)
+        self.assertIn('"$PUBLICATION_EVENT_REF" == "$expected_full_version_branch"', stable)
         self.assertIn("SOURCE_SHA: ${{ inputs.source_sha || github.sha }}", stable)
         self.assertIn("PUBLICATION_EVENT_REF: ${{ github.event.ref }}", stable)
         self.assertIn("ref: ${{ inputs.source_sha || github.sha }}", stable)

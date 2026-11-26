@@ -50,7 +50,7 @@ jobs:
             [[ "$SOURCE_SHA" == "$REQUESTED_SOURCE_SHA" ]]
           else
             [[ "$GITHUB_EVENT_NAME" == 'create' ]]
-            [[ "$PUBLICATION_EVENT_REF" =~ ^release/windows-([0-9]+)\.([0-9]+)-publish$ ]]
+            [[ "$PUBLICATION_EVENT_REF" =~ ^release/windows-([0-9]+)\.([0-9]+)(\.([0-9]+))?-publish$ ]]
             [[ "$GITHUB_REF" == "refs/heads/$PUBLICATION_EVENT_REF" ]]
             [[ "$GITHUB_SHA" == "$SOURCE_SHA" ]]
           fi
@@ -134,9 +134,11 @@ jobs:
           version="$(tr -d '\r\n' < VERSION)"
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           if [[ "$GITHUB_EVENT_NAME" == 'create' ]]; then
-            expected_branch="release/windows-${version%.*}-publish"
-            [[ "$PUBLICATION_EVENT_REF" == "$expected_branch" ]]
-            [[ "$GITHUB_REF" == "refs/heads/$expected_branch" ]]
+            expected_major_minor_branch="release/windows-${version%.*}-publish"
+            expected_full_version_branch="release/windows-$version-publish"
+            [[ "$PUBLICATION_EVENT_REF" == "$expected_major_minor_branch" ||
+               "$PUBLICATION_EVENT_REF" == "$expected_full_version_branch" ]]
+            [[ "$GITHUB_REF" == "refs/heads/$PUBLICATION_EVENT_REF" ]]
           fi
           tag="v$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
