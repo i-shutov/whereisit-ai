@@ -226,20 +226,26 @@ fn build_snapshot(
     })
 }
 
+fn compact_entry_capacity(parsed: &mut CtfCatalog) {
+    for disk in &mut parsed.disks {
+        disk.entries.shrink_to_fit();
+    }
+}
+
 pub fn open(v: &Value) -> Result<Value> {
     let open_path = PathBuf::from(text(v, "path")?);
     let source = canonical_source(v)?;
     let captured = ctf_sidecar::capture(&source, MAX_SOURCE_BYTES).map_err(|_| io_failure())?;
     let identity = captured.identity.clone();
-    let parsed = Arc::new(
-        ctf_format::parse_ctf(captured.bytes(), &Limits::default()).map_err(|e| {
-            Error::new(
-                "ctf",
-                format!("CTF parse failed at byte {}: {}", e.offset, e.message),
-            )
-        })?,
-    );
+    let mut parsed = ctf_format::parse_ctf(captured.bytes(), &Limits::default()).map_err(|e| {
+        Error::new(
+            "ctf",
+            format!("CTF parse failed at byte {}: {}", e.offset, e.message),
+        )
+    })?;
     drop(captured);
+    compact_entry_capacity(&mut parsed);
+    let parsed = Arc::new(parsed);
     let serial = GENERATION_COUNTER.fetch_add(1, Ordering::Relaxed);
     let generation = ctf_sidecar::sha256(format!("{}:{serial}", identity.sha256).as_bytes());
     let snapshot = Arc::new(build_snapshot(
@@ -632,7 +638,7 @@ pub fn copy_candidates(v: &Value) -> Result<Value> {
             return Err(failure(
                 "invalid_request",
                 "other_disks_only must be boolean",
-            ))
+            ));
         }
     };
     let source = find_id(&snapshot, source_id)
@@ -767,7 +773,7 @@ fn export_with_job(v: &Value, job: crate::ctf_job::Job) -> Result<Value> {
             return Err(failure(
                 "invalid_request",
                 "CTF preview export supports csv, json or parquet",
-            ))
+            ));
         }
     };
     let output = PathBuf::from(text(v, "output")?);
@@ -826,7 +832,7 @@ fn export_with_job(v: &Value, job: crate::ctf_job::Job) -> Result<Value> {
             return Err(failure(
                 "invalid_request",
                 "other_disks_only must be boolean",
-            ))
+            ));
         }
     };
     job.phase("preview_export")?;
@@ -949,7 +955,7 @@ fn export_with_job(v: &Value, job: crate::ctf_job::Job) -> Result<Value> {
                 return Some(Err(failure(
                     "ctf_limit",
                     "CTF entry size exceeds export schema",
-                )))
+                )));
             }
         };
         let (duplicate_count, duplicate_group) = ("0".to_owned(), String::new());
@@ -1306,6 +1312,74 @@ pub(super) mod tests {
                 .unwrap();
         assert_eq!(second["result"]["items"][0]["id"], 5);
         assert_eq!(fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn entry_capacity_compaction_preserves_ctf_bytes_and_preview_metadata() {
+        let _serial = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("compaction.ctf");
+        let source = CtfCatalog {
+            name: "synthetic compaction 東京".into(),
+            opaque_trailer: vec![37, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, b'G', 0],
+            disks: vec![
+                CtfDisk {
+                    name: "Données".into(),
+                    opaque_header: vec![],
+                    entries: vec![entry("資料", None, EntryKind::Directory), {
+                        let mut file = entry("résumé.txt", Some(0), EntryKind::File);
+                        file.description = "description保留".into();
+                        file.attributes = 0x20;
+                        file.modified_dos = 0x1234;
+                        file.created_dos = 0x5678;
+                        file.accessed_dos = 0x9abc;
+                        file
+                    }],
+                },
+                CtfDisk {
+                    name: "second".into(),
+                    opaque_header: vec![],
+                    entries: vec![entry("β.mkv", None, EntryKind::File)],
+                },
+            ],
+        };
+        let source_bytes = write_ctf(&source).unwrap();
+        fs::write(&path, &source_bytes).unwrap();
+
+        let mut parsed = ctf_format::parse_ctf(&source_bytes, &Limits::default()).unwrap();
+        let before_compaction = write_ctf(&parsed).unwrap();
+        assert_eq!(before_compaction, source_bytes);
+        let old_capacities = parsed
+            .disks
+            .iter()
+            .map(|disk| disk.entries.capacity())
+            .collect::<Vec<_>>();
+        compact_entry_capacity(&mut parsed);
+        assert_eq!(write_ctf(&parsed).unwrap(), before_compaction);
+        for (index, disk) in parsed.disks.iter().enumerate() {
+            assert!(disk.entries.capacity() <= old_capacities[index]);
+        }
+
+        let opened = open(&json!({"path":path})).unwrap();
+        let generation = opened["generation"].as_str().unwrap();
+        let page = children(
+            &json!({"path":path,"generation":generation,"volume_id":1,"parent_id":1,"limit":10}),
+        )
+        .unwrap();
+        assert_eq!(page["result"]["items"][0]["name"], "résumé.txt");
+        assert_eq!(page["result"]["items"][0]["id"], 2);
+        let found = search(&json!({"path":path,"generation":generation,
+            "query":"description:保留","full_count":true,"limit":10}))
+        .unwrap();
+        assert_eq!(found["result"]["total"], 1);
+        assert_eq!(
+            found["result"]["items"][0]["description"],
+            "description保留"
+        );
+        assert_eq!(found["result"]["items"][0]["id"], 2);
+        assert_eq!(fs::read(&path).unwrap(), source_bytes);
     }
 
     #[test]
