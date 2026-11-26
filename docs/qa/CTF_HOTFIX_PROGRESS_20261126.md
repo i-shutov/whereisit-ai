@@ -76,6 +76,20 @@ but does not establish vendor-equivalent latency or satisfy the historical
 150 ms search target. Full-scan text/path latency and installed first-use
 acceptance remain open. No global filename-sort optimization was added.
 
+## Installer artifact prepared, not accepted
+
+The unsigned egui product artifact from successful Windows run `45435317407`
+was downloaded for source commit `aa8b37d`. Its ZIP digest matched GitHub's
+artifact metadata; the setup executable digest matched both `SHA256SUMS.txt`
+and `provenance.json`. Provenance records the expected source/run, Windows x64,
+Rust/egui, no personal catalogs, `stable_ready=false` and
+`candidate_publication_approved=false`. Authenticode reports NotSigned.
+
+The package still has version 1.1.0 inherited from the development branch.
+It is a CI candidate, not a new hotfix release, and must not replace immutable
+published 1.1.0 assets. Download/provenance verification is not installation,
+upgrade or installed-GUI acceptance; those gates remain unexecuted in this run.
+
 ## Remaining release gates
 
 | Gate | Status |
@@ -96,7 +110,12 @@ infer cold disk-cache timing from uncontrolled-cache service measurements.
 ## Next actions
 
 1. Address measured full-scan text/path costs while preserving query semantics,
-   cancellation and source integrity. Code audit identified repeated path buffer
+   cancellation and source integrity. Audit also found full-source SHA checks
+   before and after search requests. A Windows read handle denying write/delete
+   sharing is a candidate to avoid redundant reads, but requires synthetic proof,
+   same-file identity checks and capture from that exact handle before changing
+   the integrity strategy. This is not implemented or measured; retain existing
+   checks and the portable fallback. Code audit identified repeated path buffer
    reconstruction as a bounded candidate; it is not yet a measured improvement.
    Ordinary ASCII name contains already has a no-allocation path; GLOB allocation
    work is a separate workload and must not be claimed as fixing these results.
