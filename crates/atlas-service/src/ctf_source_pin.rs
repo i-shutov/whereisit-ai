@@ -56,7 +56,15 @@ pub(super) fn capture(path: &Path, max_bytes: u64) -> io::Result<(SourcePin, Sna
     let identity = file_id_info(&file)?;
     ensure_path_is_pinned(identity, path)?;
 
+    // The protected length is known. Reserve one extra byte for the EOF probe
+    // instead of geometrically growing a large read buffer and retaining its
+    // freed allocations in the Windows heap while the parsed catalog is built.
+    let capacity = usize::try_from(before.len() + 1)
+        .map_err(|_| invalid("Source size cannot fit in memory"))?;
     let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(capacity)
+        .map_err(|_| io::Error::other("Unable to allocate bounded source buffer"))?;
     file.try_clone()?
         .take(max_bytes + 1)
         .read_to_end(&mut bytes)?;
