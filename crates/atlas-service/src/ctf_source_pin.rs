@@ -162,6 +162,52 @@ mod tests {
     use std::io::Write;
     use tempfile::tempdir;
 
+    #[cfg(windows)]
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CreateFileMappingW(
+            file: *mut std::ffi::c_void,
+            attributes: *mut std::ffi::c_void,
+            protection: u32,
+            maximum_size_high: u32,
+            maximum_size_low: u32,
+            name: *const u16,
+        ) -> *mut std::ffi::c_void;
+        fn MapViewOfFile(
+            mapping: *mut std::ffi::c_void,
+            desired_access: u32,
+            file_offset_high: u32,
+            file_offset_low: u32,
+            bytes_to_map: usize,
+        ) -> *mut std::ffi::c_void;
+        fn UnmapViewOfFile(address: *const std::ffi::c_void) -> i32;
+        fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+    }
+
+    #[cfg(windows)]
+    struct Mapping(*mut std::ffi::c_void);
+
+    #[cfg(windows)]
+    impl Drop for Mapping {
+        fn drop(&mut self) {
+            unsafe {
+                CloseHandle(self.0);
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    struct MappedView(*mut std::ffi::c_void);
+
+    #[cfg(windows)]
+    impl Drop for MappedView {
+        fn drop(&mut self) {
+            unsafe {
+                UnmapViewOfFile(self.0);
+            }
+        }
+    }
+
     #[test]
     fn preexisting_writable_view_without_file_or_mapping_handles_prevents_pin() {
         use std::ffi::c_void;
@@ -366,5 +412,53 @@ mod tests {
             .open(&path)
             .is_err());
         pin.verify(&path).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn preexisting_writable_section_and_view_prevent_pin_capture() {
+        let (_dir, path) = fixture();
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        let raw_mapping = unsafe {
+            CreateFileMappingW(
+                file.as_raw_handle().cast(),
+                std::ptr::null_mut(),
+                0x04, // PAGE_READWRITE
+                0,
+                0,
+                std::ptr::null(),
+            )
+        };
+        assert!(
+            !raw_mapping.is_null(),
+            "CreateFileMappingW failed: {}",
+            io::Error::last_os_error()
+        );
+        let mapping = Mapping(raw_mapping);
+
+        // The section keeps write-capable access after the original file handle
+        // is closed, so a read-only source pin must fail before publication.
+        drop(file);
+        assert!(capture(&path, 100).is_err());
+
+        let raw_view = unsafe { MapViewOfFile(mapping.0, 0x0002, 0, 0, 0) }; // FILE_MAP_WRITE
+        assert!(
+            !raw_view.is_null(),
+            "MapViewOfFile failed: {}",
+            io::Error::last_os_error()
+        );
+        let view = MappedView(raw_view);
+        drop(mapping);
+
+        // The writable view remains usable after closing the section handle.
+        unsafe {
+            *(view.0.cast::<u8>()) = b'F';
+        }
+        assert!(capture(&path, 100).is_err());
+        drop(view);
     }
 }
