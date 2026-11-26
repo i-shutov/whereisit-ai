@@ -13,6 +13,193 @@ fn item(parent_id: Option<i64>, name: &str, path: &str, kind: &str, size: u64) -
     }
 }
 
+fn search_totals(catalog: &Catalog, query: &str, volume_id: Option<i64>) -> (u64, u64) {
+    let page = catalog.search(query, volume_id, 0, 100).unwrap();
+    (page.total, page.items.iter().map(|entry| entry.size).sum())
+}
+
+fn analytics_request(
+    group_by: &str,
+    highlight_query: &str,
+    volume_id: Option<i64>,
+    folder_entry_id: Option<i64>,
+    category_id: Option<i64>,
+) -> AnalyticsRequest {
+    AnalyticsRequest {
+        volume_id,
+        folder_entry_id,
+        group_by: group_by.into(),
+        highlight_query: Some(highlight_query.into()),
+        category_id,
+        max_depth: 8,
+        max_nodes: 100,
+    }
+}
+
+#[test]
+fn analytics_highlights_use_query_compatible_metadata_tables_and_scopes() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("analytics-highlight.sqlite");
+    let mut catalog = Catalog::open(&db).unwrap();
+    let mut branch = 0;
+    let mut sigma_file = 0;
+    let mut tag_file = 0;
+    let mut outside_file = 0;
+    catalog
+        .bulk_import("Synthetic", "offline", |writer| {
+            branch = writer.insert(&item(None, "Branch", "Branch", "directory", 0))?;
+            sigma_file = writer.insert(&item(
+                Some(branch),
+                "Σigma.txt",
+                "Branch/Σigma.txt",
+                "file",
+                17,
+            ))?;
+            tag_file = writer.insert(&item(
+                Some(branch),
+                "tagged.txt",
+                "Branch/tagged.txt",
+                "file",
+                23,
+            ))?;
+            outside_file = writer.insert(&item(None, "outside.txt", "outside.txt", "file", 31))?;
+            Ok(())
+        })
+        .unwrap();
+    catalog
+        .update_entry(sigma_file, "café description", "blue label")
+        .unwrap();
+    catalog
+        .update_entry(tag_file, "plain description", "café tag")
+        .unwrap();
+    catalog
+        .update_entry(outside_file, "café description", "green")
+        .unwrap();
+    let category = catalog.create_category("Synthetic category", None).unwrap();
+    catalog.assign_category(sigma_file, category).unwrap();
+    drop(catalog);
+
+    let catalog = Catalog::open_readonly(&db).unwrap();
+    let volume_id = 1;
+
+    let description_query = "description:café OR name:Σ";
+    let expected = search_totals(&catalog, description_query, Some(volume_id));
+    assert_eq!(expected, (2, 48));
+    let description = catalog
+        .analytics(
+            &analytics_request("volumes", description_query, Some(volume_id), None, None),
+            || false,
+        )
+        .unwrap();
+    assert_eq!(
+        (
+            description.root.matched_files,
+            description.root.matched_bytes
+        ),
+        expected
+    );
+
+    let tag_query = "tag:café";
+    let expected = search_totals(&catalog, tag_query, Some(volume_id));
+    assert_eq!(expected, (1, 23));
+    let tags = catalog
+        .analytics(
+            &analytics_request("extensions", tag_query, Some(volume_id), None, None),
+            || false,
+        )
+        .unwrap();
+    assert_eq!((tags.root.matched_files, tags.root.matched_bytes), expected);
+    let text_group = tags
+        .root
+        .children
+        .iter()
+        .find(|group| group.id == "ext:txt")
+        .unwrap();
+    assert_eq!(
+        (text_group.matched_files, text_group.matched_bytes),
+        expected
+    );
+
+    let default_text_query = "café";
+    let expected = search_totals(&catalog, default_text_query, Some(volume_id));
+    assert_eq!(expected, (3, 71));
+    let default_text = catalog
+        .analytics(
+            &analytics_request(
+                "categories",
+                default_text_query,
+                Some(volume_id),
+                None,
+                None,
+            ),
+            || false,
+        )
+        .unwrap();
+    assert_eq!(
+        (
+            default_text.root.matched_files,
+            default_text.root.matched_bytes
+        ),
+        expected
+    );
+
+    let category_query = format!("({description_query}) AND category_id:{category}");
+    let expected = search_totals(&catalog, &category_query, Some(volume_id));
+    assert_eq!(expected, (1, 17));
+    let categorized = catalog
+        .analytics(
+            &analytics_request(
+                "categories",
+                description_query,
+                Some(volume_id),
+                None,
+                Some(category),
+            ),
+            || false,
+        )
+        .unwrap();
+    assert_eq!(
+        (
+            categorized.root.matched_files,
+            categorized.root.matched_bytes
+        ),
+        expected
+    );
+    let category_group = categorized
+        .root
+        .children
+        .iter()
+        .find(|group| group.id == format!("category:{category}"))
+        .unwrap();
+    assert_eq!(
+        (category_group.matched_files, category_group.matched_bytes),
+        expected
+    );
+
+    let branch_query = format!("branch_id:{branch}");
+    let expected = search_totals(&catalog, &branch_query, Some(volume_id));
+    assert_eq!(expected, (2, 40));
+    let branch_data = catalog
+        .analytics(
+            &analytics_request(
+                "volumes",
+                &branch_query,
+                Some(volume_id),
+                Some(branch),
+                None,
+            ),
+            || false,
+        )
+        .unwrap();
+    assert_eq!(
+        (
+            branch_data.root.matched_files,
+            branch_data.root.matched_bytes
+        ),
+        expected
+    );
+}
+
 #[test]
 fn analytics_counts_logical_files_once_and_preserves_unicode_scope() {
     let dir = tempfile::tempdir().unwrap();

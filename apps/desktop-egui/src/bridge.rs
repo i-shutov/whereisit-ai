@@ -255,6 +255,7 @@ pub enum Purpose {
         generation: u64,
         db: String,
         slices: bool,
+        linked_generation: Option<String>,
     },
     AnalyticsCancel,
     LocalAnalyzer {
@@ -327,16 +328,68 @@ impl CommandBus {
         if let Purpose::Analytics { job_id, .. } = &purpose {
             // The backend prepare call only registers a process-local cancellation token. It
             // must complete before the query worker starts so cancel-before-first-row is safe.
-            if let Err(error) = atlas_service::prepare_analytics_job(job_id) {
-                let response = json!({"ok":false,"error":{"code":"analytics_prepare_failed","message":error.to_string()}});
-                let _ = self.tx.send(Reply {
+            let is_preview_analytics = request["op"] == "ctf_preview_analytics";
+            #[cfg(not(test))]
+            let preview_prepared = if is_preview_analytics {
+                match atlas_service::prepare_ctf_preview_analytics_job(&request.to_string()) {
+                    Ok(prepared) => Some(prepared),
+                    Err(error) => {
+                        let response = json!({"ok":false,"error":{"code":"analytics_prepare_failed","message":error.to_string()}});
+                        let _ = self.tx.send(Reply {
+                            id,
+                            purpose,
+                            response,
+                        });
+                        ctx.request_repaint();
+                        return id;
+                    }
+                }
+            } else {
+                None
+            };
+            #[cfg(test)]
+            let _preview_prepared: Option<
+                atlas_service::PreparedCtfPreviewAnalyticsJob,
+            > = None;
+
+            if !is_preview_analytics {
+                if let Err(error) = atlas_service::prepare_analytics_job(job_id) {
+                    let response = json!({"ok":false,"error":{"code":"analytics_prepare_failed","message":error.to_string()}});
+                    let _ = self.tx.send(Reply {
+                        id,
+                        purpose,
+                        response,
+                    });
+                    ctx.request_repaint();
+                    return id;
+                }
+            }
+            let tx = self.tx.clone();
+            let repaint = ctx.clone();
+            #[cfg(test)]
+            let handler = self.handler.clone();
+            thread::spawn(move || {
+                #[cfg(test)]
+                let response = handler(&request);
+                #[cfg(not(test))]
+                let response = if let Some(prepared) = preview_prepared {
+                    serde_json::from_str(
+                        &atlas_service::dispatch_json_with_prepared_ctf_preview_analytics_job(
+                            prepared,
+                        ),
+                    )
+                    .unwrap_or_else(|_| invalid_backend_response())
+                } else {
+                    dispatch(&request)
+                };
+                let _ = tx.send(Reply {
                     id,
                     purpose,
                     response,
                 });
-                ctx.request_repaint();
-                return id;
-            }
+                repaint.request_repaint();
+            });
+            return id;
         }
         let tx = self.tx.clone();
         let repaint = ctx.clone();
@@ -364,11 +417,13 @@ impl CommandBus {
 
 fn dispatch(request: &Value) -> Value {
     let raw = atlas_service::dispatch_json(&request.to_string());
-    serde_json::from_str(&raw).unwrap_or_else(|_| {
-        json!({
-            "ok":false, "error":{"code":"invalid_backend_response",
-                "message":"Service returned invalid JSON"}
-        })
+    serde_json::from_str(&raw).unwrap_or_else(|_| invalid_backend_response())
+}
+
+fn invalid_backend_response() -> Value {
+    json!({
+        "ok":false, "error":{"code":"invalid_backend_response",
+            "message":"Service returned invalid JSON"}
     })
 }
 

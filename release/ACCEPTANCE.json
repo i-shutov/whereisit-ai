@@ -5,6 +5,13 @@
   "stable_ready": false,
   "post_release_defects": [
     {
+      "id": "P1-ANALYTICS-TEXT-HIGHLIGHT",
+      "status": "OPEN",
+      "reported_on": "2026-11-24",
+      "summary": "Analytics highlight predicates for description, tags and full text query columns absent from entries_core and fail instead of returning matched counters.",
+      "report": "docs/qa/ANALYTICS_HIGHLIGHT_DEFECT_20261124.md"
+    },
+    {
       "id": "P1-CTF-COLD-OPEN",
       "status": "OPEN",
       "reported_on": "2026-11-24",

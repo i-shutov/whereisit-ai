@@ -13,6 +13,7 @@ mod ctf_export;
 mod ctf_job;
 mod ctf_mirror;
 mod ctf_preview;
+mod ctf_preview_analytics;
 #[path = "../ctf_sidecar/mod.rs"]
 mod ctf_sidecar;
 mod dates;
@@ -45,6 +46,44 @@ pub fn cancel_analytics_job(job_id: &str) -> Result<()> {
     analytics::cancel(&json!({"job_id":job_id})).map(|_| ())
 }
 
+/// A single-use CTF analytics request with an already registered cancellation
+/// slot. Dropping it before dispatch releases that slot without filesystem I/O.
+pub struct PreparedCtfPreviewAnalyticsJob {
+    request: Value,
+    job: ctf_job::Job,
+}
+
+/// Parse a bounded request and reserve its cancellation slot before launching a
+/// worker. Does not open or hash the CTF, query a database, or evaluate metadata.
+pub fn prepare_ctf_preview_analytics_job(input: &str) -> Result<PreparedCtfPreviewAnalyticsJob> {
+    let request = parse_request(input)?;
+    if request.get("op").and_then(Value::as_str) != Some("ctf_preview_analytics") {
+        return Err(Error::new(
+            "invalid_request",
+            "Expected CTF preview analytics",
+        ));
+    }
+    text(&request, "job_id")?;
+    let job = ctf_job::Job::start(&request)?;
+    Ok(PreparedCtfPreviewAnalyticsJob { request, job })
+}
+
+pub fn cancel_ctf_preview_analytics_job(job_id: &str) -> Result<()> {
+    ctf_job::cancel(&json!({"job_id":job_id})).map(|_| ())
+}
+
+/// Consume the exact prepared request on a worker. There is no second request
+/// argument that could accidentally reuse a cancellation slot for another source.
+pub fn dispatch_json_with_prepared_ctf_preview_analytics_job(
+    prepared: PreparedCtfPreviewAnalyticsJob,
+) -> String {
+    let PreparedCtfPreviewAnalyticsJob { request, job } = prepared;
+    format_dispatch_result(std::panic::catch_unwind(|| {
+        let data = ctf_preview_analytics::analytics(&request, job)?;
+        Ok(json!({"ok":true,"data":data}))
+    }))
+}
+
 /// Reserve a local analyzer job ID before the native client starts its worker thread.
 /// Performs bounded in-memory validation only; it does not inspect the selected path.
 pub fn prepare_local_analyzer_job(job_id: &str) -> Result<()> {
@@ -64,7 +103,10 @@ pub fn prepare_local_analyzer_operation(job_id: &str, operation_id: &str) -> Res
 }
 
 pub fn dispatch_json(input: &str) -> String {
-    let result = std::panic::catch_unwind(|| dispatch(input));
+    format_dispatch_result(std::panic::catch_unwind(|| dispatch(input)))
+}
+
+fn format_dispatch_result(result: std::thread::Result<Result<Value>>) -> String {
     match result {
         Ok(Ok(value)) => value.to_string(),
         Ok(Err(e)) => json!({"ok":false,"error":{"code":e.code,"message":e.message}}).to_string(),
@@ -72,7 +114,7 @@ pub fn dispatch_json(input: &str) -> String {
     }
 }
 
-fn dispatch(input: &str) -> Result<Value> {
+fn parse_request(input: &str) -> Result<Value> {
     if input.len() > 1024 * 1024 {
         return Err(Error::new("invalid_request", "Request exceeds 1 MiB"));
     }
@@ -97,6 +139,11 @@ fn dispatch(input: &str) -> Result<Value> {
             }
         }
     }
+    Ok(v)
+}
+
+fn dispatch(input: &str) -> Result<Value> {
+    let v = parse_request(input)?;
     let op = v
         .get("op")
         .or_else(|| v.get("command"))
@@ -126,6 +173,7 @@ fn dispatch(input: &str) -> Result<Value> {
         "ctf_preview_search" => ctf_preview::search(&v)?,
         "ctf_preview_copy_candidates" => ctf_preview::copy_candidates(&v)?,
         "ctf_preview_export" => ctf_preview::export(&v)?,
+        "ctf_preview_analytics" => ctf_preview_analytics::analytics(&v, ctf_job::Job::start(&v)?)?,
         "ctf_preview_close" => ctf_preview::close(&v)?,
         "ctf_progress" => ctf_job::progress(&v)?,
         "ctf_cancel" => ctf_job::cancel(&v)?,
@@ -226,6 +274,73 @@ pub(crate) fn unsigned(v: &Value, key: &str, default: u64) -> Result<u64> {
 }
 
 pub(crate) use ctf_sidecar::digest_hex;
+
+#[cfg(test)]
+mod prepared_ctf_analytics_contract {
+    use super::*;
+
+    fn request(id: &str) -> String {
+        json!({"op":"ctf_preview_analytics","job_id":id,
+            "path":"nonexistent-synthetic.ctf","generation":"synthetic"})
+        .to_string()
+    }
+
+    #[test]
+    fn cancellation_before_worker_dispatch_prevents_source_access_and_releases_slot() {
+        let id = "prepared-ctf-analytics-before-dispatch";
+        let prepared = prepare_ctf_preview_analytics_job(&request(id)).unwrap();
+        cancel_ctf_preview_analytics_job(id).unwrap();
+        let response: Value = serde_json::from_str(
+            &dispatch_json_with_prepared_ctf_preview_analytics_job(prepared),
+        )
+        .unwrap();
+        assert_eq!(response["error"]["code"], "cancelled");
+        assert_eq!(
+            cancel_ctf_preview_analytics_job(id).unwrap_err().code,
+            "not_found"
+        );
+        drop(prepare_ctf_preview_analytics_job(&request(id)).unwrap());
+    }
+
+    #[test]
+    fn abandoned_and_duplicate_preparations_keep_slot_ownership_correct() {
+        let id = "prepared-ctf-analytics-slot-ownership";
+        let prepared = prepare_ctf_preview_analytics_job(&request(id)).unwrap();
+        assert_eq!(
+            prepare_ctf_preview_analytics_job(&request(id))
+                .err()
+                .unwrap()
+                .code,
+            "job_exists"
+        );
+        cancel_ctf_preview_analytics_job(id).unwrap();
+        drop(prepared);
+        drop(prepare_ctf_preview_analytics_job(&request(id)).unwrap());
+        assert_eq!(
+            cancel_ctf_preview_analytics_job(id).unwrap_err().code,
+            "not_found"
+        );
+    }
+
+    #[test]
+    fn preparation_rejects_other_operations_missing_ids_and_oversize_requests() {
+        for input in [
+            r#"{"op":"analytics","job_id":"wrong-kind"}"#,
+            r#"{"op":"ctf_preview_analytics"}"#,
+            "not JSON",
+        ] {
+            assert!(prepare_ctf_preview_analytics_job(input).is_err());
+        }
+        let too_large = " ".repeat(1024 * 1024 + 1);
+        assert_eq!(
+            prepare_ctf_preview_analytics_job(&too_large)
+                .err()
+                .unwrap()
+                .code,
+            "invalid_request"
+        );
+    }
+}
 
 #[cfg(test)]
 mod modern_sha2_regression {

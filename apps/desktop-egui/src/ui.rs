@@ -256,6 +256,7 @@ pub struct DesktopApp {
     workspace_tab: WorkspaceTab,
     workspace_tab_focus_request: bool,
     analytics_job_id: Option<String>,
+    analytics_preview_job: bool,
     analytics_request_id: Option<u64>,
     analytics_generation: u64,
     analytics_db: Option<String>,
@@ -271,6 +272,7 @@ pub struct DesktopApp {
     slices_dimension: usize,
     analytics_loaded: bool,
     slices_job_id: Option<String>,
+    slices_preview_job: bool,
     slices_request_id: Option<u64>,
     slices_generation: u64,
     slices_db: Option<String>,
@@ -404,6 +406,7 @@ impl DesktopApp {
             workspace_tab: WorkspaceTab::Search,
             workspace_tab_focus_request: false,
             analytics_job_id: None,
+            analytics_preview_job: false,
             analytics_request_id: None,
             analytics_generation: 0,
             analytics_db: None,
@@ -419,6 +422,7 @@ impl DesktopApp {
             slices_dimension: 0,
             analytics_loaded: false,
             slices_job_id: None,
+            slices_preview_job: false,
             slices_request_id: None,
             slices_generation: 0,
             slices_db: None,
@@ -886,12 +890,20 @@ impl DesktopApp {
                 &egui::Context::default(),
             );
         }
-        for job_id in [self.analytics_job_id.take(), self.slices_job_id.take()]
-            .into_iter()
-            .flatten()
-        {
-            let _ = atlas_service::cancel_analytics_job(&job_id);
+        for (job_id, preview) in [
+            (self.analytics_job_id.take(), self.analytics_preview_job),
+            (self.slices_job_id.take(), self.slices_preview_job),
+        ] {
+            if let Some(job_id) = job_id {
+                if preview {
+                    let _ = atlas_service::cancel_ctf_preview_analytics_job(&job_id);
+                } else {
+                    let _ = atlas_service::cancel_analytics_job(&job_id);
+                }
+            }
         }
+        self.analytics_preview_job = false;
+        self.slices_preview_job = false;
         self.analytics_generation = self.analytics_generation.wrapping_add(1);
         self.slices_generation = self.slices_generation.wrapping_add(1);
         self.analytics_request_id = None;
@@ -900,6 +912,11 @@ impl DesktopApp {
         self.slices_db = None;
         self.analytics_data = None;
         self.slices_data = None;
+        self.analytics_volume = None;
+        self.analytics_folder = None;
+        self.analytics_category_id = None;
+        self.slices_volume = None;
+        self.slices_category = None;
         self.analytics_loaded = false;
         self.slices_loaded = false;
         self.physical.close_if_scope_changed(None);
@@ -1658,6 +1675,7 @@ impl DesktopApp {
             generation,
             db,
             slices,
+            linked_generation,
         } = &reply.purpose
         {
             let current = if *slices {
@@ -1671,16 +1689,23 @@ impl DesktopApp {
                     && self.analytics_job_id.as_deref() == Some(job_id.as_str())
                     && self.analytics_db.as_deref() == Some(db.as_str())
             };
-            if !current || self.db.as_deref() != Some(db.as_str()) {
+            let linked_current = linked_generation.as_ref().is_none_or(|source_generation| {
+                self.linked_ctf.as_ref().is_some_and(|link| {
+                    link.preview && link.path == *db && link.generation == *source_generation
+                })
+            });
+            if !current || self.db.as_deref() != Some(db.as_str()) || !linked_current {
                 return;
             }
             if *slices {
                 self.slices_request_id = None;
                 self.slices_job_id = None;
+                self.slices_preview_job = false;
                 self.slices_loaded = true;
             } else {
                 self.analytics_request_id = None;
                 self.analytics_job_id = None;
+                self.analytics_preview_job = false;
                 self.analytics_loaded = true;
             }
             if reply.response["ok"] != true {
@@ -1707,7 +1732,27 @@ impl DesktopApp {
                     }
                 }
             } else {
-                let data = &reply.response["data"];
+                let data = if linked_generation.is_some() {
+                    match self
+                        .linked_ctf
+                        .as_ref()
+                        .and_then(|link| link.unwrap_reply(&reply.response).ok())
+                    {
+                        Some(response) => response["data"].clone(),
+                        None => {
+                            if *slices {
+                                self.slices_error =
+                                    Some("CTF analytics response is stale or invalid".into());
+                            } else {
+                                self.analytics_error =
+                                    Some("CTF analytics response is stale or invalid".into());
+                            }
+                            return;
+                        }
+                    }
+                } else {
+                    reply.response["data"].clone()
+                };
                 if data["root"].is_object()
                     && data["totals"].is_object()
                     && data["breadcrumbs"].is_array()
@@ -2879,42 +2924,46 @@ impl DesktopApp {
         let Some(db) = self.db.clone() else {
             return;
         };
-        if self.linked_ctf.is_some() {
+        if self.linked_ctf.as_ref().is_some_and(|link| !link.preview) {
+            let message = self
+                .t(
+                    "Аналитика для связанного CTF-источника недоступна.",
+                    "Analytics is unavailable for a linked CTF source.",
+                )
+                .to_owned();
             if slices {
                 self.slices_loaded = true;
-                self.slices_error = Some(
-                    self.t(
-                        "Аналитика для связанного CTF-источника недоступна.",
-                        "Analytics is unavailable for a linked CTF source.",
-                    )
-                    .to_owned(),
-                );
+                self.slices_error = Some(message);
             } else {
                 self.analytics_loaded = true;
-                self.analytics_error = Some(
-                    self.t(
-                        "Аналитика для связанного CTF-источника недоступна.",
-                        "Analytics is unavailable for a linked CTF source.",
-                    )
-                    .to_owned(),
-                );
+                self.analytics_error = Some(message);
             }
             return;
         }
         if self.active_request.is_some() {
             return;
         }
-        let old = if slices {
-            self.slices_job_id.take()
+        let (old, old_preview) = if slices {
+            let old = self.slices_job_id.take();
+            let preview = self.slices_preview_job;
+            self.slices_preview_job = false;
+            (old, preview)
         } else {
-            self.analytics_job_id.take()
+            let old = self.analytics_job_id.take();
+            let preview = self.analytics_preview_job;
+            self.analytics_preview_job = false;
+            (old, preview)
         };
         if let Some(old) = old {
-            let _ = self.bus.send(
-                Purpose::AnalyticsCancel,
-                analytics_cancel_request(&old),
-                ctx,
-            );
+            if old_preview {
+                let _ = atlas_service::cancel_ctf_preview_analytics_job(&old);
+            } else {
+                let _ = self.bus.send(
+                    Purpose::AnalyticsCancel,
+                    analytics_cancel_request(&old),
+                    ctx,
+                );
+            }
         }
         let generation = if slices {
             self.slices_generation = self.slices_generation.wrapping_add(1);
@@ -2935,7 +2984,7 @@ impl DesktopApp {
         } else {
             self.analytics_category_id
         };
-        let request = analytics_request(
+        let mut request = analytics_request(
             &db,
             &job_id,
             volume,
@@ -2952,15 +3001,37 @@ impl DesktopApp {
             },
             category,
         );
+        let linked_generation = self
+            .linked_ctf
+            .as_ref()
+            .filter(|link| link.preview)
+            .map(|link| link.generation.clone());
+        if let Some(link) = self.linked_ctf.as_ref().filter(|link| link.preview) {
+            match link.rewrite(request) {
+                Ok(mapped) => request = mapped,
+                Err(error) => {
+                    if slices {
+                        self.slices_loaded = true;
+                        self.slices_error = Some(error);
+                    } else {
+                        self.analytics_loaded = true;
+                        self.analytics_error = Some(error);
+                    }
+                    return;
+                }
+            }
+        }
         if !slices {
             self.analytics_applied_highlight = self.analytics_highlight.trim().to_owned();
         }
+        let preview_job = linked_generation.is_some();
         let request_id = self.bus.send(
             Purpose::Analytics {
                 job_id: job_id.clone(),
                 generation,
                 db: db.clone(),
                 slices,
+                linked_generation,
             },
             request,
             ctx,
@@ -2968,6 +3039,7 @@ impl DesktopApp {
         if slices {
             self.slices_request_id = Some(request_id);
             self.slices_job_id = Some(job_id);
+            self.slices_preview_job = preview_job;
             self.slices_db = Some(db);
             self.slices_data = None;
             self.slices_error = None;
@@ -2976,6 +3048,7 @@ impl DesktopApp {
         } else {
             self.analytics_request_id = Some(request_id);
             self.analytics_job_id = Some(job_id);
+            self.analytics_preview_job = preview_job;
             self.analytics_db = Some(db);
             self.analytics_data = None;
             self.analytics_error = None;
@@ -2985,17 +3058,27 @@ impl DesktopApp {
     }
 
     fn cancel_analytics(&mut self, ctx: &egui::Context, slices: bool, user_cancelled: bool) {
-        let job_id = if slices {
-            self.slices_job_id.take()
+        let (job_id, preview) = if slices {
+            let job_id = self.slices_job_id.take();
+            let preview = self.slices_preview_job;
+            self.slices_preview_job = false;
+            (job_id, preview)
         } else {
-            self.analytics_job_id.take()
+            let job_id = self.analytics_job_id.take();
+            let preview = self.analytics_preview_job;
+            self.analytics_preview_job = false;
+            (job_id, preview)
         };
         if let Some(job_id) = job_id {
-            let _ = self.bus.send(
-                Purpose::AnalyticsCancel,
-                analytics_cancel_request(&job_id),
-                ctx,
-            );
+            if preview {
+                let _ = atlas_service::cancel_ctf_preview_analytics_job(&job_id);
+            } else {
+                let _ = self.bus.send(
+                    Purpose::AnalyticsCancel,
+                    analytics_cancel_request(&job_id),
+                    ctx,
+                );
+            }
             if slices {
                 self.slices_cancelled = user_cancelled;
                 self.slices_loaded = user_cancelled;
@@ -4971,10 +5054,23 @@ impl DesktopApp {
             self.go_back(ctx);
         }
         if cancel_scan {
-            if self.ctf_job_id.is_some() {
-                self.cancel_ctf_job(ctx);
-            } else {
-                self.request_scan_cancel(ctx);
+            let canceled_workspace_analytics = match self.workspace_tab {
+                WorkspaceTab::VolumeMap if self.analytics_job_id.is_some() => {
+                    self.cancel_analytics(ctx, false, true);
+                    true
+                }
+                WorkspaceTab::Slices if self.slices_job_id.is_some() => {
+                    self.cancel_analytics(ctx, true, true);
+                    true
+                }
+                _ => false,
+            };
+            if !canceled_workspace_analytics {
+                if self.ctf_job_id.is_some() {
+                    self.cancel_ctf_job(ctx);
+                } else {
+                    self.request_scan_cancel(ctx);
+                }
             }
         }
     }
@@ -5093,6 +5189,7 @@ mod shortcut_tests {
                     generation: 3,
                     db: "catalog.sqlite".into(),
                     slices: false,
+                    linked_generation: None,
                 },
                 response: json!({"ok":true,"data":{"root":{"id":"stale"}}}),
             },
@@ -5100,6 +5197,26 @@ mod shortcut_tests {
         );
         assert_eq!(app.analytics_data.as_ref().unwrap()["root"]["id"], "kept");
         assert_eq!(app.analytics_job_id.as_deref(), Some("new-job"));
+    }
+
+    #[test]
+    fn catalog_clear_resets_numeric_analytics_scopes_for_map_and_slices() {
+        let ctx = egui::Context::default();
+        let mut app = DesktopApp::with_context(&ctx, None);
+        app.db = Some("old-catalog.sqlite".into());
+        app.analytics_volume = Some(7);
+        app.analytics_folder = Some(91);
+        app.analytics_category_id = Some(12);
+        app.slices_volume = Some(7);
+        app.slices_category = Some(12);
+
+        app.clear_catalog();
+
+        assert!(app.analytics_volume.is_none());
+        assert!(app.analytics_folder.is_none());
+        assert!(app.analytics_category_id.is_none());
+        assert!(app.slices_volume.is_none());
+        assert!(app.slices_category.is_none());
     }
 
     #[test]
@@ -6031,6 +6148,71 @@ mod shortcut_tests {
         output.textures_delta.clear();
         assert!(app.scan_cancel_requested);
         assert!(app.scan_cancel_request.is_some());
+    }
+
+    #[test]
+    fn escape_cancels_active_preview_analytics_before_other_job_kinds() {
+        for (index, workspace) in [WorkspaceTab::VolumeMap, WorkspaceTab::Slices]
+            .into_iter()
+            .enumerate()
+        {
+            let ctx = egui::Context::default();
+            let mut app = DesktopApp::with_context(&ctx, None);
+            app.workspace_tab = workspace;
+            let job_id = format!("escape-preview-analytics-{}-{index}", std::process::id());
+            let prepared = atlas_service::prepare_ctf_preview_analytics_job(
+                &json!({"op":"ctf_preview_analytics","job_id":job_id,
+                    "path":"synthetic-no-open.ctf","generation":"synthetic"})
+                .to_string(),
+            )
+            .unwrap();
+            if workspace == WorkspaceTab::VolumeMap {
+                app.analytics_job_id = Some(job_id.clone());
+                app.analytics_preview_job = true;
+                app.slices_job_id = Some("out-of-scope-slices-job".into());
+            } else {
+                app.slices_job_id = Some(job_id.clone());
+                app.slices_preview_job = true;
+                app.analytics_job_id = Some("out-of-scope-map-job".into());
+            }
+            app.ctf_job_id = Some("out-of-scope-ctf-job".into());
+            app.ctf_job_registered = true;
+            app.scan_job_id = Some("out-of-scope-scan-job".into());
+            app.scan_registered = true;
+
+            let input = key_input(egui::Key::Escape, egui::Modifiers::default());
+            let mut output = ctx.run_pass(input, |ctx| app.handle_shortcuts(ctx));
+            output.textures_delta.clear();
+
+            if workspace == WorkspaceTab::VolumeMap {
+                assert!(app.analytics_job_id.is_none());
+                assert!(app.analytics_cancelled);
+                assert_eq!(
+                    app.slices_job_id.as_deref(),
+                    Some("out-of-scope-slices-job")
+                );
+            } else {
+                assert!(app.slices_job_id.is_none());
+                assert!(app.slices_cancelled);
+                assert_eq!(
+                    app.analytics_job_id.as_deref(),
+                    Some("out-of-scope-map-job")
+                );
+            }
+            assert_eq!(app.ctf_job_id.as_deref(), Some("out-of-scope-ctf-job"));
+            assert_eq!(app.scan_job_id.as_deref(), Some("out-of-scope-scan-job"));
+            assert!(app.ctf_cancel_request.is_none());
+            assert!(app.scan_cancel_request.is_none());
+            assert!(!app.scan_cancel_requested);
+            atlas_service::cancel_ctf_preview_analytics_job(&job_id).unwrap();
+            drop(prepared);
+            assert_eq!(
+                atlas_service::cancel_ctf_preview_analytics_job(&job_id)
+                    .unwrap_err()
+                    .code,
+                "not_found"
+            );
+        }
     }
 
     #[test]

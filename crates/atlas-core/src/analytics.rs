@@ -115,6 +115,7 @@ impl Catalog {
         } else {
             crate::query::compile(query_text)?
         };
+        let match_table = self.query_table(query_text)?;
         let tx = self.conn().unchecked_transaction()?;
         let volume = req.volume_id;
         if let Some(id) = volume {
@@ -193,6 +194,7 @@ impl Catalog {
             &match_sql,
             &match_args,
             category_id,
+            match_table,
         )?;
         check(&cancelled)?;
         root.matched_files = root_match_files;
@@ -234,7 +236,7 @@ impl Catalog {
                     &tx,
                     volume,
                     req.folder_entry_id,
-                    (&match_sql, &match_args),
+                    (&match_sql, &match_args, match_table),
                     &req.group_by,
                     &group.id,
                     category_id,
@@ -267,8 +269,15 @@ impl Catalog {
                     None,
                 ));
                 root.children.last_mut().unwrap().item_count = n;
-                let (mf, mb) =
-                    matched_totals(&tx, Some(id), None, &match_sql, &match_args, category_id)?;
+                let (mf, mb) = matched_totals(
+                    &tx,
+                    Some(id),
+                    None,
+                    &match_sql,
+                    &match_args,
+                    category_id,
+                    match_table,
+                )?;
                 root.children.last_mut().unwrap().matched_files = mf;
                 root.children.last_mut().unwrap().matched_bytes = mb;
                 queue.push_back((None, 0, vec![root.children.len() - 1]));
@@ -333,6 +342,7 @@ impl Catalog {
                     &match_sql,
                     &match_args,
                     category_id,
+                    match_table,
                 )?;
                 child.matched_files = mf;
                 child.matched_bytes = mb;
@@ -451,11 +461,12 @@ fn matched_totals(
     predicate: &str,
     args: &[rusqlite::types::Value],
     category: Option<i64>,
+    table: &str,
 ) -> Result<(u64, u64)> {
     if predicate == "0" {
         return Ok((0, 0));
     }
-    let sql=format!("{} SELECT COUNT(*),COALESCE(SUM(size),0) FROM entries_core WHERE kind='file' AND id IN (SELECT id FROM scoped) AND (?3 IS NULL OR EXISTS(SELECT 1 FROM entry_categories ec WHERE ec.entry_id=entries_core.id AND ec.category_id=?3)) AND ({predicate})",scope_cte(v,f));
+    let sql=format!("{} SELECT COUNT(*),COALESCE(SUM(size),0) FROM {table} WHERE kind='file' AND id IN (SELECT id FROM scoped) AND (?3 IS NULL OR EXISTS(SELECT 1 FROM entry_categories ec WHERE ec.entry_id={table}.id AND ec.category_id=?3)) AND ({predicate})",scope_cte(v,f));
     let mut values = vec![v.into(), f.into(), category.into()];
     values.extend_from_slice(args);
     c.query_row(&sql, rusqlite::params_from_iter(values.iter()), |r| {
@@ -467,12 +478,12 @@ fn matched_group_totals(
     c: &rusqlite::Connection,
     v: Option<i64>,
     f: Option<i64>,
-    highlight: (&str, &[rusqlite::types::Value]),
+    highlight: (&str, &[rusqlite::types::Value], &str),
     group: &str,
     id: &str,
     category: Option<i64>,
 ) -> Result<(u64, u64)> {
-    let (predicate, args) = highlight;
+    let (predicate, args, table) = highlight;
     if predicate == "0" {
         return Ok((0, 0));
     }
@@ -484,9 +495,9 @@ fn matched_group_totals(
         )
     } else {
         let raw = id.strip_prefix("category:").unwrap_or("uncategorized");
-        (format!("COALESCE((SELECT MIN(category_id) FROM entry_categories WHERE entry_id=entries_core.id),0)=?{group_param}"),raw.parse::<i64>().ok().map(rusqlite::types::Value::Integer).unwrap_or(rusqlite::types::Value::Integer(0)))
+        (format!("COALESCE((SELECT MIN(category_id) FROM entry_categories WHERE entry_id={table}.id),0)=?{group_param}"),raw.parse::<i64>().ok().map(rusqlite::types::Value::Integer).unwrap_or(rusqlite::types::Value::Integer(0)))
     };
-    let sql=format!("{} SELECT COUNT(*),COALESCE(SUM(size),0) FROM entries_core WHERE kind='file' AND id IN (SELECT id FROM scoped) AND (?3 IS NULL OR EXISTS(SELECT 1 FROM entry_categories ec WHERE ec.entry_id=entries_core.id AND ec.category_id=?3)) AND ({predicate}) AND ({extra})",scope_cte(v,f));
+    let sql=format!("{} SELECT COUNT(*),COALESCE(SUM(size),0) FROM {table} WHERE kind='file' AND id IN (SELECT id FROM scoped) AND (?3 IS NULL OR EXISTS(SELECT 1 FROM entry_categories ec WHERE ec.entry_id={table}.id AND ec.category_id=?3)) AND ({predicate}) AND ({extra})",scope_cte(v,f));
     let mut values = vec![v.into(), f.into(), category.into()];
     values.extend_from_slice(args);
     values.push(key);
