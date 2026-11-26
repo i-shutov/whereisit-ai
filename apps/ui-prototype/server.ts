@@ -10,6 +10,7 @@ import {
   metadataCandidateKey,
   normalizeMetadataName,
 } from './src/utils/metadataCandidates';
+import { orderSearchMatches } from './src/utils/catalogOrder';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -2515,6 +2516,7 @@ async function startServer() {
       otherDisksOnly = true,
       offset = 0,
       limit = 250,
+      order = 'size',
     } = (req.body ?? {}) as {
       requestId?: string;
       mode?: 'search' | 'browse' | 'duplicates' | 'copy_candidates';
@@ -2529,6 +2531,7 @@ async function startServer() {
       otherDisksOnly?: boolean;
       offset?: number;
       limit?: number;
+      order?: 'catalog' | 'size';
     };
 
     const jobKey = requestId || crypto.randomUUID();
@@ -2785,11 +2788,8 @@ async function startServer() {
             if (normPrefix && !e.relativePath.startsWith(normPrefix) && e.relativePath !== folderPrefix) return false;
             if (category && e.category !== category) return false;
             return pred(e);
-          })
-          .sort((a, b) => {
-            if (a.kind !== b.kind) return a.kind === 'file' ? -1 : 1;
-            return b.size - a.size || a.nameNorm.localeCompare(b.nameNorm);
           });
+        matched = orderSearchMatches(matched, order);
 
         if (volumeId && folderPrefix) {
           scopeDescription = `Диск #${volumeId} · /${folderPrefix}`;

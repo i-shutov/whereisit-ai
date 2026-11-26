@@ -182,8 +182,8 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
 
   // Page-only sorting
-  const [sortCol, setSortCol] = useState<SortColumn>('size');
-  const [sortDesc, setSortDesc] = useState(true);
+  const [sortCol, setSortCol] = useState<SortColumn>('natural');
+  const [sortDesc, setSortDesc] = useState(false);
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const diskFilterRef = useRef<HTMLInputElement | null>(null);
@@ -258,6 +258,7 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
           sourceEntryId: srcId,
           candidateVolumeId: candVid,
           otherDisksOnly: true,
+          order: 'catalog',
           offset: off,
           limit: 250,
         }),
