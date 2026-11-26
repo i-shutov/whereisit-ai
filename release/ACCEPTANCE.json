@@ -14,7 +14,7 @@
       "candidate_fix_prs": [
         95
       ],
-      "candidate_validation": "Code/QA binary passed; keep OPEN until exact1.1.1 installed acceptance"
+      "candidate_validation": "PASS; synthetic regressions plus exact3cf2d36 hosted installed GUI description/tag/default text each1file11bytes; affected published1.1.0 unchanged"
     },
     {
       "id": "P1-CTF-COLD-OPEN",
@@ -85,28 +85,31 @@
   "build_time_acceptance": {
     "accepted_code_checkpoint": "PASS; PR100 aa25e26, code24d7e77; exact CI15/15 and real Win11 QA-binary GUI",
     "integration_main": "a248a6d4fa75bec511e54a82a38016973894baca; tree identical to accepted PR100",
-    "exact_1_1_1_installer_gui": "NOT_RUN",
-    "installed_1_1_0_to_1_1_1_upgrade": "NOT_RUN",
-    "original_vendor_candidate_compatibility": "NOT_RUN",
+    "exact_1_1_1_installer_gui": "PASS; exact3cf2d36 hosted artifact15143743307, run45873945126; installed bytes match provenance; direct fullCTF/paging and restart observed",
+    "installed_1_1_0_to_1_1_1_upgrade": "PASS; local standard3cf2d36 installer GUI lifecycle with external SQLite/user-store preservation; exact-source hosted upgrade run45873945384 also PASS",
+    "original_vendor_candidate_compatibility": "PARTIAL; local standard3cf2d36 installed CLI edited one folder description on a copied full derived SQLite; new export opened and Unicode note observed in original WhereIsIt2014.0.0.220; reverse/final-hosted-export not yet rerun",
     "original_ctf_write_allowed": false,
     "windows10": "OWNER_CONFIRMED_HISTORICAL; new1.1.1 artifact not tested",
     "macos_linux": "COMPILE_TESTS_ONLY; product releases deferred"
   },
   "known_open_gates": [
-    "Exact1.1.1 native CI and installer provenance",
-    "Exact1.1.1 installed Windows GUI and restart",
-    "Published1.1.0 to1.1.1 upgrade/uninstall preserving external SQLite and user state",
-    "Candidate CTF export/original-WhereIsIt compatibility and source-readonly checks"
+    "Final PR101 exact-head CI and reviewed acceptance integration",
+    "Final main/readiness artifact provenance and GUI before publication",
+    "Candidate reverse original-WhereIsIt save/import and final-artifact compatibility scope"
   ],
   "signing": {
     "windows": "unsigned; owner-approved Windows release scope",
     "macos": "deferred platform release"
   },
   "physical_acceptance": {
-    "status": "NOT_RUN",
+    "status": "PARTIAL",
     "target_version": "1.1.1",
     "previous_release_evidence": "release/history/v1.1.0.json",
-    "qa_code_checkpoint_report": "docs/qa/CTF_TEXT_SCAN_20261126.md"
+    "qa_code_checkpoint_report": "docs/qa/CTF_TEXT_SCAN_20261126.md",
+    "candidate_source_commit": "3cf2d36fe2929858cd768ef2d080a82d1725ca5a",
+    "installed_candidate_report": "docs/qa/WINDOWS_1_1_1_INSTALLED_CANDIDATE_20261126.md",
+    "hosted_installer_artifact_id": 15143743307,
+    "hosted_installer_run_id": 45873945126
   },
   "measured_performance": {
     "tested_code_commit": "24d7e772edbb4830fe5117aaed853a76016372fd",
