@@ -40,6 +40,12 @@ fn cancelled() -> Error {
 }
 
 impl Job {
+    #[cfg(test)]
+    pub(crate) fn entry_counter(&self) -> impl Fn() -> u64 + Send + Sync + 'static {
+        let state = self.state.clone();
+        move || state.entries.load(Ordering::Relaxed)
+    }
+
     pub(crate) fn start(v: &Value) -> Result<Self> {
         let mut job = Self::default();
         job.phase("preparing")?;

@@ -2,7 +2,8 @@
 //! The source CTF remains authoritative and is never written by this module.
 use crate::{ctf_sidecar, optional_id, text, unsigned};
 use atlas_core::query::{
-    MetadataCategoryPredicate, MetadataQuery, MetadataQueryContext, MetadataRecord,
+    MetadataCategoryPredicate, MetadataContainsMatcher, MetadataQuery, MetadataQueryContext,
+    MetadataRecord,
 };
 use atlas_core::{Entry, Error, FastPage, Page, Result, Volume};
 use ctf_format::{CtfCatalog, EntryKind, Limits};
@@ -543,6 +544,24 @@ impl MetadataQueryContext for DirectContext<'_> {
     fn relative_path(&self) -> &str {
         self.relative_path
             .get_or_init(|| relative_path(self.disk, self.entry_index))
+    }
+
+    fn relative_path_contains(&self, matcher: &MetadataContainsMatcher<'_>) -> bool {
+        if !matcher.is_ascii_component_needle() {
+            return matcher.matches(self.relative_path());
+        }
+        // An ASCII term without '/' cannot span path components. Check the
+        // recorded names directly, retaining the core's exact Unicode matcher,
+        // and avoid allocating a joined path for each rejected catalog record.
+        let mut cursor = Some(self.entry_index);
+        while let Some(index) = cursor {
+            let entry = &self.disk.entries[index];
+            if matcher.matches(&entry.name) {
+                return true;
+            }
+            cursor = entry.parent;
+        }
+        false
     }
 
     fn is_branch_descendant(&self, anchor_id: i64) -> bool {
@@ -1164,12 +1183,26 @@ fn search_with_job(v: &Value, job: crate::ctf_job::Job) -> Result<Value> {
         Some(Value::Bool(value)) => *value,
         _ => return Err(failure("invalid_request", "full_count must be boolean")),
     };
+    // Legacy callers retain name ordering. The native catalog workflow asks
+    // for source traversal order so a first page never waits for a global sort.
+    let catalog_order = match v.get("order") {
+        None | Some(Value::Null) => false,
+        Some(Value::String(order)) if order == "name" => false,
+        Some(Value::String(order)) if order == "catalog" => true,
+        _ => return Err(failure("invalid_request", "Unknown CTF search order")),
+    };
     let use_duckdb = match v.get("executor") {
-        None | Some(Value::Null) => cfg!(feature = "duckdb-query"),
+        None | Some(Value::Null) => cfg!(feature = "duckdb-query") && !catalog_order,
         Some(Value::String(name)) if name == "rust" => false,
         Some(Value::String(name)) if name == "duckdb" => true,
         _ => return Err(failure("invalid_request", "Unknown CTF query executor")),
     };
+    if catalog_order && use_duckdb {
+        return Err(failure(
+            "unsupported",
+            "Catalog-order search requires the Rust executor",
+        ));
+    }
     #[cfg(not(feature = "duckdb-query"))]
     if use_duckdb {
         return Err(failure(
@@ -1240,7 +1273,30 @@ fn search_with_job(v: &Value, job: crate::ctf_job::Job) -> Result<Value> {
     let mut total = 0u64;
     let mut page_rows = Vec::with_capacity(limit as usize + usize::from(!full_count));
     const MAX_PHYSICAL_HEAP_OFFSET: u64 = 100_000;
-    if full_count && effective_offset <= MAX_PHYSICAL_HEAP_OFFSET {
+    if catalog_order {
+        'disks: for (volume_index, disk) in snapshot.parsed.disks.iter().enumerate() {
+            if volume_id.is_some_and(|filter| filter != volume_index as i64 + 1) {
+                continue;
+            }
+            for entry_index in 0..disk.entries.len() {
+                let row = RowRef {
+                    volume_index: volume_index as u32,
+                    entry_index: entry_index as u32,
+                };
+                if !matches_row(&snapshot, row, &query, needs_extension, volume_id, &job)? {
+                    continue;
+                }
+                let ordinal = total;
+                total = total.saturating_add(1);
+                if ordinal >= effective_offset && ordinal < page_end {
+                    page_rows.push(row);
+                }
+                if !full_count && total > page_end {
+                    break 'disks;
+                }
+            }
+        }
+    } else if full_count && effective_offset <= MAX_PHYSICAL_HEAP_OFFSET {
         // Full counts need every row, but paging still requires only the first
         // offset+limit rows in name order. Scan source-order metadata (cache
         // friendly), keep that bounded prefix in a max heap, and sort only it.
@@ -1327,6 +1383,7 @@ fn search_with_job(v: &Value, job: crate::ctf_job::Job) -> Result<Value> {
     .map_err(|_| failure("internal", "Cannot encode CTF search result"))?;
     let mut response = checked_result(&snapshot, result, Some(&job))?;
     response["query_executor"] = json!("rust");
+    response["search_order"] = json!(if catalog_order { "catalog" } else { "name" });
     Ok(response)
 }
 
@@ -1410,6 +1467,195 @@ pub(super) mod tests {
     }
     fn req(path: &Path, generation: &str) -> Value {
         json!({"path":path,"generation":generation})
+    }
+
+    #[test]
+    fn path_terms_match_unicode_components_without_joining_ascii_needles() {
+        struct Joined<'a>(&'a str);
+        impl MetadataQueryContext for Joined<'_> {
+            fn relative_path(&self) -> &str {
+                self.0
+            }
+            fn is_branch_descendant(&self, _id: i64) -> bool {
+                false
+            }
+            fn category_matches(&self, _predicate: &MetadataCategoryPredicate) -> bool {
+                false
+            }
+        }
+        let disk = CtfDisk {
+            name: "path terms".into(),
+            opaque_header: vec![],
+            entries: vec![
+                entry("ROOTKİ", None, EntryKind::Directory),
+                entry("Σ", Some(0), EntryKind::Directory),
+                entry("data.dat", Some(1), EntryKind::File),
+            ],
+        };
+        let record = MetadataRecord {
+            id: 3,
+            name: "data.dat",
+            kind: "file",
+            size: 17,
+            extension: "dat",
+            description: "",
+            tags: "",
+        };
+        let joined = relative_path(&disk, 2);
+        for (query_text, expected, joined_needed) in [
+            ("path:k", true, false),
+            ("path:i", true, false),
+            ("path:missing", false, false),
+            ("missing", false, false),
+            ("path:root", true, false),
+            ("data", true, false),
+            ("path:Σ/data", true, true),
+            ("path:ς", false, true),
+            ("path:missing/data", false, true),
+        ] {
+            let context = DirectContext {
+                disk: &disk,
+                entry_index: 2,
+                id_base: 1,
+                relative_path: LocalOnceCell::new(),
+            };
+            let query = MetadataQuery::compile_metadata(query_text).unwrap();
+            assert_eq!(query.matches(&record, &context), expected, "{query_text}");
+            assert_eq!(
+                query.matches(&record, &context),
+                query.matches(&record, &Joined(&joined)),
+                "{query_text}"
+            );
+            assert_eq!(
+                context.relative_path.get().is_some(),
+                joined_needed,
+                "{query_text}"
+            );
+        }
+    }
+
+    #[test]
+    fn catalog_order_pages_keep_source_context_without_building_name_index() {
+        let _serial = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("catalog-order.ctf");
+        write_fixture(&path, "catalog order");
+        let opened = open(&json!({"path":path})).unwrap();
+        let generation = opened["generation"].as_str().unwrap();
+        let ids = |page: &Value| {
+            page["result"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| row["id"].as_i64().unwrap())
+                .collect::<Vec<_>>()
+        };
+        let mut all_ids = Vec::new();
+        for offset in [0, 2, 4] {
+            let page = search(&json!({"path":path,"generation":generation,"query":"",
+                "order":"catalog","offset":offset,"limit":2}))
+            .unwrap();
+            assert_eq!(page["search_order"], "catalog");
+            assert_eq!(page["query_executor"], "rust");
+            assert_eq!(page["result"]["has_more"], offset < 4);
+            all_ids.extend(ids(&page));
+        }
+        assert_eq!(all_ids, [1, 2, 3, 4, 5]);
+        let counted = search(&json!({"path":path,"generation":generation,"query":"",
+            "order":"catalog","offset":2,"limit":2,"full_count":true}))
+        .unwrap();
+        assert_eq!(ids(&counted), [3, 4]);
+        assert_eq!(counted["result"]["total"], 5);
+        assert_eq!(
+            counted["result"]["items"][1]["relative_path"],
+            "root/東京/é.txt"
+        );
+        let scoped = search(
+            &json!({"path":path,"generation":generation,"query":"kind:file",
+            "order":"catalog","volume_id":1,"limit":10}),
+        )
+        .unwrap();
+        assert_eq!(ids(&scoped), [3, 4]);
+        let snapshot = selected(&req(&path, generation), None).unwrap();
+        assert!(snapshot.name_order.get().is_none());
+        drop(snapshot);
+        let named = search(&json!({"path":path,"generation":generation,"query":"",
+            "order":"name","limit":10}))
+        .unwrap();
+        let legacy =
+            search(&json!({"path":path,"generation":generation,"query":"","limit":10})).unwrap();
+        assert_eq!(named["result"], legacy["result"]);
+        close(&req(&path, generation)).unwrap();
+    }
+
+    #[test]
+    fn catalog_order_stops_after_one_extra_match() {
+        let _serial = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("catalog-order-stop.ctf");
+        write_fixture(&path, "catalog order stop");
+        let opened = open(&json!({"path":path})).unwrap();
+        let generation = opened["generation"].as_str().unwrap();
+
+        for (suffix, offset, limit, full_count, expected_entries) in [
+            ("first", 0, 1, false, 2),
+            ("second", 1, 1, false, 3),
+            ("count", 0, 1, true, 5),
+        ] {
+            let request = json!({"path":path,"generation":generation,"query":"",
+                "order":"catalog","offset":offset,"limit":limit,"full_count":full_count,
+                "job_id":format!("catalog-order-stop-{suffix}")});
+            let job = crate::ctf_job::Job::start(&request).unwrap();
+            let entries = job.entry_counter();
+            search_with_job(&request, job).unwrap();
+            assert_eq!(entries(), expected_entries, "case={suffix}");
+        }
+        close(&req(&path, generation)).unwrap();
+    }
+
+    #[test]
+    fn catalog_order_rejects_invalid_options_and_honors_precancellation() {
+        let _serial = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("catalog-cancel.ctf");
+        write_fixture(&path, "catalog cancel");
+        let opened = open(&json!({"path":path})).unwrap();
+        let generation = opened["generation"].as_str().unwrap();
+        for order in [json!("invalid"), json!(42), json!(false)] {
+            assert_eq!(
+                search(&json!({"path":path,"generation":generation,"query":"","order":order}))
+                    .unwrap_err()
+                    .code,
+                "invalid_request"
+            );
+        }
+        assert_eq!(
+            search(&json!({"path":path,"generation":generation,"query":"",
+            "order":"catalog","executor":"duckdb"}))
+            .unwrap_err()
+            .code,
+            "unsupported"
+        );
+        let request = json!({"path":path,"generation":generation,"query":"",
+            "order":"catalog","job_id":"catalog-precancel"});
+        let job = crate::ctf_job::Job::start(&request).unwrap();
+        crate::ctf_job::cancel(&request).unwrap();
+        assert_eq!(
+            search_with_job(&request, job).unwrap_err().code,
+            "cancelled"
+        );
+        assert!(selected(&req(&path, generation), None)
+            .unwrap()
+            .name_order
+            .get()
+            .is_none());
+        close(&req(&path, generation)).unwrap();
     }
 
     #[test]
