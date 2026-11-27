@@ -9,7 +9,7 @@ use atlas_core::query::{
     MetadataRecord,
 };
 use atlas_core::{Entry, Error, FastPage, Page, Result, Volume};
-use ctf_format::{CtfCatalog, EntryKind, Limits};
+use ctf_format::{EntryKind, Limits, MetadataCatalog, MetadataDisk, MetadataEntry};
 use path_cache::AncestorCache;
 use serde_json::{json, Value};
 use std::{
@@ -34,7 +34,7 @@ pub(super) struct Snapshot {
     source_sha256: String,
     source_bytes: u64,
     source_binding: SourceBinding,
-    pub(super) parsed: Arc<CtfCatalog>,
+    pub(super) parsed: Arc<MetadataCatalog>,
     volumes: Vec<Volume>,
     pub(super) id_bases: Vec<i64>,
     pub(super) children: Vec<HashMap<Option<i64>, Vec<usize>>>,
@@ -158,7 +158,7 @@ fn ascii_nocase(a: &str, b: &str) -> std::cmp::Ordering {
 fn build_snapshot(
     path: PathBuf,
     open_path: PathBuf,
-    parsed: Arc<CtfCatalog>,
+    parsed: Arc<MetadataCatalog>,
     generation: String,
     source_sha256: String,
     source_bytes: u64,
@@ -250,7 +250,7 @@ fn build_snapshot(
     })
 }
 
-fn compact_entry_capacity(parsed: &mut CtfCatalog) {
+fn compact_entry_capacity(parsed: &mut MetadataCatalog) {
     for disk in &mut parsed.disks {
         disk.entries.shrink_to_fit();
     }
@@ -276,12 +276,13 @@ pub fn open(v: &Value) -> Result<Value> {
         ctf_sidecar::capture(&source, MAX_SOURCE_BYTES).map_err(|_| io_failure())?,
     );
     let identity = captured.identity.clone();
-    let mut parsed = ctf_format::parse_ctf(captured.bytes(), &Limits::default()).map_err(|e| {
-        Error::new(
-            "ctf",
-            format!("CTF parse failed at byte {}: {}", e.offset, e.message),
-        )
-    })?;
+    let mut parsed =
+        ctf_format::parse_ctf_metadata(captured.bytes(), &Limits::default()).map_err(|e| {
+            Error::new(
+                "ctf",
+                format!("CTF parse failed at byte {}: {}", e.offset, e.message),
+            )
+        })?;
     drop(captured);
     compact_entry_capacity(&mut parsed);
     let parsed = Arc::new(parsed);
@@ -479,7 +480,7 @@ pub fn ancestors(v: &Value) -> Result<Value> {
 fn ancestor_items(
     volume_id: i64,
     id_base: i64,
-    entries: &[ctf_format::CtfEntry],
+    entries: &[MetadataEntry],
     entry_id: i64,
 ) -> Result<Value> {
     let first = usize::try_from(
@@ -538,7 +539,7 @@ fn ancestor_items(
 }
 
 struct DirectContext<'a> {
-    disk: &'a ctf_format::CtfDisk,
+    disk: &'a MetadataDisk,
     volume_index: usize,
     entry_index: usize,
     id_base: i64,
@@ -624,7 +625,7 @@ impl MetadataQueryContext for DirectContext<'_> {
     }
 }
 
-pub(super) fn relative_path(disk: &ctf_format::CtfDisk, index: usize) -> String {
+pub(super) fn relative_path(disk: &MetadataDisk, index: usize) -> String {
     let mut components = Vec::new();
     let mut cursor = Some(index);
     while let Some(current) = cursor {
@@ -784,7 +785,7 @@ pub(super) fn entry_at(snapshot: &Snapshot, volume_index: usize, entry_index: us
     }
 }
 
-fn find_id(snapshot: &Snapshot, id: i64) -> Option<(usize, usize, &ctf_format::CtfEntry)> {
+fn find_id(snapshot: &Snapshot, id: i64) -> Option<(usize, usize, &MetadataEntry)> {
     snapshot
         .id_bases
         .iter()
@@ -1233,7 +1234,7 @@ fn export_with_job(v: &Value, job: crate::ctf_job::Job) -> Result<Value> {
     Ok(verified)
 }
 
-fn is_descendant(disk: &ctf_format::CtfDisk, mut index: usize, ancestor: usize) -> bool {
+fn is_descendant(disk: &MetadataDisk, mut index: usize, ancestor: usize) -> bool {
     loop {
         if index == ancestor {
             return true;
@@ -1475,17 +1476,6 @@ pub fn close(v: &Value) -> Result<Value> {
     }
 }
 
-/// Reuse the already validated in-memory parse when normal import opens the same bytes.
-pub(crate) fn parsed_for_import(path: &Path, sha256: &str) -> Option<Arc<CtfCatalog>> {
-    let canonical = path.canonicalize().ok()?;
-    current()
-        .lock()
-        .ok()?
-        .as_ref()
-        .filter(|s| s.path == canonical && s.source_sha256.eq_ignore_ascii_case(sha256))
-        .map(|s| s.parsed.clone())
-}
-
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
@@ -1503,6 +1493,20 @@ pub(super) mod tests {
             created_dos: 0,
             accessed_dos: 0,
             opaque: vec![],
+        }
+    }
+
+    fn metadata_entry(entry: CtfEntry) -> MetadataEntry {
+        MetadataEntry {
+            name: entry.name,
+            description: entry.description,
+            parent: entry.parent,
+            kind: entry.kind,
+            size: entry.size,
+            attributes: entry.attributes,
+            modified_dos: entry.modified_dos,
+            created_dos: entry.created_dos,
+            accessed_dos: entry.accessed_dos,
         }
     }
     fn write_fixture(path: &Path, disk_name: &str) {
@@ -1557,6 +1561,16 @@ pub(super) mod tests {
                 entry("data.dat", Some(1), EntryKind::File),
             ],
         };
+        let disk = CtfCatalog {
+            name: "path terms".into(),
+            disks: vec![disk],
+            opaque_trailer: vec![],
+        }
+        .into_metadata()
+        .disks
+        .into_iter()
+        .next()
+        .unwrap();
         let record = MetadataRecord {
             id: 3,
             name: "data.dat",
@@ -1917,7 +1931,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn entry_capacity_compaction_preserves_ctf_bytes_and_preview_metadata() {
+    fn metadata_only_preview_preserves_browsing_and_query_fields() {
         let _serial = TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -1950,19 +1964,10 @@ pub(super) mod tests {
         let source_bytes = write_ctf(&source).unwrap();
         fs::write(&path, &source_bytes).unwrap();
 
-        let mut parsed = ctf_format::parse_ctf(&source_bytes, &Limits::default()).unwrap();
-        let before_compaction = write_ctf(&parsed).unwrap();
-        assert_eq!(before_compaction, source_bytes);
-        let old_capacities = parsed
-            .disks
-            .iter()
-            .map(|disk| disk.entries.capacity())
-            .collect::<Vec<_>>();
-        compact_entry_capacity(&mut parsed);
-        assert_eq!(write_ctf(&parsed).unwrap(), before_compaction);
-        for (index, disk) in parsed.disks.iter().enumerate() {
-            assert!(disk.entries.capacity() <= old_capacities[index]);
-        }
+        assert!(
+            std::mem::size_of::<MetadataEntry>() < std::mem::size_of::<CtfEntry>(),
+            "preview row must omit the opaque payload Vec"
+        );
 
         let opened = open(&json!({"path":path})).unwrap();
         let generation = opened["generation"].as_str().unwrap();
@@ -1981,6 +1986,26 @@ pub(super) mod tests {
             "description保留"
         );
         assert_eq!(found["result"]["items"][0]["id"], 2);
+        let request = req(&path, generation);
+        let snapshot = selected(&request, None).unwrap();
+        assert!(snapshot
+            .parsed
+            .disks
+            .iter()
+            .all(|disk| disk.entries.capacity() == disk.entries.len()));
+        assert!(snapshot
+            .parsed
+            .disks
+            .iter()
+            .all(|disk| disk.opaque_header.is_empty()));
+        assert!(snapshot.parsed.opaque_trailer.is_empty());
+        let parsed = Arc::downgrade(&snapshot.parsed);
+        drop(snapshot);
+        assert_eq!(close(&request).unwrap()["closed"], true);
+        assert!(
+            parsed.upgrade().is_none(),
+            "closed preview released metadata rows"
+        );
         assert_eq!(fs::read(&path).unwrap(), source_bytes);
     }
 
@@ -2163,14 +2188,22 @@ pub(super) mod tests {
         .unwrap();
         assert_eq!(pinned_result["result"], expected);
 
-        let malformed = vec![entry("self-cycle", Some(0), EntryKind::Directory)];
+        let malformed = vec![metadata_entry(entry(
+            "self-cycle",
+            Some(0),
+            EntryKind::Directory,
+        ))];
         assert_eq!(
             ancestor_items(1, 1, &malformed, 1).unwrap_err().code,
             "ctf_tree"
         );
         let mut deep = Vec::with_capacity(MAX_ANCESTOR_DEPTH + 1);
         for index in 0..=MAX_ANCESTOR_DEPTH {
-            deep.push(entry("deep", index.checked_sub(1), EntryKind::Directory));
+            deep.push(metadata_entry(entry(
+                "deep",
+                index.checked_sub(1),
+                EntryKind::Directory,
+            )));
         }
         assert_eq!(
             ancestor_items(1, 1, &deep, deep.len() as i64)

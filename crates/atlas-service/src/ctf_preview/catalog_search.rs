@@ -358,18 +358,18 @@ fn run_configured(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ctf_format::{CtfCatalog, CtfDisk, CtfEntry, EntryKind};
+    use ctf_format::{EntryKind, MetadataCatalog, MetadataDisk, MetadataEntry};
     use std::{path::PathBuf, sync::Arc};
 
     fn snapshot(lengths: &[usize]) -> Snapshot {
         let disks = lengths
             .iter()
             .enumerate()
-            .map(|(disk_index, len)| CtfDisk {
+            .map(|(disk_index, len)| MetadataDisk {
                 name: format!("disk-{disk_index}"),
                 opaque_header: Vec::new(),
                 entries: (0..*len)
-                    .map(|entry_index| CtfEntry {
+                    .map(|entry_index| MetadataEntry {
                         name: format!("item-{entry_index}"),
                         description: String::new(),
                         parent: None,
@@ -379,7 +379,6 @@ mod tests {
                         modified_dos: 0,
                         created_dos: 0,
                         accessed_dos: 0,
-                        opaque: Vec::new(),
                     })
                     .collect(),
             })
@@ -387,7 +386,7 @@ mod tests {
         super::super::build_snapshot(
             PathBuf::new(),
             PathBuf::new(),
-            Arc::new(CtfCatalog {
+            Arc::new(MetadataCatalog {
                 name: "synthetic".into(),
                 disks,
                 opaque_trailer: Vec::new(),

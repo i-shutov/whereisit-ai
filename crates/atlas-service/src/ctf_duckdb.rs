@@ -7,7 +7,7 @@ use atlas_core::{
     query::{MetadataGlobPattern, MetadataQuery},
     Error, Result,
 };
-use ctf_format::{CtfCatalog, CtfDisk, EntryKind};
+use ctf_format::{EntryKind, MetadataCatalog, MetadataDisk};
 use duckdb::{
     core::{DataChunkHandle, Inserter, LogicalTypeHandle, LogicalTypeId},
     params_from_iter,
@@ -41,7 +41,7 @@ pub(super) struct DuckQueryResult {
 pub(super) type Engine = DuckEngine;
 
 struct Source {
-    catalog: Arc<CtfCatalog>,
+    catalog: Arc<MetadataCatalog>,
     id_bases: Vec<i64>,
     disk_ends: Vec<usize>,
     rows: usize,
@@ -287,7 +287,7 @@ fn source_row(
 }
 
 fn relative_path(
-    disk: &CtfDisk,
+    disk: &MetadataDisk,
     entry_index: usize,
 ) -> std::result::Result<String, Box<dyn std::error::Error>> {
     let mut components = Vec::new();
@@ -382,7 +382,7 @@ pub(super) struct DuckEngine {
 }
 
 impl DuckEngine {
-    pub(super) fn new(catalog: Arc<CtfCatalog>) -> Result<Self> {
+    pub(super) fn new(catalog: Arc<MetadataCatalog>) -> Result<Self> {
         let mut id_bases = Vec::with_capacity(catalog.disks.len());
         let mut disk_ends = Vec::with_capacity(catalog.disks.len());
         let mut next_id = 1i64;
@@ -611,10 +611,10 @@ fn duck_value(value: rusqlite::types::Value) -> DuckValue {
 mod tests {
     use super::*;
     use atlas_core::query::MetadataQuery;
-    use ctf_format::{CtfDisk, CtfEntry};
+    use ctf_format::{MetadataCatalog, MetadataDisk, MetadataEntry};
 
-    fn entry(name: String, parent: Option<usize>, kind: EntryKind) -> CtfEntry {
-        CtfEntry {
+    fn entry(name: String, parent: Option<usize>, kind: EntryKind) -> MetadataEntry {
+        MetadataEntry {
             name,
             description: String::new(),
             parent,
@@ -624,7 +624,6 @@ mod tests {
             modified_dos: 0,
             created_dos: 0,
             accessed_dos: 0,
-            opaque: Vec::new(),
         }
     }
 
@@ -657,14 +656,14 @@ mod tests {
             EntryKind::File,
         ));
         entries.push(entry("root-1024".into(), None, EntryKind::Directory));
-        let catalog = Arc::new(CtfCatalog {
+        let catalog = Arc::new(MetadataCatalog {
             name: "synthetic".into(),
-            disks: vec![CtfDisk {
+            opaque_trailer: vec![],
+            disks: vec![MetadataDisk {
                 name: "disk".into(),
+                opaque_header: vec![],
                 entries,
-                opaque_header: Vec::new(),
             }],
-            opaque_trailer: Vec::new(),
         });
         let mut engine = DuckEngine::new(catalog).unwrap();
 
@@ -699,10 +698,10 @@ mod tests {
 
     #[test]
     fn native_engine_counts_an_empty_catalog() {
-        let catalog = Arc::new(CtfCatalog {
+        let catalog = Arc::new(MetadataCatalog {
             name: "empty".into(),
+            opaque_trailer: vec![],
             disks: Vec::new(),
-            opaque_trailer: Vec::new(),
         });
         let mut engine = DuckEngine::new(catalog).unwrap();
         let result = engine
@@ -730,14 +729,14 @@ mod tests {
             entry("a\0b.txt".into(), None, EntryKind::File),
         ]
         .into();
-        let catalog = Arc::new(CtfCatalog {
+        let catalog = Arc::new(MetadataCatalog {
             name: "unicode-glob".into(),
-            disks: vec![CtfDisk {
+            opaque_trailer: vec![],
+            disks: vec![MetadataDisk {
                 name: "disk".into(),
+                opaque_header: vec![],
                 entries,
-                opaque_header: Vec::new(),
             }],
-            opaque_trailer: Vec::new(),
         });
         let mut engine = DuckEngine::new(catalog).unwrap();
 
@@ -771,14 +770,14 @@ mod tests {
         let entries = (0..5000)
             .map(|index| entry(format!("entry-{index:05}.txt"), None, EntryKind::File))
             .collect();
-        let catalog = Arc::new(CtfCatalog {
+        let catalog = Arc::new(MetadataCatalog {
             name: "cancel".into(),
-            disks: vec![CtfDisk {
+            opaque_trailer: vec![],
+            disks: vec![MetadataDisk {
                 name: "disk".into(),
+                opaque_header: vec![],
                 entries,
-                opaque_header: Vec::new(),
             }],
-            opaque_trailer: Vec::new(),
         });
         let mut engine = DuckEngine::new(catalog).unwrap();
         let processed = Arc::new(AtomicUsize::new(0));

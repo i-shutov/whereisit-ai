@@ -11,7 +11,6 @@ use std::{
     fs,
     io::{ErrorKind, Read, Write},
     path::Path,
-    sync::Arc,
 };
 
 const CTF_BLOCK_BYTES: usize = 256 * 1024;
@@ -143,13 +142,10 @@ pub(crate) fn import_with_job(
         ));
     }
     job.phase("parsing")?;
-    // A validated in-memory preview may already hold the exact parsed source.
-    // The byte SHA is computed by `read` first, so only an exact path+digest
-    // match can reuse it; otherwise retain the normal fail-closed parse path.
-    let parsed = match crate::ctf_preview::parsed_for_import(Path::new(text(v, "path")?), &sha) {
-        Some(parsed) => parsed,
-        None => Arc::new(ctf_format::parse_ctf(&bytes, &Limits::default()).map_err(fail)?),
-    };
+    // Preview intentionally uses a metadata-only parse. Import must parse the
+    // verified captured bytes into the full representation so every opaque
+    // source section remains available for a lossless CTF export.
+    let parsed = ctf_format::parse_ctf(&bytes, &Limits::default()).map_err(fail)?;
     drop(bytes);
     job.check()?;
     let source_path = Path::new(text(v, "path")?)

@@ -3,17 +3,20 @@ use serde::{Deserialize, Serialize};
 
 // Older Atlas exports declared a 45-block table regardless of the actual block count.
 const LEGACY_PACKED_OFFSET_TABLE_SIZE: u32 = 0x0400_00b8;
+// Smallest accepted file record: flags, name length, implied attributes,
+// modification date, and size. Empty names are currently accepted.
+const MIN_FILE_RECORD_BYTES: usize = 11;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CtfCatalog {
+pub struct CtfCatalog<E = CtfEntry> {
     pub name: String,
-    pub disks: Vec<CtfDisk>,
+    pub disks: Vec<CtfDisk<E>>,
     pub opaque_trailer: Vec<u8>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CtfDisk {
+pub struct CtfDisk<E = CtfEntry> {
     pub name: String,
-    pub entries: Vec<CtfEntry>,
+    pub entries: Vec<E>,
     /// Disk header followed by the root metadata blob, whose length is at header offset 4.
     pub opaque_header: Vec<u8>,
 }
@@ -30,6 +33,160 @@ pub struct CtfEntry {
     pub created_dos: u32,
     pub accessed_dos: u32,
     pub opaque: Vec<u8>,
+}
+/// A parsed CTF entry retaining searchable metadata without source record bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MetadataEntry {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    pub parent: Option<usize>,
+    pub kind: EntryKind,
+    pub size: u64,
+    pub attributes: u32,
+    pub modified_dos: u32,
+    pub created_dos: u32,
+    pub accessed_dos: u32,
+}
+/// Metadata-only parse result. It intentionally has no writer/opaque-byte path.
+///
+/// ```compile_fail
+/// use ctf_format::{write_ctf, MetadataCatalog};
+/// fn metadata_is_not_writable(catalog: MetadataCatalog) {
+///     let _ = write_ctf(&catalog);
+/// }
+/// ```
+pub type MetadataCatalog = CtfCatalog<MetadataEntry>;
+pub type MetadataDisk = CtfDisk<MetadataEntry>;
+
+trait EntryStorage: Sized {
+    const PRESERVE_OPAQUE: bool;
+    #[allow(clippy::too_many_arguments)]
+    fn from_fields(
+        name: String,
+        description: String,
+        parent: Option<usize>,
+        kind: EntryKind,
+        size: u64,
+        attributes: u32,
+        modified_dos: u32,
+        created_dos: u32,
+        accessed_dos: u32,
+        opaque: Vec<u8>,
+    ) -> Self;
+    fn set_description(&mut self, description: String);
+    fn set_opaque(&mut self, opaque: Vec<u8>);
+}
+
+macro_rules! impl_entry_storage {
+    ($entry:ty, $preserve:expr) => {
+        impl EntryStorage for $entry {
+            const PRESERVE_OPAQUE: bool = $preserve;
+
+            fn from_fields(
+                name: String,
+                description: String,
+                parent: Option<usize>,
+                kind: EntryKind,
+                size: u64,
+                attributes: u32,
+                modified_dos: u32,
+                created_dos: u32,
+                accessed_dos: u32,
+                opaque: Vec<u8>,
+            ) -> Self {
+                Self {
+                    name,
+                    description,
+                    parent,
+                    kind,
+                    size,
+                    attributes,
+                    modified_dos,
+                    created_dos,
+                    accessed_dos,
+                    opaque,
+                }
+            }
+
+            fn set_description(&mut self, description: String) {
+                self.description = description;
+            }
+
+            fn set_opaque(&mut self, opaque: Vec<u8>) {
+                self.opaque = opaque;
+            }
+        }
+    };
+}
+impl_entry_storage!(CtfEntry, true);
+
+impl EntryStorage for MetadataEntry {
+    const PRESERVE_OPAQUE: bool = false;
+
+    fn from_fields(
+        name: String,
+        description: String,
+        parent: Option<usize>,
+        kind: EntryKind,
+        size: u64,
+        attributes: u32,
+        modified_dos: u32,
+        created_dos: u32,
+        accessed_dos: u32,
+        _opaque: Vec<u8>,
+    ) -> Self {
+        Self {
+            name,
+            description,
+            parent,
+            kind,
+            size,
+            attributes,
+            modified_dos,
+            created_dos,
+            accessed_dos,
+        }
+    }
+
+    fn set_description(&mut self, description: String) {
+        self.description = description;
+    }
+
+    fn set_opaque(&mut self, _opaque: Vec<u8>) {}
+}
+
+impl CtfCatalog<CtfEntry> {
+    /// Drop retained source records when a synthetic fixture needs metadata only.
+    pub fn into_metadata(self) -> MetadataCatalog {
+        MetadataCatalog {
+            name: self.name,
+            disks: self
+                .disks
+                .into_iter()
+                .map(|disk| MetadataDisk {
+                    name: disk.name,
+                    entries: disk
+                        .entries
+                        .into_iter()
+                        .map(|entry| MetadataEntry {
+                            name: entry.name,
+                            description: entry.description,
+                            parent: entry.parent,
+                            kind: entry.kind,
+                            size: entry.size,
+                            attributes: entry.attributes,
+                            modified_dos: entry.modified_dos,
+                            created_dos: entry.created_dos,
+                            accessed_dos: entry.accessed_dos,
+                        })
+                        .collect(),
+                    opaque_header: Vec::new(),
+                })
+                .collect(),
+            opaque_trailer: Vec::new(),
+        }
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EntryKind {
@@ -251,12 +408,12 @@ fn dates(r: &mut Reader<'_>, f: u16) -> Result<(u32, u32, u32), CtfError> {
     };
     Ok((m, c, a))
 }
-fn read_file(
+fn read_file<E: EntryStorage>(
     r: &mut Reader<'_>,
     parent: Option<usize>,
     blob: &[u8],
     description_budget: &mut usize,
-) -> Result<(CtfEntry, usize), CtfError> {
+) -> Result<(E, usize), CtfError> {
     let start = r.p;
     let f = r.u16()?;
     if f & !0x27fc != 0 {
@@ -301,25 +458,43 @@ fn read_file(
     }
     let bytes = name.len();
     let name = decode_name(&name).map_err(|e| err(start, e.message))?;
+    let opaque = if E::PRESERVE_OPAQUE {
+        r.b[start..r.p].to_vec()
+    } else {
+        Vec::new()
+    };
     Ok((
-        CtfEntry {
+        E::from_fields(
             name,
             description,
             parent,
-            kind: EntryKind::File,
+            EntryKind::File,
             size,
-            attributes: attr,
-            modified_dos: m,
-            created_dos: c,
-            accessed_dos: a,
-            opaque: r.b[start..r.p].to_vec(),
-        },
+            attr,
+            m,
+            c,
+            a,
+            opaque,
+        ),
         bytes,
     ))
 }
 /// Parse only the observed uncompressed Catalog 3.00 variant; unknown layouts fail closed.
 /// Source bytes are never modified. Offsets, ranges, counts, depth and encodings are checked.
 pub fn parse_ctf(bytes: &[u8], limits: &Limits) -> Result<CtfCatalog, CtfError> {
+    parse_ctf_with_storage::<CtfEntry>(bytes, limits)
+}
+
+/// Parse CTF metadata without retaining per-entry source records or opaque disk bytes.
+/// This result is read-only and cannot be passed to `write_ctf`.
+pub fn parse_ctf_metadata(bytes: &[u8], limits: &Limits) -> Result<MetadataCatalog, CtfError> {
+    parse_ctf_with_storage::<MetadataEntry>(bytes, limits)
+}
+
+fn parse_ctf_with_storage<E: EntryStorage>(
+    bytes: &[u8],
+    limits: &Limits,
+) -> Result<CtfCatalog<E>, CtfError> {
     if bytes.len() > limits.max_bytes {
         return Err(err(0, "input exceeds byte limit"));
     }
@@ -387,7 +562,9 @@ pub fn parse_ctf(bytes: &[u8], limits: &Limits) -> Result<CtfCatalog, CtfError> 
             if g.u8()? != 0 || g.p != b.len() {
                 return Err(err(start, "unsupported disk group payload"));
             }
-            opaque_trailer.extend_from_slice(b);
+            if E::PRESERVE_OPAQUE {
+                opaque_trailer.extend_from_slice(b);
+            }
             continue;
         }
         let mut r = Reader::new(b, 0);
@@ -456,22 +633,22 @@ pub fn parse_ctf(bytes: &[u8], limits: &Limits) -> Result<CtfCatalog, CtfError> 
             }
             let description = ext.into_iter().find(|x| x.0 == 1);
             folder_records.push((rec_start..rd.p, description));
-            entries.push(CtfEntry {
+            entries.push(E::from_fields(
                 name,
-                description: String::new(),
+                String::new(),
                 parent,
-                kind: if marker & 0x10 != 0 {
+                if marker & 0x10 != 0 {
                     EntryKind::Archive
                 } else {
                     EntryKind::Directory
                 },
                 size,
-                attributes: attr,
-                modified_dos: m,
-                created_dos: c,
-                accessed_dos: a,
-                opaque: Vec::new(),
-            });
+                attr,
+                m,
+                c,
+                a,
+                Vec::new(),
+            ));
             stack.push(index);
             ranges.push(fr);
             total += 1;
@@ -504,6 +681,7 @@ pub fn parse_ctf(bytes: &[u8], limits: &Limits) -> Result<CtfCatalog, CtfError> 
         }
         intervals.sort_unstable();
         let mut cursor = first_data;
+        let mut file_count = 0usize;
         for (a, b) in intervals {
             if a != cursor {
                 return Err(err(start + a, "overlapping or unaccounted data ranges"));
@@ -513,6 +691,32 @@ pub fn parse_ctf(bytes: &[u8], limits: &Limits) -> Result<CtfCatalog, CtfError> 
         if cursor != dirs {
             return Err(err(start + cursor, "unaccounted data before folder table"));
         }
+
+        // Counts are untrusted until both the data intervals and minimum
+        // record size have been checked. Validate the full per-disk total
+        // before reserving so forged counts cannot trigger a large allocation.
+        for fr in &ranges {
+            if fr.count == 0 {
+                continue;
+            }
+            let record_bytes = fr.len - fr.blob;
+            if fr.count > record_bytes / MIN_FILE_RECORD_BYTES {
+                return Err(err(start + fr.offset, "file count exceeds range capacity"));
+            }
+            file_count = file_count
+                .checked_add(fr.count)
+                .ok_or_else(|| err(start + fr.offset, "entry count overflow"))?;
+        }
+        if total
+            .checked_add(file_count)
+            .filter(|v| *v <= limits.max_entries)
+            .is_none()
+        {
+            return Err(err(start, "entry limit exceeded"));
+        }
+        entries
+            .try_reserve_exact(file_count)
+            .map_err(|_| err(start, "entry allocation failed"))?;
 
         // Do not copy or decode a folder blob until the complete data layout
         // has been validated. Malformed overlapping ranges could otherwise
@@ -526,17 +730,26 @@ pub fn parse_ctf(bytes: &[u8], limits: &Limits) -> Result<CtfCatalog, CtfError> 
             };
             let entry = &mut entries[index];
             if let Some((_, packed, data)) = description {
-                entry.description =
+                let decoded =
                     decode_description_bounded(packed, &data, blob, &mut description_budget)
                         .map_err(|e| err(start + record.start, e.message))?;
+                entry.set_description(decoded);
             }
-            entry.opaque.reserve_exact(4 + record.len() + blob.len());
-            put32(&mut entry.opaque, record.len() as u32);
-            entry.opaque.extend_from_slice(&b[record]);
-            entry.opaque.extend_from_slice(blob);
+            if E::PRESERVE_OPAQUE {
+                let mut opaque = Vec::new();
+                opaque.reserve_exact(4 + record.len() + blob.len());
+                put32(&mut opaque, record.len() as u32);
+                opaque.extend_from_slice(&b[record]);
+                opaque.extend_from_slice(blob);
+                entry.set_opaque(opaque);
+            }
         }
-        let mut opaque_header = b[..first_data].to_vec();
-        if root.blob != 0 {
+        let mut opaque_header = if E::PRESERVE_OPAQUE {
+            b[..first_data].to_vec()
+        } else {
+            Vec::new()
+        };
+        if E::PRESERVE_OPAQUE && root.blob != 0 {
             // The validated range includes the leading blob.
             opaque_header.extend_from_slice(&b[root.offset..root.offset + root.blob]);
         }
@@ -1374,8 +1587,10 @@ mod tests {
                 (0x0400_0000 | size).to_le_bytes()
             );
             let parsed = parse_ctf(&bytes, &Limits::default()).unwrap();
+            let metadata = parse_ctf_metadata(&bytes, &Limits::default()).unwrap();
             assert_eq!(parsed.disks.len(), catalog.disks.len());
             assert_eq!(parsed.opaque_trailer, catalog.opaque_trailer);
+            assert!(metadata.opaque_trailer.is_empty());
 
             bytes[extension_start + 1] ^= 4;
             let error = parse_ctf(&bytes, &Limits::default()).unwrap_err();
@@ -1407,6 +1622,7 @@ mod tests {
     #[test]
     fn root_blob_preserves_external_file_descriptions_and_unreferenced_bytes() {
         let mut catalog = sample();
+        catalog.disks[0].entries[0].description = "folder note".into();
         let disk = &mut catalog.disks[0];
         let blob = b"\xff\x80description\0\xfe";
         disk.opaque_header = generic_disk_header(disk.name.as_bytes()).unwrap();
@@ -1427,6 +1643,11 @@ mod tests {
 
         let mut bytes = write_ctf(&catalog).unwrap();
         let mut parsed = parse_ctf(&bytes, &Limits::default()).unwrap();
+        let metadata = parse_ctf_metadata(&bytes, &Limits::default()).unwrap();
+        assert_eq!(metadata.disks[0].entries[0].description, "folder note");
+        assert_eq!(metadata.disks[0].entries[1].description, "description");
+        assert_eq!(metadata.disks[0].entries[2].description, "description");
+        assert!(metadata.disks[0].opaque_header.is_empty());
         assert_eq!(parsed.disks[0].entries[1].description, "description");
         assert!(parsed.disks[0].opaque_header.ends_with(blob));
         assert_eq!(write_ctf(&parsed).unwrap(), bytes);
@@ -1543,7 +1764,12 @@ mod tests {
         }
         let bytes = write_ctf(&catalog).unwrap();
         let roundtrip = parse_ctf(&bytes, &Limits::default()).unwrap();
+        let metadata = parse_ctf_metadata(&bytes, &Limits::default()).unwrap();
         assert!(roundtrip.disks[0]
+            .entries
+            .iter()
+            .all(|e| e.description == text));
+        assert!(metadata.disks[0]
             .entries
             .iter()
             .all(|e| e.description == text));
@@ -1555,7 +1781,10 @@ mod tests {
             ..Limits::default()
         };
         let refused = parse_ctf(&bytes, &limits).unwrap_err();
+        let metadata_refused = parse_ctf_metadata(&bytes, &limits).unwrap_err();
         assert_eq!(refused.message, "aggregate description byte limit exceeded");
+        assert_eq!(metadata_refused.offset, refused.offset);
+        assert_eq!(metadata_refused.message, refused.message);
     }
 
     #[test]
@@ -1606,6 +1835,100 @@ mod tests {
             let error = parse_ctf(&malformed, &Limits::default()).unwrap_err();
             assert_eq!(error.message, "invalid absent file range");
         }
+    }
+
+    #[test]
+    fn file_heavy_parse_reserves_exact_entry_capacity_and_roundtrips_opaque_unicode() {
+        let mut entries: Vec<_> = (0..1025)
+            .map(|i| item(&format!("файл-{i:04}.dat"), None, EntryKind::File, i))
+            .collect();
+        let (mut raw, _) = file_encode(&entries[0], &[]).unwrap();
+        let flags = u16::from_le_bytes(raw[..2].try_into().unwrap());
+        raw[..2].copy_from_slice(&(flags | 128).to_le_bytes());
+        write_extensions(&mut raw, &[(77, 3, vec![0xff, 0x00, 0x7f])]);
+        entries[0].opaque = raw;
+        let source = CtfCatalog {
+            name: "capacity fixture".into(),
+            disks: vec![CtfDisk {
+                name: "file-heavy synthetic disk".into(),
+                entries,
+                opaque_header: Vec::new(),
+            }],
+            opaque_trailer: Vec::new(),
+        };
+
+        let bytes = write_ctf(&source).unwrap();
+        let parsed = parse_ctf(&bytes, &Limits::default()).unwrap();
+        let metadata = parse_ctf_metadata(&bytes, &Limits::default()).unwrap();
+        assert_eq!(parsed.disks[0].entries.len(), 1025);
+        assert_eq!(parsed.disks[0].entries.capacity(), 1025);
+        assert_eq!(metadata.disks[0].entries.len(), 1025);
+        assert_eq!(metadata.disks[0].entries.capacity(), 1025);
+        assert_eq!(parsed.disks[0].entries[0].name, "файл-0000.dat");
+        assert_eq!(
+            metadata.disks[0].entries[0],
+            MetadataEntry {
+                name: parsed.disks[0].entries[0].name.clone(),
+                description: parsed.disks[0].entries[0].description.clone(),
+                parent: parsed.disks[0].entries[0].parent,
+                kind: parsed.disks[0].entries[0].kind,
+                size: parsed.disks[0].entries[0].size,
+                attributes: parsed.disks[0].entries[0].attributes,
+                modified_dos: parsed.disks[0].entries[0].modified_dos,
+                created_dos: parsed.disks[0].entries[0].created_dos,
+                accessed_dos: parsed.disks[0].entries[0].accessed_dos,
+            }
+        );
+        let converted = parsed.clone().into_metadata();
+        assert_eq!(converted.disks[0].entries[0], metadata.disks[0].entries[0]);
+        assert!(converted.disks[0].opaque_header.is_empty());
+        assert!(converted.opaque_trailer.is_empty());
+        assert!(metadata.disks[0].opaque_header.is_empty());
+        assert!(metadata.opaque_trailer.is_empty());
+        assert_eq!(write_ctf(&parsed).unwrap(), bytes);
+    }
+
+    #[test]
+    fn forged_file_count_is_rejected_before_capacity_reservation() {
+        let mut source = sample();
+        source.disks[0].entries = vec![item("small.txt", None, EntryKind::File, 1)];
+        let mut bytes = write_ctf(&source).unwrap();
+        let table_offset = 27 + source.name.len();
+        let disk_offset =
+            u32::from_le_bytes(bytes[table_offset..table_offset + 4].try_into().unwrap()) as usize;
+        // Root range count field: disk header (16 bytes), then range offset/len/count.
+        bytes[disk_offset + 24..disk_offset + 28].copy_from_slice(&u32::MAX.to_le_bytes());
+
+        let error = parse_ctf(&bytes, &Limits::default()).unwrap_err();
+        let metadata_error = parse_ctf_metadata(&bytes, &Limits::default()).unwrap_err();
+        assert_eq!(error.message, "file count exceeds range capacity");
+        assert_eq!(metadata_error.offset, error.offset);
+        assert_eq!(metadata_error.message, error.message);
+    }
+
+    #[test]
+    fn entry_limit_is_aggregate_across_disks() {
+        let source = CtfCatalog {
+            name: "two disks".into(),
+            disks: (0..2)
+                .map(|i| CtfDisk {
+                    name: format!("disk-{i}"),
+                    entries: vec![item("one.txt", None, EntryKind::File, 1)],
+                    opaque_header: Vec::new(),
+                })
+                .collect(),
+            opaque_trailer: Vec::new(),
+        };
+        let bytes = write_ctf(&source).unwrap();
+        let limits = Limits {
+            max_entries: 1,
+            ..Limits::default()
+        };
+        let error = parse_ctf(&bytes, &limits).unwrap_err();
+        let metadata_error = parse_ctf_metadata(&bytes, &limits).unwrap_err();
+        assert_eq!(error.message, "entry limit exceeded");
+        assert_eq!(metadata_error.offset, error.offset);
+        assert_eq!(metadata_error.message, error.message);
     }
 
     #[test]
@@ -1688,9 +2011,17 @@ mod tests {
     fn truncated_inputs_never_panic() {
         let b = write_ctf(&sample()).unwrap();
         for n in 0..b.len() {
-            assert!(
-                parse_ctf(&b[..n], &Limits::default()).is_err(),
-                "accepted truncation at {n}"
+            let full_error = parse_ctf(&b[..n], &Limits::default())
+                .expect_err("full parser accepted truncated source");
+            let metadata_error = parse_ctf_metadata(&b[..n], &Limits::default())
+                .expect_err("metadata parser accepted truncated source");
+            assert_eq!(
+                metadata_error.offset, full_error.offset,
+                "at truncation {n}"
+            );
+            assert_eq!(
+                metadata_error.message, full_error.message,
+                "at truncation {n}"
             );
         }
     }

@@ -536,7 +536,7 @@ pub(crate) fn analytics(v: &Value, job: crate::ctf_job::Job) -> Result<Value> {
     ctf_preview::checked_result(&snapshot, value, Some(&job))
 }
 
-fn find_id(snapshot: &Snapshot, id: i64) -> Option<(usize, usize, &ctf_format::CtfEntry)> {
+fn find_id(snapshot: &Snapshot, id: i64) -> Option<(usize, usize, &ctf_format::MetadataEntry)> {
     snapshot.id_bases.iter().enumerate().find_map(|(vi, base)| {
         let index = usize::try_from(id.checked_sub(*base)?).ok()?;
         Some((
