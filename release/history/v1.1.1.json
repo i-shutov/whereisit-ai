@@ -1,0 +1,169 @@
+{
+  "format": "whereisit-release-acceptance-v1",
+  "version": "1.1.1",
+  "channel": "stable",
+  "stable_ready": true,
+  "post_release_defects": [
+    {
+      "id": "P1-ANALYTICS-TEXT-HIGHLIGHT",
+      "status": "FIXED_IN_1_1_1",
+      "reported_on": "2026-11-24",
+      "summary": "Analytics highlight predicates for description, tags and full text query columns absent from entries_core and fail instead of returning matched counters.",
+      "report": "docs/qa/ANALYTICS_HIGHLIGHT_DEFECT_20261124.md",
+      "affected_release": "1.1.0",
+      "candidate_fix_prs": [
+        95
+      ],
+      "candidate_validation": "PASS; synthetic regressions plus exact3cf2d36 hosted installed GUI description/tag/default text each1file11bytes; affected published1.1.0 unchanged",
+      "resolved_version": "1.1.1"
+    },
+    {
+      "id": "P1-CTF-COLD-OPEN",
+      "status": "FIXED_IN_1_1_1",
+      "reported_on": "2026-11-24",
+      "summary": "First opening of a large CTF waits for complete import and indexing; owner reports over 15 minutes on Windows 10.",
+      "acceptance_gap": "Warm derived-SQLite search measurements do not validate first CTF open latency.",
+      "report": "docs/qa/CTF_COLD_OPEN_DEFECT_20261124.md",
+      "affected_release": "1.1.0",
+      "candidate_fix_prs": [
+        94,
+        96,
+        97,
+        98,
+        99,
+        100
+      ],
+      "candidate_validation": "PASS; direct immutable fullCTF open and paged search in exact3cf2d36 installed hosted product GUI; two service benchmark series at unchanged product code24d7e77. Windows10 exact artifact remains untested.",
+      "resolved_version": "1.1.1"
+    }
+  ],
+  "candidate_publication_approved": true,
+  "publication_is_manual_after_QA": true,
+  "personal_catalogs_in_release": false,
+  "synthetic_data_is_not_real_data_acceptance": true,
+  "manual_acceptance_is_distinct_from_CI": true,
+  "publication_requires_successful_jobs": [
+    "test",
+    "windows"
+  ],
+  "previous_stable": {
+    "version": "1.1.0",
+    "tag": "v1.1.0",
+    "source_commit": "7f684f47aab42fb211dfa0af1085ace311ef9f8d",
+    "acceptance": "release/history/v1.1.0.json",
+    "immutable_published_assets": true
+  },
+  "release_scope": {
+    "target_version": "1.1.1",
+    "ship_platforms": [
+      "windows-x64"
+    ],
+    "deferred_product_platforms": [
+      "macos-arm64",
+      "macos-x86_64",
+      "linux"
+    ],
+    "unsigned_windows_stable_approved": true,
+    "usb_binding_enabled": false,
+    "deferred_features": [],
+    "runtime": "Rust/egui; no web runtime"
+  },
+  "integrated_feature_prs": [
+    94,
+    95,
+    96,
+    97,
+    98,
+    99,
+    100
+  ],
+  "candidate_features": [
+    "Direct read-only CTF metadata snapshot without mandatory SQLite import/index construction",
+    "Disk/tree/file navigation and source-order first pages",
+    "Windows protected source pin with portable full-verification fallback",
+    "Bounded parallel metadata matching and query-local ancestor cache",
+    "Direct CTF analytics and corrected description/tag highlights"
+  ],
+  "build_time_acceptance": {
+    "accepted_code_checkpoint": "PASS; PR100 aa25e26, code24d7e77; exact CI15/15 and real Win11 QA-binary GUI",
+    "integration_main": "a248a6d4fa75bec511e54a82a38016973894baca; tree identical to accepted PR100",
+    "exact_1_1_1_installer_gui": "PASS; exact3cf2d36 hosted artifact15143743307, run45873945126; installed bytes match provenance; direct fullCTF/paging and restart observed",
+    "installed_1_1_0_to_1_1_1_upgrade": "PASS; local standard3cf2d36 installer GUI lifecycle with external SQLite/user-store preservation; exact-source hosted upgrade run45873945384 also PASS",
+    "original_vendor_candidate_compatibility": "PASS for exercised supported fullcatalog; both GUI directions;44volumes/3046133rows,10 semanticfields,exactly1 intendeddescriptionchange; original/master unchanged",
+    "original_ctf_write_allowed": false,
+    "windows10": "OWNER_CONFIRMED_HISTORICAL; new1.1.1 artifact not tested",
+    "macos_linux": "COMPILE_TESTS_ONLY; product releases deferred",
+    "accepted_pr101_ci": "PASS; all15 checks on975a174; mergedmain8f95d639 has identical tree"
+  },
+  "known_open_gates": [],
+  "signing": {
+    "windows": "unsigned; owner-approved Windows release scope",
+    "macos": "deferred platform release"
+  },
+  "physical_acceptance": {
+    "status": "PASS_FOR_TESTED_CANDIDATE",
+    "target_version": "1.1.1",
+    "previous_release_evidence": "release/history/v1.1.0.json",
+    "qa_code_checkpoint_report": "docs/qa/CTF_TEXT_SCAN_20261126.md",
+    "candidate_source_commit": "3cf2d36fe2929858cd768ef2d080a82d1725ca5a",
+    "installed_candidate_report": "docs/qa/WINDOWS_1_1_1_INSTALLED_CANDIDATE_20261126.md",
+    "hosted_installer_artifact_id": 15143743307,
+    "hosted_installer_run_id": 45873945126,
+    "date_utc": "2026-11-26",
+    "platform": "Windows11 Pro x64; Administrator interactive RDP",
+    "supported_ctf_original_vendor_both_directions": "PASS",
+    "original_whereisit_file_version": "2014.0.0.220",
+    "full_catalog_volumes": 44,
+    "full_catalog_entries": 3046133,
+    "all_vendor_roundtrip_entry_rows_compared": 3046133,
+    "vendor_roundtrip_fields_compared": 10,
+    "vendor_roundtrip_description_changes": 1,
+    "all_semantic_volume_metadata_preserved": true,
+    "source_original_unchanged": true,
+    "remaining_p0": 0,
+    "remaining_p1": 0,
+    "public_report": "docs/qa/WINDOWS_1_1_1_STABLE_ACCEPTANCE_20261126.md"
+  },
+  "measured_performance": {
+    "tested_code_commit": "24d7e772edbb4830fe5117aaed853a76016372fd",
+    "catalog_entries": 3046133,
+    "volumes": 44,
+    "search_classes": 10,
+    "series": 2,
+    "samples_per_class_per_series": 30,
+    "search_max_p95_ms": 122.112,
+    "search_largest_observed_ms": 126.938,
+    "open_through_first_search_ms": [
+      1273,
+      1217
+    ],
+    "search_peak_working_set_bytes": 904663040,
+    "peak_commit_bytes": 1133379584,
+    "after_close_private_bytes": [
+      9404416,
+      10088448
+    ],
+    "cache": "OS uncontrolled; repeated warm workload, not cold-cache",
+    "scope": "Optimized Rust service on Win11, four logical CPUs; not installed1.1.1 acceptance or arbitrary-query guarantee",
+    "report": "docs/qa/CTF_TEXT_SCAN_20261126.md"
+  },
+  "publication_verification": {
+    "manual_final_action": true,
+    "require_rebuilt_readiness_artifact_provenance_and_checksum": true,
+    "require_final_installer_gui_before_publication": true,
+    "later_builds_not_certified_retroactively": true,
+    "preserve_previous_release_and_tag": true,
+    "require_current_main_successful_required_ci_jobs": true,
+    "required_completed_unique_jobs": [
+      "test",
+      "windows"
+    ],
+    "unshipped_platform_jobs_are_not_windows_publication_gates": true,
+    "readiness_scope": "Functional/data-safety readiness established by recorded candidate evidence; rebuilt exact-main installer still requires independent provenance/checksum and actual GUI verification before publisher trigger. Later binaries are not certified retroactively."
+  },
+  "inherited_feature_prs": [
+    87,
+    88,
+    89
+  ]
+}
