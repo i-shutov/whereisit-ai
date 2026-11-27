@@ -27,6 +27,8 @@ The HTTP demo binds to **127.0.0.1:3000**, and its development WebSocket also bi
 
 Windows 1.1 starts with the existing five PR58 workspaces, preserving their order and layout. Visited panels remain mounted in memory so switching tabs retains the query, scope, selection, folder/page and inner scroll state; unopened panels mount lazily. Arrow keys/Home/End navigate the accessible tab strip, and hidden Search does not handle shortcuts. A browser reload starts a fresh demo session. Scoped asynchronous response guards prevent older analytical results replacing a newer scope and allow retry after failure.
 
+The selected-file inspector includes a synthetic CTF annotation walkthrough: edit note/tags/category, save a browser-local draft, reload, then simulate an external description change and explicitly keep either value. It is mock data only and never writes a CTF. Annotation keys use a fixed synthetic document ID plus volume/entry IDs; a separately named mock-copy ID is covered by utility tests and is not represented as another GUI catalog.
+
 See the [workspace acceptance contract](../../docs/qa/WINDOWS_1_1_WORKSPACES_PR58_20261122.md). Browser demo analytics do not establish native feature readiness; Search and USB Disks are the first real egui workspace slice.
 
 See [`docs/UX_EGUI_VIDEO_CATALOG_2026-11-16.md`](../../docs/UX_EGUI_VIDEO_CATALOG_2026-11-16.md). Implementation target is a separate `apps/desktop-egui` Rust crate using the existing `atlas-service` APIs and preserving the existing Win32 and SwiftUI clients until full feature parity and physical QA.

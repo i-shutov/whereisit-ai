@@ -43,6 +43,18 @@ import { useI18n } from '../i18n';
 import { CatalogNavigationTree } from './CatalogNavigationTree';
 import { buildSearchJumpDefaults } from '../utils/searchJump';
 import { breadcrumbPath, destinationForEmptyQuery, type FolderIdentity } from '../utils/catalogNavigation';
+import {
+  applyExternalDemoChange,
+  demoDocumentKey,
+  demoRecordHasConflict,
+  conflictFields,
+  initialDemoRecord,
+  markDemoRecordSaved,
+  parseDemoRecord,
+  PRIMARY_DEMO_DOCUMENT_ID,
+  resolveDemoConflict,
+  type DemoAnnotationRecord,
+} from '../utils/demoAnnotations';
 
 interface NavigationSnapshot {
   mode: 'search' | 'browse' | 'duplicates' | 'copy_candidates';
@@ -180,6 +192,11 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
   const [loading, setLoading] = useState(false);
   const [queryError, setQueryError] = useState<string | null>(null);
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
+  const [demoAnnotationRecord, setDemoAnnotationRecord] = useState<DemoAnnotationRecord | null>(null);
+  const [annotationStatus, setAnnotationStatus] = useState<'saved' | 'saving' | 'dirty' | 'error'>('saved');
+  const [annotationError, setAnnotationError] = useState<string | null>(null);
+  const [annotationLoadError, setAnnotationLoadError] = useState(false);
+  const draftRecordsRef = useRef<Map<string, DemoAnnotationRecord>>(new Map());
 
   // Page-only sorting
   const [sortCol, setSortCol] = useState<SortColumn>('natural');
@@ -410,6 +427,69 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
     const id = scopedVolumeId ?? selectedEntry?.volumeId ?? selectedRegisterDiskId;
     return volumeMap.get(id) ?? snapshot.volumes[0];
   }, [scopedVolumeId, selectedEntry, selectedRegisterDiskId, volumeMap, snapshot.volumes]);
+
+  const annotationStorageKey = selectedEntry && activeDisk?.sourceKind === 'archive_ctf'
+    ? demoDocumentKey(PRIMARY_DEMO_DOCUMENT_ID, activeDisk.id, selectedEntry.id)
+    : null;
+  const isSyntheticDemo = annotationStorageKey !== null;
+
+  useEffect(() => {
+    if (!selectedEntry || !annotationStorageKey) {
+      setDemoAnnotationRecord(null);
+      return;
+    }
+    let saved: DemoAnnotationRecord | null = null;
+    try {
+      const raw = window.localStorage.getItem(annotationStorageKey);
+      if (raw) saved = parseDemoRecord(raw);
+      saved = draftRecordsRef.current.get(annotationStorageKey) ?? saved;
+      setDemoAnnotationRecord(saved ?? initialDemoRecord({
+        description: selectedEntry.description,
+        tags: selectedEntry.tags,
+        category: selectedEntry.category,
+      }));
+      setAnnotationStatus('saved');
+      setAnnotationError(null);
+      setAnnotationLoadError(false);
+    } catch {
+      setDemoAnnotationRecord(initialDemoRecord({
+        description: selectedEntry.description,
+        tags: selectedEntry.tags,
+        category: selectedEntry.category,
+      }));
+      setAnnotationStatus('error');
+      setAnnotationError('Could not load this browser’s synthetic demo annotations.');
+      setAnnotationLoadError(true);
+    }
+  }, [annotationStorageKey, selectedEntry]);
+
+  const updateDemoAnnotation = (field: 'description' | 'tags' | 'category', value: string) => {
+    setDemoAnnotationRecord((current) => {
+      if (!current || annotationLoadError || !annotationStorageKey) return current;
+      const next = { ...current, value: { ...current.value, [field]: value }, saved: false };
+      draftRecordsRef.current.set(annotationStorageKey, next);
+      try { window.localStorage.setItem(annotationStorageKey, JSON.stringify(next)); setAnnotationError(null); }
+      catch { setAnnotationStatus('error'); setAnnotationError('Browser storage is unavailable or full. Your current edits remain on screen.'); return next; }
+      setAnnotationStatus('dirty');
+      return next;
+    });
+  };
+
+  const saveDemoAnnotation = () => {
+    if (!annotationStorageKey || !demoAnnotationRecord || annotationLoadError) return;
+    setAnnotationStatus('saving');
+    try {
+      const saved = markDemoRecordSaved(demoAnnotationRecord);
+      window.localStorage.setItem(annotationStorageKey, JSON.stringify(saved));
+      draftRecordsRef.current.set(annotationStorageKey, saved);
+      setDemoAnnotationRecord(saved);
+      setAnnotationStatus('saved');
+      setAnnotationError(null);
+    } catch {
+      setAnnotationStatus('error');
+      setAnnotationError('Browser storage is unavailable or full. Your current edits remain on screen.');
+    }
+  };
 
   const startInlineRename = (vol: CatalogVolume) => {
     setShowRail(true);
@@ -1895,6 +1975,62 @@ export const LocatorWorkspace: React.FC<LocatorWorkspaceProps> = ({
                   </button>
                 </div>
               </div>
+
+              {isSyntheticDemo && selectedEntry && demoAnnotationRecord && (
+                <section className="mt-2 border-t border-slate-200 dark:border-slate-800 pt-2" aria-label={t('Демо аннотаций CTF', 'CTF annotation demo')}>
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                    <div>
+                      <strong className="text-xs text-slate-800 dark:text-slate-100">{t('Аннотации CTF · демо', 'CTF annotations · demo')}</strong>
+                      <p className="text-[11px] text-slate-500">{t('Демо: правки в этом браузере. Исходный CTF не изменяется.', 'Demo: edits stay in this browser. The source CTF is unchanged.')}</p>
+                    </div>
+                    <span role="status" className={`text-xs ${annotationStatus === 'error' ? 'text-red-600' : 'text-slate-500'}`}>
+                      {annotationStatus === 'error' ? t('Ошибка', 'Error') : demoRecordHasConflict(demoAnnotationRecord) ? t('Требуется решение конфликта', 'Conflict resolution required') : annotationStatus === 'saving' ? t('Сохранение…', 'Saving…') : annotationStatus === 'dirty' || !demoAnnotationRecord.saved ? t('Черновик в браузере', 'Browser-local draft') : t('Сохранено в браузере', 'Saved in this browser')}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <label className="text-[11px] text-slate-600 dark:text-slate-300">{t('Заметка', 'Note')}
+                      <textarea disabled={annotationLoadError} value={demoAnnotationRecord.value.description} onChange={(event) => updateDemoAnnotation('description', event.target.value)} rows={2} className="mt-0.5 w-full rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1 text-xs text-slate-900 dark:text-white" />
+                    </label>
+                    <label className="text-[11px] text-slate-600 dark:text-slate-300">{t('Теги (через запятую)', 'Tags (comma separated)')}
+                      <input disabled={annotationLoadError} value={demoAnnotationRecord.value.tags} onChange={(event) => updateDemoAnnotation('tags', event.target.value)} className="mt-0.5 w-full rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1 text-xs text-slate-900 dark:text-white" />
+                    </label>
+                    <label className="text-[11px] text-slate-600 dark:text-slate-300">{t('Категория', 'Category')}
+                      <input disabled={annotationLoadError} value={demoAnnotationRecord.value.category} onChange={(event) => updateDemoAnnotation('category', event.target.value)} className="mt-0.5 w-full rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1 text-xs text-slate-900 dark:text-white" />
+                    </label>
+                  </div>
+                  {annotationError && <p role="alert" className="mt-1 text-xs text-red-600">{annotationError}</p>}
+                  {demoRecordHasConflict(demoAnnotationRecord) && demoAnnotationRecord.external && (
+                    <div className="mt-2 rounded border border-amber-400 bg-amber-50 dark:bg-amber-950/30 p-2 text-xs">
+                      <p className="font-semibold text-amber-900 dark:text-amber-200">{t('Конфликт внешнего изменения — сравните значения', 'External change conflict — review both values')}</p>
+                      {conflictFields(demoAnnotationRecord).map((field) => <React.Fragment key={field}>
+                        <p className="mt-1"><b>{t('Ваше значение', 'Your value')} ({field === 'description' ? t('заметка', 'note') : field === 'tags' ? t('теги', 'tags') : t('категория', 'category')}):</b> {demoAnnotationRecord.value[field] || t('(пусто)', '(empty)')}</p>
+                        <p><b>{t('Внешнее значение', 'External value')} ({field === 'description' ? t('заметка', 'note') : field === 'tags' ? t('теги', 'tags') : t('категория', 'category')}):</b> {demoAnnotationRecord.external![field] || t('(пусто)', '(empty)')}</p>
+                      </React.Fragment>)}
+                      <div className="mt-2 flex gap-2">
+                        {(['mine', 'external'] as const).map((choice) => (
+                          <button key={choice} type="button" onClick={() => {
+                            const resolved = resolveDemoConflict(demoAnnotationRecord, choice);
+                            setDemoAnnotationRecord(resolved);
+                            draftRecordsRef.current.set(annotationStorageKey!, resolved);
+                            try { window.localStorage.setItem(annotationStorageKey!, JSON.stringify(resolved)); setAnnotationStatus('saved'); setAnnotationError(null); }
+                            catch { setAnnotationStatus('error'); setAnnotationError('Resolution is visible but could not be stored.'); }
+                          }} className="rounded bg-amber-800 px-2 py-1 text-white hover:bg-amber-700">{choice === 'mine' ? t('Оставить моё', 'Keep mine') : t('Принять внешнее', 'Use external')}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button type="button" disabled={demoRecordHasConflict(demoAnnotationRecord) || annotationLoadError} onClick={saveDemoAnnotation} className="rounded bg-blue-700 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50">{t('Сохранить демо-правки', 'Save demo annotations')}</button>
+                    <button type="button" disabled={annotationLoadError} onClick={() => {
+                      const changed = applyExternalDemoChange(demoAnnotationRecord, `${demoAnnotationRecord.base.description} [external demo edit]`);
+                      setDemoAnnotationRecord(changed);
+                      draftRecordsRef.current.set(annotationStorageKey!, changed);
+                      try { window.localStorage.setItem(annotationStorageKey!, JSON.stringify(changed)); setAnnotationStatus('saved'); setAnnotationError(null); }
+                      catch { setAnnotationStatus('error'); setAnnotationError('External demo change could not be stored.'); }
+                    }} className="rounded border border-amber-500 px-2.5 py-1 text-xs text-amber-800 dark:text-amber-200">{t('Смоделировать внешнее изменение заметки', 'Simulate external note change')}</button>
+                  </div>
+                </section>
+              )}
 
               {pageData?.copyCandidatesMeta && (
                 <div className="mt-1.5 pt-1.5 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center gap-1.5 text-xs">

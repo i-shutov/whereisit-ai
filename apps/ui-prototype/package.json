@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test:workspaces": "tsx --test src/utils/scopedRequest.test.ts src/utils/searchJump.test.ts src/utils/catalogNavigation.test.ts src/utils/catalogOrder.test.ts src/utils/metadataCandidates.test.ts src/utils/reviewCsv.test.ts"
+    "test:workspaces": "tsx --test src/utils/scopedRequest.test.ts src/utils/searchJump.test.ts src/utils/catalogNavigation.test.ts src/utils/catalogOrder.test.ts src/utils/metadataCandidates.test.ts src/utils/reviewCsv.test.ts src/utils/demoAnnotations.test.ts"
   },
   "dependencies": {
     "@google/genai": "^3.3.0",
