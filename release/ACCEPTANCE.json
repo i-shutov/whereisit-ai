@@ -2,7 +2,7 @@
   "format": "whereisit-release-acceptance-v1",
   "version": "1.1.1",
   "channel": "stable",
-  "stable_ready": true,
+  "stable_ready": false,
   "post_release_defects": [
     {
       "id": "P1-ANALYTICS-TEXT-HIGHLIGHT",
@@ -37,7 +37,7 @@
       "resolved_version": "1.1.1"
     }
   ],
-  "candidate_publication_approved": true,
+  "candidate_publication_approved": false,
   "publication_is_manual_after_QA": true,
   "personal_catalogs_in_release": false,
   "synthetic_data_is_not_real_data_acceptance": true,
@@ -95,7 +95,9 @@
     "macos_linux": "COMPILE_TESTS_ONLY; product releases deferred",
     "accepted_pr101_ci": "PASS; all15 checks on975a174; mergedmain8f95d639 has identical tree"
   },
-  "known_open_gates": [],
+  "known_open_gates": [
+    "CTF opening-memory development candidate: parser bounds/regressions, before/after memory and latency, and real GUI acceptance pending"
+  ],
   "signing": {
     "windows": "unsigned; owner-approved Windows release scope",
     "macos": "deferred platform release"
@@ -165,5 +167,11 @@
     87,
     88,
     89
-  ]
+  ],
+  "development_candidate": {
+    "base_release": "1.1.1",
+    "base_source_commit": "4bb4a4030b8c689a9adb367689d510d07c1dcd29",
+    "work": "Reduce CTF opening peak memory; published1.1.1 tags/assets remain immutable",
+    "report": "docs/qa/CTF_OPEN_MEMORY_20261127.md"
+  }
 }
