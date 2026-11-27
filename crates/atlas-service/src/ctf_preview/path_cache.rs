@@ -4,7 +4,7 @@
 //! and use their exact fallback whenever this cache declines a lookup.
 
 use atlas_core::query::MetadataContainsMatcher;
-use ctf_format::{CtfDisk, EntryKind};
+use ctf_format::{EntryKind, MetadataDisk};
 
 const WARMUP_LOOKUPS: usize = 1024;
 const MAX_PATTERNS: usize = 4;
@@ -37,7 +37,7 @@ impl AncestorCache {
     pub(super) fn ancestors_contain(
         &mut self,
         volume_index: usize,
-        disk: &CtfDisk,
+        disk: &MetadataDisk,
         parent: Option<usize>,
         matcher: &MetadataContainsMatcher<'_>,
     ) -> Option<bool> {
@@ -78,7 +78,7 @@ impl AncestorCache {
 
     fn resolve_parent(
         &mut self,
-        disk: &CtfDisk,
+        disk: &MetadataDisk,
         parent: usize,
         pattern_index: usize,
         mut matches: impl FnMut(&str) -> bool,
@@ -180,11 +180,11 @@ mod tests {
     use atlas_core::query::{
         MetadataCategoryPredicate, MetadataQuery, MetadataQueryContext, MetadataRecord,
     };
-    use ctf_format::{CtfEntry, EntryKind};
+    use ctf_format::{EntryKind, MetadataDisk, MetadataEntry};
     use std::cell::RefCell;
 
-    fn entry(name: &str, parent: Option<usize>, kind: EntryKind) -> CtfEntry {
-        CtfEntry {
+    fn entry(name: &str, parent: Option<usize>, kind: EntryKind) -> MetadataEntry {
+        MetadataEntry {
             name: name.to_owned(),
             description: String::new(),
             parent,
@@ -194,12 +194,11 @@ mod tests {
             modified_dos: 0,
             created_dos: 0,
             accessed_dos: 0,
-            opaque: vec![],
         }
     }
 
-    fn disk(entries: Vec<CtfEntry>) -> CtfDisk {
-        CtfDisk {
+    fn disk(entries: Vec<MetadataEntry>) -> MetadataDisk {
+        MetadataDisk {
             name: "synthetic".into(),
             opaque_header: vec![],
             entries,
@@ -208,7 +207,7 @@ mod tests {
 
     struct QueryContext<'a> {
         cache: RefCell<AncestorCache>,
-        disk: &'a CtfDisk,
+        disk: &'a MetadataDisk,
         volume: usize,
         parent: RefCell<Option<usize>>,
         answers: RefCell<Vec<Option<bool>>>,

@@ -232,12 +232,20 @@ fn ctf_database_normal_export_preserves_root_blob_and_external_description() {
     let original = ctf_format::write_ctf(&fixture).unwrap();
     std::fs::write(&source, &original).unwrap();
 
+    // Preview keeps only metadata; a subsequent import must still parse the
+    // original full representation and preserve unknown opaque payloads.
+    let preview = call(json!({"op":"ctf_preview_open","path":source}));
+    assert_eq!(preview["ok"], true, "{preview}");
+    let generation = preview["data"]["generation"].as_str().unwrap();
+
     let imported = call(json!({"op":"import_ctf","db":db,"path":source}));
     assert_eq!(imported["ok"], true, "{imported}");
     let exported = call(json!({"op":"export_ctf","db":db,"path":output}));
     assert_eq!(exported["ok"], true, "{exported}");
     let bytes = std::fs::read(output).unwrap();
     assert_eq!(bytes, original);
+    let closed = call(json!({"op":"ctf_preview_close","path":source,"generation":generation}));
+    assert_eq!(closed["data"]["closed"], true, "{closed}");
     let parsed = ctf_format::parse_ctf(&bytes, &limits).unwrap();
     assert_eq!(parsed.disks[0].entries[0].description, "text");
     assert!(parsed.disks[0].opaque_header.ends_with(metadata));
