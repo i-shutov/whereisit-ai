@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 
 // Older Atlas exports declared a 45-block table regardless of the actual block count.
 const LEGACY_PACKED_OFFSET_TABLE_SIZE: u32 = 0x0400_00b8;
+// Smallest accepted file record: flags, name length, implied attributes,
+// modification date, and size. Empty names are currently accepted.
+const MIN_FILE_RECORD_BYTES: usize = 11;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CtfCatalog {
@@ -504,6 +507,7 @@ pub fn parse_ctf(bytes: &[u8], limits: &Limits) -> Result<CtfCatalog, CtfError> 
         }
         intervals.sort_unstable();
         let mut cursor = first_data;
+        let mut file_count = 0usize;
         for (a, b) in intervals {
             if a != cursor {
                 return Err(err(start + a, "overlapping or unaccounted data ranges"));
@@ -513,6 +517,32 @@ pub fn parse_ctf(bytes: &[u8], limits: &Limits) -> Result<CtfCatalog, CtfError> 
         if cursor != dirs {
             return Err(err(start + cursor, "unaccounted data before folder table"));
         }
+
+        // Counts are untrusted until both the data intervals and minimum
+        // record size have been checked. Validate the full per-disk total
+        // before reserving so forged counts cannot trigger a large allocation.
+        for fr in &ranges {
+            if fr.count == 0 {
+                continue;
+            }
+            let record_bytes = fr.len - fr.blob;
+            if fr.count > record_bytes / MIN_FILE_RECORD_BYTES {
+                return Err(err(start + fr.offset, "file count exceeds range capacity"));
+            }
+            file_count = file_count
+                .checked_add(fr.count)
+                .ok_or_else(|| err(start + fr.offset, "entry count overflow"))?;
+        }
+        if total
+            .checked_add(file_count)
+            .filter(|v| *v <= limits.max_entries)
+            .is_none()
+        {
+            return Err(err(start, "entry limit exceeded"));
+        }
+        entries
+            .try_reserve_exact(file_count)
+            .map_err(|_| err(start, "entry allocation failed"))?;
 
         // Do not copy or decode a folder blob until the complete data layout
         // has been validated. Malformed overlapping ranges could otherwise
@@ -1606,6 +1636,71 @@ mod tests {
             let error = parse_ctf(&malformed, &Limits::default()).unwrap_err();
             assert_eq!(error.message, "invalid absent file range");
         }
+    }
+
+    #[test]
+    fn file_heavy_parse_reserves_exact_entry_capacity_and_roundtrips_opaque_unicode() {
+        let mut entries: Vec<_> = (0..1025)
+            .map(|i| item(&format!("файл-{i:04}.dat"), None, EntryKind::File, i))
+            .collect();
+        let (mut raw, _) = file_encode(&entries[0], &[]).unwrap();
+        let flags = u16::from_le_bytes(raw[..2].try_into().unwrap());
+        raw[..2].copy_from_slice(&(flags | 128).to_le_bytes());
+        write_extensions(&mut raw, &[(77, 3, vec![0xff, 0x00, 0x7f])]);
+        entries[0].opaque = raw;
+        let source = CtfCatalog {
+            name: "capacity fixture".into(),
+            disks: vec![CtfDisk {
+                name: "file-heavy synthetic disk".into(),
+                entries,
+                opaque_header: Vec::new(),
+            }],
+            opaque_trailer: Vec::new(),
+        };
+
+        let bytes = write_ctf(&source).unwrap();
+        let parsed = parse_ctf(&bytes, &Limits::default()).unwrap();
+        assert_eq!(parsed.disks[0].entries.len(), 1025);
+        assert_eq!(parsed.disks[0].entries.capacity(), 1025);
+        assert_eq!(parsed.disks[0].entries[0].name, "файл-0000.dat");
+        assert_eq!(write_ctf(&parsed).unwrap(), bytes);
+    }
+
+    #[test]
+    fn forged_file_count_is_rejected_before_capacity_reservation() {
+        let mut source = sample();
+        source.disks[0].entries = vec![item("small.txt", None, EntryKind::File, 1)];
+        let mut bytes = write_ctf(&source).unwrap();
+        let table_offset = 27 + source.name.len();
+        let disk_offset =
+            u32::from_le_bytes(bytes[table_offset..table_offset + 4].try_into().unwrap()) as usize;
+        // Root range count field: disk header (16 bytes), then range offset/len/count.
+        bytes[disk_offset + 24..disk_offset + 28].copy_from_slice(&u32::MAX.to_le_bytes());
+
+        let error = parse_ctf(&bytes, &Limits::default()).unwrap_err();
+        assert_eq!(error.message, "file count exceeds range capacity");
+    }
+
+    #[test]
+    fn entry_limit_is_aggregate_across_disks() {
+        let source = CtfCatalog {
+            name: "two disks".into(),
+            disks: (0..2)
+                .map(|i| CtfDisk {
+                    name: format!("disk-{i}"),
+                    entries: vec![item("one.txt", None, EntryKind::File, 1)],
+                    opaque_header: Vec::new(),
+                })
+                .collect(),
+            opaque_trailer: Vec::new(),
+        };
+        let bytes = write_ctf(&source).unwrap();
+        let limits = Limits {
+            max_entries: 1,
+            ..Limits::default()
+        };
+        let error = parse_ctf(&bytes, &limits).unwrap_err();
+        assert_eq!(error.message, "entry limit exceeded");
     }
 
     #[test]

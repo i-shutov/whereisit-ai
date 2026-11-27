@@ -1,4 +1,4 @@
-# CTF opening memory — 27 November 2026
+# CTF opening memory вЂ” 27 November 2026
 
 Development on top of Windows 1.1.1 source `4bb4a403`. Published `v1.1.1` and
 its assets stay immutable. This work is a new candidate, not a release:
@@ -40,3 +40,32 @@ Regressions must cover allocation capacity, forged counts, global limits,
 Unicode/opaque roundtrip integrity and query/navigation semantics. Follow-up
 memory measurements use the same executable harness in fresh processes;
 latency and native GUI checks remain required before acceptance.
+
+## Stage 1: checked exact entry reservation
+
+The parser now checks file counts against validated range payload lengths and
+the minimum accepted 11-byte file record, then enforces the aggregate entry
+limit before a fallible exact reservation. Full opaque data and structural
+checks are retained. Twenty parser tests passed, including count forgery,
+multiple-disk limits and Unicode/unknown-field byte-identical roundtrip.
+An independent review found no P0/P1 in the bounds/reservation change.
+
+Same unchanged benchmark harness and workload, three fresh processes:
+
+| Run | Peak working set MiB | Peak commit MiB | Private after open MiB | Private after close MiB |
+|---|---:|---:|---:|---:|
+| 1 | 781.699 | 819.203 | 732.691 | 8.504 |
+| 2 | 806.492 | 819.027 | 732.523 | 9.074 |
+| 3 | 806.297 | 818.656 | 732.375 | 8.020 |
+
+Opening took 1158 / 1133 / 1112 ms; through first search 1187 / 1162 / 1139 ms.
+Peak commit dropped from about 1081 to 819 MiB (about 24%). The maximum
+observed working set dropped from 862 to 807 MiB, but retained private memory
+remained about 733 MiB. Paging makes individual working-set runs incomparable
+as a strict allocation measure; commit and retained bytes motivate the next
+step. Source bytes stayed unchanged in every run.
+
+Next: a distinct read-only metadata projection that validates the same format
+but does not retain raw writer/import opaque buffers. Normal import and export
+continue using the full-fidelity parser; metadata types cannot enter the CTF
+writer. This is not permission to discard unknown source data or change files.
