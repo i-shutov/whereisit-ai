@@ -2,7 +2,7 @@
   "format": "whereisit-release-acceptance-v1",
   "version": "1.1.2",
   "channel": "stable",
-  "stable_ready": false,
+  "stable_ready": true,
   "post_release_defects": [
     {
       "id": "P1-ANALYTICS-TEXT-HIGHLIGHT",
@@ -79,21 +79,19 @@
     "accepted_code_checkpoint": "PR103 head96996f3482d29c6e59c1c8ff1f8ba7f1217fb234;15/15 checks PASS",
     "integration_main": "c936124936d42c1cbc5b420a04b3b1374bd7ef78;identical tree;13/13 main push jobs PASS",
     "installed_main_gui": "PASS exact-main local standard installer: synthetic60,fullcopy44/3046133,paging,cancel/retry,restart,externalSQLite preserved on uninstall",
-    "version_1_1_2_candidate": "PENDING",
+    "version_1_1_2_candidate": "PASS c836ec3 local standard installed candidate;GUI Install/Finish,60disks,paged search,close;installed GUI/CLI hashes and versions;identity+publication tests",
     "original_vendor_compatibility": "Historical actual1.1.1 both-direction evidence in release/history/v1.1.1.json;PR103 full-copy field parity and byte-exact full writer roundtrip PASS",
     "original_ctf_write_allowed": false,
     "windows10": "OWNER_CONFIRMED_HISTORICAL; exact1.1.2 artifact not tested",
     "macos_linux": "COMPILE_TESTS_ONLY;product releases deferred"
   },
-  "known_open_gates": [
-    "Version1.1.2 installed candidate GUI and release identity checks pending"
-  ],
+  "known_open_gates": [],
   "signing": {
     "windows": "unsigned; owner-approved Windows release scope",
     "macos": "deferred platform release"
   },
   "physical_acceptance": {
-    "status": "PENDING_VERSIONED_CANDIDATE",
+    "status": "PASS_FOR_TESTED_CANDIDATE",
     "target_version": "1.1.2",
     "previous_release_evidence": "release/history/v1.1.1.json",
     "platform": "Windows11 Pro x64;Administrator interactive RDP",
@@ -101,7 +99,12 @@
     "original_write_allowed": false,
     "memory_fix_report": "docs/qa/CTF_OPEN_MEMORY_20261127.md",
     "public_report": "docs/qa/WINDOWS_1_1_2_STABLE_ACCEPTANCE_20261127.md",
-    "exact_final_installer_gui_required": true
+    "exact_final_installer_gui_required": true,
+    "candidate_source_commit": "c836ec30fb574dadfa0d94ff5c926b66af8cbc27",
+    "date_utc": "2026-11-27",
+    "remaining_p0": 0,
+    "remaining_p1": 0,
+    "known_performance_limit": "One size/count p95 target miss retained;paired repeats show no regression;no arbitrary-query guarantee"
   },
   "measured_performance": {
     "tested_code_commit": "96996f3482d29c6e59c1c8ff1f8ba7f1217fb234",
