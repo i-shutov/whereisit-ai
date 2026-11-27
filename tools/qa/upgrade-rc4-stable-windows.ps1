@@ -16,6 +16,7 @@ $pair = switch ($targetVersion) {
     '1.1.0-rc.1' { @{ source = '1.0.0'; sha = '938fece2d74793c2eda7a1b84082ab5db3f8a092' } }
     '1.1.0' { @{ source = '1.0.0'; sha = '938fece2d74793c2eda7a1b84082ab5db3f8a092' } }
     '1.1.1' { @{ source = '1.1.0'; sha = '7f684f47aab42fb211dfa0af1085ace311ef9f8d' } }
+    '1.1.2' { @{ source = '1.1.1'; sha = '4bb4a4030b8c689a9adb367689d510d07c1dcd29' } }
     default { throw "Unsupported target release: $targetVersion" }
 }
 if ($sourceVersion -ne $pair.source -or $sourceSha -ne $pair.sha) { throw 'Wrong exact predecessor source.' }
@@ -60,7 +61,7 @@ function Remove-Product {
 function Run-Probe([string]$Phase) {
     $probeArgs = @($Phase, '--cli', $cli, '--db', $db, '--fixture-root', $fixture,
         '--snapshot', $snapshot, '--source-release', $sourceVersion, '--target-release', $targetVersion)
-    if ($targetVersion -eq '1.1.1') { $probeArgs += @('--user-store', $sidecar) }
+    if ($targetVersion -in @('1.1.1', '1.1.2')) { $probeArgs += @('--user-store', $sidecar) }
     & python $probe @probeArgs
     if ($LASTEXITCODE -ne 0) { throw "Synthetic catalog probe failed during $Phase." }
 }
@@ -77,9 +78,9 @@ Install-Product $old $SourceRoot $sourceVersion
 Run-Probe prepare
 $beforeUpgrade = File-Sha $db
 $ctfSha = File-Sha $placeholder
-# Older pairs use a generated marker file. The hotfix pair asks the 1.1.0 CLI
-# to create the actual application-owned preferences SQLite store via its API.
-if ($targetVersion -ne '1.1.1') {
+# Older pairs use a generated marker file. The 1.1.1 and 1.1.2 upgrade pairs
+# ask the predecessor CLI to create the actual application preferences store.
+if ($targetVersion -notin @('1.1.1', '1.1.2')) {
     & python -c "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('CREATE TABLE sidecar_fixture (value TEXT NOT NULL)'); c.execute('INSERT INTO sidecar_fixture VALUES (?)', ('synthetic user sidecar',)); c.commit(); c.close()" $sidecar
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $sidecar -PathType Leaf)) { throw 'Could not create synthetic external user sidecar.' }
 }

@@ -7,7 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 from upgrade_catalog_probe import (FORMAT, RC1, RC2, RC3, RC4, STABLE, NEXT_RC1, NEXT_STABLE,
-    HOTFIX_STABLE, preferences_payload, preferences_snapshot, validate_user_store_pair,
+    HOTFIX_STABLE, MEMORY_FIX_STABLE, preferences_payload, preferences_snapshot, validate_user_store_pair,
     verify_user_store_checkpoint, sha256,
     ENTRY_NOTE, ENTRY_TAGS, expected_cli_version, validate_checkpoint_versions,
     seed_fixture_annotation, require_fixture_annotation)
@@ -115,6 +115,62 @@ class InstalledVersionContract(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "unexpected_user_store_for_upgrade_pair"):
             validate_user_store_pair(STABLE, NEXT_STABLE, store)
 
+    def test_112_memory_fix_pair_requires_real_user_store(self):
+        store = Path("synthetic-user-store.sqlite")
+        self.assertEqual(expected_cli_version("prepare", HOTFIX_STABLE, MEMORY_FIX_STABLE),
+                         "WhereIsIt AI " + HOTFIX_STABLE)
+        self.assertEqual(expected_cli_version("verify", HOTFIX_STABLE, MEMORY_FIX_STABLE),
+                         "WhereIsIt AI " + MEMORY_FIX_STABLE)
+        validate_user_store_pair(HOTFIX_STABLE, MEMORY_FIX_STABLE, store)
+        with self.assertRaisesRegex(RuntimeError, "user_store_required_for_memory_fix"):
+            validate_user_store_pair(HOTFIX_STABLE, MEMORY_FIX_STABLE, None)
+        with self.assertRaisesRegex(RuntimeError, "unexpected_user_store_for_upgrade_pair"):
+            validate_user_store_pair(NEXT_STABLE, MEMORY_FIX_STABLE, store)
+
+    def test_112_preferences_use_real_app_store_and_checkpoint_note(self):
+        db = Path("synthetic-catalog.sqlite")
+        store = Path("synthetic-user-store.sqlite")
+        note = "Synthetic shelf preferences — 1.1.1 to 1.1.2"
+        expected = {
+            "volume_id": 4, "display_name": "Synthetic Upgrade Disk",
+            "shelf_label": "QA-HOTFIX-111", "model": "Synthetic Model",
+            "filesystem": "NTFS", "capacity_bytes": 123456,
+            "note": note, "revision": 1,
+        }
+        saved = {"saved": True, "volume_id": 4, "revision": 1}
+        with patch("upgrade_catalog_probe.call_cli", side_effect=[saved, expected]) as call:
+            self.assertEqual(preferences_snapshot(Path("atlas.exe"), db, store, 4,
+                                                  create=True, note=note), expected)
+        save_request = call.call_args_list[0].args[1]
+        self.assertEqual(save_request["op"], "disk_preferences_set")
+        self.assertEqual(save_request["note"], note)
+        self.assertEqual(call.call_args_list[1].args[1]["op"], "disk_preferences_get")
+
+    def test_112_checkpoint_binds_exact_pair_and_checks_app_preferences(self):
+        source, target = HOTFIX_STABLE, MEMORY_FIX_STABLE
+        checkpoint = {"format": FORMAT, "source_release": source, "target_release": target}
+        validate_checkpoint_versions(checkpoint, source, target)
+        for wrong_source, wrong_target in [(NEXT_STABLE, target), (source, HOTFIX_STABLE)]:
+            with self.subTest(source=wrong_source, target=wrong_target):
+                with self.assertRaisesRegex(RuntimeError, "wrong_checkpoint"):
+                    validate_checkpoint_versions(checkpoint, wrong_source, wrong_target)
+
+        note = f"Synthetic shelf preferences — {source} to {target}"
+        preferences = {"volume_id": 4, "display_name": "Synthetic Upgrade Disk",
+                       "shelf_label": "QA-HOTFIX-111", "model": "Synthetic Model",
+                       "filesystem": "NTFS", "capacity_bytes": 123456,
+                       "note": note, "revision": 1}
+        with TemporaryDirectory() as directory:
+            store = Path(directory) / "generated-sidecar.sqlite"
+            store.write_bytes(b"synthetic application preferences sqlite fixture")
+            user_checkpoint = {"path": str(store), "sha256_after_prepare": sha256(store),
+                               "preferences": preferences}
+            with patch("upgrade_catalog_probe.preferences_snapshot", return_value=preferences) as read:
+                self.assertTrue(verify_user_store_checkpoint(
+                    Path("atlas.exe"), Path("catalog.sqlite"), store, user_checkpoint, note=note))
+            read.assert_called_once_with(Path("atlas.exe"), Path("catalog.sqlite"),
+                                         store, 4, create=False, note=note)
+
     def test_111_preferences_prepare_and_verify_use_cli_contract(self):
         db = Path("synthetic-catalog.sqlite")
         store = Path("synthetic-user-store.sqlite")
@@ -161,7 +217,8 @@ class InstalledVersionContract(unittest.TestCase):
                 self.assertTrue(verify_user_store_checkpoint(
                     Path("atlas.exe"), Path("catalog.sqlite"), store, checkpoint))
             read.assert_called_once_with(Path("atlas.exe"), Path("catalog.sqlite"),
-                                         store, 4, create=False)
+                                         store, 4, create=False,
+                                         note="Synthetic shelf preferences — 1.1.0 to 1.1.1")
 
             changed = dict(checkpoint, sha256_after_prepare="0" * 64)
             with self.assertRaisesRegex(RuntimeError, "user_store_bytes_changed_by_upgrade"):
