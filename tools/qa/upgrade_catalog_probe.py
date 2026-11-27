@@ -30,6 +30,7 @@ STABLE = "1.0.0"
 NEXT_RC1 = "1.1.0-rc.1"
 NEXT_STABLE = "1.1.0"
 HOTFIX_STABLE = "1.1.1"
+MEMORY_FIX_STABLE = "1.1.2"
 QUERY = "(ext:mp3 OR ext:mkv) AND size:>0B"
 CATEGORY = "QA-Upgrade-Ω-Категория"
 ENTRY_NOTE = "Synthetic upgrade note — 東京"
@@ -39,7 +40,9 @@ FORMAT = "whereisit-native-upgrade-smoke-v1"
 SUPPORTED_PAIRS = {
     (RC1, RC2), (RC2, RC3), (RC3, RC4), (RC4, STABLE),
     (STABLE, NEXT_RC1), (STABLE, NEXT_STABLE), (NEXT_STABLE, HOTFIX_STABLE),
+    (HOTFIX_STABLE, MEMORY_FIX_STABLE),
 }
+USER_STORE_PAIRS = {(NEXT_STABLE, HOTFIX_STABLE), (HOTFIX_STABLE, MEMORY_FIX_STABLE)}
 
 
 def expected_cli_version(mode: str, source: str, target: str) -> str:
@@ -57,29 +60,33 @@ def validate_checkpoint_versions(checkpoint: dict, source: str, target: str) -> 
 
 
 def validate_user_store_pair(source: str, target: str, user_store: Path | None) -> None:
-    """The 1.1.1 hotfix exercises the application's real preferences sidecar."""
-    if (source, target) == (NEXT_STABLE, HOTFIX_STABLE):
+    """Recent stable upgrades exercise the application's real preferences sidecar."""
+    if (source, target) in USER_STORE_PAIRS:
         if user_store is None:
-            raise RuntimeError("user_store_required_for_hotfix")
+            code = ("user_store_required_for_hotfix" if (source, target) ==
+                    (NEXT_STABLE, HOTFIX_STABLE) else "user_store_required_for_memory_fix")
+            raise RuntimeError(code)
     elif user_store is not None:
         raise RuntimeError("unexpected_user_store_for_upgrade_pair")
 
 
-def preferences_payload(db: Path, store: Path, volume_id: int) -> dict:
+def preferences_payload(db: Path, store: Path, volume_id: int, *, note: str =
+                        "Synthetic shelf preferences — 1.1.0 to 1.1.1") -> dict:
     return {
         "op": "disk_preferences_set", "db": str(db), "user_store": str(store),
         "platform": "windows", "volume_id": volume_id,
         "display_name": "Synthetic Upgrade Disk", "shelf_label": "QA-HOTFIX-111",
         "model": "Synthetic Model", "filesystem": "NTFS", "capacity_bytes": 123456,
-        "note": "Synthetic shelf preferences — 1.1.0 to 1.1.1",
+        "note": note,
         "expected_revision": 0, "expected_shelf_label": "", "confirmed": True,
     }
 
 
 def preferences_snapshot(cli: Path, db: Path, store: Path, volume_id: int,
-                         *, create: bool) -> dict:
+                         *, create: bool, note: str =
+                         "Synthetic shelf preferences — 1.1.0 to 1.1.1") -> dict:
     if create:
-        saved = call_cli(cli, preferences_payload(db, store, volume_id))
+        saved = call_cli(cli, preferences_payload(db, store, volume_id, note=note))
         if (not isinstance(saved, dict) or saved.get("saved") is not True
                 or saved.get("volume_id") != volume_id or saved.get("revision") != 1):
             raise RuntimeError("synthetic_user_store_save_failed")
@@ -91,7 +98,7 @@ def preferences_snapshot(cli: Path, db: Path, store: Path, volume_id: int,
         "volume_id": volume_id, "display_name": "Synthetic Upgrade Disk",
         "shelf_label": "QA-HOTFIX-111", "model": "Synthetic Model",
         "filesystem": "NTFS", "capacity_bytes": 123456,
-        "note": "Synthetic shelf preferences — 1.1.0 to 1.1.1", "revision": 1,
+        "note": note, "revision": 1,
     }
     if result != expected:
         raise RuntimeError("synthetic_user_store_preferences_mismatch")
@@ -99,14 +106,15 @@ def preferences_snapshot(cli: Path, db: Path, store: Path, volume_id: int,
 
 
 def verify_user_store_checkpoint(cli: Path, db: Path, store: Path,
-                                 checkpoint: dict) -> bool:
+                                 checkpoint: dict, *, note: str =
+                                 "Synthetic shelf preferences — 1.1.0 to 1.1.1") -> bool:
     if str(store) != checkpoint["path"]:
         raise RuntimeError("user_store_path_changed")
     digest = checkpoint["sha256_after_prepare"]
     if not store.is_file() or sha256(store) != digest:
         raise RuntimeError("user_store_bytes_changed_by_upgrade")
     volume_id = int(checkpoint["preferences"]["volume_id"])
-    preferences = preferences_snapshot(cli, db, store, volume_id, create=False)
+    preferences = preferences_snapshot(cli, db, store, volume_id, create=False, note=note)
     if sha256(store) != digest:
         raise RuntimeError("user_store_bytes_changed_by_read")
     if preferences != checkpoint["preferences"]:
@@ -282,7 +290,8 @@ def main() -> int:
             if not isinstance(volumes, list) or len(volumes) != 1:
                 raise RuntimeError("synthetic_user_store_volume_missing")
             user_store_state = preferences_snapshot(
-                cli, db, user_store, int(volumes[0]["id"]), create=True
+                cli, db, user_store, int(volumes[0]["id"]), create=True,
+                note=f"Synthetic shelf preferences — {args.source_release} to {args.target_release}",
             )
         baseline = observed(cli, db)
         require_fixture_annotation(baseline)
@@ -327,7 +336,8 @@ def main() -> int:
         if user_store_checkpoint is not None:
             if user_store is None:
                 raise RuntimeError("user_store_path_changed")
-            verify_user_store_checkpoint(cli, db, user_store, user_store_checkpoint)
+            note = f"Synthetic shelf preferences — {args.source_release} to {args.target_release}"
+            verify_user_store_checkpoint(cli, db, user_store, user_store_checkpoint, note=note)
         print(json.dumps({
             "phase": "target_verify", "target_release": args.target_release, "status": "pass",
             "entry_count": after["entries"],

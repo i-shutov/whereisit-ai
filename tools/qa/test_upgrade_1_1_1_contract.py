@@ -44,9 +44,12 @@ class WindowsUpgradeContract(unittest.TestCase):
             "1.1.0-rc.1": ("1.0.0", "938fece2d74793c2eda7a1b84082ab5db3f8a092"),
             "1.1.0": ("1.0.0", "938fece2d74793c2eda7a1b84082ab5db3f8a092"),
             "1.1.1": ("1.1.0", "7f684f47aab42fb211dfa0af1085ace311ef9f8d"),
+            "1.1.2": ("1.1.1", "4bb4a4030b8c689a9adb367689d510d07c1dcd29"),
         }
         self.assertEqual(workflow_pairs(self.workflow), expected)
         self.assertEqual(lifecycle_pairs(self.lifecycle), expected)
+        current_version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+        self.assertIn(current_version, expected, "Current VERSION must have an exact predecessor mapping")
         for target, (source, _pin) in expected.items():
             with self.subTest(source=source, target=target):
                 self.assertEqual(expected_cli_version("prepare", source, target),
@@ -86,8 +89,8 @@ class WindowsUpgradeContract(unittest.TestCase):
         self.assertIn("external_sidecar_preserved = (File-Sha $sidecar) -eq $sidecarSha", self.lifecycle)
         self.assertIn("Verify-External $beforeRollback $ctfSha", self.lifecycle)
         self.assertIn("synthetic_only = $true", self.lifecycle)
-        self.assertIn("if ($targetVersion -eq '1.1.1') { $probeArgs += @('--user-store', $sidecar) }", self.lifecycle)
-        self.assertIn("if ($targetVersion -ne '1.1.1')", self.lifecycle)
+        self.assertIn("if ($targetVersion -in @('1.1.1', '1.1.2')) { $probeArgs += @('--user-store', $sidecar) }", self.lifecycle)
+        self.assertIn("if ($targetVersion -notin @('1.1.1', '1.1.2'))", self.lifecycle)
         self.assertIn("preferences_snapshot(", (ROOT / "tools/qa/upgrade_catalog_probe.py").read_text(encoding="utf-8"))
 
 
